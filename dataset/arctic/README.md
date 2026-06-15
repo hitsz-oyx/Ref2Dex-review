@@ -56,6 +56,67 @@ For real data, place ARCTIC under `data/arctic_data/`, body models under `data/b
 
 The audit tools do not download ARCTIC data, MANO/SMPL-X files, or object assets. They can reuse existing local caches such as `outputs/meshcat_cache/*_world_verts.npz` and can enrich them with object faces from `data/arctic_data/data/meta/object_vtemplates/` when available.
 
+To download real ARCTIC data, run the official scripts from the ARCTIC repository root. First register accounts on the [ARCTIC site](https://arctic.is.tue.mpg.de/register.php), [SMPL-X](https://smpl-x.is.tue.mpg.de/), and [MANO](https://mano.is.tue.mpg.de/), and accept the corresponding licenses. The official Download page requires login. The preserved upstream documentation in this workspace is `README_ARCTIC.md` and `docs/data/README.md`.
+
+```bash
+export ARCTIC_USERNAME=<ARCTIC login email>
+export ARCTIC_PASSWORD=<ARCTIC password>
+export SMPLX_USERNAME=<SMPL-X login email>
+export SMPLX_PASSWORD=<SMPL-X password>
+export MANO_USERNAME=<MANO login email>
+export MANO_PASSWORD=<MANO password>
+
+chmod +x ./bash/*.sh
+```
+
+Start with the official dry run to verify credentials, download scripts, unzip, and checksum flow:
+
+```bash
+./bash/download_dry_run.sh
+python scripts_data/unzip_download.py
+python scripts_data/checksum.py
+```
+
+If the dry run creates `cropped_images`, `images`, `meta`, `raw_seqs`, and `splits_json` under `unpack/arctic_data/data/`, the pipeline is working. The current code expects the unpacked data at `./data`, so move the official output into the expected location:
+
+```bash
+mv unpack data
+```
+
+For a full download, the official docs provide two common paths. To reproduce experiments or reuse the CVPR baseline splits, download body models, cropped images, splits, and misc files, then optionally baseline weights and LSTM image features:
+
+```bash
+./bash/clean_downloads.sh
+./bash/download_body_models.sh
+./bash/download_cropped_images.sh
+./bash/download_splits.sh
+./bash/download_misc.sh
+./bash/download_baselines.sh   # optional: official baseline weights
+./bash/download_feat.sh        # optional: image features for LSTM baselines
+python scripts_data/checksum.py
+python scripts_data/unzip_download.py
+mv unpack data
+```
+
+If you need full control over raw data, download at least body models and misc files; add `cropped_images`, full-resolution `images`, `splits`, `feat`, `baselines`, and `mocap` as needed:
+
+```bash
+./bash/clean_downloads.sh
+./bash/download_body_models.sh
+./bash/download_misc.sh
+./bash/download_cropped_images.sh  # optional
+./bash/download_images.sh          # optional, full 2K images are large
+./bash/download_splits.sh          # optional
+./bash/download_feat.sh            # optional
+./bash/download_baselines.sh       # optional
+./bash/download_mocap.sh           # optional
+python scripts_data/checksum.py
+python scripts_data/unzip_download.py
+mv unpack data
+```
+
+After setup, the audit tools mainly check `data/arctic_data/data/raw_seqs/*/*.mano.npy`, `data/arctic_data/data/meta/object_vtemplates/`, and existing `outputs/meshcat_cache/*_world_verts.npz`. If your shell does not provide a `python` command, enter the conda environment from sections 2/3 first, or use an equivalent `python3` command in local scripts.
+
 ## 5. Visualization
 
 ```bash

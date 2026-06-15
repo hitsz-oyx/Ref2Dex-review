@@ -56,6 +56,67 @@ python dataset_audit/scripts/view_meshcat.py \
 
 审计工具不会下载 ARCTIC 数据、MANO/SMPL-X 文件或物体资产。它可以复用本地已有 cache，例如 `outputs/meshcat_cache/*_world_verts.npz`；当 `data/arctic_data/data/meta/object_vtemplates/` 可用时，也可以为 cache 补充 object faces。
 
+按官方说明下载真实数据时，从 ARCTIC 仓库根目录执行，先在 [ARCTIC 官网](https://arctic.is.tue.mpg.de/register.php)、[SMPL-X](https://smpl-x.is.tue.mpg.de/) 和 [MANO](https://mano.is.tue.mpg.de/) 注册账号并接受对应 license。官网的 Download 页面需要登录；本仓库保留的官方说明见 `README_ARCTIC.md` 和 `docs/data/README.md`。
+
+```bash
+export ARCTIC_USERNAME=<ARCTIC 登录邮箱>
+export ARCTIC_PASSWORD=<ARCTIC 密码>
+export SMPLX_USERNAME=<SMPL-X 登录邮箱>
+export SMPLX_PASSWORD=<SMPL-X 密码>
+export MANO_USERNAME=<MANO 登录邮箱>
+export MANO_PASSWORD=<MANO 密码>
+
+chmod +x ./bash/*.sh
+```
+
+建议先跑官方 dry run，确认账号、下载脚本、解压和 checksum 流程可用：
+
+```bash
+./bash/download_dry_run.sh
+python scripts_data/unzip_download.py
+python scripts_data/checksum.py
+```
+
+如果 dry run 后 `unpack/arctic_data/data/` 中出现 `cropped_images`、`images`、`meta`、`raw_seqs`、`splits_json` 等目录，说明流程正常。当前代码默认读 `./data`，可以把官方解压目录移动到本仓库期望位置：
+
+```bash
+mv unpack data
+```
+
+下载完整数据时，官方提供两类路径。若目标是复现实验或复用 CVPR baseline split，下载 body models、cropped images、splits、misc，并按需下载 baseline 权重和 LSTM image features：
+
+```bash
+./bash/clean_downloads.sh
+./bash/download_body_models.sh
+./bash/download_cropped_images.sh
+./bash/download_splits.sh
+./bash/download_misc.sh
+./bash/download_baselines.sh   # 可选：官方 baseline 权重
+./bash/download_feat.sh        # 可选：LSTM baseline 用 image features
+python scripts_data/checksum.py
+python scripts_data/unzip_download.py
+mv unpack data
+```
+
+若需要完全控制原始数据，至少下载 body models 和 misc；`cropped_images`、完整 `images`、`splits`、`feat`、`baselines`、`mocap` 可按任务需要追加：
+
+```bash
+./bash/clean_downloads.sh
+./bash/download_body_models.sh
+./bash/download_misc.sh
+./bash/download_cropped_images.sh  # 可选
+./bash/download_images.sh          # 可选，完整 2K 图片体积很大
+./bash/download_splits.sh          # 可选
+./bash/download_feat.sh            # 可选
+./bash/download_baselines.sh       # 可选
+./bash/download_mocap.sh           # 可选
+python scripts_data/checksum.py
+python scripts_data/unzip_download.py
+mv unpack data
+```
+
+完成后，审计工具主要检查 `data/arctic_data/data/raw_seqs/*/*.mano.npy`、`data/arctic_data/data/meta/object_vtemplates/` 和已有 `outputs/meshcat_cache/*_world_verts.npz`。如果 shell 中没有 `python` 命令，请先进入本文第 2/3 节的 conda 环境，或在本地脚本中使用等价的 `python3`。
+
 ## 5. 可视化
 
 ```bash
