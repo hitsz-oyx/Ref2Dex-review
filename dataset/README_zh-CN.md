@@ -31,7 +31,7 @@ cd Ref2Dex
 不要在 macOS host 上直接安装依赖或运行数据集处理脚本。请进入每个仓库自己的 Docker/Miniconda 环境：
 
 ```bash
-cd /Users/key_z/Documents/github/dex/Ref2Dex/dataset/<repo>
+cd dataset/<repo>
 ./.codex/enter.sh
 source /opt/conda/etc/profile.d/conda.sh
 conda activate <repo-dev-env>

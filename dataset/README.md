@@ -31,7 +31,7 @@ The `dataset/` tree should be committed from the Ref2Dex parent repository like 
 Do not install dependencies or run dataset processing directly on the macOS host. Use each repository's Docker/Miniconda environment:
 
 ```bash
-cd /Users/key_z/Documents/github/dex/Ref2Dex/dataset/<repo>
+cd dataset/<repo>
 ./.codex/enter.sh
 source /opt/conda/etc/profile.d/conda.sh
 conda activate <repo-dev-env>
