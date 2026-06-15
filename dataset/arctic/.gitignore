@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__
+/data/
+/downloads/
+/outputs/
+/unpack/
+/logs/
+/body_models/
+/downloads_failed/
+README_tmp.md
+
+# Local Codex/Docker helper files
+/.codex/
+
+# Local model/data assets that must not be uploaded
+/mano_v1_2/
+*.pkl
+*.npz
+*.npy
+*.zip
+*.tar
+*.tar.gz
+
+# Python/cache artifacts
+*.py[cod]
+.pytest_cache/

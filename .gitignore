@@ -1,0 +1,27 @@
+.DS_Store
+**/.DS_Store
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Dataset-local generated files; dataset folders also carry local .gitignore files.
+dataset/*/outputs/
+dataset/*/.codex/
+dataset/*/data/
+dataset/*/downloads/
+dataset/*/logs/
+dataset/*/body_models/
+dataset/*/models/
+dataset/*/object_models/
+dataset/*/MANO*/
+dataset/*/SMPL*/
+dataset/*/SMPLX*/
+dataset/*/*.pkl
+dataset/*/*.npz
+dataset/*/*.npy
+dataset/*/*.pt
+dataset/*/*.pth
+dataset/*/*.zip
+dataset/*/*.tar
+dataset/*/*.tar.gz
