@@ -1,0 +1,32 @@
+# Local Codex/Docker helper files
+.codex/
+
+# Local GRAB data, body models, object assets, and generated outputs
+outputs/
+data/
+grab_data/
+GRAB_data/
+downloads/
+logs/
+body_models/
+models/
+smplx_models/
+MANO*/
+SMPL*/
+SMPLX*/
+*.pkl
+*.npz
+*.npy
+*.pt
+*.pth
+*.zip
+*.tar
+*.tar.gz
+
+# Python / macOS artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+

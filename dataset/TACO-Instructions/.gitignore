@@ -1,0 +1,32 @@
+*__pycache__
+*.out
+
+# Local Codex/Docker helper files
+.codex/
+
+# Local dataset, model, render, and audit outputs
+outputs/
+data/
+dataset/
+downloads/
+logs/
+object_models/
+body_models/
+dataset_utils/manopth/mano/models/
+MANO_LEFT.pkl
+MANO_RIGHT.pkl
+SMPL*/
+SMPLX*/
+*.pkl
+*.npz
+*.npy
+*.pt
+*.pth
+*.zip
+*.tar
+*.tar.gz
+
+# macOS / Python artifacts
+.DS_Store
+*.py[cod]
+.pytest_cache/

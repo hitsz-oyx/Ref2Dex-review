@@ -1,0 +1,41 @@
+data/**
+data2/**
+assets/**
+build/**
+temp/**
+tmp/**
+
+
+.vscode/**
+
+**/__pycache__/**
+**/__MACOSC/**
+
+*.egg-info/**
+
+# Local Codex/Docker helper files
+.codex/
+
+# Local data, model, and generated audit outputs
+outputs/
+downloads/
+logs/
+checkpoints/
+body_models/
+mano_v1_2/
+MANO*/
+SMPL*/
+SMPLX*/
+*.pkl
+*.npz
+*.npy
+*.pt
+*.pth
+*.zip
+*.tar
+*.tar.gz
+
+# macOS / Python artifacts
+.DS_Store
+*.py[cod]
+.pytest_cache/
