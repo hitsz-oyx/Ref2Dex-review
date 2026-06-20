@@ -474,7 +474,8 @@ class Ref2DexViewer:
         """Load MANO CPF optimization result for current sequence + side.
 
         Looks for `<opti_root>/<subject>/<seq_name>_<side>.pkl` (the layout used
-        by ``preprocess/arctic_mano_cpf_fit.py``). Returns the unpickled payload
+        by the current `outputs/mano_fit/*` tree and older optimization outputs).
+        Returns the unpickled payload
         dict, or ``None`` if the file is missing / fails to load.
 
         The payload is expected to contain at least:

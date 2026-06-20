@@ -88,7 +88,7 @@ def _first_existing_path(*candidates):
     return None
 
 
-REF2DEX_ROOT = Path(__file__).resolve().parents[1]
+REF2DEX_ROOT = Path(__file__).resolve().parents[2]
 ARCTIC_DATA_ROOT = (
     REF2DEX_ROOT / "dataset" / "arctic" / "data"
 )
@@ -509,11 +509,33 @@ class SmplxManoFitter:
         self.n_anchor_regions = int(self.merged_vertex_assignment.max()) + 1
         self.palm_vid = np.loadtxt(str(CPF_ASSETS_DIR / "hand_palm_full.txt"), dtype=int)
 
+    def _align_betas_to_model(self, betas: torch.Tensor) -> torch.Tensor:
+        """Match input betas dim to the loaded MANO shapedirs dim.
+
+        Current Ref2Dex MANO assets use 10 shape coefficients, so this is a no-op
+        in the normal ARCTIC/GRAB pipeline. We still keep the shim to stay robust
+        to alternative MANO assets whose shape space dimension differs.
+        """
+        actual_num_betas = int(self.mano.shapedirs.shape[-1])
+        if betas.shape[-1] == actual_num_betas:
+            return betas
+        betas = betas[..., :min(betas.shape[-1], actual_num_betas)]
+        if actual_num_betas > betas.shape[-1]:
+            pad = torch.zeros(
+                *betas.shape[:-1],
+                actual_num_betas - betas.shape[-1],
+                device=betas.device,
+                dtype=betas.dtype,
+            )
+            betas = torch.cat([betas, pad], dim=-1)
+        return betas
+
     def _forward(self,
                  global_orient_aa: torch.Tensor,
                  hand_pose_aa: torch.Tensor,
                  betas: torch.Tensor,
                  transl: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        betas = self._align_betas_to_model(betas)
         out = self.mano(
             global_orient=global_orient_aa.unsqueeze(0),
             hand_pose=hand_pose_aa.view(1, 45),

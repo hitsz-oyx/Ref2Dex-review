@@ -6,7 +6,7 @@ GRAB 数据集预处理脚本（仿造 arctic_preprocess.py 字段规范）
 
 本脚本将 GRAB 原始数据 (`.npz` 序列) 处理成 Ref2Dex 训练所需的 `.npz` 格式，
 **字段命名与 `arctic_preprocess.py` 完全一致**——这样下游消费者
-（`arctic_mano_cpf_fit.py` / `arctic_mano_toch_fit.py` / 可视化 / 学习模型）
+（`process/opti/mano_smplx_fit.py` / `render/processed_data_visualize.py` / 学习模型）
 对两个数据集可以共用同一套读取逻辑，只需把数据源切换即可。
 
 ================================================================================
@@ -161,7 +161,7 @@ from smplx import MANO
 # ============================================================
 # 路径配置（可通过 CLI 覆盖）
 # ============================================================
-REF2DEX_ROOT = op.dirname(op.dirname(op.abspath(__file__)))
+REF2DEX_ROOT = op.dirname(op.dirname(op.dirname(op.abspath(__file__))))
 # MANO 模型目录（含 MANO_LEFT.pkl / MANO_RIGHT.pkl）
 DEFAULT_MANO_MODEL_DIR = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "body_models", "mano")
 # GRAB 原始数据根目录（含 grab/、tools/、tools/object_meshes/contact_meshes/）
@@ -664,7 +664,8 @@ class GRABPreprocessor:
             betas = torch.from_numpy(betas_np).float().unsqueeze(0).expand(T, -1).to(self.device)
         else:
             betas = torch.from_numpy(betas_np).float().to(self.device)
-        # 截断 betas 到模型实际 num_betas（GRAB 存 (10,)，MANO 模型可能只有 9）
+        # 对齐 betas 到当前加载的 MANO shapedirs 维度。
+        # 在当前 Ref2Dex 环境里是 10 维；这里保留兼容层，避免替换 MANO 资产后因维度不同报错。
         actual_num_betas = self.mano.shapedirs.shape[-1]
         if betas.shape[-1] != actual_num_betas:
             betas = betas[..., :min(betas.shape[-1], actual_num_betas)]

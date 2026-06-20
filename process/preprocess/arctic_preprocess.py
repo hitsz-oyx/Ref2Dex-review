@@ -154,7 +154,7 @@ from tqdm import tqdm     # 进度条
 # ============================================================
 # 路径配置（可通过命令行参数覆盖）
 # ============================================================
-REF2DEX_ROOT = op.dirname(op.dirname(op.abspath(__file__)))
+REF2DEX_ROOT = op.dirname(op.dirname(op.dirname(op.abspath(__file__))))
 # MANO 模型文件目录（包含 MANO_LEFT.pkl / MANO_RIGHT.pkl）
 MANO_MODEL_DIR = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "body_models", "mano")
 # ARCTIC 原始数据根目录

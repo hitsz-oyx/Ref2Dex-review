@@ -60,13 +60,13 @@ python -c "import numpy, open3d, torch; from pytorch3d.io import load_obj, load_
 On Linux, this usually works:
 
 ```bash
-blender --background --python preprocess/repair_non_manifold_with_blender.py
+blender --background --python process/repair/repair_non_manifold_with_blender.py
 ```
 
 On macOS, if the `blender` command is not available, use the full executable path:
 
 ```bash
-/Applications/Blender.app/Contents/MacOS/Blender --background --python preprocess/repair_non_manifold_with_blender.py
+/Applications/Blender.app/Contents/MacOS/Blender --background --python process/repair/repair_non_manifold_with_blender.py
 ```
 
 If Blender is not installed yet, install it with the system package manager on Linux, or use the official installer / Homebrew Cask on macOS:
@@ -101,7 +101,7 @@ Main features:
 Common command:
 
 ```bash
-python preprocess/check_manifold.py \
+python process/repair/check_manifold.py \
   --input-dir get_assets/0_merged_visual_objs \
   --output-dir reports/manifold_check \
   --workers 8
@@ -110,7 +110,7 @@ python preprocess/check_manifold.py \
 Multiple input directories:
 
 ```bash
-python preprocess/check_manifold.py \
+python process/repair/check_manifold.py \
   --input-dir get_assets/1_manifold_visual_objs get_assets/2_non_manifold_objs_repaired_advanced \
   --output-dir reports/manifold_check_after_repair \
   --workers 8
@@ -151,7 +151,7 @@ Main features:
 Common command:
 
 ```bash
-python preprocess/filter_manifold_objs.py \
+python process/repair/filter_manifold_objs.py \
   --input-root get_assets/0_merged_visual_objs \
   --manifold-output-root get_assets/1_manifold_visual_objs \
   --non-manifold-output-root get_assets/1_non_manifold_visual_objs \
@@ -200,7 +200,7 @@ PRESERVE_REGISTRY_LEVEL = True
 2. Run it with Blender in background mode:
 
 ```bash
-blender --background --python preprocess/repair_non_manifold_with_blender.py
+blender --background --python process/repair/repair_non_manifold_with_blender.py
 ```
 
 Use cases:
@@ -247,7 +247,7 @@ RETRY_WITH_HALF_VOXEL_ON_FAIL = True
 3. Run it with Blender in background mode:
 
 ```bash
-blender --background --python preprocess/repair_non_manifold_with_blender_advanced.py
+blender --background --python process/repair/repair_non_manifold_with_blender_advanced.py
 ```
 
 Key parameters:
@@ -271,13 +271,13 @@ Use cases:
 
 ```bash
 # 1. Check the original merged OBJ files.
-python preprocess/check_manifold.py \
+python process/repair/check_manifold.py \
   --input-dir get_assets/0_merged_visual_objs \
   --output-dir reports/manifold_check_raw \
   --workers 8 || true
 
 # 2. Split manifold and non-manifold OBJ files.
-python preprocess/filter_manifold_objs.py \
+python process/repair/filter_manifold_objs.py \
   --input-root get_assets/0_merged_visual_objs \
   --manifold-output-root get_assets/1_manifold_visual_objs \
   --non-manifold-output-root get_assets/1_non_manifold_visual_objs \
@@ -286,10 +286,10 @@ python preprocess/filter_manifold_objs.py \
 
 # 3. Edit the paths at the top of repair_non_manifold_with_blender_advanced.py,
 # then repair with Blender.
-blender --background --python preprocess/repair_non_manifold_with_blender_advanced.py
+blender --background --python process/repair/repair_non_manifold_with_blender_advanced.py
 
 # 4. Check the repaired outputs.
-python preprocess/check_manifold.py \
+python process/repair/check_manifold.py \
   --input-dir get_assets/2_non_manifold_objs_repaired_advanced \
   --output-dir reports/manifold_check_repaired \
   --workers 8 || true
