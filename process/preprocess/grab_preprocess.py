@@ -124,14 +124,17 @@ split 划分
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import os.path as op
 import pickle
 import re
 import sys
+import time
 import traceback
 from glob import glob
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -168,6 +171,8 @@ DEFAULT_MANO_MODEL_DIR = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "bod
 DEFAULT_GRAB_ROOT = op.join(REF2DEX_ROOT, "dataset", "GRAB", "data")
 # 默认输出根目录
 DEFAULT_OUTPUT_ROOT = op.join(REF2DEX_ROOT, "processed_data", "grab")
+DEFAULT_TORCH_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEFAULT_NN_BATCH_SIZE = 16
 SHARED_ASSET_ROOT = op.join(REF2DEX_ROOT, "assets", "shared")
 SHARED_MANO_ASSET_ROOT = op.join(SHARED_ASSET_ROOT, "mano")
 OBJECT_ASSET_ROOT = op.join(REF2DEX_ROOT, "assets", "grab", "objects")
@@ -302,6 +307,16 @@ def compute_face_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
     return normals
 
 
+def compute_face_normals_batched(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """批量计算面法向，避免逐帧构造 trimesh。"""
+    v0 = vertices[:, faces[:, 0], :]
+    v1 = vertices[:, faces[:, 1], :]
+    v2 = vertices[:, faces[:, 2], :]
+    normals = np.cross(v1 - v0, v2 - v0)
+    norms = np.linalg.norm(normals, axis=-1, keepdims=True)
+    return normals / np.clip(norms, 1e-10, None)
+
+
 def sample_mesh_surface(mesh: trimesh.Trimesh, n_points: int, seed: int = 42):
     """均匀随机表面采样，返回 points / face_idx / barycentric。"""
     np.random.seed(seed)
@@ -356,6 +371,164 @@ def assign_hand_semantics(mano_layer: MANO, is_right: bool) -> tuple:
         else:
             region_id[i] = REGION_FINGER_PAD
     return finger_id, region_id
+
+
+def compute_canonical_hand_surface(mano_layer: MANO) -> tuple:
+    """返回 canonical MANO face-center 点和 face normal。"""
+    with torch.no_grad():
+        output = mano_layer()
+        verts = output.vertices.squeeze(0).detach().cpu().numpy().astype(np.float32)
+    faces = np.asarray(mano_layer.faces, dtype=np.int64)
+    face_centers = verts[faces].mean(axis=1).astype(np.float32)
+    face_normals = compute_face_normals(verts, faces).astype(np.float32)
+    return face_centers, face_normals
+
+
+def collapse_constant_betas(betas: np.ndarray) -> np.ndarray:
+    """如果整段序列 betas 不变，则折叠成 (B,) 常值字段。"""
+    betas = np.asarray(betas, dtype=np.float32)
+    if betas.ndim == 2 and betas.shape[0] > 0 and np.allclose(betas, betas[:1]):
+        return betas[0].astype(np.float32)
+    return betas.astype(np.float32)
+
+
+def _resolve_manifest_seq_path(manifest_path: str, grab_root: str, row: dict, line_num: int) -> str:
+    raw_path_text = str(
+        row.get("raw_path")
+        or row.get("raw_path_abs")
+        or row.get("source_path")
+        or row.get("path")
+        or ""
+    ).strip()
+    seq_id_text = str(row.get("seq_id") or row.get("sequence") or "").strip()
+    if raw_path_text:
+        candidate = Path(raw_path_text)
+        if not candidate.is_absolute():
+            candidate_grab = Path(grab_root) / raw_path_text
+            candidate_repo = Path(REF2DEX_ROOT) / raw_path_text
+            if candidate_grab.exists():
+                candidate = candidate_grab
+            elif candidate_repo.exists():
+                candidate = candidate_repo
+            else:
+                candidate = candidate_grab
+    elif seq_id_text:
+        if "/" not in seq_id_text:
+            raise ValueError(
+                f"Manifest {manifest_path} line {line_num}: seq_id must be '<subject>/<sequence>', got {seq_id_text!r}"
+            )
+        subject_id, seq_name = seq_id_text.split("/", 1)
+        candidate = Path(grab_root) / "grab" / subject_id / f"{seq_name}.npz"
+    else:
+        raise ValueError(
+            f"Manifest {manifest_path} line {line_num}: expected one of raw_path/raw_path_abs/source_path/path/seq_id"
+        )
+    candidate = candidate.resolve()
+    if not candidate.exists():
+        raise FileNotFoundError(f"Manifest {manifest_path} line {line_num}: missing sequence file {candidate}")
+    return str(candidate)
+
+
+def load_manifest_seq_paths(manifest_path: str, grab_root: str) -> list[str]:
+    manifest = Path(manifest_path).resolve()
+    if not manifest.exists():
+        raise FileNotFoundError(f"Manifest not found: {manifest}")
+    seq_paths: list[str] = []
+    seen = set()
+    suffix = manifest.suffix.lower()
+    if suffix == ".csv":
+        with manifest.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for line_num, row in enumerate(reader, start=2):
+                seq_path = _resolve_manifest_seq_path(str(manifest), grab_root, row, line_num)
+                if seq_path not in seen:
+                    seen.add(seq_path)
+                    seq_paths.append(seq_path)
+    elif suffix == ".json":
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError(f"Manifest {manifest} must be a JSON list, got {type(payload)!r}")
+        for idx, item in enumerate(payload, start=1):
+            if isinstance(item, str):
+                row = {"seq_id": item}
+            elif isinstance(item, dict):
+                row = item
+            else:
+                raise ValueError(f"Manifest {manifest} item {idx}: unsupported type {type(item)!r}")
+            seq_path = _resolve_manifest_seq_path(str(manifest), grab_root, row, idx)
+            if seq_path not in seen:
+                seen.add(seq_path)
+                seq_paths.append(seq_path)
+    else:
+        line_num = 0
+        for raw_line in manifest.read_text(encoding="utf-8").splitlines():
+            line_num += 1
+            line = raw_line.strip()
+            if (not line) or line.startswith("#"):
+                continue
+            row = {"seq_id": line}
+            seq_path = _resolve_manifest_seq_path(str(manifest), grab_root, row, line_num)
+            if seq_path not in seen:
+                seen.add(seq_path)
+                seq_paths.append(seq_path)
+    return seq_paths
+
+
+def resolve_torch_device(device: str) -> str:
+    device = str(device).strip()
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        print("[Preprocessor] CUDA unavailable, falling back to CPU.")
+        return "cpu"
+    return device or "cpu"
+
+
+def bidirectional_nn_batch(
+    src_points: np.ndarray,
+    dst_points: np.ndarray,
+    device: str,
+    frame_batch_size: int,
+):
+    """Compute exact bidirectional nearest neighbors for batched frames.
+
+    Args:
+        src_points: (T, Ns, 3)
+        dst_points: (T, Nd, 3)
+        device: torch device string
+        frame_batch_size: chunk size along T for GPU cdist
+    """
+    T, Ns = src_points.shape[:2]
+    Nd = dst_points.shape[1]
+    src_to_dst_idx = np.zeros((T, Ns), dtype=np.int32)
+    src_to_dst_dist = np.zeros((T, Ns), dtype=np.float32)
+    dst_to_src_idx = np.zeros((T, Nd), dtype=np.int32)
+    dst_to_src_dist = np.zeros((T, Nd), dtype=np.float32)
+
+    if str(device).startswith("cuda"):
+        torch_device = torch.device(device)
+        chunk = max(1, int(frame_batch_size))
+        for start in range(0, T, chunk):
+            end = min(start + chunk, T)
+            src_t = torch.from_numpy(src_points[start:end]).to(torch_device, dtype=torch.float32)
+            dst_t = torch.from_numpy(dst_points[start:end]).to(torch_device, dtype=torch.float32)
+            dist = torch.cdist(src_t, dst_t, p=2)
+            src_dist, src_idx = dist.min(dim=2)
+            dst_dist, dst_idx = dist.min(dim=1)
+            src_to_dst_idx[start:end] = src_idx.detach().cpu().numpy().astype(np.int32)
+            src_to_dst_dist[start:end] = src_dist.detach().cpu().numpy().astype(np.float32)
+            dst_to_src_idx[start:end] = dst_idx.detach().cpu().numpy().astype(np.int32)
+            dst_to_src_dist[start:end] = dst_dist.detach().cpu().numpy().astype(np.float32)
+        return src_to_dst_idx, src_to_dst_dist, dst_to_src_idx, dst_to_src_dist
+
+    for t in range(T):
+        tree_dst = cKDTree(dst_points[t])
+        d_src, i_src = tree_dst.query(src_points[t], k=1)
+        src_to_dst_idx[t] = i_src
+        src_to_dst_dist[t] = d_src.astype(np.float32)
+        tree_src = cKDTree(src_points[t])
+        d_dst, i_dst = tree_src.query(dst_points[t], k=1)
+        dst_to_src_idx[t] = i_dst
+        dst_to_src_dist[t] = d_dst.astype(np.float32)
+    return src_to_dst_idx, src_to_dst_dist, dst_to_src_idx, dst_to_src_dist
 
 
 def load_object_canonical_mesh(obj_name: str, grab_root: str, unit: str = "m") -> trimesh.Trimesh:
@@ -511,6 +684,23 @@ def transform_object_points(
     return posed_points, posed_normals
 
 
+def transform_object_points_batch(
+    obj_points_canonical: np.ndarray,
+    obj_normals_canonical: np.ndarray,
+    global_rot: np.ndarray,
+    global_trans: np.ndarray,
+    device: str,
+) -> tuple:
+    """批量 rigid transform GRAB object points/normals to world space."""
+    rot_t = torch.from_numpy(global_rot).float().to(device)
+    R_global = axis_angle_to_rotmat(rot_t).detach().cpu().numpy()
+    posed_points = np.einsum("tij,pj->tpi", R_global, obj_points_canonical) + global_trans[:, None, :]
+    posed_normals = np.einsum("tij,pj->tpi", R_global, obj_normals_canonical)
+    norms = np.linalg.norm(posed_normals, axis=-1, keepdims=True)
+    posed_normals = posed_normals / np.clip(norms, 1e-10, None)
+    return posed_points.astype(np.float32), posed_normals.astype(np.float32)
+
+
 # ============================================================
 # GRAB 帧级过滤（仿造 TOCH filter_contact_frames）
 # ============================================================
@@ -553,7 +743,7 @@ class GRABPreprocessor:
         self,
         output_root: str = DEFAULT_OUTPUT_ROOT,
         num_obj_points: int = 2048,
-        device: str = "cpu",
+        device: str = DEFAULT_TORCH_DEVICE,
         dt: float = 1.0 / 30.0,
         contact_distance_thresh: float = CONTACT_DISTANCE_THRESH,
         max_frames: Optional[int] = None,
@@ -562,10 +752,12 @@ class GRABPreprocessor:
         hand: str = "right",
         ds_rate: int = 1,
         obj_unit: str = "m",
+        nn_batch_size: int = DEFAULT_NN_BATCH_SIZE,
+        save_compressed: bool = False,
     ):
         self.output_root = output_root
         self.num_obj_points = num_obj_points
-        self.device = "cpu"   # 强制 CPU，与 arctic_preprocess 一致
+        self.device = resolve_torch_device(device)
         self.dt = dt
         self.contact_distance_thresh = float(contact_distance_thresh)
         self.max_frames = max_frames
@@ -573,16 +765,26 @@ class GRABPreprocessor:
         self.hand = hand
         self.ds_rate = max(1, int(ds_rate))
         self.obj_unit = obj_unit
+        self.nn_batch_size = max(1, int(nn_batch_size))
+        self.save_compressed = bool(save_compressed)
 
         # 默认 MANO（用于手部语义标签等静态分析）
-        print(f"[Preprocessor] Loading default MANO for {hand} hand (flat_hand_mean=True)...")
-        self.default_mano = MANO(
+        print("[Preprocessor] Loading default MANO for both hands (flat_hand_mean=True)...")
+        self.default_mano_r = MANO(
             mano_path,
-            is_rhand=(hand == "right"),
-            use_pca=True,         # GRAB 用 PCA24
+            is_rhand=True,
+            use_pca=True,
             num_pca_comps=24,
             flat_hand_mean=True,
         ).to(self.device)
+        self.default_mano_l = MANO(
+            mano_path,
+            is_rhand=False,
+            use_pca=True,
+            num_pca_comps=24,
+            flat_hand_mean=True,
+        ).to(self.device)
+        self.default_mano = self.default_mano_r if hand == "right" else self.default_mano_l
         # 实际 forward 用的 MANO（按 subject vtemp 注入）—— 运行时构造并 cache
         self._mano_cache = {}    # key: (vtemp_path, is_rhand) -> ManoLayer
         self.mano_path = mano_path
@@ -591,11 +793,16 @@ class GRABPreprocessor:
 
         # 手部语义标签（cache）
         print(f"[Preprocessor] Computing hand semantics...")
-        self.finger_id, self.region_id = assign_hand_semantics(self.default_mano, is_right=(hand == "right"))
+        self.right_finger_id, self.right_region_id = assign_hand_semantics(self.default_mano_r, is_right=True)
+        self.left_finger_id, self.left_region_id = assign_hand_semantics(self.default_mano_l, is_right=False)
+        self.right_hand_cano_points, self.right_hand_cano_normals = compute_canonical_hand_surface(self.default_mano_r)
+        self.left_hand_cano_points, self.left_hand_cano_normals = compute_canonical_hand_surface(self.default_mano_l)
+        self.right_faces = self.default_mano_r.faces.astype(np.int64)
+        self.left_faces = self.default_mano_l.faces.astype(np.int64)
         self.faces = self.default_mano.faces.astype(np.int64)
-        self.num_hand_points = self.faces.shape[0]
+        self.num_hand_points = self.right_faces.shape[0]
         self.hand_point_id = np.arange(self.num_hand_points, dtype=np.int32)
-        self.mano_parents = self.default_mano.parents.detach().cpu().numpy().astype(np.int64)
+        self.mano_parents = self.default_mano_r.parents.detach().cpu().numpy().astype(np.int64)
 
         # 物体采样缓存
         self._obj_cache = {}
@@ -606,6 +813,11 @@ class GRABPreprocessor:
             "train": [],   # 运行时填
         }
         self._split_of_seq = {}   # path -> "train"/"val"/"test"
+        print(
+            f"[Preprocessor] Device: {self.device} | "
+            f"NN batch size: {self.nn_batch_size} | "
+            f"Save compressed: {self.save_compressed}"
+        )
 
     def _get_mano_for_vtemp(self, vtemp_path: str, is_rhand: bool) -> MANO:
         """根据受试者 vtemp 构造（或取 cache）MANO layer。
@@ -705,10 +917,12 @@ class GRABPreprocessor:
             "points": np.zeros((T, self.num_hand_points, 3), dtype=np.float32),
             "normals": np.zeros((T, self.num_hand_points, 3), dtype=np.float32),
             "root_pose": np.tile(np.eye(4, dtype=np.float32), (T, 1, 1)),
+            "global_orient_aa": np.zeros((T, 3), dtype=np.float32),
+            "translation": np.zeros((T, 3), dtype=np.float32),
             "joint_axis_angle": np.zeros((T, 15, 3), dtype=np.float32),
             "joint_axis_angle_delta": np.zeros((T, 15, 3), dtype=np.float32),
             "joint_quat": np.zeros((T, 16, 4), dtype=np.float32),
-            "betas": np.zeros((T, 10), dtype=np.float32),
+            "betas": np.zeros((10,), dtype=np.float32),
             "verts": np.zeros((T, 778, 3), dtype=np.float32),
             "flow": np.zeros((T, self.num_hand_points, 3), dtype=np.float32),
             "flow_valid": np.zeros((T, self.num_hand_points), dtype=bool),
@@ -752,16 +966,17 @@ class GRABPreprocessor:
             self.mano = old_mano
 
         verts = verts_t.detach().cpu().numpy().astype(np.float32)
-        face_pts = verts[:, self.faces].mean(axis=2).astype(np.float32)
-        normals = np.zeros_like(face_pts)
-        for t in range(T):
-            normals[t] = compute_face_normals(verts[t], self.faces).astype(np.float32)
+        faces = self.right_faces if side == "right" else self.left_faces
+        face_pts = verts[:, faces].mean(axis=2).astype(np.float32)
+        normals = compute_face_normals_batched(verts, faces).astype(np.float32)
 
         global_orient = np.asarray(hand_params_sel["global_orient"], dtype=np.float32)
         transl = np.asarray(hand_params_sel["transl"], dtype=np.float32)
-        R_root = axis_angle_to_rotmat(torch.from_numpy(global_orient)).cpu().numpy()
+        R_root = axis_angle_to_rotmat(
+            torch.from_numpy(global_orient).float().to(self.device)
+        ).detach().cpu().numpy()
         root_pose = build_SE3(
-            torch.from_numpy(R_root),
+            torch.from_numpy(R_root).float(),
             torch.from_numpy(transl).float(),
         ).cpu().numpy().astype(np.float32)
 
@@ -792,25 +1007,29 @@ class GRABPreprocessor:
         hand_to_obj_dist = np.zeros((T, self.num_hand_points), dtype=np.float32)
         obj_to_hand_nn_id = np.zeros((T, self.num_obj_points), dtype=np.int32)
         obj_to_hand_dist = np.zeros((T, self.num_obj_points), dtype=np.float32)
-        for t in range(T):
-            tree_obj = cKDTree(obj_points[t])
-            dists_h2o, idxs_h2o = tree_obj.query(face_pts[t], k=1)
-            hand_to_obj_nn_id[t] = idxs_h2o
-            hand_to_obj_dist[t] = dists_h2o.astype(np.float32)
-            tree_hand = cKDTree(face_pts[t])
-            dists_o2h, idxs_o2h = tree_hand.query(obj_points[t], k=1)
-            obj_to_hand_nn_id[t] = idxs_o2h
-            obj_to_hand_dist[t] = dists_o2h.astype(np.float32)
+        (
+            hand_to_obj_nn_id,
+            hand_to_obj_dist,
+            obj_to_hand_nn_id,
+            obj_to_hand_dist,
+        ) = bidirectional_nn_batch(
+            face_pts,
+            obj_points,
+            device=self.device,
+            frame_batch_size=self.nn_batch_size,
+        )
 
         min_per_frame = hand_to_obj_dist.min(axis=1)
         return {
             "points": face_pts,
             "normals": normals,
             "root_pose": root_pose,
+            "global_orient_aa": global_orient.astype(np.float32),
+            "translation": transl.astype(np.float32),
             "joint_axis_angle": joint_aa.astype(np.float32),
             "joint_axis_angle_delta": joint_aa_delta.astype(np.float32),
             "joint_quat": joint_quat,
-            "betas": betas,
+            "betas": collapse_constant_betas(betas),
             "verts": verts,
             "flow": hand_flow,
             "flow_valid": hand_flow_valid,
@@ -842,22 +1061,19 @@ class GRABPreprocessor:
             obj_trans = obj_trans / 1000.0
 
         obj_cache = self._get_obj_sampling(obj_name)
-        obj_points = np.zeros((T, self.num_obj_points, 3), dtype=np.float32)
-        obj_normals = np.zeros((T, self.num_obj_points, 3), dtype=np.float32)
-        for t in range(T):
-            pts, nmls = transform_object_points(
-                obj_cache["points"], obj_cache["normals"],
-                obj_cache["face_idx"], obj_cache["barycentric"],
-                obj_cache["mesh"],
-                obj_rot_aa[t], obj_trans[t],
-                obj_cache["faces"],
-            )
-            obj_points[t] = pts.astype(np.float32)
-            obj_normals[t] = nmls.astype(np.float32)
+        obj_points, obj_normals = transform_object_points_batch(
+            obj_cache["points"],
+            obj_cache["normals"],
+            obj_rot_aa,
+            obj_trans,
+            device=self.device,
+        )
 
-        R_obj = axis_angle_to_rotmat(torch.from_numpy(obj_rot_aa)).cpu().numpy()
+        R_obj = axis_angle_to_rotmat(
+            torch.from_numpy(obj_rot_aa).float().to(self.device)
+        ).detach().cpu().numpy()
         obj_root_pose = build_SE3(
-            torch.from_numpy(R_obj),
+            torch.from_numpy(R_obj).float(),
             torch.from_numpy(obj_trans).float(),
         ).cpu().numpy().astype(np.float32)
 
@@ -875,10 +1091,27 @@ class GRABPreprocessor:
         subj_id = f"s{parent_dir[1:]}" if m else parent_dir
         action_name = op.basename(seq_path).replace(".npz", "")
         seq_id = f"{subj_id}/{action_name}"
+        preprocess_frame_idx = np.arange(T, dtype=np.int32)
+        right_obj_keep_8cm = right_data["obj_to_hand_dist"] <= 0.08
+        left_obj_keep_8cm = left_data["obj_to_hand_dist"] <= 0.08
+        right_obj_spring_1cm = right_data["obj_to_hand_dist"] <= 0.01
+        left_obj_spring_1cm = left_data["obj_to_hand_dist"] <= 0.01
+        right_hand_spring_1cm = right_data["to_obj_dist"] <= 0.01
+        left_hand_spring_1cm = left_data["to_obj_dist"] <= 0.01
 
         output = {
             "seq_id": seq_id,
+            "dataset_name": "grab",
+            "subject_id": subj_id,
+            "seq_name": action_name,
+            "object_name": obj_name,
+            "raw_frame_id": frame_ids.astype(np.int32),
+            "preprocess_frame_idx": preprocess_frame_idx,
             "frame_id": frame_ids.astype(np.int32),
+            "obj_points_world": obj_points,
+            "obj_normals_world": obj_normals,
+            "obj_points_cano": obj_cache["points"].astype(np.float32),
+            "obj_normals_cano": obj_cache["normals"].astype(np.float32),
             "obj_points": obj_points,
             "obj_normals": obj_normals,
             "obj_point_id": obj_cache["point_id"],
@@ -890,45 +1123,71 @@ class GRABPreprocessor:
             "obj_to_left_hand_nn_id": left_data["obj_to_hand_nn_id"],
             "obj_to_left_hand_dist": left_data["obj_to_hand_dist"],
 
+            "right_hand_points_world": right_data["points"],
+            "right_hand_normals_world": right_data["normals"],
+            "right_hand_verts_world": right_data["verts"],
             "right_hand_points": right_data["points"],
             "right_hand_normals": right_data["normals"],
             "right_hand_point_id": self.hand_point_id,
+            "right_hand_cano_points": self.right_hand_cano_points.astype(np.float32),
+            "right_hand_cano_normals": self.right_hand_cano_normals.astype(np.float32),
             "right_hand_root_pose": right_data["root_pose"],
+            "right_hand_global_orient_aa": right_data["global_orient_aa"],
+            "right_hand_translation": right_data["translation"],
             "right_hand_joint_axis_angle": right_data["joint_axis_angle"],
             "right_hand_joint_axis_angle_delta": right_data["joint_axis_angle_delta"],
+            "right_hand_joint_quat_world": right_data["joint_quat"],
             "right_hand_joint_quat": right_data["joint_quat"],
             "right_hand_betas": right_data["betas"],
             "right_hand_verts": right_data["verts"],
-            "right_hand_finger_id": self.finger_id,
-            "right_hand_region_id": self.region_id,
+            "right_hand_finger_id": self.right_finger_id,
+            "right_hand_region_id": self.right_region_id,
             "right_hand_flow": right_data["flow"],
             "right_hand_flow_valid": right_data["flow_valid"],
             "right_hand_to_obj_nn_id": right_data["to_obj_nn_id"],
             "right_hand_to_obj_dist": right_data["to_obj_dist"],
             "right_hand_min_dist_to_obj": right_data["min_dist_to_obj"],
+            "right_frame_keep_3cm": right_data["valid"],
             "right_hand_valid": right_data["valid"],
             "right_hand_valid_2cm": right_data["valid_2cm"],
             "right_hand_valid_1cm": right_data["valid_1cm"],
+            "right_obj_keep_8cm": right_obj_keep_8cm,
+            "right_obj_spring_1cm": right_obj_spring_1cm,
+            "right_hand_spring_1cm": right_hand_spring_1cm,
+            "right_frame_contact_1cm": right_data["valid_1cm"],
 
+            "left_hand_points_world": left_data["points"],
+            "left_hand_normals_world": left_data["normals"],
+            "left_hand_verts_world": left_data["verts"],
             "left_hand_points": left_data["points"],
             "left_hand_normals": left_data["normals"],
             "left_hand_point_id": self.hand_point_id,
+            "left_hand_cano_points": self.left_hand_cano_points.astype(np.float32),
+            "left_hand_cano_normals": self.left_hand_cano_normals.astype(np.float32),
             "left_hand_root_pose": left_data["root_pose"],
+            "left_hand_global_orient_aa": left_data["global_orient_aa"],
+            "left_hand_translation": left_data["translation"],
             "left_hand_joint_axis_angle": left_data["joint_axis_angle"],
             "left_hand_joint_axis_angle_delta": left_data["joint_axis_angle_delta"],
+            "left_hand_joint_quat_world": left_data["joint_quat"],
             "left_hand_joint_quat": left_data["joint_quat"],
             "left_hand_betas": left_data["betas"],
             "left_hand_verts": left_data["verts"],
-            "left_hand_finger_id": self.finger_id,
-            "left_hand_region_id": self.region_id,
+            "left_hand_finger_id": self.left_finger_id,
+            "left_hand_region_id": self.left_region_id,
             "left_hand_flow": left_data["flow"],
             "left_hand_flow_valid": left_data["flow_valid"],
             "left_hand_to_obj_nn_id": left_data["to_obj_nn_id"],
             "left_hand_to_obj_dist": left_data["to_obj_dist"],
             "left_hand_min_dist_to_obj": left_data["min_dist_to_obj"],
+            "left_frame_keep_3cm": left_data["valid"],
             "left_hand_valid": left_data["valid"],
             "left_hand_valid_2cm": left_data["valid_2cm"],
             "left_hand_valid_1cm": left_data["valid_1cm"],
+            "left_obj_keep_8cm": left_obj_keep_8cm,
+            "left_obj_spring_1cm": left_obj_spring_1cm,
+            "left_hand_spring_1cm": left_hand_spring_1cm,
+            "left_frame_contact_1cm": left_data["valid_1cm"],
 
             "right_hand_is_mano": bool(right_data["is_mano"]),
             "right_hand_has_mano_params": bool(right_data["has_mano_params"]),
@@ -950,13 +1209,20 @@ class GRABPreprocessor:
         save_dict = {
             k: v for k, v in output.items()
             if "is_mano" not in k
-            and "has_mano_params" not in k
             and not k.endswith("_vtemplate_path")
         }
-        np.savez_compressed(out_path, **save_dict)
+        if self.save_compressed:
+            np.savez_compressed(out_path, **save_dict)
+        else:
+            np.savez(out_path, **save_dict)
         return out_path
 
-    def run(self, seq_filter: Optional[str] = None):
+    def run(
+        self,
+        seq_filter: Optional[str] = None,
+        seq_paths: Optional[list[str]] = None,
+        manifest_path: Optional[str] = None,
+    ):
         """处理一批 GRAB 序列。
 
         seq_filter 形如：
@@ -964,8 +1230,11 @@ class GRABPreprocessor:
             - 'airplane_fly_1'       → 文件名包含 airplane_fly_1 的序列
             - 's1'                   → s1 受试者的所有序列
         """
-        all_seqs = sorted(glob(op.join(self.grab_root, "grab", "*", "*.npz")))
-        if seq_filter:
+        if seq_paths is None:
+            all_seqs = sorted(glob(op.join(self.grab_root, "grab", "*", "*.npz")))
+        else:
+            all_seqs = list(dict.fromkeys(seq_paths))
+        if seq_filter and seq_paths is None:
             if "/" in seq_filter:
                 # 保留兼容：'obj/action'
                 obj, action = seq_filter.split("/", 1)
@@ -1036,7 +1305,11 @@ class GRABPreprocessor:
         all_objects = sorted(set(GRABSeqData(s).obj_name for s in all_seqs))
         all_subjects = sorted(set(op.basename(op.dirname(s)) for s in all_seqs))
         meta = {
+            "schema_name": "preprocessed_strided_full",
+            "schema_version": "0.2.0",
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "dataset_name": "grab",
+            "source_data_root": self.grab_root,
             "data_root": self.grab_root,
             "mano_model_dir": self.mano_path,
             "shared_asset_root": SHARED_ASSET_ROOT,
@@ -1045,10 +1318,39 @@ class GRABPreprocessor:
             "output_root": self.output_root,
             "subjects": all_subjects,
             "rigid_objects": all_objects,
+            "raw_fps": float(primary_fps),
+            "raw_dt": float(1.0 / primary_fps) if primary_fps > 0 else self.dt,
+            "preprocess_stride": int(self.ds_rate),
+            "dt_effective": float(meta_dt),
+            "stride_policy": {
+                "physically_drop_frames_in_preprocess": True,
+                "contact_based_frame_drop_in_preprocess": False,
+                "contact_based_point_drop_in_preprocess": False,
+                "raw_frame_id_required": True,
+            },
+            "graph_policy": {
+                "store_knn_in_preprocess": False,
+                "store_graph_edges_in_preprocess": False,
+                "reason": "KNN depends on final training object sampling and augmentation; it is generated in Stage 3.",
+            },
+            "storage_policy": {
+                "sequence_constant_fields_may_be_singletons": True,
+                "store_constant_fields_per_frame": False,
+            },
+            "num_obj_points_full": self.num_obj_points,
             "num_obj_points": self.num_obj_points,
             "num_hand_points": self.num_hand_points,
             "dt": meta_dt,
+            "device": self.device,
+            "nn_batch_size": self.nn_batch_size,
+            "save_compressed": self.save_compressed,
             "contact_distance_thresh": self.contact_distance_thresh,
+            "thresholds": {
+                "frame_keep_thresh": float(self.contact_distance_thresh),
+                "obj_crop_thresh": 0.08,
+                "spring_contact_thresh": 0.01,
+                "fit_err_thresh_mm": None,
+            },
             "mano_config": {
                 "is_rhand": None,
                 "use_pca": False,
@@ -1056,7 +1358,16 @@ class GRABPreprocessor:
                 "num_shape_coeffs": 10,
                 "num_faces": MANO_NUM_FACES,
                 "num_joints": MANO_NUM_JOINTS,
+                "sampling": "face_center",
+                "num_face_centers": MANO_NUM_FACES,
                 "requires_vtemplate": True,
+            },
+            "object_config": {
+                "object_asset_root": OBJECT_ASSET_ROOT,
+                "object_mesh_filename": "mesh.obj",
+                "object_parts_filename": None,
+                "object_sampling": "fixed_canonical_surface_points",
+                "num_obj_points_full": self.num_obj_points,
             },
             "splits": {
                 "train": all_objects,
@@ -1068,6 +1379,12 @@ class GRABPreprocessor:
             "num_sequences_failed": stats["fail"],
             "num_sequences_skipped": stats["skipped"],
             "processed_sequences": stats["sequences"],
+            "stats": {
+                "num_sequences_processed": stats["success"],
+                "num_sequences_failed": stats["fail"],
+                "num_sequences_skipped": stats["skipped"],
+                "sequences": contact_stats,
+            },
             "grab_dataset_meta": {
                 "framerate_hz": primary_fps,
                 "ds_rate": self.ds_rate,
@@ -1089,6 +1406,9 @@ class GRABPreprocessor:
                 "contact_stats": contact_stats,
             },
         }
+        if manifest_path:
+            meta["input_manifest"] = str(Path(manifest_path).resolve())
+            meta["grab_dataset_meta"]["input_manifest"] = str(Path(manifest_path).resolve())
         meta_path = op.join(self.output_root, "meta.json")
         os.makedirs(self.output_root, exist_ok=True)
         with open(meta_path, "w", encoding="utf-8") as f:
@@ -1110,17 +1430,30 @@ def main():
     parser.add_argument("--dt", type=float, default=1.0 / 30.0)
     parser.add_argument("--contact_distance_thresh", type=float, default=CONTACT_DISTANCE_THRESH)
     parser.add_argument("--max-frames", type=int, default=0)
+    parser.add_argument("--device", type=str, default=DEFAULT_TORCH_DEVICE)
     parser.add_argument("--hand", type=str, default="right", choices=["left", "right"],
                         help="Deprecated compatibility arg. 双手都会被处理，值仅保留兼容旧命令。")
     parser.add_argument("--ds-rate", type=int, default=1,
                         help="Down-sample rate (every N-th frame kept). 1=keep all.")
+    parser.add_argument("--nn-batch-size", type=int, default=DEFAULT_NN_BATCH_SIZE,
+                        help="Frame chunk size for GPU nearest-neighbor via torch.cdist.")
+    parser.add_argument("--save-compressed", action="store_true", default=False,
+                        help="Use np.savez_compressed. Default is uncompressed np.savez for speed.")
     parser.add_argument("--obj-unit", type=str, default="m",
                         choices=["m", "mm", "auto"],
                         help="物体 mesh.obj 顶点单位。GRAB 实测 = 'm'（abs_max 0.02~1.35m）。"
                              "内部如需会 /1000 转米，pipeline 统一 m。")
     parser.add_argument("--seq", type=str, default=None,
                         help="Sequence filter, e.g. 'mug' (object) or 'mug/pass_1' (object/action).")
+    parser.add_argument(
+        "--manifest",
+        type=str,
+        default=None,
+        help="Optional CSV/JSON/TXT manifest of exact GRAB sequences to preprocess.",
+    )
     args = parser.parse_args()
+    if args.seq and args.manifest:
+        raise SystemExit("Use either --seq or --manifest, not both.")
 
     preprocessor = GRABPreprocessor(
         output_root=args.output_root,
@@ -1128,13 +1461,17 @@ def main():
         dt=args.dt,
         contact_distance_thresh=args.contact_distance_thresh,
         max_frames=(args.max_frames if args.max_frames > 0 else None),
+        device=args.device,
         grab_root=args.grab_path,
         mano_path=args.mano_path,
         hand=args.hand,
         ds_rate=args.ds_rate,
         obj_unit=args.obj_unit,
+        nn_batch_size=args.nn_batch_size,
+        save_compressed=args.save_compressed,
     )
-    preprocessor.run(seq_filter=args.seq)
+    seq_paths = load_manifest_seq_paths(args.manifest, args.grab_path) if args.manifest else None
+    preprocessor.run(seq_filter=args.seq, seq_paths=seq_paths, manifest_path=args.manifest)
 
 
 if __name__ == "__main__":

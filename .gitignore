@@ -33,4 +33,6 @@ dataset/*/*.zip
 dataset/*/*.tar
 dataset/*/*.tar.gz
 assets/
-指导.md/
+outputs/*
+docs/修改指导.md
+docs/代码.py

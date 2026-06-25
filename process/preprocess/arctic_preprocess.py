@@ -167,6 +167,9 @@ SHARED_MANO_ASSET_ROOT = op.join(SHARED_ASSET_ROOT, "mano")
 OBJECT_ASSET_ROOT = op.join(REF2DEX_ROOT, "assets", "arctic", "objects")
 # 默认输出根目录
 DEFAULT_OUTPUT_ROOT = op.join(REF2DEX_ROOT, "processed_data", "arctic")
+DEFAULT_TORCH_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEFAULT_NN_BATCH_SIZE = 16
+DEFAULT_MANO_BATCH_SIZE = 1024 if torch.cuda.is_available() else 320
 
 # ARCTIC 包含 10 个被试 (s01..s10)
 SUBJECTS = [f"s{i:02d}" for i in range(1, 11)]
@@ -447,6 +450,86 @@ def compute_face_normals(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
     return normals
 
 
+def compute_face_normals_batched(vertices: np.ndarray, faces: np.ndarray) -> np.ndarray:
+    """
+    批量计算 posed MANO mesh 的面法向。
+
+    Args:
+        vertices: (T, V, 3)
+        faces:    (F, 3)
+
+    Returns:
+        normals:  (T, F, 3)
+    """
+    triangles = vertices[:, faces]  # (T, F, 3, 3)
+    edge_01 = triangles[:, :, 1] - triangles[:, :, 0]
+    edge_02 = triangles[:, :, 2] - triangles[:, :, 0]
+    normals = np.cross(edge_01, edge_02)
+    norms = np.linalg.norm(normals, axis=-1, keepdims=True)
+    return normals / np.clip(norms, 1e-10, None)
+
+
+def resolve_torch_device(device: str) -> str:
+    """Resolve user-facing device string to an actually available torch device."""
+    if device.startswith("cuda") and not torch.cuda.is_available():
+        return "cpu"
+    return str(torch.device(device))
+
+
+def bidirectional_nn_batch(
+    src_points: np.ndarray,
+    dst_points: np.ndarray,
+    device: str,
+    frame_batch_size: int,
+) -> tuple:
+    """
+    分帧批量计算 src↔dst 的双向最近邻。
+
+    Args:
+        src_points: (T, Ns, 3)
+        dst_points: (T, Nd, 3)
+        device:     torch 设备；CUDA 时走 torch.cdist
+        frame_batch_size: 每次并行处理多少帧
+
+    Returns:
+        src_to_dst_idx/dist, dst_to_src_idx/dist
+    """
+    T, num_src, _ = src_points.shape
+    num_dst = dst_points.shape[1]
+    src_to_dst_idx = np.zeros((T, num_src), dtype=np.int32)
+    src_to_dst_dist = np.zeros((T, num_src), dtype=np.float32)
+    dst_to_src_idx = np.zeros((T, num_dst), dtype=np.int32)
+    dst_to_src_dist = np.zeros((T, num_dst), dtype=np.float32)
+
+    if device.startswith("cuda"):
+        torch_device = torch.device(device)
+        for start in range(0, T, frame_batch_size):
+            end = min(start + frame_batch_size, T)
+            src_t = torch.from_numpy(src_points[start:end]).float().to(torch_device)
+            dst_t = torch.from_numpy(dst_points[start:end]).float().to(torch_device)
+            dist = torch.cdist(src_t, dst_t)
+            src_dist, src_idx = dist.min(dim=2)
+            dst_dist, dst_idx = dist.min(dim=1)
+            src_to_dst_idx[start:end] = src_idx.detach().cpu().numpy().astype(np.int32)
+            src_to_dst_dist[start:end] = src_dist.detach().cpu().numpy().astype(np.float32)
+            dst_to_src_idx[start:end] = dst_idx.detach().cpu().numpy().astype(np.int32)
+            dst_to_src_dist[start:end] = dst_dist.detach().cpu().numpy().astype(np.float32)
+        return src_to_dst_idx, src_to_dst_dist, dst_to_src_idx, dst_to_src_dist
+
+    for t in range(T):
+        tree_dst = cKDTree(dst_points[t])
+        dists, idxs = tree_dst.query(src_points[t], k=1)
+        src_to_dst_idx[t] = idxs.astype(np.int32)
+        src_to_dst_dist[t] = dists.astype(np.float32)
+
+        tree_src = cKDTree(src_points[t])
+        dists, idxs = tree_src.query(dst_points[t], k=1)
+        dst_to_src_idx[t] = idxs.astype(np.int32)
+        dst_to_src_dist[t] = dists.astype(np.float32)
+
+    return src_to_dst_idx, src_to_dst_dist, dst_to_src_idx, dst_to_src_dist
+
+
 def sample_mesh_surface(mesh: trimesh.Trimesh, n_points: int, seed: int = 42):
     """
     在 mesh 表面**均匀随机采样** n_points 个点。
@@ -574,6 +657,25 @@ def assign_hand_semantics(
             region_id[i] = REGION_FINGER_PAD
 
     return finger_id, region_id
+
+
+def compute_canonical_hand_surface(mano_layer: MANO) -> tuple:
+    """返回 canonical MANO face-center 点和 face normal。"""
+    with torch.no_grad():
+        output = mano_layer()
+        verts = output.vertices.squeeze(0).detach().cpu().numpy().astype(np.float32)
+    faces = np.asarray(mano_layer.faces, dtype=np.int64)
+    face_centers = verts[faces].mean(axis=1).astype(np.float32)
+    face_normals = compute_face_normals(verts, faces).astype(np.float32)
+    return face_centers, face_normals
+
+
+def collapse_constant_betas(betas: np.ndarray) -> np.ndarray:
+    """如果整段序列 betas 不变，则折叠成 (B,) 常值字段。"""
+    betas = np.asarray(betas, dtype=np.float32)
+    if betas.ndim == 2 and betas.shape[0] > 0 and np.allclose(betas, betas[:1]):
+        return betas[0].astype(np.float32)
+    return betas.astype(np.float32)
 
 
 def load_object_mesh(obj_name: str, unit: str = "m") -> tuple:
@@ -756,6 +858,65 @@ def transform_object_points(
     return posed_points, posed_normals
 
 
+def transform_object_points_batch(
+    obj_points_canonical: np.ndarray,
+    obj_normals_canonical: np.ndarray,
+    sample_parts: Optional[np.ndarray],
+    arti_angle: np.ndarray,
+    global_rot: np.ndarray,
+    global_trans: np.ndarray,
+    device: str,
+) -> tuple:
+    """
+    批量把 canonical 采样点/法向变换到 posed 世界空间。
+
+    这里不再逐帧重建 posed mesh 再插值，而是直接对采样点执行：
+        1. 顶部件铰接旋转（若有）
+        2. 物体整体刚体变换
+
+    因为这两步都属于刚体变换，所以对采样点和法向直接施加同样旋转即可。
+    """
+    torch_device = torch.device(device)
+    arti_angle = np.asarray(arti_angle, dtype=np.float32).reshape(-1)
+    global_rot = np.asarray(global_rot, dtype=np.float32)
+    global_trans = np.asarray(global_trans, dtype=np.float32)
+    T = global_rot.shape[0]
+
+    points = torch.from_numpy(obj_points_canonical).float().to(torch_device)
+    normals = torch.from_numpy(obj_normals_canonical).float().to(torch_device)
+    points = points.unsqueeze(0).expand(T, -1, -1).clone()
+    normals = normals.unsqueeze(0).expand(T, -1, -1).clone()
+
+    if sample_parts is not None and np.any(sample_parts):
+        top_mask = torch.from_numpy(sample_parts.astype(np.bool_)).to(torch_device)
+        c = torch.cos(torch.from_numpy(arti_angle).float().to(torch_device))
+        s = torch.sin(torch.from_numpy(arti_angle).float().to(torch_device))
+        R_arti = torch.zeros((T, 3, 3), device=torch_device, dtype=torch.float32)
+        R_arti[:, 0, 0] = c
+        R_arti[:, 0, 1] = s
+        R_arti[:, 1, 0] = -s
+        R_arti[:, 1, 1] = c
+        R_arti[:, 2, 2] = 1.0
+        points[:, top_mask] = torch.matmul(points[:, top_mask], R_arti.transpose(1, 2))
+        normals[:, top_mask] = torch.matmul(normals[:, top_mask], R_arti.transpose(1, 2))
+
+    R_global = axis_angle_to_rotmat(
+        torch.from_numpy(global_rot).float().to(torch_device)
+    )
+    trans = torch.from_numpy(global_trans).float().to(torch_device)
+    posed_points = torch.matmul(points, R_global.transpose(1, 2)) + trans[:, None, :]
+    posed_normals = torch.matmul(normals, R_global.transpose(1, 2))
+    posed_normals = posed_normals / torch.clamp(
+        torch.linalg.norm(posed_normals, dim=-1, keepdim=True),
+        min=1e-10,
+    )
+
+    return (
+        posed_points.detach().cpu().numpy().astype(np.float32),
+        posed_normals.detach().cpu().numpy().astype(np.float32),
+    )
+
+
 # ============================================================
 # 核心处理逻辑
 # ============================================================
@@ -789,20 +950,25 @@ class ArcticPreprocessor:
         self,
         output_root: str = DEFAULT_OUTPUT_ROOT,
         num_obj_points: int = 2048,
-        device: str = "cuda:0",
+        device: str = DEFAULT_TORCH_DEVICE,
         dt: float = 1.0 / 30.0,
+        preprocess_stride: int = 1,
         contact_distance_thresh: float = CONTACT_DISTANCE_THRESH,
         max_frames: Optional[int] = None,
         obj_unit: str = "mm",      # mesh.obj 单位：'m' / 'mm' / 'auto'
                                     # 默认 'mm'：ARCTIC 原始 mesh.obj 是 mm（box max=244.91mm），
                                     # 函数内部会 /1000 转成 m，pipeline 统一 m。
+        nn_batch_size: int = DEFAULT_NN_BATCH_SIZE,
+        mano_batch_size: int = DEFAULT_MANO_BATCH_SIZE,
+        save_compressed: bool = False,
     ):
         """
         Args:
             output_root:           输出根目录
             num_obj_points:        每个物体表面采样点数（默认 2048）
-            device:                PyTorch 设备（参数保留，目前强制用 CPU）
+            device:                PyTorch 设备（如 cuda / cuda:3 / cpu）
             dt:                    帧间隔秒数（默认 1/30，对应 30 FPS）
+            preprocess_stride:     预处理阶段物理降采样步长。1=保留全部帧。
             contact_distance_thresh: 手-物接触距离阈值（米），默认 0.03m (3cm)
                                     超过该距离的帧会被判定为"无接触"并屏蔽该手的数据
             max_frames:            单条序列最多处理前 N 帧（None=不限制）。
@@ -811,12 +977,15 @@ class ArcticPreprocessor:
         """
         self.output_root = output_root
         self.num_obj_points = num_obj_points
-        # 强制使用 CPU（该环境无 CUDA / 不想强依赖）
-        self.device = "cpu"
+        self.device = resolve_torch_device(device)
         self.dt = dt
+        self.preprocess_stride = max(1, int(preprocess_stride))
         self.contact_distance_thresh = float(contact_distance_thresh)
         self.max_frames = max_frames  # None=不限；>0=只处理前 N 帧（quick test 用）
         self.obj_unit = obj_unit      # mesh.obj 单位：'m' / 'mm' / 'auto'
+        self.nn_batch_size = max(1, int(nn_batch_size))
+        self.mano_batch_size = max(1, int(mano_batch_size))
+        self.save_compressed = bool(save_compressed)
 
         # ----- 加载 MANO 左右手模型 -----
         print(f"[Preprocessor] Loading MANO models...")
@@ -837,9 +1006,17 @@ class ArcticPreprocessor:
             self.right_region_id,
         ) = assign_hand_semantics(self.mano_r, is_right=True)
         (
+            self.right_hand_cano_points,
+            self.right_hand_cano_normals,
+        ) = compute_canonical_hand_surface(self.mano_r)
+        (
             self.left_finger_id,
             self.left_region_id,
         ) = assign_hand_semantics(self.mano_l, is_right=False)
+        (
+            self.left_hand_cano_points,
+            self.left_hand_cano_normals,
+        ) = compute_canonical_hand_surface(self.mano_l)
 
         # ----- 缓存 MANO face 索引 -----
         # MANO 拓扑固定，face 索引在 forward 之后可以直接从 layer.faces 取
@@ -862,7 +1039,11 @@ class ArcticPreprocessor:
 
         print(f"[Preprocessor] Output dir: {output_root}")
         print(f"[Preprocessor] Device: {self.device}")
+        print(f"[Preprocessor] Preprocess stride: {self.preprocess_stride}")
+        print(f"[Preprocessor] MANO batch size: {self.mano_batch_size}")
+        print(f"[Preprocessor] NN frame batch size: {self.nn_batch_size}")
         print(f"[Preprocessor] Num obj points: {num_obj_points}")
+        print(f"[Preprocessor] Save compressed: {self.save_compressed}")
         print(f"[Preprocessor] Contact distance thresh: "
               f"{self.contact_distance_thresh*100:.2f} cm")
 
@@ -965,20 +1146,20 @@ class ArcticPreprocessor:
         mano_data = np.load(mano_p, allow_pickle=True).item()    # dict
         obj_params = np.load(obj_p, allow_pickle=True)            # (T, 7)
 
-        T = obj_params.shape[0]   # 帧数
+        T_raw = int(obj_params.shape[0])
+        raw_frame_id = np.arange(0, T_raw, self.preprocess_stride, dtype=np.int32)
+        if self.max_frames is not None:
+            raw_frame_id = raw_frame_id[: int(self.max_frames)]
+        if raw_frame_id.size == 0:
+            raise ValueError("No frames selected after applying preprocess_stride / max_frames")
 
-        # ----- 裁帧 (max_frames) -----
-        # 目的：quick smoke test 时不需要跑整条 700+ 帧的序列。
-        # 在所有按 T 切片的逻辑之前裁一次，下游 NN / flow / valid 等会自动
-        # 只算被保留的 0..T' 帧。
-        if self.max_frames is not None and T > self.max_frames:
-            T = int(self.max_frames)
-            obj_params = obj_params[:T]
-            for side in ("right", "left"):
-                for k in ("rot", "pose", "trans"):
-                    if k in mano_data[side]:
-                        mano_data[side][k] = mano_data[side][k][:T]
-            # shape 不裁（一条序列一个 subject 一套手型）
+        obj_params = obj_params[raw_frame_id]
+        for side in ("right", "left"):
+            for k in ("rot", "pose", "trans"):
+                if k in mano_data[side]:
+                    mano_data[side][k] = mano_data[side][k][raw_frame_id]
+        T = int(raw_frame_id.shape[0])
+        # shape 不裁（一条序列一个 subject 一套手型）
 
         # ----- 提取并转 torch 的 MANO 参数 -----
         # rot: 全局根节点旋转（axis-angle）
@@ -1005,7 +1186,7 @@ class ArcticPreprocessor:
         obj_trans_m = obj_trans / 1000.0    # 转米（与 MANO 单位一致）
 
         # ----- MANO Forward（分批避免 OOM）-----
-        batch_size = min(T, 320)
+        batch_size = min(T, self.mano_batch_size)
         all_right_verts = []
         all_right_joints = []
         all_left_verts = []
@@ -1016,7 +1197,7 @@ class ArcticPreprocessor:
             b = end - i
 
             # 右手: shape 兼容 (10,) 和 (T, 10) 两种存储形式
-            shape_r_batch = shape_r.expand(b, -1) if shape_r.ndim == 1 else shape_r[:b]
+            shape_r_batch = shape_r.expand(b, -1) if shape_r.ndim == 1 else shape_r[i:end]
             out_r = self.mano_r(
                 global_orient=rot_r[i:end],
                 hand_pose=pose_r[i:end],
@@ -1027,7 +1208,7 @@ class ArcticPreprocessor:
             all_right_joints.append(out_r.joints.detach().cpu().numpy())
 
             # 左手同理
-            shape_l_batch = shape_l.expand(b, -1) if shape_l.ndim == 1 else shape_l[:b]
+            shape_l_batch = shape_l.expand(b, -1) if shape_l.ndim == 1 else shape_l[i:end]
             out_l = self.mano_l(
                 global_orient=rot_l[i:end],
                 hand_pose=pose_l[i:end],
@@ -1051,64 +1232,52 @@ class ArcticPreprocessor:
 
         # ----- 计算每帧的面法向（per-face normal）-----
         # 用 posed mesh 的 face normal（不是 vertex normal），与 face center 天然对应
-        right_normals = np.zeros_like(right_face_pts)
-        left_normals = np.zeros_like(left_face_pts)
-
-        for t in range(T):
-            right_normals[t] = compute_face_normals(
-                right_verts[t], self.right_faces
-            )
-            left_normals[t] = compute_face_normals(
-                left_verts[t], self.left_faces
-            )
+        right_normals = compute_face_normals_batched(
+            right_verts, self.right_faces
+        ).astype(np.float32)
+        left_normals = compute_face_normals_batched(
+            left_verts, self.left_faces
+        ).astype(np.float32)
 
         # ----- 物体：读 canonical 采样，逐帧变换 -----
         obj_cache = self._get_obj_sampling(obj_name)
         obj_canon_points = obj_cache["points"]       # (No, 3)
         obj_canon_normals = obj_cache["normals"]      # (No, 3)
         obj_point_id = obj_cache["point_id"]          # (No,)
-        obj_face_idx = obj_cache["face_idx"]          # (No,)
-        obj_barycentric = obj_cache["barycentric"]    # (No, 3)
-        obj_mesh = obj_cache["mesh"]
-        obj_parts = obj_cache["parts"]
-        obj_faces = obj_cache["faces"]
-
-        # 逐帧变换到世界坐标
-        obj_points = np.zeros((T, self.num_obj_points, 3), dtype=np.float32)
-        obj_normals = np.zeros((T, self.num_obj_points, 3), dtype=np.float32)
-
-        for t in range(T):
-            pts, nmls = transform_object_points(
-                obj_canon_points, obj_canon_normals,
-                obj_face_idx, obj_barycentric,
-                obj_mesh, obj_parts,
-                arti[t, 0], obj_rot_aa[t], obj_trans_m[t],
-                obj_faces,
-            )
-            obj_points[t] = pts
-            obj_normals[t] = nmls
+        obj_sample_parts = obj_cache["sample_parts"]
+        obj_points, obj_normals = transform_object_points_batch(
+            obj_canon_points,
+            obj_canon_normals,
+            obj_sample_parts,
+            arti[:, 0],
+            obj_rot_aa,
+            obj_trans_m,
+            self.device,
+        )
 
         # ----- 计算根节点 SE(3) pose -----
         # 右手根节点: rot_r (axis-angle) + trans_r
-        R_r = axis_angle_to_rotmat(rot_r.cpu()).numpy()
+        R_r = axis_angle_to_rotmat(rot_r).detach().cpu()
         right_root_pose = build_SE3(
-            torch.from_numpy(R_r),
-            trans_r.cpu(),
-        ).numpy()
+            R_r,
+            trans_r,
+        ).detach().cpu().numpy()
 
         # 左手根节点
-        R_l = axis_angle_to_rotmat(rot_l.cpu()).numpy()
+        R_l = axis_angle_to_rotmat(rot_l).detach().cpu()
         left_root_pose = build_SE3(
-            torch.from_numpy(R_l),
-            trans_l.cpu(),
-        ).numpy()
+            R_l,
+            trans_l,
+        ).detach().cpu().numpy()
 
         # 物体根节点
-        R_o = axis_angle_to_rotmat(torch.from_numpy(obj_rot_aa)).numpy()
+        R_o = axis_angle_to_rotmat(
+            torch.from_numpy(obj_rot_aa).float().to(self.device)
+        ).detach().cpu()
         obj_root_pose = build_SE3(
-            torch.from_numpy(R_o),
-            torch.from_numpy(obj_trans_m),
-        ).numpy()
+            R_o,
+            torch.from_numpy(obj_trans_m).float().to(R_o.device),
+        ).detach().cpu().numpy()
 
         # ----- 手部 15 个手指关节的 axis-angle -----
         # pose_r 形状是 (T, 45) = 15 * 3，重塑为 (T, 15, 3)
@@ -1184,29 +1353,28 @@ class ArcticPreprocessor:
         obj_to_left_hand_nn_id = np.zeros((T, self.num_obj_points), dtype=np.int32)
         obj_to_left_hand_dist = np.zeros((T, self.num_obj_points), dtype=np.float32)
 
-        for t in range(T):
-            # 右手 → 物体（在手点位置查物体 kd-tree）
-            tree_obj = cKDTree(obj_points[t])
-            dists, idxs = tree_obj.query(right_face_pts[t], k=1)
-            right_hand_to_obj_nn_id[t] = idxs
-            right_hand_to_obj_dist[t] = dists
-
-            # 左手 → 物体
-            dists, idxs = tree_obj.query(left_face_pts[t], k=1)
-            left_hand_to_obj_nn_id[t] = idxs
-            left_hand_to_obj_dist[t] = dists
-
-            # 物体 → 右手
-            tree_r = cKDTree(right_face_pts[t])
-            dists, idxs = tree_r.query(obj_points[t], k=1)
-            obj_to_right_hand_nn_id[t] = idxs
-            obj_to_right_hand_dist[t] = dists
-
-            # 物体 → 左手
-            tree_l = cKDTree(left_face_pts[t])
-            dists, idxs = tree_l.query(obj_points[t], k=1)
-            obj_to_left_hand_nn_id[t] = idxs
-            obj_to_left_hand_dist[t] = dists
+        (
+            right_hand_to_obj_nn_id,
+            right_hand_to_obj_dist,
+            obj_to_right_hand_nn_id,
+            obj_to_right_hand_dist,
+        ) = bidirectional_nn_batch(
+            right_face_pts.astype(np.float32),
+            obj_points.astype(np.float32),
+            self.device,
+            self.nn_batch_size,
+        )
+        (
+            left_hand_to_obj_nn_id,
+            left_hand_to_obj_dist,
+            obj_to_left_hand_nn_id,
+            obj_to_left_hand_dist,
+        ) = bidirectional_nn_batch(
+            left_face_pts.astype(np.float32),
+            obj_points.astype(np.float32),
+            self.device,
+            self.nn_batch_size,
+        )
 
         # ============================================================
         # 手-物接触距离判定（per-frame, per-hand）：只算掩码，不删/不清
@@ -1243,6 +1411,15 @@ class ArcticPreprocessor:
         # 将 min 距离也保存下来，下游可做 soft contact 软接触 label
         right_min_dist = right_min_per_frame.astype(np.float32)         # (T,)
         left_min_dist = left_min_per_frame.astype(np.float32)           # (T,)
+        preprocess_frame_idx = np.arange(T, dtype=np.int32)
+        right_obj_keep_8cm = obj_to_right_hand_dist <= 0.08
+        left_obj_keep_8cm = obj_to_left_hand_dist <= 0.08
+        right_obj_spring_1cm = obj_to_right_hand_dist <= 0.01
+        left_obj_spring_1cm = obj_to_left_hand_dist <= 0.01
+        right_hand_spring_1cm = right_hand_to_obj_dist <= 0.01
+        left_hand_spring_1cm = left_hand_to_obj_dist <= 0.01
+        right_betas_out = collapse_constant_betas(right_betas)
+        left_betas_out = collapse_constant_betas(left_betas)
 
         # ============================================================
         # 组装输出 dict（字段顺序与 .npz 写入顺序无关）
@@ -1252,9 +1429,19 @@ class ArcticPreprocessor:
         output = {
             # ----- 元信息 -----
             "seq_id": seq_id,
-            "frame_id": np.arange(T, dtype=np.int32),         # 物体帧编号 (T,)
+            "dataset_name": "arctic",
+            "subject_id": subject,
+            "seq_name": seq_name,
+            "object_name": obj_name,
+            "raw_frame_id": raw_frame_id.astype(np.int32),
+            "preprocess_frame_idx": preprocess_frame_idx,
+            "frame_id": raw_frame_id.astype(np.int32),         # legacy alias
 
             # ----- 物体（保留全部 T 帧）-----
+            "obj_points_world": obj_points.astype(np.float32),
+            "obj_normals_world": obj_normals.astype(np.float32),
+            "obj_points_cano": obj_canon_points.astype(np.float32),
+            "obj_normals_cano": obj_canon_normals.astype(np.float32),
             "obj_points": obj_points.astype(np.float32),
             "obj_normals": obj_normals.astype(np.float32),
             "obj_point_id": obj_point_id,
@@ -1263,48 +1450,76 @@ class ArcticPreprocessor:
             "obj_flow_valid": obj_flow_valid,
 
             # ----- 右手（始终 (T, ...) 形状，不删除任何帧）-----
+            "right_hand_points_world": right_face_pts.astype(np.float32),
+            "right_hand_normals_world": right_normals.astype(np.float32),
+            "right_hand_verts_world": right_verts.astype(np.float32),
             "right_hand_points": right_face_pts.astype(np.float32),
             "right_hand_normals": right_normals.astype(np.float32),
             "right_hand_point_id": self.right_hand_point_id,
+            "right_hand_cano_points": self.right_hand_cano_points.astype(np.float32),
+            "right_hand_cano_normals": self.right_hand_cano_normals.astype(np.float32),
             "right_hand_root_pose": right_root_pose.astype(np.float32),
             "right_hand_joint_axis_angle": right_joint_aa.astype(np.float32),
             "right_hand_joint_axis_angle_delta": right_joint_aa_delta.astype(np.float32),
+            "right_hand_global_orient_aa": rot_r.cpu().numpy().astype(np.float32),
+            "right_hand_translation": trans_r.cpu().numpy().astype(np.float32),
+            "right_hand_joint_quat_world": right_joint_quat,
             "right_hand_joint_quat": right_joint_quat,
-            "right_hand_betas": right_betas,
+            "right_hand_betas": right_betas_out,
             "right_hand_verts": right_verts.astype(np.float32),
             "right_hand_finger_id": self.right_finger_id,
             "right_hand_region_id": self.right_region_id,
+            "right_hand_has_mano_params": True,
             "right_hand_flow": right_hand_flow.astype(np.float32),
             "right_hand_flow_valid": hand_flow_valid_r,
             "right_hand_to_obj_nn_id": right_hand_to_obj_nn_id,
             "right_hand_to_obj_dist": right_hand_to_obj_dist.astype(np.float32),
             "right_hand_min_dist_to_obj": right_min_dist,    # (T,) 该手每帧到物最近距离
+            "right_frame_keep_3cm": right_valid,
             "right_hand_valid": right_valid,                  # (T,) bool 3cm 接触掩码
             "right_hand_valid_2cm": right_valid_2cm,         # (T,) bool 2cm 接触掩码（CPF 对齐）
             "right_hand_valid_1cm": right_valid_1cm,         # (T,) bool 1cm 接触掩码（CPF 硬截断对齐）
+            "right_obj_keep_8cm": right_obj_keep_8cm,
+            "right_obj_spring_1cm": right_obj_spring_1cm,
+            "right_hand_spring_1cm": right_hand_spring_1cm,
+            "right_frame_contact_1cm": right_valid_1cm,
             "obj_to_right_hand_nn_id": obj_to_right_hand_nn_id,
             "obj_to_right_hand_dist": obj_to_right_hand_dist.astype(np.float32),
 
             # ----- 左手（始终 (T, ...) 形状）-----
+            "left_hand_points_world": left_face_pts.astype(np.float32),
+            "left_hand_normals_world": left_normals.astype(np.float32),
+            "left_hand_verts_world": left_verts.astype(np.float32),
             "left_hand_points": left_face_pts.astype(np.float32),
             "left_hand_normals": left_normals.astype(np.float32),
             "left_hand_point_id": self.left_hand_point_id,
+            "left_hand_cano_points": self.left_hand_cano_points.astype(np.float32),
+            "left_hand_cano_normals": self.left_hand_cano_normals.astype(np.float32),
             "left_hand_root_pose": left_root_pose.astype(np.float32),
             "left_hand_joint_axis_angle": left_joint_aa.astype(np.float32),
             "left_hand_joint_axis_angle_delta": left_joint_aa_delta.astype(np.float32),
+            "left_hand_global_orient_aa": rot_l.cpu().numpy().astype(np.float32),
+            "left_hand_translation": trans_l.cpu().numpy().astype(np.float32),
+            "left_hand_joint_quat_world": left_joint_quat,
             "left_hand_joint_quat": left_joint_quat,
-            "left_hand_betas": left_betas,
+            "left_hand_betas": left_betas_out,
             "left_hand_verts": left_verts.astype(np.float32),
             "left_hand_finger_id": self.left_finger_id,
             "left_hand_region_id": self.left_region_id,
+            "left_hand_has_mano_params": True,
             "left_hand_flow": left_hand_flow.astype(np.float32),
             "left_hand_flow_valid": hand_flow_valid_l,
             "left_hand_to_obj_nn_id": left_hand_to_obj_nn_id,
             "left_hand_to_obj_dist": left_hand_to_obj_dist.astype(np.float32),
             "left_hand_min_dist_to_obj": left_min_dist,
+            "left_frame_keep_3cm": left_valid,
             "left_hand_valid": left_valid,                    # (T,) bool 3cm 接触掩码
             "left_hand_valid_2cm": left_valid_2cm,           # (T,) bool 2cm 接触掩码（CPF 对齐）
             "left_hand_valid_1cm": left_valid_1cm,           # (T,) bool 1cm 接触掩码（CPF 硬截断对齐）
+            "left_obj_keep_8cm": left_obj_keep_8cm,
+            "left_obj_spring_1cm": left_obj_spring_1cm,
+            "left_hand_spring_1cm": left_hand_spring_1cm,
+            "left_frame_contact_1cm": left_valid_1cm,
             "obj_to_left_hand_nn_id": obj_to_left_hand_nn_id,
             "obj_to_left_hand_dist": obj_to_left_hand_dist.astype(np.float32),
         }
@@ -1321,7 +1536,10 @@ class ArcticPreprocessor:
         seq_rel = seq_rel.replace(".mano.npy", "")
         out_path = op.join(self.output_root, seq_rel + ".npz")
         os.makedirs(op.dirname(out_path), exist_ok=True)
-        np.savez_compressed(out_path, **output)
+        if self.save_compressed:
+            np.savez_compressed(out_path, **output)
+        else:
+            np.savez(out_path, **output)
         return out_path
 
     def save_meta(self, stats: dict, extra_info: dict = None):
@@ -1339,9 +1557,15 @@ class ArcticPreprocessor:
             stats:      run() 里累计的成功/失败/跳过计数及序列列表
             extra_info: 可选补充信息（如每个序列的接触统计）
         """
+        contact_stats = (extra_info or {}).get("contact_stats", {})
         meta = {
+            "schema_name": "preprocessed_strided_full",
+            "schema_version": "0.2.0",
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+
             # ---- 路径 ----
             "dataset_name": "arctic",
+            "source_data_root": DATA_ROOT,
             "data_root": DATA_ROOT,
             "raw_seqs_dir": RAW_SEQS_DIR,
             "object_vtemplate_dir": OBJECT_VTEMPLATE_DIR,
@@ -1353,34 +1577,83 @@ class ArcticPreprocessor:
             "subjects": SUBJECTS,
             "articulated_objects": sorted(list(ARTICULATED_OBJECTS)),
 
-            # ---- 采样与时间超参 ----
-            "num_obj_points": self.num_obj_points,
-            "num_hand_points": self.num_hand_points,    # 1538
-            "dt": self.dt,
+            # ---- 时间/stride ----
+            "raw_fps": float(round(1.0 / self.dt)) if self.dt > 0 else 30.0,
+            "raw_dt": float(self.dt),
+            "dt": float(self.dt),
+            "preprocess_stride": int(self.preprocess_stride),
+            "dt_effective": float(self.dt * self.preprocess_stride),
+            "stride_policy": {
+                "physically_drop_frames_in_preprocess": True,
+                "contact_based_frame_drop_in_preprocess": False,
+                "contact_based_point_drop_in_preprocess": False,
+                "raw_frame_id_required": True,
+            },
+            "graph_policy": {
+                "store_knn_in_preprocess": False,
+                "store_graph_edges_in_preprocess": False,
+                "reason": "KNN depends on final training object sampling and augmentation; it is generated in Stage 3.",
+            },
+            "storage_policy": {
+                "sequence_constant_fields_may_be_singletons": True,
+                "store_constant_fields_per_frame": False,
+            },
 
-            # ---- 手-物接触过滤超参 ----
+            # ---- 采样与设备 ----
+            "num_obj_points_full": self.num_obj_points,
+            "num_obj_points": self.num_obj_points,
+            "num_hand_points": self.num_hand_points,
+            "num_mano_verts": 778,
+            "num_mano_faces": MANO_NUM_FACES,
+            "num_mano_joints": MANO_NUM_JOINTS,
+            "num_mano_shape_coeffs": 10,
+            "device": self.device,
+            "nn_batch_size": self.nn_batch_size,
+            "mano_batch_size": self.mano_batch_size,
+            "save_compressed": self.save_compressed,
+
+            # ---- 阈值 ----
             "contact_distance_thresh": self.contact_distance_thresh,
             "contact_distance_thresh_cm": self.contact_distance_thresh * 100.0,
             "fitting_err_thresh_mm": FITTING_ERR_THRESH,
+            "thresholds": {
+                "frame_keep_thresh": float(self.contact_distance_thresh),
+                "obj_crop_thresh": 0.08,
+                "spring_contact_thresh": 0.01,
+                "fit_err_thresh_mm": float(FITTING_ERR_THRESH),
+            },
 
-            # ---- MANO 初始化超参 ----
+            # ---- MANO / object 配置 ----
             "mano_config": {
-                "is_rhand": True,
+                "is_rhand": None,
                 "use_pca": False,
                 "flat_hand_mean": False,
                 "num_shape_coeffs": 10,
                 "num_faces": MANO_NUM_FACES,
                 "num_joints": MANO_NUM_JOINTS,
+                "sampling": "face_center",
+                "num_face_centers": MANO_NUM_FACES,
+                "requires_vtemplate": False,
             },
-
-            # ---- 设备 ----
-            "device": self.device,
+            "object_config": {
+                "object_asset_root": OBJECT_ASSET_ROOT,
+                "object_mesh_filename": "mesh.obj",
+                "object_parts_filename": "parts.json",
+                "object_sampling": "fixed_canonical_surface_points",
+                "num_obj_points_full": self.num_obj_points,
+            },
 
             # ---- 处理统计 ----
             "num_sequences_processed": stats.get("success", 0),
             "num_sequences_failed": stats.get("fail", 0),
             "num_sequences_skipped": stats.get("skipped", 0),
             "processed_sequences": stats.get("sequences", []),
+            "stats": {
+                "num_sequences_processed": stats.get("success", 0),
+                "num_sequences_failed": stats.get("fail", 0),
+                "num_sequences_skipped": stats.get("skipped", 0),
+                "sequences": contact_stats,
+            },
         }
         if extra_info:
             meta["extras"] = extra_info
@@ -1525,11 +1798,21 @@ def main():
                         help="每个物体的表面采样点数 (默认: 2048)")
     parser.add_argument("--dt", type=float, default=1.0/30.0,
                         help="帧间隔秒数 (默认: 1/30 = 30 FPS)")
+    parser.add_argument("--preprocess-stride", type=int, default=1,
+                        help="预处理物理降采样步长。1=保留全部帧。")
     parser.add_argument("--contact_distance_thresh", type=float, default=CONTACT_DISTANCE_THRESH,
                         help=f"手-物接触距离阈值 (米, 默认: {CONTACT_DISTANCE_THRESH} = 3cm). "
                              "超过该距离的帧会屏蔽该手的所有数据。")
     parser.add_argument("--max-frames", type=int, default=0,
                         help="单条序列最多处理前 N 帧 (0=不限)。用于 quick smoke test。")
+    parser.add_argument("--device", type=str, default=DEFAULT_TORCH_DEVICE,
+                        help="PyTorch 设备，如 cpu / cuda / cuda:3")
+    parser.add_argument("--nn-batch-size", type=int, default=DEFAULT_NN_BATCH_SIZE,
+                        help="最近邻计算时每批并行处理的帧数（CUDA 下生效）")
+    parser.add_argument("--mano-batch-size", type=int, default=DEFAULT_MANO_BATCH_SIZE,
+                        help="MANO forward 的帧批大小")
+    parser.add_argument("--save-compressed", action="store_true", default=False,
+                        help="使用 np.savez_compressed 保存，磁盘更省但会更慢")
     parser.add_argument("--obj-unit", type=str, default="mm",
                         choices=["m", "mm", "auto"],
                         help="物体 mesh.obj 顶点坐标单位。"
@@ -1544,9 +1827,14 @@ def main():
         output_root=args.output_root,
         num_obj_points=args.num_obj_points,
         dt=args.dt,
+        preprocess_stride=args.preprocess_stride,
         contact_distance_thresh=args.contact_distance_thresh,
         max_frames=(args.max_frames if args.max_frames > 0 else None),
         obj_unit=args.obj_unit,
+        device=args.device,
+        nn_batch_size=args.nn_batch_size,
+        mano_batch_size=args.mano_batch_size,
+        save_compressed=args.save_compressed,
     )
     # 选择过滤模式
     if args.seq is not None:

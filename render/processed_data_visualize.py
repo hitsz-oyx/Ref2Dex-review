@@ -15,25 +15,24 @@ Keyboard controls:
     Space           : Play/Pause
     N               : Toggle normals
     F               : Toggle flow arrows
-    J               : Toggle joint markers
+    X               : Toggle joint markers
     B               : Toggle bones (MANO skeleton)
-    W               : Toggle object wireframe
-    O               : Toggle object point cloud
+    O / W           : Switch object display: point cloud <-> mesh
     1               : Toggle right hand
     2               : Toggle left hand
     3 / M           : Cycle hand display: GT only → opt only → both
-    T               : Toggle trajectory lines
+    P               : Switch hand display: point cloud <-> mesh
     S               : Next sequence
     R               : Reset camera
-    H               : Toggle help overlay
+    / or ?          : Toggle help overlay
     Escape/Q        : Quit
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import glob
+import json
 import os
 import os.path as op
 import pickle
@@ -66,7 +65,7 @@ LEGACY_OPTI_ROOT = op.join(REF2DEX_ROOT, "mano_opti_data")
 # 方便直接对比两个手整体的几何差异。
 
 COLOR_OBJ_POINTS = (0.40, 0.80, 1.00)  # light blue
-COLOR_OBJ_WIREFRAME = (0.70, 0.90, 1.00)  # lighter blue
+COLOR_OBJ_MESH = (0.72, 0.86, 0.98)  # soft blue surface
 COLOR_NORMALS = (1.00, 0.40, 0.40)  # red
 COLOR_FLOW = (0.20, 1.00, 0.20)  # green
 COLOR_JOINTS = (1.00, 0.20, 0.20)  # red
@@ -93,6 +92,47 @@ MANO_BONE_CHAINS = [
 # But preprocess uses 16 joints from MANO without PCA
 # Actually, the processed data has 21 joints (standard MANO output)
 MANO_JOINT_FINGER = [0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5]
+
+
+def _load_mano_faces(meta: dict) -> np.ndarray:
+    """Load MANO triangle faces once for hand mesh rendering."""
+    legacy_aliases = {
+        "bool": bool,
+        "int": int,
+        "float": float,
+        "complex": complex,
+        "object": object,
+        "unicode": str,
+        "str": str,
+    }
+    for name, value in legacy_aliases.items():
+        if not hasattr(np, name):
+            setattr(np, name, value)
+    candidates = []
+    mano_model_dir = meta.get("mano_model_dir")
+    shared_mano_root = meta.get("shared_mano_asset_root")
+    if mano_model_dir:
+        candidates.extend([
+            op.join(mano_model_dir, "MANO_RIGHT.pkl"),
+            op.join(mano_model_dir, "MANO_LEFT.pkl"),
+        ])
+    if shared_mano_root:
+        candidates.extend([
+            op.join(shared_mano_root, "MANO_RIGHT.pkl"),
+            op.join(shared_mano_root, "MANO_LEFT.pkl"),
+        ])
+    for path in candidates:
+        if not path or not op.exists(path):
+            continue
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f, encoding="latin1")
+            faces = np.asarray(payload["f"], dtype=np.int32)
+            if faces.ndim == 2 and faces.shape[1] == 3:
+                return faces
+        except Exception as e:
+            print(f"[Viewer] Failed to load MANO faces from {path}: {e}")
+    return np.zeros((0, 3), dtype=np.int32)
 
 
 def _load_dataset_meta(data_root: str) -> dict:
@@ -181,6 +221,18 @@ def make_pointcloud(points, colors=None):
     return pcd
 
 
+def make_mesh(vertices, faces, color=None):
+    """Create an Open3D triangle mesh."""
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(np.asarray(vertices, dtype=np.float64))
+    mesh.triangles = o3d.utility.Vector3iVector(np.asarray(faces, dtype=np.int32))
+    if color is not None:
+        mesh.paint_uniform_color(np.asarray(color, dtype=np.float64))
+    if len(vertices) > 0 and len(faces) > 0:
+        mesh.compute_vertex_normals()
+    return mesh
+
+
 def make_sphere(center, radius=0.008, color=(1, 0, 0)):
     """Create a small sphere mesh at a position."""
     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
@@ -250,6 +302,10 @@ class Ref2DexViewer:
         self.dataset_name = _resolve_dataset_name(self.meta, self.data_root)
         self.arctic_root = op.abspath(args.arctic_root) if args.arctic_root else None
         self.assets_root = op.abspath(args.assets_root) if args.assets_root else ASSETS_ROOT
+        self.hand_faces = _load_mano_faces(self.meta)
+        self.hand_mesh_available = (
+            hasattr(o3d.geometry, "TriangleMesh") and len(self.hand_faces) > 0
+        )
         self.opti_root = (
             op.abspath(args.opti_root)
             if args.opti_root else _resolve_default_opti_root(self.dataset_name)
@@ -271,11 +327,18 @@ class Ref2DexViewer:
         self.show_flow = args.flow
         self.show_joints = args.joints
         self.show_bones = args.bones
-        self.show_wireframe = args.wireframe
-        self.show_object_pc = True
+        requested_object_mode = getattr(args, "object_mode", "points")
+        if getattr(args, "wireframe", False):
+            requested_object_mode = "mesh"
+        self.object_render_mode = requested_object_mode
+        self.object_mesh_available = False
         self.show_right_hand = True
         self.show_left_hand = True
-        self.show_trajectory = args.trajectory
+        self.hand_render_mode = getattr(args, "hand_mode", "points")
+        if self.hand_render_mode == "mesh" and not self.hand_mesh_available:
+            print("[Viewer] MANO faces unavailable; fallback to hand point cloud.")
+            self.hand_render_mode = "points"
+        self.show_trajectory = False
         self.show_help = False
         # MANO CPF optimized hand overlay
         # 显示模式: 0 = GT only, 1 = opt only, 2 = both (GT=green, opt=red)
@@ -324,9 +387,6 @@ class Ref2DexViewer:
         self.added_names = set()  # names of geometries currently added to vis
         self.vis = None
         self.help_panel = None    # text overlay
-
-        # Track if trajectory was created (one-time)
-        self._trajectory_created = False
 
         # Load first sequence & create window
         self._load_sequence(self.seq_idx)
@@ -394,6 +454,14 @@ class Ref2DexViewer:
             print(f"[Warning] Object mesh not found for {obj_name} under dataset={self.dataset_name}")
             self.canonical_obj_verts = np.zeros((0, 3), dtype=np.float64)
             self.canonical_obj_faces = np.zeros((0, 3), dtype=np.int32)
+        self.object_mesh_available = (
+            hasattr(o3d.geometry, "TriangleMesh")
+            and len(self.canonical_obj_verts) > 0
+            and len(self.canonical_obj_faces) > 0
+        )
+        if self.object_render_mode == "mesh" and not self.object_mesh_available:
+            print(f"[Viewer] Object mesh unavailable for {obj_name}; fallback to point cloud.")
+            self.object_render_mode = "points"
 
         # Load parts.json for articulated objects
         parts_path = op.join(obj_asset_dir, "parts.json") if obj_asset_dir else ""
@@ -415,24 +483,6 @@ class Ref2DexViewer:
                 obj_params = np.load(obj_npy_path)  # (T, 7)
                 self.arti_angles = obj_params[:, 0].astype(np.float64)  # (T,)
                 print(f"[Viewer] Loaded articulation angles for {seq_id}")
-
-        # Compute obj mesh edges from faces (for wireframe)
-        if len(self.canonical_obj_faces) > 0:
-            edges = np.concatenate([
-                self.canonical_obj_faces[:, [0, 1]],
-                self.canonical_obj_faces[:, [1, 2]],
-                self.canonical_obj_faces[:, [2, 0]],
-            ], axis=0)
-            edges = np.sort(edges, axis=1)
-            self.obj_edges = np.unique(edges, axis=0)
-        else:
-            self.obj_edges = np.zeros((0, 2), dtype=np.int32)
-
-        # Face data for the wireframe
-        self.obj_faces = self.canonical_obj_faces.copy()
-
-        # Reset trajectory flag
-        self._trajectory_created = False
 
         # Load MANO CPF optimization result for this sequence (if available)
         self.opti_right = self._load_opti_data("right")
@@ -465,11 +515,6 @@ class Ref2DexViewer:
         verts = (R @ verts.T).T + t
         return verts
 
-    def _get_posed_obj_edges(self, frame_idx: int):
-        """Get posed wireframe edges for the object at a given frame."""
-        verts = self._get_posed_obj_verts(frame_idx)
-        return verts, self.obj_edges
-
     def _load_opti_data(self, side: str):
         """Load MANO CPF optimization result for current sequence + side.
 
@@ -481,7 +526,7 @@ class Ref2DexViewer:
         The payload is expected to contain at least:
             - ``frame_ids`` (Tpkl,) int
             - ``opt_hand_face_centers`` (Tpkl, 1538, 3) float
-            - ``penetration_depth`` (Tpkl,) float
+            - ``penetration_depth`` (Tpkl,) float, max penetration depth in mm
             - ``contact_ratio`` (Tpkl,) float
         """
         seq_id = str(self.data['seq_id'])
@@ -521,6 +566,11 @@ class Ref2DexViewer:
 
         # Set rendering options
         opt = self.vis.get_render_option()
+        if opt is None:
+            raise RuntimeError(
+                "Open3D failed to initialize a rendering backend. "
+                "Check DISPLAY / X11 forwarding / OpenGL availability."
+            )
         opt.background_color = np.array(COLOR_BACKGROUND)
         opt.point_size = 3.0
         opt.line_width = 1.5
@@ -552,18 +602,19 @@ class Ref2DexViewer:
         self.vis.register_key_callback(32, lambda v: self._toggle_play())      # SPACE
         self.vis.register_key_callback(ord('N'), lambda v: self._toggle_flag('normals'))
         self.vis.register_key_callback(ord('F'), lambda v: self._toggle_flag('flow'))
-        self.vis.register_key_callback(ord('J'), lambda v: self._toggle_flag('joints'))
+        self.vis.register_key_callback(ord('X'), lambda v: self._toggle_flag('joints'))
         self.vis.register_key_callback(ord('B'), lambda v: self._toggle_flag('bones'))
-        self.vis.register_key_callback(ord('W'), lambda v: self._toggle_flag('wireframe'))
-        self.vis.register_key_callback(ord('O'), lambda v: self._toggle_flag('object_pc'))
+        self.vis.register_key_callback(ord('W'), lambda v: self._toggle_flag('object_render'))
+        self.vis.register_key_callback(ord('O'), lambda v: self._toggle_flag('object_render'))
+        self.vis.register_key_callback(ord('P'), lambda v: self._toggle_flag('hand_render'))
         self.vis.register_key_callback(ord('1'), lambda v: self._toggle_flag('right_hand'))
         self.vis.register_key_callback(ord('2'), lambda v: self._toggle_flag('left_hand'))
         self.vis.register_key_callback(ord('3'), lambda v: self._toggle_flag('opti_hand'))
         self.vis.register_key_callback(ord('M'), lambda v: self._toggle_flag('opti_hand'))  # alias
-        self.vis.register_key_callback(ord('T'), lambda v: self._toggle_flag('trajectory'))
         self.vis.register_key_callback(ord('S'), lambda v: self._next_sequence())
         self.vis.register_key_callback(ord('R'), lambda v: self._reset_camera())
-        self.vis.register_key_callback(ord('H'), lambda v: self._toggle_flag('help'))
+        self.vis.register_key_callback(ord('/'), lambda v: self._toggle_flag('help'))
+        self.vis.register_key_callback(ord('?'), lambda v: self._toggle_flag('help'))
         self.vis.register_key_callback(256, lambda v: self._quit())            # ESCAPE
         self.vis.register_key_callback(ord('Q'), lambda v: self._quit())       # Q
 
@@ -579,30 +630,50 @@ class Ref2DexViewer:
         # ---- Right Hand PointCloud ----
         # 原始手：统一绿色（COLOR_ORIG_HAND），不再按 finger_id 着色
         colors_r = np.tile(np.array(COLOR_ORIG_HAND, dtype=np.float64), (num_hand_pts, 1))
-        self.geom['right_hand'] = (
+        self.geom['right_hand_pc'] = (
             make_pointcloud(np.zeros((num_hand_pts, 3)), colors_r),
-            True,
+            False,
+        )
+        self.geom['right_hand_mesh'] = (
+            make_mesh(
+                np.zeros((0, 3), dtype=np.float64),
+                self.hand_faces.copy(),
+                COLOR_ORIG_HAND,
+            ),
+            False,
         )
 
         # ---- Left Hand PointCloud ----
         # 原始手：统一绿色（COLOR_ORIG_HAND），不再按 finger_id 着色
         colors_l = np.tile(np.array(COLOR_ORIG_HAND, dtype=np.float64), (num_hand_pts, 1))
-        self.geom['left_hand'] = (
+        self.geom['left_hand_pc'] = (
             make_pointcloud(np.zeros((num_hand_pts, 3)), colors_l),
-            True,
+            False,
+        )
+        self.geom['left_hand_mesh'] = (
+            make_mesh(
+                np.zeros((0, 3), dtype=np.float64),
+                self.hand_faces.copy(),
+                COLOR_ORIG_HAND,
+            ),
+            False,
         )
 
         # ---- Object PointCloud ----
         self.geom['object_pc'] = (
             make_pointcloud(np.zeros((num_obj_pts, 3)),
                           np.tile(COLOR_OBJ_POINTS, (num_obj_pts, 1))),
-            True,
+            self.object_render_mode == "points",
         )
 
-        # ---- Object Wireframe ----
-        self.geom['wireframe'] = (
-            make_lineset(np.zeros((1, 3)), np.zeros((0, 2), dtype=np.int32), COLOR_OBJ_WIREFRAME),
-            self.show_wireframe,
+        # ---- Object Mesh ----
+        self.geom['object_mesh'] = (
+            make_mesh(
+                np.zeros((0, 3), dtype=np.float64),
+                np.zeros((0, 3), dtype=np.int32),
+                COLOR_OBJ_MESH,
+            ),
+            self.object_render_mode == "mesh" and self.object_mesh_available,
         )
 
         # ---- Normals (Right Hand) ----
@@ -647,43 +718,50 @@ class Ref2DexViewer:
             self.show_bones,
         )
 
-        # ---- Trajectory Lines ----
-        self.geom['trajectory'] = (
-            make_lineset(np.zeros((1, 3)), np.zeros((0, 2), dtype=np.int32), COLOR_TRAJECTORY_WRIST),
-            self.show_trajectory,
-        )
-
-        # ---- Optimized (MANO CPF) Hand PointCloud (per side) ----
+        # ---- Optimized (MANO CPF) Hand PointCloud / Mesh (per side) ----
         # Default visible only when --show-opti-hand is set AND the corresponding
         # pkl was successfully loaded for the current sequence.
         opti_color_arr = np.tile(np.array(COLOR_OPTI_HAND, dtype=np.float64), (num_hand_pts, 1))
-        self.geom['opti_hand_r'] = (
+        self.geom['opti_hand_r_pc'] = (
             make_pointcloud(np.zeros((num_hand_pts, 3)), opti_color_arr.copy()),
-            bool(self.show_opti_hand and self.opti_right is not None),
+            False,
         )
-        self.geom['opti_hand_l'] = (
+        self.geom['opti_hand_r_mesh'] = (
+            make_mesh(
+                np.zeros((0, 3), dtype=np.float64),
+                self.hand_faces.copy(),
+                COLOR_OPTI_HAND,
+            ),
+            False,
+        )
+        self.geom['opti_hand_l_pc'] = (
             make_pointcloud(np.zeros((num_hand_pts, 3)), opti_color_arr.copy()),
-            bool(self.show_opti_hand and self.opti_left is not None),
+            False,
         )
-
-        # Add all default-visible geometries
-        for name in ['right_hand', 'left_hand', 'object_pc']:
-            geom, _ = self.geom[name]
-            self.vis.add_geometry(geom)
-            self.added_names.add(name)
+        self.geom['opti_hand_l_mesh'] = (
+            make_mesh(
+                np.zeros((0, 3), dtype=np.float64),
+                self.hand_faces.copy(),
+                COLOR_OPTI_HAND,
+            ),
+            False,
+        )
 
         # Add toggleable ones based on initial flags
         for name, (geom, default_vis) in self.geom.items():
             if default_vis and name not in self.added_names:
-                self.vis.add_geometry(geom)
+                self._add_geometry_raw(geom)
                 self.added_names.add(name)
+
+        self._sync_object_render_mode()
+        self._sync_hand_render_mode()
 
     def _add_geom(self, name):
         """Add a geometry to the visualizer by name."""
         if name in self.added_names:
             return
         geom, _ = self.geom[name]
-        self.vis.add_geometry(geom)
+        self._add_geometry_raw(geom)
         self.added_names.add(name)
 
     def _remove_geom(self, name):
@@ -691,8 +769,28 @@ class Ref2DexViewer:
         if name not in self.added_names:
             return
         geom, _ = self.geom[name]
-        self.vis.remove_geometry(geom)
+        self._remove_geometry_raw(geom)
         self.added_names.discard(name)
+
+    def _add_geometry_raw(self, geom):
+        try:
+            self.vis.add_geometry(geom, reset_bounding_box=False)
+        except TypeError:
+            self.vis.add_geometry(geom)
+
+    def _remove_geometry_raw(self, geom):
+        try:
+            self.vis.remove_geometry(geom, reset_bounding_box=False)
+        except TypeError:
+            self.vis.remove_geometry(geom)
+
+    def _current_gt_geom_name(self, side: str) -> str:
+        suffix = "mesh" if self.hand_render_mode == "mesh" else "pc"
+        return f"{side}_hand_{suffix}"
+
+    def _current_opti_geom_name(self, side: str) -> str:
+        suffix = "mesh" if self.hand_render_mode == "mesh" else "pc"
+        return f"opti_hand_{side}_{suffix}"
 
     def _update_gt_visibility(self):
         """GT 手显隐 = show_side_attr AND show_mode != 1
@@ -701,15 +799,68 @@ class Ref2DexViewer:
         show_mode=2 → GT on
         """
         for side, attr in [('right', 'show_right_hand'), ('left', 'show_left_hand')]:
+            self._remove_geom(f'{side}_hand_pc')
+            self._remove_geom(f'{side}_hand_mesh')
             show = getattr(self, attr) and self.show_mode != 1
             if show:
-                self._add_geom(f'{side}_hand')
-            else:
-                self._remove_geom(f'{side}_hand')
+                self._add_geom(self._current_gt_geom_name(side))
+
+    def _update_opti_visibility(self):
+        for side, payload in [('r', self.opti_right), ('l', self.opti_left)]:
+            self._remove_geom(f'opti_hand_{side}_pc')
+            self._remove_geom(f'opti_hand_{side}_mesh')
+            show = self.show_opti_hand and self.show_mode != 0 and payload is not None
+            if show:
+                self._add_geom(self._current_opti_geom_name(side))
+
+    def _sync_object_render_mode(self):
+        """Ensure the object is shown as either point cloud or mesh."""
+        if self.object_render_mode == "mesh" and self.object_mesh_available:
+            self._remove_geom('object_pc')
+            self._add_geom('object_mesh')
+        else:
+            self.object_render_mode = "points"
+            self._remove_geom('object_mesh')
+            self._add_geom('object_pc')
+
+    def _sync_hand_render_mode(self):
+        if self.hand_render_mode == "mesh" and not self.hand_mesh_available:
+            self.hand_render_mode = "points"
+        self._update_gt_visibility()
+        self._update_opti_visibility()
 
     # ----------------------------------------------------------
     # Frame update
     # ----------------------------------------------------------
+
+    def _get_consistent_gt_verts(self, side: str, frame_idx: int):
+        payload = self.opti_right if side == 'r' else self.opti_left
+        if payload is None or 'gt_verts_consistent' not in payload:
+            return None
+        current_frame_id = int(self.data['frame_id'][frame_idx])
+        pkl_frame_ids = np.asarray(payload['frame_ids'])
+        matches = np.where(pkl_frame_ids == current_frame_id)[0]
+        if matches.size == 0:
+            return None
+        pkl_idx = int(matches[0])
+        return np.asarray(payload['gt_verts_consistent'][pkl_idx], dtype=np.float64)
+
+    def _update_hand_pc_geom(self, name: str, points: np.ndarray):
+        geom, _ = self.geom[name]
+        geom.points = o3d.utility.Vector3dVector(np.asarray(points, dtype=np.float64))
+        if name in self.added_names:
+            self.vis.update_geometry(geom)
+
+    def _update_hand_mesh_geom(self, name: str, verts: np.ndarray, color):
+        geom, _ = self.geom[name]
+        verts = np.asarray(verts, dtype=np.float64)
+        geom.vertices = o3d.utility.Vector3dVector(verts)
+        geom.triangles = o3d.utility.Vector3iVector(self.hand_faces.astype(np.int32))
+        geom.paint_uniform_color(np.asarray(color, dtype=np.float64))
+        if len(verts) > 0 and len(self.hand_faces) > 0:
+            geom.compute_vertex_normals()
+        if name in self.added_names:
+            self.vis.update_geometry(geom)
 
     def _update_frame(self):
         """Update all geometry positions/colors for the current frame."""
@@ -722,29 +873,32 @@ class Ref2DexViewer:
         # show_mode=1 → 用空点云 hide；show_mode=2 → 用 manotorch 自洽 GT 做公平对比
         if self.show_mode == 1:
             rh_pts = self._empty_pc
+            rh_verts = np.zeros((0, 3), dtype=np.float64)
         elif self.show_mode == 2:
             consistent = self._get_consistent_gt_pts('r', f)
             rh_pts = consistent if consistent is not None else data['right_hand_points'][f]
+            consistent_verts = self._get_consistent_gt_verts('r', f)
+            rh_verts = consistent_verts if consistent_verts is not None else data['right_hand_verts'][f]
         else:
             rh_pts = data['right_hand_points'][f]
-        geom_rh, _ = self.geom['right_hand']
-        geom_rh.points = o3d.utility.Vector3dVector(rh_pts.astype(np.float64))
-        # Colors are static (finger_id based), no need to update
-        if 'right_hand' in self.added_names:
-            vis.update_geometry(geom_rh)
+            rh_verts = data['right_hand_verts'][f]
+        self._update_hand_pc_geom('right_hand_pc', rh_pts)
+        self._update_hand_mesh_geom('right_hand_mesh', rh_verts, COLOR_ORIG_HAND)
 
         # ---- Left Hand ----
         if self.show_mode == 1:
             lh_pts = self._empty_pc
+            lh_verts = np.zeros((0, 3), dtype=np.float64)
         elif self.show_mode == 2:
             consistent = self._get_consistent_gt_pts('l', f)
             lh_pts = consistent if consistent is not None else data['left_hand_points'][f]
+            consistent_verts = self._get_consistent_gt_verts('l', f)
+            lh_verts = consistent_verts if consistent_verts is not None else data['left_hand_verts'][f]
         else:
             lh_pts = data['left_hand_points'][f]
-        geom_lh, _ = self.geom['left_hand']
-        geom_lh.points = o3d.utility.Vector3dVector(lh_pts.astype(np.float64))
-        if 'left_hand' in self.added_names:
-            vis.update_geometry(geom_lh)
+            lh_verts = data['left_hand_verts'][f]
+        self._update_hand_pc_geom('left_hand_pc', lh_pts)
+        self._update_hand_mesh_geom('left_hand_mesh', lh_verts, COLOR_ORIG_HAND)
 
         # ---- Object PointCloud ----
         obj_pts = data['obj_points'][f]
@@ -753,16 +907,17 @@ class Ref2DexViewer:
         if 'object_pc' in self.added_names:
             vis.update_geometry(geom_obj)
 
-        # ---- Object Wireframe ----
-        if self.show_wireframe:
-            posed_verts, edges = self._get_posed_obj_edges(f)
-            geom_wf, _ = self.geom['wireframe']
-            geom_wf.points = o3d.utility.Vector3dVector(posed_verts.astype(np.float64))
-            geom_wf.lines = o3d.utility.Vector2iVector(edges.astype(np.int32))
-            wf_colors = np.tile(np.array(COLOR_OBJ_WIREFRAME, dtype=np.float64), (len(edges), 1))
-            geom_wf.colors = o3d.utility.Vector3dVector(wf_colors)
-            if 'wireframe' in self.added_names:
-                vis.update_geometry(geom_wf)
+        # ---- Object Mesh ----
+        if self.object_mesh_available and 'object_mesh' in self.added_names:
+            posed_verts = self._get_posed_obj_verts(f)
+            geom_mesh, _ = self.geom['object_mesh']
+            geom_mesh.vertices = o3d.utility.Vector3dVector(posed_verts.astype(np.float64))
+            geom_mesh.triangles = o3d.utility.Vector3iVector(
+                self.canonical_obj_faces.astype(np.int32)
+            )
+            geom_mesh.paint_uniform_color(np.asarray(COLOR_OBJ_MESH, dtype=np.float64))
+            geom_mesh.compute_vertex_normals()
+            vis.update_geometry(geom_mesh)
 
         # ---- Normals ----
         self._update_normals('rh', data['right_hand_points'][f], data['right_hand_normals'][f])
@@ -782,18 +937,17 @@ class Ref2DexViewer:
         # ---- Bones ----
         self._update_bones()
 
-        # ---- Trajectory (one-time creation) ----
-        if self.show_trajectory and not self._trajectory_created:
-            self._update_trajectory()
-            self._trajectory_created = True
-
         # ---- Optimized (MANO CPF) Hand Overlay ----
         # show_mode=0 → opt hide（空点云）；1/2 → opt 显示当前帧
         for side in ['r', 'l']:
-            opt_geom, _ = self.geom[f'opti_hand_{side}']
-            if f'opti_hand_{side}' in self.added_names and self.show_mode == 0:
-                opt_geom.points = o3d.utility.Vector3dVector(self._empty_pc)
-                vis.update_geometry(opt_geom)
+            for name in [f'opti_hand_{side}_pc', f'opti_hand_{side}_mesh']:
+                if name in self.added_names and self.show_mode == 0:
+                    if name.endswith('_pc'):
+                        geom, _ = self.geom[name]
+                        geom.points = o3d.utility.Vector3dVector(self._empty_pc)
+                        vis.update_geometry(geom)
+                    else:
+                        self._update_hand_mesh_geom(name, np.zeros((0, 3), dtype=np.float64), COLOR_OPTI_HAND)
         # mode 1/2 走原路径（_update_opti_hand 内部用 show_opti_hand 决定更新内容）
         self._update_opti_hand('r')
         self._update_opti_hand('l')
@@ -1069,8 +1223,9 @@ class Ref2DexViewer:
         per consecutive miss streak (suppressed on subsequent misses, re-armed
         on the next match).
         """
-        geom_name = f'opti_hand_{side}'
-        if not self.show_opti_hand or geom_name not in self.added_names:
+        pc_name = f'opti_hand_{side}_pc'
+        mesh_name = f'opti_hand_{side}_mesh'
+        if not self.show_opti_hand or (pc_name not in self.added_names and mesh_name not in self.added_names):
             return
 
         payload = self.opti_right if side == 'r' else self.opti_left
@@ -1082,11 +1237,10 @@ class Ref2DexViewer:
         pkl_frame_ids = np.asarray(payload['frame_ids'])
         matches = np.where(pkl_frame_ids == current_frame_id)[0]
 
-        geom, _ = self.geom[geom_name]
         if matches.size == 0:
             # Strict miss: empty the point cloud so nothing is drawn, warn once.
-            geom.points = o3d.utility.Vector3dVector(np.zeros((0, 3), dtype=np.float64))
-            self.vis.update_geometry(geom)
+            self._update_hand_pc_geom(pc_name, np.zeros((0, 3), dtype=np.float64))
+            self._update_hand_mesh_geom(mesh_name, np.zeros((0, 3), dtype=np.float64), COLOR_OPTI_HAND)
             if not self._opti_was_missing:
                 print(f"[Viewer] Frame id={current_frame_id} not in MANO opti pkl "
                       f"({side}); optimized overlay hidden. "
@@ -1097,8 +1251,12 @@ class Ref2DexViewer:
         # Match found: write points
         pkl_idx = int(matches[0])
         opt_pts = np.asarray(payload['opt_hand_face_centers'][pkl_idx], dtype=np.float64)
-        geom.points = o3d.utility.Vector3dVector(opt_pts)
-        self.vis.update_geometry(geom)
+        self._update_hand_pc_geom(pc_name, opt_pts)
+        opt_verts = payload.get('opt_hand_verts_world', payload.get('opt_hand_verts'))
+        if opt_verts is not None:
+            self._update_hand_mesh_geom(mesh_name, np.asarray(opt_verts[pkl_idx], dtype=np.float64), COLOR_OPTI_HAND)
+        else:
+            self._update_hand_mesh_geom(mesh_name, np.zeros((0, 3), dtype=np.float64), COLOR_OPTI_HAND)
         if self._opti_was_missing:
             print(f"[Viewer] Frame id={current_frame_id} found in MANO opti pkl "
                   f"({side}) at pkl idx {pkl_idx}; overlay restored.")
@@ -1178,47 +1336,44 @@ class Ref2DexViewer:
                 self._remove_geom(name)
             print(f"[Viewer] Bones: {'ON' if self.show_bones else 'OFF'}")
 
-        elif flag_name == 'wireframe':
-            self.show_wireframe = not self.show_wireframe
-            name = 'wireframe'
-            if self.show_wireframe:
-                self._add_geom(name)
-                posed_verts, edges = self._get_posed_obj_edges(self.frame_idx)
-                geom, _ = self.geom[name]
-                geom.points = o3d.utility.Vector3dVector(posed_verts.astype(np.float64))
-                geom.lines = o3d.utility.Vector2iVector(edges.astype(np.int32))
-                wf_colors = np.tile(np.array(COLOR_OBJ_WIREFRAME, dtype=np.float64), (len(edges), 1))
-                geom.colors = o3d.utility.Vector3dVector(wf_colors)
-                self.vis.update_geometry(geom)
+        elif flag_name == 'object_render':
+            if not self.object_mesh_available:
+                self.object_render_mode = 'points'
+                self._sync_object_render_mode()
+                self._update_frame()
+                print("[Viewer] Object mesh unavailable for current sequence; using point cloud.")
             else:
-                self._remove_geom(name)
-            print(f"[Viewer] Wireframe: {'ON' if self.show_wireframe else 'OFF'}")
+                self.object_render_mode = (
+                    'mesh' if self.object_render_mode == 'points' else 'points'
+                )
+                self._sync_object_render_mode()
+                self._update_frame()
+                print(f"[Viewer] Object display: {self.object_render_mode}")
 
-        elif flag_name == 'object_pc':
-            self.show_object_pc = not self.show_object_pc
-            name = 'object_pc'
-            if self.show_object_pc:
-                self._add_geom(name)
+        elif flag_name == 'hand_render':
+            if not self.hand_mesh_available:
+                self.hand_render_mode = 'points'
+                self._sync_hand_render_mode()
+                self._update_frame()
+                print("[Viewer] Hand mesh unavailable; using point cloud.")
             else:
-                self._remove_geom(name)
-            print(f"[Viewer] Object point cloud: {'ON' if self.show_object_pc else 'OFF'}")
+                self.hand_render_mode = (
+                    'mesh' if self.hand_render_mode == 'points' else 'points'
+                )
+                self._sync_hand_render_mode()
+                self._update_frame()
+                print(f"[Viewer] Hand display: {self.hand_render_mode}")
 
         elif flag_name == 'right_hand':
             self.show_right_hand = not self.show_right_hand
-            name = 'right_hand'
-            if self.show_right_hand:
-                self._add_geom(name)
-            else:
-                self._remove_geom(name)
+            self._update_gt_visibility()
+            self._update_frame()
             print(f"[Viewer] Right hand: {'ON' if self.show_right_hand else 'OFF'}")
 
         elif flag_name == 'left_hand':
             self.show_left_hand = not self.show_left_hand
-            name = 'left_hand'
-            if self.show_left_hand:
-                self._add_geom(name)
-            else:
-                self._remove_geom(name)
+            self._update_gt_visibility()
+            self._update_frame()
             print(f"[Viewer] Left hand: {'ON' if self.show_left_hand else 'OFF'}")
 
         elif flag_name == 'opti_hand':
@@ -1226,6 +1381,7 @@ class Ref2DexViewer:
             # 显隐完全由 _update_frame() 按 show_mode 决定（hide by empty point cloud）
             self.show_mode = (self.show_mode + 1) % 3
             self.show_opti_hand = bool(self.show_mode)
+            self._sync_hand_render_mode()
             mode_str = ["GT only", "OPT only", "GT + OPT"][self.show_mode]
             # 立即 force 一次 frame update
             self._update_frame()
@@ -1233,14 +1389,7 @@ class Ref2DexViewer:
                   f"(0=GT only, 1=OPT only, 2=both)")
 
         elif flag_name == 'trajectory':
-            self.show_trajectory = not self.show_trajectory
-            name = 'trajectory'
-            if self.show_trajectory:
-                self._update_trajectory()
-                self._add_geom(name)
-            else:
-                self._remove_geom(name)
-            print(f"[Viewer] Trajectory: {'ON' if self.show_trajectory else 'OFF'}")
+            print("[Viewer] Trajectory has been removed from this viewer.")
 
         elif flag_name == 'help':
             self.show_help = not self.show_help
@@ -1325,9 +1474,9 @@ class Ref2DexViewer:
             pen_l = getattr(self, '_last_opti_metrics_l', None)
             metrics = []
             if self.opti_right is not None and pen_r is not None:
-                metrics.append(f"R pen={pen_r[0]:.4f} cr={pen_r[1]:.3f}")
+                metrics.append(f"R pen_mm={pen_r[0]:.3f} cr={pen_r[1]:.3f}")
             if self.opti_left is not None and pen_l is not None:
-                metrics.append(f"L pen={pen_l[0]:.4f} cr={pen_l[1]:.3f}")
+                metrics.append(f"L pen_mm={pen_l[0]:.3f} cr={pen_l[1]:.3f}")
             if metrics:
                 title += " | opti: " + ", ".join(metrics)
         try:
@@ -1421,17 +1570,16 @@ class Ref2DexViewer:
             "  Space         : Play/Pause\n"
             "  N             : Toggle normals\n"
             "  F             : Toggle flow arrows\n"
-            "  J             : Toggle joint markers\n"
+            "  X             : Toggle joint markers\n"
             "  B             : Toggle bones\n"
-            "  W             : Toggle object wireframe\n"
-            "  O             : Toggle object point cloud\n"
+            "  O / W         : Switch object display: point cloud <-> mesh\n"
+            "  P             : Switch hand display: point cloud <-> mesh\n"
             "  1             : Toggle right hand\n"
             "  2             : Toggle left hand\n"
             "  3 / M         : Cycle hand display: GT only → opt only → both\n"
-            "  T             : Toggle trajectory paths\n"
             "  S             : Next sequence\n"
             "  R             : Reset camera\n"
-            "  H             : Show/hide this help\n"
+            "  / or ?        : Show/hide this help\n"
             "  Escape/Q      : Quit\n"
             "==================================\n"
         )
@@ -1487,7 +1635,7 @@ def build_parser():
     parser.add_argument("--opti-root", type=str, default=None,
                         help="Optimization result root. Default: auto-probe outputs/mano_fit/* then legacy mano_opti_data/*")
     parser.add_argument("--show-opti-hand", action="store_true", default=False,
-                        help="Overlay the MANO CPF optimized hand (light green) "
+                        help="Overlay the MANO CPF optimized hand (red) "
                              "for visual comparison with the original hand.")
     parser.add_argument("--width", type=int, default=1280, help="Window width")
     parser.add_argument("--height", type=int, default=720, help="Window height")
@@ -1500,10 +1648,14 @@ def build_parser():
                         help="Show joint markers by default")
     parser.add_argument("--bones", action="store_true", default=True,
                         help="Show bones by default")
-    parser.add_argument("--wireframe", action="store_true", default=True,
-                        help="Show object wireframe by default")
-    parser.add_argument("--trajectory", action="store_true", default=True,
-                        help="Show trajectory lines by default")
+    parser.add_argument("--object-mode", choices=["points", "mesh"], default="points",
+                        help="Initial object display mode (default: points)")
+    parser.add_argument("--hand-mode", choices=["points", "mesh"], default="points",
+                        help="Initial hand display mode (default: points)")
+    parser.add_argument("--wireframe", action="store_true", default=False,
+                        help="Deprecated alias for --object-mode mesh. Wireframe rendering has been removed.")
+    parser.add_argument("--trajectory", action="store_true", default=False,
+                        help="Deprecated, no effect. Trajectory lines have been removed.")
     parser.add_argument("--normal_stride", type=int, default=16,
                         help="Subsample stride for normals display (default: 16)")
     parser.add_argument("--flow_stride", type=int, default=32,
