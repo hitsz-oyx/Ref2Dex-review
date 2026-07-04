@@ -36,3 +36,4 @@ assets/
 outputs/*
 docs/修改指导.md
 docs/代码.py
+tmp/**

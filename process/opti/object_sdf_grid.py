@@ -71,7 +71,7 @@ class ObjectSDFGrid:
 
 
 def default_object_sdf_cache_root(repo_root: Path) -> Path:
-    return repo_root / "outputs" / f"_object_sdf_grid_cache_v{OBJECT_SDF_GRID_CACHE_VERSION}"
+    return repo_root / "tmp" / f"_object_sdf_grid_cache_v{OBJECT_SDF_GRID_CACHE_VERSION}"
 
 
 def resolve_object_sdf_cache_path(

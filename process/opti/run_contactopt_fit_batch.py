@@ -52,7 +52,7 @@ def _run_one(
 
     cmd = [
         sys.executable,
-        str((REF2DEX_ROOT / "process" / "opti" / "mano_smplx_fit.py").resolve()),
+        str((REF2DEX_ROOT / "process" / "opti" / "contactopt_fit.py").resolve()),
         "--processed-root",
         str(Path(args.processed_root).resolve()),
         "--seq-id",
@@ -63,25 +63,25 @@ def _run_one(
         args.device,
         "--output-dir",
         str(output_root),
-        "--repulsion-mode",
-        args.repulsion_mode,
-        "--penetration-tol-mm",
-        str(args.penetration_tol_mm),
-        "--lambda-repulsion-loss",
-        str(args.lambda_repulsion_loss),
-        "--lambda-contact-loss",
-        str(args.lambda_contact_loss),
+        "--contact-source",
+        args.contact_source,
+        "--mano-param-mode",
+        args.mano_param_mode,
         "--frame-batch-size",
         str(args.frame_batch_size),
-        "--n-iter",
-        str(args.n_iter),
-        "--lr",
-        str(args.lr),
+        "--pca-fit-batch-size",
+        str(args.pca_fit_batch_size),
+        "--pca-fit-iter",
+        str(args.pca_fit_iter),
+        "--pca-fit-lr",
+        str(args.pca_fit_lr),
     ]
-    if args.progress:
-        cmd.append("--progress")
-    if args.keep_all_frames:
-        cmd.append("--keep-all-frames")
+    if args.export_init_only:
+        cmd.append("--export-init-only")
+    if args.respect_hand_valid:
+        cmd.append("--respect-hand-valid")
+    else:
+        cmd.append("--no-respect-hand-valid")
 
     start = time.time()
     proc = subprocess.run(cmd, cwd=str(REF2DEX_ROOT))
@@ -102,24 +102,26 @@ def _write_summary(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Stage 2 MANO fitting over a CSV manifest of single-hand jobs.")
+    parser = argparse.ArgumentParser(description="Run ContactOpt fitting/export over a CSV manifest of single-hand jobs.")
     parser.add_argument("--manifest", type=str, required=True)
     parser.add_argument("--processed-root", type=str, required=True)
     parser.add_argument("--output-root", type=str, required=True)
     parser.add_argument("--summary-json", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--repulsion-mode", type=str, default="sdf_grid")
-    parser.add_argument("--penetration-tol-mm", type=float, default=2.0)
-    parser.add_argument("--lambda-repulsion-loss", type=float, default=0.03)
-    parser.add_argument("--lambda-contact-loss", type=float, default=10.0)
-    parser.add_argument("--frame-batch-size", type=int, default=8)
-    parser.add_argument("--n-iter", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-2)
+    parser.add_argument("--contact-source", type=str, default="geom", choices=["deepcontact", "geom"])
+    parser.add_argument("--mano-param-mode", type=str, default="auto", choices=["auto", "native", "contactopt_pca"])
+    parser.add_argument("--frame-batch-size", type=int, default=16)
+    parser.add_argument("--pca-fit-batch-size", type=int, default=32)
+    parser.add_argument("--pca-fit-iter", type=int, default=200)
+    parser.add_argument("--pca-fit-lr", type=float, default=0.03)
+    valid_group = parser.add_mutually_exclusive_group()
+    valid_group.add_argument("--respect-hand-valid", dest="respect_hand_valid", action="store_true")
+    valid_group.add_argument("--no-respect-hand-valid", dest="respect_hand_valid", action="store_false")
+    parser.set_defaults(respect_hand_valid=True)
+    parser.add_argument("--export-init-only", action="store_true", default=False)
     parser.add_argument("--start-index", type=int, default=0)
     parser.add_argument("--max-jobs", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true", default=False)
-    parser.add_argument("--progress", action="store_true", default=False)
-    parser.add_argument("--keep-all-frames", action="store_true", default=False)
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).resolve()
@@ -143,11 +145,11 @@ def main() -> None:
     for idx, row in enumerate(selected, start=1):
         seq_id = str(row["seq_id"])
         side = str(row["side"])
-        print(f"[mano-fit-batch] job {idx}/{total} seq={seq_id} side={side}", flush=True)
+        print(f"[contactopt-fit-batch] job {idx}/{total} seq={seq_id} side={side}", flush=True)
         result = _run_one(row, args, output_root)
         results.append(result)
         print(
-            f"[mano-fit-batch] status={result['status']} seq={seq_id} side={side} "
+            f"[contactopt-fit-batch] status={result['status']} seq={seq_id} side={side} "
             f"elapsed={result['elapsed_sec']:.3f}s",
             flush=True,
         )
@@ -170,11 +172,12 @@ def main() -> None:
         "num_ok": int(sum(1 for row in results if row["status"] == "ok")),
         "num_skipped_existing": int(sum(1 for row in results if row["status"] == "skipped_existing")),
         "num_failed": int(sum(1 for row in results if row["status"] == "failed")),
+        "export_init_only": bool(args.export_init_only),
         "total_elapsed_sec": float(time.time() - t0),
         "results": results,
     }
     _write_summary(summary_json, payload)
-    print(f"[mano-fit-batch] wrote summary {summary_json}")
+    print(f"[contactopt-fit-batch] wrote summary {summary_json}")
 
 
 if __name__ == "__main__":

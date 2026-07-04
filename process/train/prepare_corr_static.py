@@ -14,8 +14,8 @@ from scipy.spatial import cKDTree
 
 
 REF2DEX_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_MANO_OPT_ROOT = REF2DEX_ROOT / "outputs" / "mano_fit"
-DEFAULT_OUTPUT_ROOT = REF2DEX_ROOT / "outputs" / "train_corr_static"
+DEFAULT_MANO_OPT_ROOT = REF2DEX_ROOT / "processed_data" / "generated" / "mano_fit"
+DEFAULT_OUTPUT_ROOT = REF2DEX_ROOT / "processed_data" / "generated" / "train_corr_static"
 
 
 for _legacy_name, _legacy_value in {

@@ -54,7 +54,7 @@ REF2DEX_ROOT = op.abspath(op.join(THIS_DIR, ".."))
 ASSETS_ROOT = op.join(REF2DEX_ROOT, "assets")
 DATA_ROOT_DEFAULT = op.join(REF2DEX_ROOT, "processed_data", "arctic")
 ARCTIC_ROOT_DEFAULT = op.join(THIS_DIR, "..", "dataset", "arctic", "data", "arctic_data", "data")
-OUTPUTS_ROOT = op.join(REF2DEX_ROOT, "outputs", "mano_fit")
+OUTPUTS_ROOT = op.join(REF2DEX_ROOT, "processed_data", "generated", "mano_fit")
 LEGACY_OPTI_ROOT = op.join(REF2DEX_ROOT, "mano_opti_data")
 
 # ============================================================
@@ -519,7 +519,7 @@ class Ref2DexViewer:
         """Load MANO CPF optimization result for current sequence + side.
 
         Looks for `<opti_root>/<subject>/<seq_name>_<side>.pkl` (the layout used
-        by the current `outputs/mano_fit/*` tree and older optimization outputs).
+        by the current `processed_data/generated/mano_fit/*` tree and older optimization outputs).
         Returns the unpickled payload
         dict, or ``None`` if the file is missing / fails to load.
 
@@ -1633,7 +1633,7 @@ def build_parser():
     parser.add_argument("--assets_root", type=str, default=None,
                         help="Asset root directory (default: <Ref2Dex>/assets)")
     parser.add_argument("--opti-root", type=str, default=None,
-                        help="Optimization result root. Default: auto-probe outputs/mano_fit/* then legacy mano_opti_data/*")
+                        help="Optimization result root. Default: auto-probe processed_data/generated/mano_fit/* then legacy mano_opti_data/*")
     parser.add_argument("--show-opti-hand", action="store_true", default=False,
                         help="Overlay the MANO CPF optimized hand (red) "
                              "for visual comparison with the original hand.")

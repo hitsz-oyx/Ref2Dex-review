@@ -269,7 +269,7 @@ loss = 1.0 * obj_contact
 
 ```bash
 python -m src.task.corresponse_v1.train \
-    --data outputs/train_corr_static/grab \
+    --data processed_data/generated/train_corr_static/grab \
     --output-dir outputs/train/corresponse_v1 \
     --device cuda:0
 ```

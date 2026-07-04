@@ -114,7 +114,7 @@ from process.opti.object_sdf_grid import (
 
 DEFAULT_PROCESSED_ROOT = REF2DEX_ROOT / "processed_data" / "arctic"
 DEFAULT_MANO_DIR = ARCTIC_DATA_ROOT / "body_models" / "mano"
-DEFAULT_OUTPUT_ROOT = REF2DEX_ROOT / "outputs" / "mano_fit"
+DEFAULT_OUTPUT_ROOT = REF2DEX_ROOT / "processed_data" / "generated" / "mano_fit"
 DEFAULT_SDF_REF_ROOT = _first_existing_path(
     os.environ.get("SDF_REF_ROOT"),
     REF2DEX_ROOT.parent / "SDF_ref",

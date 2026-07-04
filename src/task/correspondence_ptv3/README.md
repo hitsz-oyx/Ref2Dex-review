@@ -19,6 +19,6 @@
 
 ```bash
 python -m src.task.correspondence_ptv3.train \
-  --data outputs/train_corr_static/... \
+  --data processed_data/generated/train_corr_static/... \
   --output-dir outputs/train/correspondence_ptv3
 ```

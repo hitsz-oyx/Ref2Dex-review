@@ -27,9 +27,9 @@ process/
 - 共享资产：`assets/shared/mano`
 - 数据集对象资产：`assets/arctic/objects`，`assets/grab/objects`
 - 预处理输出：`processed_data/arctic`，`processed_data/grab`
-- 优化输出：`outputs/mano_fit/*`
+- 优化输出：`processed_data/generated/mano_fit/*`
 - 优化结果检查：`process/check/summarize_penetration.py`
-- 训练前处理输出：`outputs/train_corr_static/*`
+- 训练前处理输出：`processed_data/generated/train_corr_static/*`
 - 可视化：`render/processed_data_visualize.py`
 
 ## Environment
@@ -101,15 +101,15 @@ done
 ```bash
 python process/preprocess/build_grab_subset_manifest.py \
   --sample-size 100 \
-  --out-csv /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset_100.csv \
-  --out-json /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset_100_summary.json
+  --out-csv /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset_100.csv \
+  --out-json /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset_100_summary.json
 ```
 
 按 manifest 精确预处理：
 
 ```bash
 python process/preprocess/grab_preprocess.py \
-  --manifest /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset_100.csv \
+  --manifest /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset_100.csv \
   --ds-rate 4 \
   --device cuda \
   --nn-batch-size 16 \
@@ -169,18 +169,18 @@ done
 ```bash
 python process/opti/build_hand_job_manifest.py \
   --processed-root /home/oyx/test_ws/Ref2Dex/processed_data/grab_subset100_ds4 \
-  --out-csv /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset100_hand_jobs.csv \
-  --out-json /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset100_hand_jobs_summary.json
+  --out-csv /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset100_hand_jobs.csv \
+  --out-json /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset100_hand_jobs_summary.json
 ```
 
 按单手 manifest 批量跑 Stage 2：
 
 ```bash
 python process/opti/run_mano_fit_batch.py \
-  --manifest /home/oyx/test_ws/Ref2Dex/outputs/manifests/grab_subset100_hand_jobs.csv \
+  --manifest /home/oyx/test_ws/Ref2Dex/tmp/manifests/grab_subset100_hand_jobs.csv \
   --processed-root /home/oyx/test_ws/Ref2Dex/processed_data/grab_subset100_ds4 \
-  --output-root /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/grab_subset100_rep3e-2 \
-  --summary-json /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/grab_subset100_rep3e-2_batch_summary.json \
+  --output-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit/grab_subset100_rep3e-2 \
+  --summary-json /home/oyx/test_ws/Ref2Dex/tmp/logs/mano_fit_grab_subset100_rep3e-2_batch_summary.json \
   --device cuda \
   --repulsion-mode sdf_grid \
   --penetration-tol-mm 2.0 \
@@ -282,17 +282,17 @@ python process/opti/mano_smplx_fit.py \
 
 ```bash
 python process/check/summarize_penetration.py \
-  --input-pkl /home/oyx/test_ws/Ref2Dex/outputs/mano_fit_sdfgrid_tol2mm/grab_smplx_cpf/s1/airplane_fly_1_right.pkl \
+  --input-pkl /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit_sdfgrid_tol2mm/grab_smplx_cpf/s1/airplane_fly_1_right.pkl \
   --depth-threshold-mm 2 5 10 \
-  --out-json /home/oyx/test_ws/Ref2Dex/outputs/check/grab_airplane_fly_1_right_penetration.json \
-  --out-csv /home/oyx/test_ws/Ref2Dex/outputs/check/grab_airplane_fly_1_right_penetration.csv
+  --out-json /home/oyx/test_ws/Ref2Dex/tmp/check/grab_airplane_fly_1_right_penetration.json \
+  --out-csv /home/oyx/test_ws/Ref2Dex/tmp/check/grab_airplane_fly_1_right_penetration.csv
 ```
 
 如果想强制重算 penetration depth：
 
 ```bash
 python process/check/summarize_penetration.py \
-  --input-pkl /home/oyx/test_ws/Ref2Dex/outputs/mano_fit_sdfgrid_tol2mm/grab_smplx_cpf/s1/airplane_fly_1_right.pkl \
+  --input-pkl /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit_sdfgrid_tol2mm/grab_smplx_cpf/s1/airplane_fly_1_right.pkl \
   --depth-threshold-mm 2 5 10 \
   --recompute
 ```
@@ -303,35 +303,35 @@ python process/check/summarize_penetration.py \
 
 ```bash
 python process/train/prepare_corr_static.py \
-  --mano-opt-root /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/grab_smplx_cpf \
+  --mano-opt-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit/grab_smplx_cpf \
   --seq-id s1/airplane_fly_1 \
   --side right \
-  --output-root /home/oyx/test_ws/Ref2Dex/outputs/train_corr_static
+  --output-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/train_corr_static
 ```
 
 批量处理一个数据根下的全部单手 `.pkl`：
 
 ```bash
 python process/train/prepare_corr_static.py \
-  --mano-opt-root /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/grab_smplx_cpf \
-  --output-root /home/oyx/test_ws/Ref2Dex/outputs/train_corr_static
+  --mano-opt-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit/grab_smplx_cpf \
+  --output-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/train_corr_static
 ```
 
 指定只处理左手或右手：
 
 ```bash
 python process/train/prepare_corr_static.py \
-  --mano-opt-root /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/arctic_smplx_cpf \
+  --mano-opt-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit/arctic_smplx_cpf \
   --side left \
-  --output-root /home/oyx/test_ws/Ref2Dex/outputs/train_corr_static
+  --output-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/train_corr_static
 ```
 
 如果想压缩 `.npz`，加：
 
 ```bash
 python process/train/prepare_corr_static.py \
-  --mano-opt-root /home/oyx/test_ws/Ref2Dex/outputs/mano_fit/grab_smplx_cpf \
-  --output-root /home/oyx/test_ws/Ref2Dex/outputs/train_corr_static \
+  --mano-opt-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/mano_fit/grab_smplx_cpf \
+  --output-root /home/oyx/test_ws/Ref2Dex/processed_data/generated/train_corr_static \
   --save-compressed
 ```
 
@@ -378,7 +378,7 @@ python render/processed_data_visualize.py \
 - `process/preprocess/*.py` 和 `process/opti/*.py` 现在都按仓库根目录解析依赖，不再假设自己位于旧的 `preprocess/` 目录。
 - `process/train/prepare_corr_static.py` 读取的是 Stage 2 单手 `.pkl`，输出按序列打包的 Stage 3 `.npz`；每个 `.npz` 内部的 sample unit 是 `single_frame_single_hand`。
 - `meta.json` 是下游读取配置的统一入口；可视化和优化优先从 `processed_data/<dataset>/meta.json` 解析 `dataset_name`、`mano_model_dir`、`object_asset_root`。
-- `mano_smplx_fit.py` 现在会在 `outputs/mano_fit/<dataset>_smplx_cpf/meta.json` 写出 Stage 2 schema 信息；`prepare_corr_static.py` 会在 `outputs/train_corr_static/<dataset>/meta.json` 写出 Stage 3 schema 信息。
+- `mano_smplx_fit.py` 现在会在 `processed_data/generated/mano_fit/<dataset>_smplx_cpf/meta.json` 写出 Stage 2 schema 信息；`prepare_corr_static.py` 会在 `processed_data/generated/train_corr_static/<dataset>/meta.json` 写出 Stage 3 schema 信息。
 - 预处理默认改为 `np.savez` 非压缩保存，速度更快；只有在确实要省磁盘时再加 `--save-compressed`。
 - 预处理最近邻现在支持 GPU：`--device cuda --nn-batch-size 16` 是比较稳妥的起点；显存够的话可以继续增大。
 - MANO/SMPLX 优化现在支持多帧 batch：`--frame-batch-size 8` 起步即可；如果只看 `jt_loss/vert_loss`，把 `--lambda-contact-loss 0 --lambda-repulsion-loss 0` 会明显更快。

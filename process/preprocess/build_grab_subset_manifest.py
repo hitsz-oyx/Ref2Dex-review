@@ -14,8 +14,8 @@ import numpy as np
 
 REF2DEX_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GRAB_ROOT = REF2DEX_ROOT / "dataset" / "GRAB" / "data"
-DEFAULT_OUT_CSV = REF2DEX_ROOT / "outputs" / "manifests" / "grab_subset_100.csv"
-DEFAULT_OUT_JSON = REF2DEX_ROOT / "outputs" / "manifests" / "grab_subset_100_summary.json"
+DEFAULT_OUT_CSV = REF2DEX_ROOT / "tmp" / "manifests" / "grab_subset_100.csv"
+DEFAULT_OUT_JSON = REF2DEX_ROOT / "tmp" / "manifests" / "grab_subset_100_summary.json"
 
 
 def _frame_count(raw_path: Path) -> int:

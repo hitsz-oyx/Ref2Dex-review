@@ -1,5 +1,7 @@
 # Outputs Layout
 
-- `mano_fit/`: optimization outputs grouped by method or dataset family
+- `train/`: model training runs and checkpoints
+- `eval/`: model evaluation outputs, when produced
 
-Current compatibility mapping keeps legacy `mano_opti_data/*` paths working while new code writes under `outputs/mano_fit/*`.
+Generated preprocessing / fitting datasets live under `processed_data/generated/`.
+Temporary manifests, logs, checks, visualizations, and caches live under `tmp/`.

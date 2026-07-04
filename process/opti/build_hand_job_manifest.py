@@ -12,8 +12,8 @@ import numpy as np
 
 
 REF2DEX_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUT_CSV = REF2DEX_ROOT / "outputs" / "manifests" / "grab_subset100_hand_jobs.csv"
-DEFAULT_OUT_JSON = REF2DEX_ROOT / "outputs" / "manifests" / "grab_subset100_hand_jobs_summary.json"
+DEFAULT_OUT_CSV = REF2DEX_ROOT / "tmp" / "manifests" / "grab_subset100_hand_jobs.csv"
+DEFAULT_OUT_JSON = REF2DEX_ROOT / "tmp" / "manifests" / "grab_subset100_hand_jobs_summary.json"
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
