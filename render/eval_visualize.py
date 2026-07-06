@@ -12,26 +12,21 @@ Open3D 窗口中。
 --------
 A / D   或  ← / →
     上一帧 / 下一帧（步长由 --step 控制，默认 1）。
-W / S   或  ↑ / ↓
-    提高 / 降低当前概率阈值（步长 0.05，范围 0.0 ~ 1.0）。
-        只影响 Eval 模式下:
-          * heatmap 视图: 不影响 (heatmap 永远是连续概率)
-          * cross 视图:  边透明度与高亮规则
-        GT 模式下不消费该值。
 [ / ]
     上一 epoch / 下一 epoch
     改变对物体点 512 个采样点的稳定哈希种子，从而复现训练时不同 epoch
     的子集。所有 loss / 概率都会按新 epoch 重新计算并刷新。
 G
-    切换 GT / Eval 显示模式（顶部状态栏 mode）。
+    切换 GT / Eval 显示模式（顶部状态栏 mode）。切换不重置已选中的
+    物体点、frame 或 epoch。
 C
-    切换 heatmap / cross 视图（顶部状态栏 view）。
-    * heatmap: 整片物体点云按概率/标签着色
-    * cross:   只保留普通颜色，被选中的单点高亮黄色，并把它到
-              K_cross 个候选手部点的边画出来
+    切换 heatmap / cross 视图（顶部状态栏 view）。切换不重置已选中的
+    物体点、frame 或 epoch，两个视图共享同一份 runtime 状态。
 , / .
     上一 / 下一物体点
-    仅在 cross 视图下生效；改变 selected_rank 选取的物体点。
+    改变 selected_rank 选取的物体点。cross 视图下手部颜色会随
+    选中的物体点重新计算并刷新。被选中的物体点用一个 yellow sphere
+    标记 (默认半径 3mm，由 --marker-radius 调整)，随相机缩放同步。
 R
     重置视角到初始相机参数。
 
@@ -40,23 +35,26 @@ R
 GT
     显示 Stage 3 的 ground truth 标签:
       * 物体点云按 hard contact label 着色（手部用 GT 干净手）
-      * 边缘模式显示 clean GT KNN 边，红色 = 真实接触 (dist <= d_pos)
+      * cross 视图下手部按到选中物体点的欧氏距离上色（基于 clean hand）
 Eval
     显示模型推理结果:
       * 物体点云按 pred_obj_contact 概率着色（见下方 heatmap 配色）
       * 手部用 noisy hand（手 perturb 后的输入几何）
-      * 边缘模式显示 noisy input KNN 边，按 pred_cross_contact 概率
-        渐变；高于当前阈值的边高亮，等于或低于阈值的边按概率渐隐
+      * cross 视图下对“选中物体点 × 全部 hand 点”复用现有 edge head
+        做 dense 推理，并按 pred_cross_contact 概率连续上色
 
 视图 (C 切换)
 =============
 heatmap
     整片物体点云按 contact 概率/标签着色，cross 视图里没有边。
+    选中的物体点仍以 yellow sphere 高亮。
 cross
-    普通灰色物体点云 + 1 个黄色高亮点（被 ,/. 选中）
-    + 它到 K_cross 个手部点的边:
-      * GT 模式:  clean GT KNN 边，按真实 edge dist 着色
-      * Eval 模式: noisy input KNN 边，按 pred_cross_contact 着色
+    普通灰色物体点云 + 1 个 yellow sphere 高亮点（被 ,/. 选中）
+    + 手部颜色按模式不同:
+      * GT  模式: 全部 hand 点按到选中物体点的欧氏距离上色 (cap=3cm)
+      * Eval 模式: 全部 hand 点按 dense pred_cross_contact 概率上色
+    按 ,/. 切换物体点会实时重新计算并刷新手部颜色。
+    heatmap 视图下被点云的 prob / label 着色完全独立，切换不影响。
 
 颜色说明
 ========
@@ -69,22 +67,26 @@ object 点云 (heatmap 视图)
         白色 (1.0 , 1.0 , 1.0 )   = 概率 0.5  （不确定）
         红色 (0.98, 0.16, 0.12)   = 概率 1.0  （确定接触）
 
+object 点云 (cross 视图)
+    灰色 (0.62, 0.62, 0.66)  全部统一色，被选中的单点用 sphere 高亮
+
 手部点云
-    GT 模式:  橙色 (0.95, 0.58, 0.12)  = clean hand（关掉手扰动）
-    Eval 模式: 品红 (0.85, 0.16, 0.85)  = noisy hand（带扰动的输入）
+    heatmap 视图 / cross 视图无选中点:
+        GT 模式:  橙色 (0.95, 0.58, 0.12)  = clean hand
+        Eval 模式: 品红 (0.85, 0.16, 0.85)  = noisy hand
+    cross 视图 + 有选中点 (GT 模式，按 soft_contact_label 概率上色):
+        蓝色 (0.12, 0.36, 0.98)  = 概率 1.0  (更接近 / 更可能接触)
+        灰色 (0.18, 0.18, 0.22)  = 概率 0.0  (更远 / 更不可能接触)
+        概率由 clean hand 到选中物体点的距离经 d_pos/d_neg/gamma 映射得到
+    cross 视图 + 有选中点 (Eval 模式，按 pred_cross_contact 概率上色):
+        蓝色 (0.12, 0.36, 0.98)  = 概率 1.0  (模型更认为接触)
+        灰色 (0.18, 0.18, 0.22)  = 概率 0.0  (模型更认为不接触)
+        中间概率在线性插值为蓝灰渐变
+        这里是“选中物体点 × 全部 hand 点”的 dense 推理结果，不再只限于 KNN
 
-被选中的物体点 (cross 视图)
-    黄色 (1.0, 0.95, 0.15)  半径固定的一个 PointCloud
-
-物体→手部边 (cross 视图)
-    GT 模式:  红色 = 真正接触 (dist <= d_pos);  灰色 = 非接触
-    Eval 模式: 颜色仍按 pred 概率在蓝→白→红 上渐变,
-               但 透明度 由 probability 与 threshold 共同决定:
-               probability >= threshold  →  完全不透明 (高亮)
-               probability <  threshold  →  intensity 随
-                                            probability / threshold
-                                            在 0.12 ~ 0.67 之间衰减
-               这样低于阈值的边就自然变暗，便于关注 > threshold 的边
+被选中的物体点 (任意视图)
+    黄色 sphere (1.0, 0.95, 0.15)，默认半径 3mm (--marker-radius)
+    缩放时按世界尺度放大；位置跟随机身实时更新。
 
 CLI 示例
 ========
@@ -176,6 +178,8 @@ class RuntimeFrame:
 class PredictionFrame:
     pred_obj_contact: np.ndarray
     pred_cross_contact: np.ndarray
+    obj_dense_tokens: torch.Tensor
+    hand_dense_tokens: torch.Tensor
 
 
 def _scalar(data: Any, key: str, default: str = "") -> str:
@@ -282,19 +286,32 @@ def _binary_contact_colors(mask: np.ndarray) -> np.ndarray:
     return colors
 
 
-def _edge_probability_colors(probability: np.ndarray, threshold: float) -> np.ndarray:
-    base = _probability_colors(probability)
-    background = np.asarray([0.08, 0.09, 0.11], dtype=np.float32)
-    threshold = float(np.clip(threshold, 0.0, 1.0))
-    if threshold <= 0.0:
-        intensity = np.ones_like(probability, dtype=np.float32)
-    else:
-        intensity = np.where(
-            probability >= threshold,
-            1.0,
-            0.12 + 0.55 * (probability / threshold),
-        ).astype(np.float32)
-    return background[None] * (1.0 - intensity[:, None]) + base * intensity[:, None]
+def _blue_gray_colors(score: np.ndarray) -> np.ndarray:
+    score = np.clip(np.asarray(score, dtype=np.float32), 0.0, 1.0)
+    near_blue = np.asarray([0.12, 0.36, 0.98], dtype=np.float32)
+    far_gray = np.asarray([0.18, 0.18, 0.22], dtype=np.float32)
+    return far_gray[None] * (1.0 - score[:, None]) + near_blue[None] * score[:, None]
+
+
+def _distance_to_contact_probability(
+    distance: np.ndarray,
+    *,
+    d_pos: float,
+    d_neg: float,
+    gamma: float,
+) -> np.ndarray:
+    distance_tensor = torch.from_numpy(np.asarray(distance, dtype=np.float32))
+    probability = soft_contact_label(
+        distance_tensor,
+        d_pos=float(d_pos),
+        d_neg=float(d_neg),
+        gamma=float(gamma),
+    )
+    return probability.detach().cpu().numpy().astype(np.float32)
+
+
+def _probability_hand_colors(probabilities: np.ndarray) -> np.ndarray:
+    return _blue_gray_colors(np.asarray(probabilities, dtype=np.float32))
 
 
 def _build_runtime_frame(
@@ -447,7 +464,48 @@ def _run_inference(
     return PredictionFrame(
         pred_obj_contact=pred_obj_contact,
         pred_cross_contact=pred_cross_contact,
+        obj_dense_tokens=preds["obj_dense_tokens"][0].detach(),
+        hand_dense_tokens=preds["hand_dense_tokens"][0].detach(),
     )
+
+
+def _dense_cross_probabilities(
+    model: Any,
+    prediction: PredictionFrame,
+    runtime: RuntimeFrame,
+    selected_slot: int,
+) -> np.ndarray:
+    device = prediction.obj_dense_tokens.device
+    with torch.no_grad():
+        obj_token = prediction.obj_dense_tokens[selected_slot].to(device=device).unsqueeze(0).unsqueeze(0)
+        hand_tokens = prediction.hand_dense_tokens.to(device=device).unsqueeze(0).unsqueeze(0)
+
+        obj_point = torch.from_numpy(
+            np.asarray(runtime.obj_points[selected_slot], dtype=np.float32)
+        ).to(device=device)
+        obj_normal = torch.from_numpy(
+            np.asarray(runtime.obj_normals[selected_slot], dtype=np.float32)
+        ).to(device=device)
+        hand_points = torch.from_numpy(
+            np.asarray(runtime.noisy_hand_points, dtype=np.float32)
+        ).to(device=device)
+        hand_normals = torch.from_numpy(
+            np.asarray(runtime.noisy_hand_normals, dtype=np.float32)
+        ).to(device=device)
+
+        delta = hand_points - obj_point.unsqueeze(0)
+        dist = torch.norm(delta, dim=-1, keepdim=True)
+        signed_dist = torch.sum(obj_normal.unsqueeze(0) * delta, dim=-1, keepdim=True)
+        normal_dot = torch.sum(obj_normal.unsqueeze(0) * hand_normals, dim=-1, keepdim=True)
+        edge_geo = torch.cat([delta, dist, signed_dist, normal_dot], dim=-1).unsqueeze(0).unsqueeze(0)
+
+        edge_shared = model._compute_shared_edge_features(
+            z_obj_cross=obj_token,
+            z_hand_neighbors=hand_tokens,
+            edge_geo=edge_geo,
+        )
+        dense_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
+    return torch.sigmoid(dense_logits).detach().cpu().numpy().astype(np.float32)
 
 
 def _build_selected_edges(
@@ -504,10 +562,10 @@ class EvalViewer:
         self.frame = int(np.clip(args.frame, 0, len(data["raw_frame_id"]) - 1))
         self.epoch = max(0, int(args.epoch))
         self.step = max(1, int(args.step))
-        self.threshold = float(np.clip(args.threshold, 0.0, 1.0))
         self.show_gt = bool(args.start_gt)
         self.show_cross = bool(args.start_cross)
         self.selected_rank = 0
+        self._selected_marker_position: np.ndarray | None = None
         self.geometries: dict[str, Any] = {}
         self._cache_signature: tuple[Any, ...] | None = None
         self._cache_runtime: RuntimeFrame | None = None
@@ -534,10 +592,6 @@ class EvalViewer:
             self.vis.register_key_callback(key, lambda vis: self._move(+self.step))
         for key in (263, ord("A")):
             self.vis.register_key_callback(key, lambda vis: self._move(-self.step))
-        for key in (265, ord("W")):
-            self.vis.register_key_callback(key, lambda vis: self._change_threshold(+0.05))
-        for key in (264, ord("S")):
-            self.vis.register_key_callback(key, lambda vis: self._change_threshold(-0.05))
         self.vis.register_key_callback(ord("["), lambda vis: self._change_epoch(-1))
         self.vis.register_key_callback(ord("]"), lambda vis: self._change_epoch(+1))
         self.vis.register_key_callback(ord("G"), lambda vis: self._toggle_mode())
@@ -588,11 +642,6 @@ class EvalViewer:
 
     def _change_epoch(self, delta: int) -> bool:
         self.epoch = max(0, self.epoch + delta)
-        self.refresh()
-        return False
-
-    def _change_threshold(self, delta: float) -> bool:
-        self.threshold = float(np.clip(self.threshold + delta, 0.0, 1.0))
         self.refresh()
         return False
 
@@ -672,6 +721,39 @@ class EvalViewer:
         geometry = self.geometries.pop(name, None)
         if geometry is not None:
             self.vis.remove_geometry(geometry, reset_bounding_box=False)
+        if name == "selected_object":
+            self._selected_marker_position = None
+
+    def _set_sphere_marker(
+        self,
+        name: str,
+        position: np.ndarray,
+        color: np.ndarray,
+        radius: float,
+    ) -> None:
+        # 用一个 sphere mesh 标记选中物体点，半径按米计，缩放时会跟着放大。
+        # 通过记录上次的 world position，更新时只做相对位移，避免重置整个 mesh。
+        position = np.asarray(position, dtype=np.float64)
+        sphere = self.geometries.get(name)
+        is_new = sphere is None
+        if is_new:
+            sphere = self.o3d.geometry.TriangleMesh.create_sphere(radius=float(radius))
+            sphere.compute_vertex_normals()
+            sphere.paint_uniform_color(np.asarray(color, dtype=np.float64))
+            self.geometries[name] = sphere
+            sphere.translate(position)
+            self._selected_marker_position = position.copy()
+        else:
+            prev = self._selected_marker_position
+            if prev is not None:
+                sphere.translate(position - prev)
+            else:
+                sphere.translate(position)
+            self._selected_marker_position = position.copy()
+        if is_new:
+            self.vis.add_geometry(sphere, reset_bounding_box=False)
+        else:
+            self.vis.update_geometry(sphere)
 
     def refresh(self, reset_view: bool = False) -> None:
         runtime, prediction = self._get_cached_state()
@@ -701,88 +783,87 @@ class EvalViewer:
         )
 
         hand_points = runtime.clean_hand_points if self.show_gt else runtime.noisy_hand_points
-        hand_color = (
-            np.asarray([0.95, 0.58, 0.12])
-            if self.show_gt
-            else np.asarray([0.85, 0.16, 0.85])
-        )
-        self._set_point_cloud("hand_points", hand_points, hand_color)
+        hand_distances: np.ndarray | None = None
+        dense_cross_prob: np.ndarray | None = None
+        if self.show_cross and selected_slot is not None:
+            selected_obj_point = runtime.obj_points[selected_slot]
+            hand_distances = np.linalg.norm(
+                hand_points - selected_obj_point[None],
+                axis=-1,
+            ).astype(np.float32)
+        if self.show_cross and selected_slot is not None:
+            # cross 视图: GT 用真实欧氏距离上色, Eval 用 pred_cross_contact 概率上色.
+            if self.show_gt:
+                # GT: clean hand 到选中物体点的距离，先映射成 soft label 概率。
+                assert hand_distances is not None
+                gt_cross_prob = _distance_to_contact_probability(
+                    hand_distances,
+                    d_pos=float(self.args.d_pos),
+                    d_neg=float(self.args.d_neg),
+                    gamma=float(self.args.gamma),
+                )
+                hand_colors = _probability_hand_colors(gt_cross_prob)
+            else:
+                # Eval: 对“选中物体点 × 全部 hand 点”直接跑 dense edge head。
+                dense_cross_prob = _dense_cross_probabilities(
+                    self.runner.model,
+                    prediction,
+                    runtime,
+                    selected_slot,
+                )
+                hand_colors = _probability_hand_colors(dense_cross_prob)
+            self._set_point_cloud(
+                "hand_points",
+                hand_points,
+                np.asarray([0.0, 0.0, 0.0]),
+                hand_colors,
+            )
+        else:
+            hand_color = (
+                np.asarray([0.95, 0.58, 0.12])
+                if self.show_gt
+                else np.asarray([0.85, 0.16, 0.85])
+            )
+            self._set_point_cloud("hand_points", hand_points, hand_color)
 
         if selected_slot is None:
             self._remove("selected_object")
-            self._remove("selected_edges")
             selected_pred = 0.0
             selected_pool_idx = -1
             selected_point_id = -1
             selected_min_dist = 0.0
         else:
-            selected_point = runtime.obj_points[selected_slot : selected_slot + 1]
-            self._set_point_cloud(
+            self._set_sphere_marker(
                 "selected_object",
-                selected_point,
+                runtime.obj_points[selected_slot],
                 np.asarray([1.0, 0.95, 0.15]),
+                radius=float(self.args.marker_radius),
             )
             selected_pred = float(prediction.pred_obj_contact[selected_slot])
             selected_pool_idx = int(runtime.selected_obj_idx[selected_slot])
             selected_point_id = int(runtime.selected_obj_point_id[selected_slot])
             selected_min_dist = float(runtime.selected_obj_min_dist[selected_slot])
 
-            if self.show_cross:
-                if self.show_gt:
-                    edge_idx = runtime.clean_knn_idx[selected_slot]
-                    edge_mask = edge_idx >= 0
-                    edge_dist = np.zeros_like(edge_idx, dtype=np.float32)
-                    valid_edge_idx = np.flatnonzero(edge_mask)
-                    if valid_edge_idx.size > 0:
-                        hand_neighbors = runtime.clean_hand_points[edge_idx[valid_edge_idx]]
-                        edge_dist[valid_edge_idx] = np.linalg.norm(
-                            hand_neighbors - runtime.obj_points[selected_slot][None],
-                            axis=-1,
-                        )
-                    edge_colors = np.tile(
-                        np.asarray([0.45, 0.45, 0.48], dtype=np.float32)[None],
-                        (edge_idx.shape[0], 1),
-                    )
-                    edge_colors[edge_dist <= float(self.args.d_pos)] = np.asarray(
-                        [0.98, 0.18, 0.12],
-                        dtype=np.float32,
-                    )
-                    line_points, line_index, line_colors = _build_selected_edges(
-                        runtime.obj_points[selected_slot],
-                        runtime.clean_hand_points,
-                        edge_idx,
-                        edge_mask,
-                        edge_colors,
-                    )
-                else:
-                    edge_idx = runtime.input_knn_idx[selected_slot]
-                    edge_mask = runtime.input_knn_valid[selected_slot]
-                    edge_colors = _edge_probability_colors(
-                        prediction.pred_cross_contact[selected_slot],
-                        self.threshold,
-                    )
-                    line_points, line_index, line_colors = _build_selected_edges(
-                        runtime.obj_points[selected_slot],
-                        runtime.noisy_hand_points,
-                        edge_idx,
-                        edge_mask,
-                        edge_colors,
-                    )
-                self._set_lines("selected_edges", line_points, line_index, line_colors)
-            else:
-                self._remove("selected_edges")
-
         mode_name = "GT" if self.show_gt else "Eval"
         view_name = "cross" if self.show_cross else "heatmap"
+        if hand_distances is not None:
+            cross_min = float(hand_distances.min())
+        else:
+            cross_min = 0.0
+        if dense_cross_prob is not None:
+            cross_prob_max = float(dense_cross_prob.max())
+        else:
+            cross_prob_max = 0.0
         print(
             f"\r[eval] frame={self.frame}/{len(self.data['raw_frame_id']) - 1} "
             f"raw={runtime.raw_frame_id} epoch={self.epoch} mode={mode_name} "
-            f"view={view_name} thr={self.threshold:.2f} valid={int(runtime.obj_valid.sum())} "
+            f"view={view_name} valid={int(runtime.obj_valid.sum())} "
             f"obj={self.selected_rank + 1 if selected_slot is not None else 0}/"
             f"{int(runtime.obj_valid.sum())} pool_idx={selected_pool_idx} "
             f"point_id={selected_point_id} dist={selected_min_dist:.4f} "
-            f"pred={selected_pred:.3f} hand_noise={runtime.hand_perturbed} "
-            f"seed={runtime.sample_seed}   ",
+            f"hand_min={cross_min:.4f} cross_max={cross_prob_max:.3f} "
+            f"pred={selected_pred:.3f} "
+            f"hand_noise={runtime.hand_perturbed} seed={runtime.sample_seed}   ",
             end="",
             flush=True,
         )
@@ -820,9 +901,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step", type=int, default=1)
     parser.add_argument("--epoch", type=int, default=0)
     parser.add_argument("--base-seed", type=int, default=None)
-    parser.add_argument("--threshold", type=float, default=0.50)
     parser.add_argument("--num-obj-points", type=int, default=None)
     parser.add_argument("--k-cross", type=int, default=None)
+    parser.add_argument("--marker-radius", type=float, default=0.003)
 
     _add_bool_flag(parser, "augment", default=False)
     _add_bool_flag(parser, "hand-perturb", default=False)
@@ -915,7 +996,7 @@ def main() -> None:
     if args.check_only:
         return
     print(
-        "Keys: Left/A, Right/D frames; Up/W, Down/S threshold; [/] epoch; "
+        "Keys: Left/A Right/D frames; [/] epoch; "
         "G GT/Eval; C heatmap/cross; ,/. object; R reset"
     )
     viewer = EvalViewer(data, runner, args)
