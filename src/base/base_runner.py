@@ -101,6 +101,7 @@ class BaseRunner:
         start_time = time.time()
         last_metrics: dict[str, float] = {}
         final_epoch = self.start_epoch
+        last_eval_epoch: int | None = None
         for epoch in range(self.start_epoch, self.cfg.train.epochs):
             final_epoch = epoch + 1
             train_metrics = self.train_epoch(epoch)
@@ -115,6 +116,7 @@ class BaseRunner:
                 last_metrics.update(val_metrics)
                 self._record_metrics(last_metrics, epoch + 1)
                 self._save_if_best(val_metrics, epoch + 1)
+                last_eval_epoch = epoch + 1
                 if self._check_early_stopping(val_metrics, epoch + 1):
                     break
 
@@ -124,9 +126,10 @@ class BaseRunner:
             if self.global_step >= self.total_steps:
                 break
 
-        if self.val_loader is not None:
+        if self.val_loader is not None and last_eval_epoch != final_epoch:
             val_metrics = self.evaluate(prefix="val/")
             last_metrics.update(val_metrics)
+            self._record_metrics(val_metrics, final_epoch)
             self._save_if_best(val_metrics, final_epoch)
         self.save(epoch=final_epoch, is_best=False)
         elapsed = format_seconds(time.time() - start_time)

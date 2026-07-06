@@ -1,4 +1,4 @@
-# preprocess 工具说明
+# 网格修复工具
 
 本目录存放 Ref2Dex 数据预处理阶段使用的网格流形性检查、筛选和修复脚本。当前脚本主要面向 OBJ 资产，部分检查脚本也支持 STL/PLY。
 
@@ -59,13 +59,13 @@ python -c "import numpy, open3d, torch; from pytorch3d.io import load_obj, load_
 Linux 上通常可以直接使用：
 
 ```bash
-blender --background --python process/repair/repair_non_manifold_with_blender.py
+blender --background --python tools/mesh_repair/repair_non_manifold_with_blender.py
 ```
 
 macOS 上如果命令行找不到 `blender`，可以使用完整路径：
 
 ```bash
-/Applications/Blender.app/Contents/MacOS/Blender --background --python process/repair/repair_non_manifold_with_blender.py
+/Applications/Blender.app/Contents/MacOS/Blender --background --python tools/mesh_repair/repair_non_manifold_with_blender.py
 ```
 
 如果本机还没有 Blender，Linux 可用系统包管理器安装，macOS 可安装官网版本或使用 Homebrew Cask：
@@ -100,7 +100,7 @@ Blender 修复脚本只使用 Blender 自带模块，不需要在普通 conda �
 常用命令：
 
 ```bash
-python process/repair/check_manifold.py \
+python tools/mesh_repair/check_manifold.py \
   --input-dir get_assets/0_merged_visual_objs \
   --output-dir reports/manifold_check \
   --workers 8
@@ -109,7 +109,7 @@ python process/repair/check_manifold.py \
 多个输入目录：
 
 ```bash
-python process/repair/check_manifold.py \
+python tools/mesh_repair/check_manifold.py \
   --input-dir get_assets/1_manifold_visual_objs get_assets/2_non_manifold_objs_repaired_advanced \
   --output-dir reports/manifold_check_after_repair \
   --workers 8
@@ -150,7 +150,7 @@ python process/repair/check_manifold.py \
 常用命令：
 
 ```bash
-python process/repair/filter_manifold_objs.py \
+python tools/mesh_repair/filter_manifold_objs.py \
   --input-root get_assets/0_merged_visual_objs \
   --manifold-output-root get_assets/1_manifold_visual_objs \
   --non-manifold-output-root get_assets/1_non_manifold_visual_objs \
@@ -199,7 +199,7 @@ PRESERVE_REGISTRY_LEVEL = True
 2. 用 Blender 后台模式运行：
 
 ```bash
-blender --background --python process/repair/repair_non_manifold_with_blender.py
+blender --background --python tools/mesh_repair/repair_non_manifold_with_blender.py
 ```
 
 适用场景：
@@ -246,7 +246,7 @@ RETRY_WITH_HALF_VOXEL_ON_FAIL = True
 3. 用 Blender 后台模式运行：
 
 ```bash
-blender --background --python process/repair/repair_non_manifold_with_blender_advanced.py
+blender --background --python tools/mesh_repair/repair_non_manifold_with_blender_advanced.py
 ```
 
 关键参数说明：
@@ -270,13 +270,13 @@ blender --background --python process/repair/repair_non_manifold_with_blender_ad
 
 ```bash
 # 1. 检查原始合并 OBJ。
-python process/repair/check_manifold.py \
+python tools/mesh_repair/check_manifold.py \
   --input-dir get_assets/0_merged_visual_objs \
   --output-dir reports/manifold_check_raw \
   --workers 8 || true
 
 # 2. 分流流形/非流形 OBJ。
-python process/repair/filter_manifold_objs.py \
+python tools/mesh_repair/filter_manifold_objs.py \
   --input-root get_assets/0_merged_visual_objs \
   --manifold-output-root get_assets/1_manifold_visual_objs \
   --non-manifold-output-root get_assets/1_non_manifold_visual_objs \
@@ -284,10 +284,10 @@ python process/repair/filter_manifold_objs.py \
   --workers 10
 
 # 3. 修改 repair_non_manifold_with_blender_advanced.py 顶部路径后，用 Blender 修复。
-blender --background --python process/repair/repair_non_manifold_with_blender_advanced.py
+blender --background --python tools/mesh_repair/repair_non_manifold_with_blender_advanced.py
 
 # 4. 检查修复后的输出。
-python process/repair/check_manifold.py \
+python tools/mesh_repair/check_manifold.py \
   --input-dir get_assets/2_non_manifold_objs_repaired_advanced \
   --output-dir reports/manifold_check_repaired \
   --workers 8 || true

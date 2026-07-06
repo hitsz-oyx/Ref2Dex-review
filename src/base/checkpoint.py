@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,11 @@ class CheckpointManager:
             "config": config,
             "runner_state": runner_state or {},
         }
-        torch.save(payload, ckpt_path)
+        # Write atomically so aliases to an older checkpoint inode remain valid
+        # when the same epoch filename is saved again later in the epoch.
+        temp_path = ckpt_path.with_name(f".{ckpt_path.name}.tmp-{os.getpid()}")
+        torch.save(payload, temp_path)
+        os.replace(temp_path, ckpt_path)
         self._copy_checkpoint(ckpt_path, self.root / LATEST_FILE)
         if is_best:
             self._copy_checkpoint(ckpt_path, self.root / BEST_FILE)
@@ -83,7 +88,13 @@ class CheckpointManager:
                 shutil.rmtree(target)
             else:
                 target.unlink()
-        shutil.copy2(source, target)
+        # Checkpoints can exceed 1 GB. ``latest`` and ``best`` are aliases, not
+        # independent artifacts, so prefer a hard link on the same filesystem.
+        # Fall back to a real copy for filesystems that do not support links.
+        try:
+            os.link(source, target)
+        except OSError:
+            shutil.copy2(source, target)
 
     def _prune(self) -> None:
         if self.max_to_keep <= 0:

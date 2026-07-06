@@ -1,6 +1,7 @@
 # correspondence_ptv3
 
-`correspondence_ptv3` 使用与 `corresponse_v1` 相同的 Stage 3 数据格式和训练入口，但把编码主干替换成了 two-stem + unified serialized attention backbone。
+`correspondence_ptv3` 直接读取当前 Stage 3 点池格式，训练时按 epoch 采样
+512 个物体点并生成增强后的输入 KNN。
 
 实现上参考了 `/home/oyx/test_ws/PointTransformerV3` 的序列化思路，但为了适配当前环境，去掉了 `spconv / torch_scatter / flash_attn` 依赖，保留：
 
@@ -19,6 +20,6 @@
 
 ```bash
 python -m src.task.correspondence_ptv3.train \
-  --data processed_data/generated/train_corr_static/... \
+  --data processed_data/generated/stage3/... \
   --output-dir outputs/train/correspondence_ptv3
 ```

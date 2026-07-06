@@ -11,7 +11,7 @@ from src.utils.correspondence import soft_contact_label
 
 
 class CorrespondencePTV3Runner(BaseRunner):
-    """Runner for the PTv3-style static hand-object correspondence model."""
+    """Training runner for the runtime-sampled Stage 3 representation."""
 
     def __init__(
         self,
@@ -21,32 +21,71 @@ class CorrespondencePTV3Runner(BaseRunner):
         device: str | None = None,
         build_data: bool = True,
     ) -> None:
-        super().__init__(cfg=cfg, mode=mode, checkpoint=checkpoint, device=device, build_data=build_data)
+        super().__init__(
+            cfg=cfg,
+            mode=mode,
+            checkpoint=checkpoint,
+            device=device,
+            build_data=build_data,
+        )
 
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(data_cfg, meta_cfg=self.cfg.meta, seed=seed)
 
-    def configure_data(self, metadata: dict[str, Any], train_dataset: Any | None = None) -> None:
+    def configure_data(
+        self,
+        metadata: dict[str, Any],
+        train_dataset: Any | None = None,
+    ) -> None:
         super().configure_data(metadata, train_dataset)
-        meta = self.cfg.meta
-        for field in ("num_obj_points", "num_hand_points", "k_cross"):
-            if field in metadata:
-                setattr(meta, field, int(metadata[field]))
-        for field in ("num_fingers", "num_regions"):
+        for field in (
+            "num_obj_pool",
+            "num_obj_points",
+            "num_hand_points",
+            "k_cross",
+            "num_fingers",
+            "num_regions",
+        ):
             if field in metadata and int(metadata[field]) > 0:
-                setattr(meta, field, int(metadata[field]))
+                setattr(self.cfg.meta, field, int(metadata[field]))
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
-        return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
+        return self.build_model_from_config(
+            model_cfg,
+            condition_shape=None,
+            target_shape=None,
+        )
 
-    def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
+    def train_epoch(self, epoch: int) -> dict[str, float]:
+        """Make runtime object sampling a deterministic function of the epoch."""
+        dataset = getattr(getattr(self, "train_loader", None), "dataset", None)
+        if dataset is not None and hasattr(dataset, "set_epoch"):
+            dataset.set_epoch(epoch)
+        sampler = getattr(getattr(self, "train_loader", None), "sampler", None)
+        if sampler is not None and hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
+        return super().train_epoch(epoch)
+
+    def step(
+        self,
+        model: torch.nn.Module,
+        batch: dict[str, torch.Tensor],
+        mode: str = "train",
+    ) -> RunnerOutput:
+        del mode
         preds = model(batch)
         losses, aux_metrics = self._compute_losses(preds, batch)
         total_loss = sum(losses.values())
-        metrics = {key: float(val.detach().cpu()) for key, val in losses.items()}
-        metrics.update({key: float(val.detach().cpu()) for key, val in aux_metrics.items()})
+        metrics = {
+            key: float(value.detach().cpu())
+            for key, value in {**losses, **aux_metrics}.items()
+        }
         metrics["loss"] = float(total_loss.detach().cpu())
-        return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(batch["points"].shape[0]))
+        return RunnerOutput(
+            loss=total_loss,
+            metrics=metrics,
+            batch_size=int(batch["points"].shape[0]),
+        )
 
     def _compute_losses(
         self,
@@ -54,123 +93,202 @@ class CorrespondencePTV3Runner(BaseRunner):
         batch: dict[str, torch.Tensor],
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         meta = self.cfg.meta
-        obj_label_valid_mask = batch["obj_label_valid_mask"].float()
-        corr_valid_mask = self._build_corr_valid_mask(batch).float()
-
-        pred_contact = preds["pred_obj_contact"]
+        obj_valid = batch["runtime_obj_valid_mask"].float()
+        input_edge_valid = batch["input_obj_to_hand_knn_valid_mask"].float()
         target_contact = batch["obj_contact_label"].float()
-        contact_loss = F.binary_cross_entropy_with_logits(
-            pred_contact,
+
+        contact_loss = self._masked_bce(
+            preds["pred_obj_contact"],
             target_contact,
-            weight=obj_label_valid_mask,
-            reduction="sum",
-        ) / obj_label_valid_mask.sum().clamp(min=1)
+            obj_valid,
+        )
 
-        cross_valid_mask = batch["obj_to_hand_knn_valid_mask"].float()
-        edge_contact_labels = self._compute_dynamic_edge_labels(batch)
-        cross_loss = F.binary_cross_entropy_with_logits(
+        edge_contact_target = self._compute_dynamic_edge_labels(batch)
+        edge_contact_loss = self._masked_bce(
             preds["pred_cross_contact"],
-            edge_contact_labels,
-            weight=cross_valid_mask,
-            reduction="sum",
-        ) / cross_valid_mask.sum().clamp(min=1)
+            edge_contact_target,
+            input_edge_valid,
+        )
 
-        pred_cross_cano = preds["pred_cross_cano"]
-        target_cross_cano = batch["obj_to_hand_cano_points"].float().unsqueeze(2).expand_as(pred_cross_cano)
-        edge_cano_valid_mask = cross_valid_mask * (
-            edge_contact_labels > float(getattr(meta, "corr_contact_label_min", 0.1))
-        ).float()
-        cross_cano_diff = F.smooth_l1_loss(pred_cross_cano, target_cross_cano, reduction="none").sum(dim=-1)
-        cano_loss = (cross_cano_diff * edge_cano_valid_mask).sum() / edge_cano_valid_mask.sum().clamp(min=1)
+        target_obj_cano, corr_valid, target_finger, target_region = (
+            self._build_clean_correspondence_targets(batch)
+        )
+        cano_diff = F.smooth_l1_loss(
+            preds["pred_obj_cano"],
+            target_obj_cano,
+            reduction="none",
+        ).sum(dim=-1)
+        cano_loss = (
+            (cano_diff * corr_valid).sum()
+            / corr_valid.sum().clamp(min=1.0)
+        )
 
-        obj_contact_oracle = self._soft_bce_entropy_floor(target_contact, obj_label_valid_mask)
-        cross_edge_oracle = self._soft_bce_entropy_floor(edge_contact_labels, cross_valid_mask)
-
-        zero = pred_contact.new_tensor(0.0)
+        zero = contact_loss.new_tensor(0.0)
         finger_loss = zero
-        region_loss = zero
-
-        if "pred_obj_to_hand_finger" in preds:
-            pred_finger = preds["pred_obj_to_hand_finger"]
-            target_finger = batch["obj_to_hand_finger_id"].long()
-            finger_valid = corr_valid_mask * (target_finger >= 0).float()
-            if finger_valid.sum() > 0:
-                finger_loss_map = F.cross_entropy(
-                    pred_finger.reshape(-1, pred_finger.shape[-1]),
+        if "pred_obj_finger" in preds:
+            finger_valid = corr_valid * (target_finger >= 0).float()
+            if bool(finger_valid.any()):
+                finger_map = F.cross_entropy(
+                    preds["pred_obj_finger"].reshape(
+                        -1,
+                        preds["pred_obj_finger"].shape[-1],
+                    ),
                     target_finger.reshape(-1).clamp(min=0),
                     reduction="none",
-                ).reshape(target_finger.shape)
-                finger_loss = (finger_loss_map * finger_valid).sum() / finger_valid.sum().clamp(min=1)
+                ).reshape_as(target_finger)
+                finger_loss = (
+                    (finger_map * finger_valid).sum()
+                    / finger_valid.sum().clamp(min=1.0)
+                )
 
-        if "pred_obj_to_hand_region" in preds:
-            pred_region = preds["pred_obj_to_hand_region"]
-            target_region = batch["obj_to_hand_region_id"].long()
-            region_valid = corr_valid_mask * (target_region >= 0).float()
-            if region_valid.sum() > 0:
-                region_loss_map = F.cross_entropy(
-                    pred_region.reshape(-1, pred_region.shape[-1]),
+        region_loss = zero
+        if "pred_obj_region" in preds:
+            region_valid = corr_valid * (target_region >= 0).float()
+            if bool(region_valid.any()):
+                region_map = F.cross_entropy(
+                    preds["pred_obj_region"].reshape(
+                        -1,
+                        preds["pred_obj_region"].shape[-1],
+                    ),
                     target_region.reshape(-1).clamp(min=0),
                     reduction="none",
-                ).reshape(target_region.shape)
-                region_loss = (region_loss_map * region_valid).sum() / region_valid.sum().clamp(min=1)
+                ).reshape_as(target_region)
+                region_loss = (
+                    (region_map * region_valid).sum()
+                    / region_valid.sum().clamp(min=1.0)
+                )
 
         losses = {
             "obj_contact": float(meta.loss_contact_weight) * contact_loss,
-            "cross_cano": float(meta.loss_cano_weight) * cano_loss,
+            "obj_cano": float(meta.loss_cano_weight) * cano_loss,
             "obj_finger": float(meta.loss_finger_weight) * finger_loss,
             "obj_region": float(meta.loss_region_weight) * region_loss,
-            "cross_edge_contact": float(meta.loss_cross_edge_weight) * cross_loss,
+            "cross_edge_contact": (
+                float(meta.loss_cross_edge_weight) * edge_contact_loss
+            ),
         }
         aux_metrics = {
-            "obj_contact_oracle_bce": obj_contact_oracle,
-            "obj_contact_excess_bce": contact_loss - obj_contact_oracle,
-            "cross_edge_oracle_bce": cross_edge_oracle,
-            "cross_edge_excess_bce": cross_loss - cross_edge_oracle,
+            "obj_contact_oracle_bce": self._soft_bce_entropy_floor(
+                target_contact,
+                obj_valid,
+            ),
+            "cross_edge_oracle_bce": self._soft_bce_entropy_floor(
+                edge_contact_target,
+                input_edge_valid,
+            ),
+            "num_valid_obj": obj_valid.sum(),
+            "num_valid_cano": corr_valid.sum(),
         }
+        aux_metrics["obj_contact_excess_bce"] = (
+            contact_loss - aux_metrics["obj_contact_oracle_bce"]
+        )
+        aux_metrics["cross_edge_excess_bce"] = (
+            edge_contact_loss - aux_metrics["cross_edge_oracle_bce"]
+        )
         return losses, aux_metrics
 
-    def _build_corr_valid_mask(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        meta = self.cfg.meta
-        corr_valid_mask = batch["obj_label_valid_mask"].bool()
-        if "obj_to_hand_nn_id" in batch:
-            corr_valid_mask = corr_valid_mask & (batch["obj_to_hand_nn_id"] >= 0)
-        corr_valid_mask = corr_valid_mask & (
-            batch["obj_contact_label"] > float(getattr(meta, "corr_contact_label_min", 0.1))
-        )
-        return corr_valid_mask
+    @staticmethod
+    def _masked_bce(
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        return F.binary_cross_entropy_with_logits(
+            pred,
+            target,
+            weight=mask,
+            reduction="sum",
+        ) / mask.sum().clamp(min=1.0)
 
-    def _compute_dynamic_edge_labels(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    def _build_clean_correspondence_targets(
+        self,
+        batch: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Use clean KNN rank 0 as the one target for each sampled object point."""
+        clean_knn = batch["gt_obj_to_hand_knn_idx"].long()
+        nearest_idx = clean_knn[..., 0]
+        safe_idx = nearest_idx.clamp(min=0)
+
+        hand_cano = batch["hand_cano_points"].float()
+        hand_finger = batch["hand_finger_id"].long()
+        hand_region = batch["hand_region_id"].long()
+        if hand_cano.dim() == 2:
+            hand_cano = hand_cano.unsqueeze(0)
+            hand_finger = hand_finger.unsqueeze(0)
+            hand_region = hand_region.unsqueeze(0)
+
+        target_cano = self._batch_gather(hand_cano, safe_idx)
+        target_finger = self._batch_gather(hand_finger, safe_idx)
+        target_region = self._batch_gather(hand_region, safe_idx)
+        corr_valid = (
+            batch["runtime_obj_valid_mask"].bool()
+            & (nearest_idx >= 0)
+            & (
+                batch["obj_contact_label"]
+                > float(getattr(self.cfg.meta, "corr_contact_label_min", 0.1))
+            )
+        ).float()
+        return target_cano, corr_valid, target_finger, target_region
+
+    @staticmethod
+    def _batch_gather(
+        values: torch.Tensor,
+        indices: torch.Tensor,
+    ) -> torch.Tensor:
+        batch_idx = torch.arange(
+            values.shape[0],
+            device=values.device,
+        ).view(-1, 1)
+        return values[batch_idx, indices]
+
+    def _compute_dynamic_edge_labels(
+        self,
+        batch: dict[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Build edge labels from noisy input KNN and clean GT geometry."""
         meta = self.cfg.meta
         points = batch.get("gt_points", batch["points"])
-        num_obj_points = int(meta.num_obj_points)
-        num_hand_points = int(meta.num_hand_points)
+        num_obj = int(meta.num_obj_points)
+        num_hand = int(meta.num_hand_points)
+        obj_points = points[:, :num_obj]
+        hand_points = points[:, num_obj : num_obj + num_hand]
+        knn_idx = batch["input_obj_to_hand_knn_idx"].long()
+        edge_valid = batch["input_obj_to_hand_knn_valid_mask"].bool()
+        safe_idx = knn_idx.clamp(min=0)
 
-        obj_points = points[:, :num_obj_points]
-        hand_points = points[:, num_obj_points : num_obj_points + num_hand_points]
-        obj_to_hand_knn_idx = batch["obj_to_hand_knn_idx"].long()
+        batch_idx = torch.arange(
+            points.shape[0],
+            device=points.device,
+        ).view(-1, 1, 1)
+        neighbor_hand = hand_points[batch_idx, safe_idx]
+        distance = torch.norm(
+            neighbor_hand - obj_points.unsqueeze(2),
+            dim=-1,
+        )
+        labels = soft_contact_label(
+            distance,
+            d_pos=float(meta.d_pos),
+            d_neg=float(meta.d_neg),
+            gamma=float(meta.gamma),
+        )
+        return labels * edge_valid.float()
 
-        batch_size, _, k_cross = obj_to_hand_knn_idx.shape
-        labels = torch.zeros(batch_size, num_obj_points, k_cross, device=points.device, dtype=points.dtype)
-
-        for batch_idx in range(batch_size):
-            safe_idx = obj_to_hand_knn_idx[batch_idx].clamp(min=0)
-            neighbor_hand = hand_points[batch_idx, safe_idx]
-            delta = neighbor_hand - obj_points[batch_idx].unsqueeze(1)
-            dist = torch.norm(delta, dim=-1)
-            labels[batch_idx] = soft_contact_label(
-                dist,
-                d_pos=float(meta.d_pos),
-                d_neg=float(meta.d_neg),
-                gamma=float(meta.gamma),
-            )
-
-        return labels
-
-    def _soft_bce_entropy_floor(self, target: torch.Tensor, mask: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    @staticmethod
+    def _soft_bce_entropy_floor(
+        target: torch.Tensor,
+        mask: torch.Tensor,
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
         target = target.clamp(min=eps, max=1.0 - eps)
-        entropy = -(target * torch.log(target) + (1.0 - target) * torch.log(1.0 - target))
+        entropy = -(
+            target * torch.log(target)
+            + (1.0 - target) * torch.log(1.0 - target)
+        )
         return (entropy * mask).sum() / mask.sum().clamp(min=1.0)
 
-    def inference(self, model: torch.nn.Module, inputs: Any) -> dict[str, torch.Tensor]:
-        inputs = self.prepare_batch(inputs)
-        return model(inputs)
+    def inference(
+        self,
+        model: torch.nn.Module,
+        inputs: Any,
+    ) -> dict[str, torch.Tensor]:
+        return model(self.prepare_batch(inputs))
