@@ -29,9 +29,6 @@ class CorrStaticDataset(Dataset):
         "hand_points",
         "hand_normals",
         "hand_point_id",
-        "hand_cano_points",
-        "hand_finger_id",
-        "hand_region_id",
         "obj_to_hand_min_dist",
         "obj_candidate_mask_5cm",
         "gt_obj_to_hand_knn_idx",
@@ -45,6 +42,12 @@ class CorrStaticDataset(Dataset):
         num_obj_points: int = 512,
         num_hand_points: int = 1538,
         k_cross: int = 32,
+        k_ctx: int = 32,
+        k_logit: int = 64,
+        k_logit_hard_neg: int = 16,
+        ctx_radius: float = 0.04,
+        logit_neg_radius: float = 0.06,
+        logit_far_weight: float = 0.5,
         base_seed: int = 42,
         augment: bool = True,
         apply_hand_perturb: bool = True,
@@ -68,7 +71,25 @@ class CorrStaticDataset(Dataset):
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
-        self.k_cross = int(k_cross)
+        self.k_gt = int(k_cross)
+        self.k_ctx = int(k_ctx)
+        self.k_logit = int(k_logit)
+        self.k_logit_hard_neg = int(k_logit_hard_neg)
+        self.ctx_radius = float(ctx_radius)
+        self.logit_neg_radius = float(logit_neg_radius)
+        self.logit_far_weight = float(logit_far_weight)
+        if self.k_ctx <= 0:
+            raise ValueError("k_ctx must be positive.")
+        if self.k_logit < self.k_ctx:
+            raise ValueError("k_logit must be >= k_ctx.")
+        if self.k_logit_hard_neg < 0:
+            raise ValueError("k_logit_hard_neg must be non-negative.")
+        if self.k_ctx + self.k_logit_hard_neg > self.k_logit:
+            raise ValueError("k_ctx + k_logit_hard_neg must be <= k_logit.")
+        if self.logit_neg_radius < self.ctx_radius:
+            raise ValueError("logit_neg_radius must be >= ctx_radius.")
+        if not 0.0 < self.logit_far_weight <= 1.0:
+            raise ValueError("logit_far_weight must be in (0, 1].")
         self.base_seed = int(base_seed)
         self.augment = bool(augment)
         self.apply_hand_perturb = bool(apply_hand_perturb)
@@ -211,11 +232,30 @@ class CorrStaticDataset(Dataset):
         )
         obj_min_dist *= float(geometry.distance_scale)
 
-        input_knn_idx, input_knn_valid = _compute_input_knn(
+        (
+            input_ctx_idx,
+            input_ctx_valid,
+            input_logit_idx,
+            input_logit_valid,
+            input_logit_weight,
+        ) = _compute_runtime_hand_neighbors(
             geometry.input_obj_points,
             geometry.input_hand_points,
             obj_valid,
-            k_cross=self.k_cross,
+            k_ctx=self.k_ctx,
+            k_logit=self.k_logit,
+            k_logit_hard_neg=self.k_logit_hard_neg,
+            ctx_radius=self.ctx_radius,
+            logit_neg_radius=self.logit_neg_radius,
+            far_weight=self.logit_far_weight,
+            seed=stable_frame_seed(
+                base_seed=self.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=epoch,
+                namespace="logit-neighbors",
+            ),
         )
         input_points = np.concatenate(
             [geometry.input_obj_points, geometry.input_hand_points],
@@ -256,14 +296,113 @@ class CorrStaticDataset(Dataset):
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "obj_contact_label": contact_label.float(),
             "gt_obj_to_hand_knn_idx": torch.from_numpy(clean_knn_idx).long(),
-            "input_obj_to_hand_knn_idx": torch.from_numpy(input_knn_idx).long(),
-            "input_obj_to_hand_knn_valid_mask": torch.from_numpy(input_knn_valid),
-            "hand_cano_points": torch.from_numpy(np.asarray(data["hand_cano_points"])).float(),
-            "hand_finger_id": torch.from_numpy(np.asarray(data["hand_finger_id"])).long(),
-            "hand_region_id": torch.from_numpy(np.asarray(data["hand_region_id"])).long(),
+            "input_obj_to_hand_ctx_idx": torch.from_numpy(input_ctx_idx).long(),
+            "input_obj_to_hand_ctx_valid_mask": torch.from_numpy(input_ctx_valid),
+            "input_obj_to_hand_logit_idx": torch.from_numpy(input_logit_idx).long(),
+            "input_obj_to_hand_logit_valid_mask": torch.from_numpy(input_logit_valid),
+            "input_obj_to_hand_logit_loss_weight": torch.from_numpy(input_logit_weight).float(),
+            "hand_cano_points": torch.from_numpy(
+                np.asarray(
+                    data.get(
+                        "hand_cano_points",
+                        np.zeros((self.num_hand_points, 3), dtype=np.float32),
+                    )
+                )
+            ).float(),
+            "hand_finger_id": torch.from_numpy(
+                np.asarray(
+                    data.get(
+                        "hand_finger_id",
+                        np.full((self.num_hand_points,), -1, dtype=np.int64),
+                    )
+                )
+            ).long(),
+            "hand_region_id": torch.from_numpy(
+                np.asarray(
+                    data.get(
+                        "hand_region_id",
+                        np.full((self.num_hand_points,), -1, dtype=np.int64),
+                    )
+                )
+            ).long(),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
+
+
+def _compute_runtime_hand_neighbors(
+    obj_points: np.ndarray,
+    hand_points: np.ndarray,
+    obj_valid: np.ndarray,
+    *,
+    k_ctx: int,
+    k_logit: int,
+    k_logit_hard_neg: int,
+    ctx_radius: float,
+    logit_neg_radius: float,
+    far_weight: float,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    num_obj = obj_points.shape[0]
+    ctx_idx = np.full((num_obj, k_ctx), -1, dtype=np.int64)
+    ctx_valid = np.zeros((num_obj, k_ctx), dtype=bool)
+    logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
+    logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
+    logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
+    valid_obj_idx = np.flatnonzero(obj_valid)
+    if valid_obj_idx.size == 0:
+        return ctx_idx, ctx_valid, logit_idx, logit_valid, logit_weight
+    obj = torch.from_numpy(np.asarray(obj_points[valid_obj_idx], dtype=np.float32))
+    hand = torch.from_numpy(np.asarray(hand_points, dtype=np.float32))
+    distance = torch.cdist(obj, hand).numpy()
+    rng = np.random.default_rng(seed)
+    extra_slots = int(k_logit - k_ctx)
+    hard_neg_slots = min(max(int(k_logit_hard_neg), 0), extra_slots)
+    far_neg_slots = max(0, extra_slots - hard_neg_slots)
+    for row, obj_idx in enumerate(valid_obj_idx.tolist()):
+        dist_row = distance[row]
+
+        ctx_candidates = np.flatnonzero(dist_row <= float(ctx_radius))
+        if ctx_candidates.size > 0:
+            order = np.argsort(dist_row[ctx_candidates], kind="stable")
+            chosen_ctx = ctx_candidates[order[:k_ctx]]
+            ctx_count = int(chosen_ctx.size)
+            ctx_idx[obj_idx, :ctx_count] = chosen_ctx
+            ctx_valid[obj_idx, :ctx_count] = True
+            logit_idx[obj_idx, :ctx_count] = chosen_ctx
+            logit_valid[obj_idx, :ctx_count] = True
+            logit_weight[obj_idx, :ctx_count] = 1.0
+
+        if extra_slots <= 0:
+            continue
+        hard_neg_candidates = np.flatnonzero(
+            (dist_row > float(ctx_radius))
+            & (dist_row <= float(logit_neg_radius))
+        )
+        start = int(k_ctx)
+        if hard_neg_slots > 0 and hard_neg_candidates.size > 0:
+            hard_neg_order = np.argsort(dist_row[hard_neg_candidates], kind="stable")
+            chosen_hard_neg = hard_neg_candidates[hard_neg_order[:hard_neg_slots]]
+            hard_neg_count = int(chosen_hard_neg.size)
+            logit_idx[obj_idx, start : start + hard_neg_count] = chosen_hard_neg
+            logit_valid[obj_idx, start : start + hard_neg_count] = True
+            logit_weight[obj_idx, start : start + hard_neg_count] = 1.0
+            start += hard_neg_count
+        if far_neg_slots <= 0:
+            continue
+        far_neg_candidates = np.flatnonzero(dist_row > float(logit_neg_radius))
+        if far_neg_candidates.size == 0:
+            continue
+        far_neg_count = min(int(far_neg_slots), int(far_neg_candidates.size))
+        chosen_far_neg = rng.choice(
+            far_neg_candidates,
+            size=far_neg_count,
+            replace=False,
+        )
+        logit_idx[obj_idx, start : start + far_neg_count] = chosen_far_neg
+        logit_valid[obj_idx, start : start + far_neg_count] = True
+        logit_weight[obj_idx, start : start + far_neg_count] = float(far_weight)
+    return ctx_idx, ctx_valid, logit_idx, logit_valid, logit_weight
 
 
 def _compute_input_knn(
@@ -273,6 +412,12 @@ def _compute_input_knn(
     *,
     k_cross: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Backward-compatible helper for visualization scripts.
+
+    This preserves the old name/signature and returns only the context
+    neighborhood with a very large radius, i.e. classic top-k over all hand
+    points for each valid object point.
+    """
     num_obj = obj_points.shape[0]
     result = np.full((num_obj, k_cross), -1, dtype=np.int64)
     valid = np.zeros((num_obj, k_cross), dtype=bool)
@@ -281,7 +426,7 @@ def _compute_input_knn(
         return result, valid
     obj = torch.from_numpy(np.asarray(obj_points[valid_obj_idx], dtype=np.float32))
     hand = torch.from_numpy(np.asarray(hand_points, dtype=np.float32))
-    topk = min(k_cross, hand.shape[0])
+    topk = min(int(k_cross), int(hand.shape[0]))
     idx = torch.topk(torch.cdist(obj, hand), k=topk, dim=-1, largest=False).indices.numpy()
     result[valid_obj_idx, :topk] = idx
     valid[valid_obj_idx, :topk] = True
@@ -366,6 +511,12 @@ def make_dataloaders(
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
         "k_cross": int(meta_cfg.k_cross),
+        "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
+        "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
+        "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
+        "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
+        "logit_neg_radius": float(getattr(meta_cfg, "logit_neg_radius", 0.06)),
+        "logit_far_weight": float(getattr(meta_cfg, "loss_cross_edge_far_weight", 0.5)),
         "base_seed": int(seed),
         "augment": True,
         "apply_hand_perturb": True,
@@ -409,14 +560,23 @@ def make_dataloaders(
         )
     first_path = train_loader.dataset.file_paths[0]
     with np.load(first_path, allow_pickle=False) as data:
+        hand_finger_id = np.asarray(
+            data.get("hand_finger_id", np.full((int(data["hand_points"].shape[1]),), -1, dtype=np.int64))
+        )
+        hand_region_id = np.asarray(
+            data.get("hand_region_id", np.full((int(data["hand_points"].shape[1]),), -1, dtype=np.int64))
+        )
         metadata.update(
             {
                 "num_obj_pool": int(data["obj_points"].shape[1]),
                 "num_obj_points": int(meta_cfg.num_obj_points),
                 "num_hand_points": int(data["hand_points"].shape[1]),
                 "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
-                "num_fingers": int(np.max(data["hand_finger_id"])) + 1,
-                "num_regions": int(np.max(data["hand_region_id"])) + 1,
+                "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
+                "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
+                "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
+                "num_fingers": int(np.max(hand_finger_id)) + 1 if hand_finger_id.size > 0 else 0,
+                "num_regions": int(np.max(hand_region_id)) + 1 if hand_region_id.size > 0 else 0,
             }
         )
     if val_loader is not None:

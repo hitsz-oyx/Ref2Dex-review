@@ -35,7 +35,11 @@ import torch
 import torch.nn as nn
 
 # 与"对应关系"相关的几何特征计算 / 邻居特征聚合工具。
-from src.utils.correspondence import compute_obj_to_hand_edge_features, gather_knn_features
+from src.utils.correspondence import (
+    compute_obj_to_hand_edge_features,
+    decode_contact_bin_logits,
+    gather_knn_features,
+)
 
 
 def _build_stem(input_dim: int, hidden_dim: int) -> nn.Sequential:
@@ -251,15 +255,14 @@ class PTv3DenseBackbone(nn.Module):
 
 
 class StaticHOCPTv3(nn.Module):
-    """基于 PointTransformerV3 的"静态手-物对应关系"模型。
+    """基于 PointTransformerV3 的静态 hand-object token 模型。
 
-    主要分支：
-      - obj stem    : 把 [xyz, normal] (6D) 投影到 hidden_dim；
-      - hand stem   : 把 [xyz, normal, hand_cano] (9D) 投影到 hidden_dim；
-      - backbone    : PTv3 序列化注意力（不分物体/手部，统一处理）；
-      - cross-attn  : 在 backbone 输出之上，对每个物体点从其 K 个手部邻居
-                       聚合信息（带几何 bias 和 hand_cano 注入）；
-      - 多个预测头：接触概率 / 物体级 canonical / cross-edge / finger / region。
+    当前默认路径：
+      1. 直接使用 runtime noisy geometry 构造共享点特征；
+      2. 不使用 hand/object 双 stem；
+      3. cross-attn 默认关闭，但保留 config 开关；
+      4. 物体点和 cross-edge 都输出 10-bin contact logits；
+      5. 同时导出解码后的连续概率，供指标和可视化使用。
     """
 
     def __init__(
@@ -276,78 +279,61 @@ class StaticHOCPTv3(nn.Module):
             condition_shape / target_shape: 框架约定接口（这里未使用，预留）。
         """
         super().__init__()
-        # 保存配置对象，方便后续按需访问。
         self.cfg = cfg
         meta = cfg.meta
 
-        # 记录几何规模与 stem 维度。
-        self.stem_dim = int(getattr(meta, "hidden_dim", 96))
         self.num_obj_points = int(meta.num_obj_points)
         self.num_hand_points = int(meta.num_hand_points)
         self.num_fingers = int(meta.num_fingers)
         self.num_regions = int(meta.num_regions)
-        # 是否启用 finger/region 分类头。
+        self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
+        self.num_contact_bins = int(getattr(meta, "num_contact_bins", 10))
+        self.contact_bin_decode_mode = str(
+            getattr(meta, "contact_bin_decode_mode", "expectation")
+        )
+        self.use_cross_attn = bool(getattr(meta, "use_cross_attn", False))
         self.use_finger_region_head = bool(getattr(meta, "use_finger_region_head", False))
+        self.use_cano_head = bool(getattr(meta, "use_cano_head", False))
 
-        # 物体 stem：输入 6D = xyz(3) + normal(3)。
-        self.obj_stem = _build_stem(6, self.stem_dim)
-        # 手部 stem：输入 9D = xyz(3) + normal(3) + hand_cano(3)。
-        self.hand_stem = _build_stem(9, self.stem_dim)
-        # 统一主干：输入 = stem 输出维度。
-        self.backbone = PTv3DenseBackbone(meta, in_channels=self.stem_dim)
-        # 主干输出维度（= PTv3 解码器第一阶段通道数）。
+        self.backbone = PTv3DenseBackbone(meta, in_channels=self.point_feat_dim)
         self.token_dim = int(self.backbone.output_dim)
 
-        # 各种"边特征" / "cano 注入"的子维度。
-        self.edge_geo_dim = self.token_dim // 2
-        self.cano_embed_dim = self.token_dim // 2
-        # 边几何特征 embedding：输入 6D (delta, dist, signed_dist, normal_dot) -> edge_geo_dim。
-        self.edge_geo_mlp = _build_mlp(6, self.token_dim // 2, self.edge_geo_dim)
-        # 手部 canonical 坐标 embedding：3D -> cano_embed_dim。
-        self.hand_cano_mlp = _build_mlp(3, self.token_dim // 2, self.cano_embed_dim)
+        if self.use_cross_attn:
+            self.edge_geo_dim = self.token_dim // 2
+            self.edge_geo_mlp = _build_mlp(6, self.token_dim // 2, self.edge_geo_dim)
+            self.cross_q = nn.Linear(self.token_dim, self.token_dim)
+            self.cross_k = nn.Linear(self.token_dim + self.edge_geo_dim, self.token_dim)
+            self.cross_v = nn.Linear(self.token_dim + self.edge_geo_dim, self.token_dim)
+            self.cross_bias = _build_mlp(6, self.token_dim // 2, 1)
+            self.cross_out = _build_mlp(self.token_dim, self.token_dim, self.token_dim)
 
-        # 交叉注意力的 Q/K/V 投影（Q 只来自物体 token；K/V 来自邻居手部 token + 边特征）。
-        self.cross_q = nn.Linear(self.token_dim, self.token_dim)
-        self.cross_k = nn.Linear(self.token_dim + self.edge_geo_dim, self.token_dim)
-        self.cross_v = nn.Linear(self.token_dim + self.edge_geo_dim + self.cano_embed_dim, self.token_dim)
-        # 几何偏置：把 6D 边特征映射到一个标量，加到 attention logits 上。
-        self.cross_bias = _build_mlp(6, self.token_dim // 2, 1)
-        # 交叉上下文输出投影（与残差相加前再过一次 MLP）。
-        self.cross_out = _build_mlp(self.token_dim, self.token_dim, self.token_dim)
-
-        # 接触概率预测头：token -> 1D logit。
         self.contact_head = nn.Sequential(
             nn.Linear(self.token_dim, self.token_dim // 2),
             nn.GELU(),
-            nn.Linear(self.token_dim // 2, 1),
+            nn.Linear(self.token_dim // 2, self.num_contact_bins),
         )
-        # 物体级 canonical 对应点：每个 dense object token 只预测一个 3D 点。
-        # KNN 邻居仅用于形成 cross-attention token，不在 canonical 头上复制 K 份输出。
-        self.cano_head = nn.Sequential(
-            nn.Linear(self.token_dim, self.token_dim // 2),
-            nn.GELU(),
-            nn.Linear(self.token_dim // 2, 3),
-        )
+        if self.use_cano_head:
+            self.cano_head = nn.Sequential(
+                nn.Linear(self.token_dim, self.token_dim // 2),
+                nn.GELU(),
+                nn.Linear(self.token_dim // 2, 3),
+            )
 
-        # 可选：finger / region 分类头。
         if self.use_finger_region_head:
             if self.num_fingers <= 0 or self.num_regions <= 0:
                 raise ValueError("Finger/region heads require positive num_fingers and num_regions.")
-            # 手指分类头：token -> num_fingers。
             self.finger_head = nn.Sequential(
                 nn.Linear(self.token_dim, self.token_dim // 2),
                 nn.GELU(),
                 nn.Linear(self.token_dim // 2, self.num_fingers),
             )
-            # 手掌区域分类头：token -> num_regions。
             self.region_head = nn.Sequential(
                 nn.Linear(self.token_dim, self.token_dim // 2),
                 nn.GELU(),
                 nn.Linear(self.token_dim // 2, self.num_regions),
             )
 
-        # 边级共享特征：把"边 (z_obj, z_hand, edge_geo)"映射到共享 embedding。
-        cross_edge_input_dim = self.token_dim * 2 + 6
+        cross_edge_input_dim = self.token_dim * 2
         self.edge_shared_dim = self.token_dim // 2
         self.edge_shared_backbone = nn.Sequential(
             nn.Linear(cross_edge_input_dim, self.token_dim),
@@ -355,124 +341,223 @@ class StaticHOCPTv3(nn.Module):
             nn.Linear(self.token_dim, self.edge_shared_dim),
             nn.GELU(),
         )
-        # 边接触预测头：edge_shared -> 1D logit。
-        self.cross_edge_head = nn.Linear(self.edge_shared_dim, 1)
+        self.cross_edge_head = nn.Linear(self.edge_shared_dim, self.num_contact_bins)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """前向推理。
-
-        步骤：
-          1. 解析 batch 字段（points / normals / hand_cano / masks / KNN）；
-          2. 通过两个 stem 得到初始 token；
-          3. 通过 PTv3 主干得到统一 token；
-          4. 计算 cross-attention，得到 z_obj_cross；
-          5. 从物体 dense token 预测一个 canonical 点，并预测 cross-contact；
-          6. （可选）预测 finger / region。
-
-        Returns:
-            字典，包含接触预测、物体级 canonical 预测、cross-contact 预测，以及
-            若干中间 token（用于可视化 / 调试）。
-        """
-        # ----- 1) 解析输入 -----
         points = batch["points"].float()
         normals = batch["normals"].float()
         batch_size, total_points, _ = points.shape
-        # 期望的最小总点数（模型设计上假定点云按"先物体后手部"拼接）。
         expected_total = self.num_obj_points + self.num_hand_points
         if total_points < expected_total:
             raise ValueError(f"Expected at least {expected_total} points, got {total_points}.")
 
-        # 切出物体和手部的坐标 / 法向量。
         obj_points = points[:, : self.num_obj_points]
         obj_normals = normals[:, : self.num_obj_points]
         hand_points = points[:, self.num_obj_points : expected_total]
         hand_normals = normals[:, self.num_obj_points : expected_total]
 
-        # Stage 3 直接提供纯手部 canonical 坐标 [1538, 3]，不再把 512 个
-        # 物体占位点拼在它前面。
-        hand_cano_points = batch["hand_cano_points"].float()
-        if hand_cano_points.dim() == 2:
-            hand_cano_points = hand_cano_points.unsqueeze(0).expand(batch_size, -1, -1)
-        if hand_cano_points.shape[1] != self.num_hand_points:
-            raise ValueError(
-                "hand_cano_points must contain only the hand points "
-                f"({self.num_hand_points}); got {hand_cano_points.shape[1]}."
-            )
-        hand_cano = hand_cano_points
-
-        # 点有效性掩码：缺省全部有效；支持 (B, N) / (N,) 两种形式。
         point_valid_mask = batch.get("point_valid_mask")
         if point_valid_mask is None:
             point_valid_mask = torch.ones(batch_size, expected_total, device=points.device, dtype=torch.bool)
         elif point_valid_mask.dim() == 1:
             point_valid_mask = point_valid_mask.unsqueeze(0).expand(batch_size, -1)
         point_valid_mask = point_valid_mask[:, :expected_total].bool()
+        obj_valid_mask = batch.get("runtime_obj_valid_mask")
+        if obj_valid_mask is None:
+            obj_valid_mask = point_valid_mask[:, : self.num_obj_points]
+        elif obj_valid_mask.dim() == 1:
+            obj_valid_mask = obj_valid_mask.unsqueeze(0).expand(batch_size, -1)
+        obj_valid_mask = obj_valid_mask.bool()
 
-        # ----- 2) Stem 投影 -----
-        # 物体原始特征：xyz + normal (6D)。
-        obj_raw = torch.cat([obj_points, obj_normals], dim=-1)
-        # 手部原始特征：xyz + normal + canonical (9D)。
-        hand_raw = torch.cat([hand_points, hand_normals, hand_cano], dim=-1)
-        obj_feat = self.obj_stem(obj_raw)
-        hand_feat = self.hand_stem(hand_raw)
+        obj_feat, hand_feat = self._build_point_features(
+            obj_points=obj_points,
+            obj_normals=obj_normals,
+            hand_points=hand_points,
+            hand_normals=hand_normals,
+            obj_valid_mask=obj_valid_mask,
+        )
 
-        # ----- 3) 统一主干 -----
-        # 把物体和手部点拼在一起送入 PTv3；这样可以共享 attention。
         coord = torch.cat([obj_points, hand_points], dim=1)
         feat = torch.cat([obj_feat, hand_feat], dim=1)
         tokens = self.backbone(feat, coord, point_valid_mask)
 
-        # 重新切出物体/手部 token。
         z_obj = tokens[:, : self.num_obj_points]
         z_hand = tokens[:, self.num_obj_points : expected_total]
-        # cross-KNN 索引和有效性掩码。
-        obj_to_hand_knn_idx = batch["input_obj_to_hand_knn_idx"].long()
-        obj_to_hand_knn_valid_mask = batch["input_obj_to_hand_knn_valid_mask"].bool()
-        # 计算 cross-attention 上下文 + 边几何特征。
-        z_obj_cross, obj_to_hand_attn, edge_geo, z_hand_neighbors = self._compute_obj_cross_context(
-            z_obj=z_obj,
-            z_hand=z_hand,
-            obj_points=obj_points,
-            hand_points=hand_points,
-            obj_normals=obj_normals,
-            hand_normals=hand_normals,
-            hand_cano=hand_cano,
-            obj_to_hand_knn_idx=obj_to_hand_knn_idx,
-            obj_to_hand_knn_valid_mask=obj_to_hand_knn_valid_mask,
+        ctx_idx = batch.get("input_obj_to_hand_ctx_idx")
+        ctx_valid = batch.get("input_obj_to_hand_ctx_valid_mask")
+        if ctx_idx is None or ctx_valid is None:
+            ctx_idx = batch["input_obj_to_hand_knn_idx"]
+            ctx_valid = batch["input_obj_to_hand_knn_valid_mask"]
+        ctx_idx = ctx_idx.long()
+        ctx_valid = ctx_valid.bool()
+
+        logit_idx = batch.get("input_obj_to_hand_logit_idx")
+        logit_valid = batch.get("input_obj_to_hand_logit_valid_mask")
+        if logit_idx is None or logit_valid is None:
+            logit_idx = ctx_idx
+            logit_valid = ctx_valid
+        logit_idx = logit_idx.long()
+        logit_valid = logit_valid.bool()
+
+        if self.use_cross_attn:
+            z_obj_cross, obj_to_hand_attn = self._compute_obj_cross_context(
+                z_obj=z_obj,
+                z_hand=z_hand,
+                obj_points=obj_points,
+                hand_points=hand_points,
+                obj_normals=obj_normals,
+                hand_normals=hand_normals,
+                obj_to_hand_knn_idx=ctx_idx,
+                obj_to_hand_knn_valid_mask=ctx_valid,
+            )
+        else:
+            z_obj_cross = z_obj
+            obj_to_hand_attn = z_obj.new_zeros(
+                batch_size,
+                self.num_obj_points,
+                ctx_idx.shape[-1],
+            )
+
+        z_hand_logit_neighbors = self._gather_batched_knn_features(
+            z_hand,
+            logit_idx,
+            logit_valid,
         )
 
-        # ----- 4) 物体级接触预测 -----
+        pred_obj_contact_bin = self.contact_head(z_obj_cross)
         outputs = {
-            "pred_obj_contact": self.contact_head(z_obj_cross).squeeze(-1),
-            "pred_obj_cano": self.cano_head(z_obj_cross),
-            "obj_dense_tokens": z_obj_cross,        # 用于可视化 / 下游任务
-            "hand_dense_tokens": z_hand,            # 用于可视化 / 下游任务
-            "ptv3_obj_tokens": z_obj,               # 未经 cross-attn 的原始物体 token
-            "obj_to_hand_attn": obj_to_hand_attn,   # cross-attn 注意力权重
+            "pred_obj_contact_bin": pred_obj_contact_bin,
+            "obj_dense_tokens": z_obj_cross,
+            "hand_dense_tokens": z_hand,
+            "ptv3_obj_tokens": z_obj,
+            "obj_to_hand_attn": obj_to_hand_attn,
         }
+        if self.use_cano_head:
+            outputs["pred_obj_cano"] = self.cano_head(z_obj_cross)
 
-        # ----- 5) 边级共享特征 + 接触预测 -----
-        # 把"边级特征"放到一个共享 embedding 中。
         edge_shared = self._compute_shared_edge_features(
             z_obj_cross=z_obj_cross,
-            z_hand_neighbors=z_hand_neighbors,
-            edge_geo=edge_geo,
+            z_hand_neighbors=z_hand_logit_neighbors,
         )
-        outputs.update(
-            {
-                # cross-edge 接触预测：每个 (obj, hand) 边是否接触。
-                "pred_cross_contact": self._compute_cross_edge_predictions(
-                    edge_shared=edge_shared,
-                ),
-            }
+        pred_cross_contact_bin = self._compute_cross_edge_predictions(
+            edge_shared=edge_shared,
         )
+        outputs["pred_cross_contact_bin"] = pred_cross_contact_bin
 
-        # ----- 6) 可选：finger / region 分类 -----
+        pred_obj_contact_prob = decode_contact_bin_logits(
+            pred_obj_contact_bin,
+            mode=self.contact_bin_decode_mode,
+        )
+        pred_cross_contact_prob = decode_contact_bin_logits(
+            pred_cross_contact_bin,
+            mode=self.contact_bin_decode_mode,
+        )
+        outputs["pred_obj_contact_prob"] = pred_obj_contact_prob
+        outputs["pred_cross_contact_prob"] = pred_cross_contact_prob
+        outputs["pred_obj_contact"] = self._safe_logit_from_prob(pred_obj_contact_prob)
+        outputs["pred_cross_contact"] = self._safe_logit_from_prob(pred_cross_contact_prob)
+
         if self.use_finger_region_head:
             outputs["pred_obj_finger"] = self.finger_head(z_obj_cross)
             outputs["pred_obj_region"] = self.region_head(z_obj_cross)
 
         return outputs
+
+    def _build_point_features(
+        self,
+        *,
+        obj_points: torch.Tensor,
+        obj_normals: torch.Tensor,
+        hand_points: torch.Tensor,
+        hand_normals: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        obj_extra = self._compute_opposite_cloud_features(
+            query_points=obj_points,
+            query_normals=obj_normals,
+            opposite_points=hand_points,
+            opposite_valid_mask=None,
+            query_valid_mask=obj_valid_mask,
+        )
+        hand_extra = self._compute_opposite_cloud_features(
+            query_points=hand_points,
+            query_normals=hand_normals,
+            opposite_points=obj_points,
+            opposite_valid_mask=obj_valid_mask,
+            query_valid_mask=None,
+        )
+
+        obj_type = obj_points.new_zeros(obj_points.shape[0], obj_points.shape[1], 2)
+        obj_type[..., 0] = 1.0
+        hand_type = hand_points.new_zeros(hand_points.shape[0], hand_points.shape[1], 2)
+        hand_type[..., 1] = 1.0
+
+        obj_feat = torch.cat([obj_points, obj_type, obj_normals, obj_extra], dim=-1)
+        hand_feat = torch.cat([hand_points, hand_type, hand_normals, hand_extra], dim=-1)
+        obj_feat = obj_feat * obj_valid_mask.unsqueeze(-1).float()
+        return obj_feat, hand_feat
+
+    @staticmethod
+    def _compute_opposite_cloud_features(
+        *,
+        query_points: torch.Tensor,
+        query_normals: torch.Tensor,
+        opposite_points: torch.Tensor,
+        opposite_valid_mask: torch.Tensor | None,
+        query_valid_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        batch_size, num_query, _ = query_points.shape
+        num_opp = opposite_points.shape[1]
+        distance = torch.cdist(query_points, opposite_points)
+
+        if opposite_valid_mask is None:
+            opposite_valid_mask = torch.ones(
+                batch_size,
+                num_opp,
+                device=query_points.device,
+                dtype=torch.bool,
+            )
+        else:
+            opposite_valid_mask = opposite_valid_mask.bool()
+
+        masked_distance = distance.masked_fill(
+            ~opposite_valid_mask.unsqueeze(1),
+            float("inf"),
+        )
+        any_opp_valid = opposite_valid_mask.any(dim=-1)
+        safe_masked_distance = torch.where(
+            any_opp_valid.view(batch_size, 1, 1),
+            masked_distance,
+            torch.zeros_like(masked_distance),
+        )
+        nn_idx = torch.argmin(safe_masked_distance, dim=-1)
+        batch_idx = torch.arange(batch_size, device=query_points.device).view(-1, 1)
+        nn_points = opposite_points[batch_idx, nn_idx]
+        delta_nn = nn_points - query_points
+        nn_dist = torch.norm(delta_nn, dim=-1, keepdim=True)
+        dir_nn = delta_nn / nn_dist.clamp(min=1e-8)
+
+        opp_valid_f = opposite_valid_mask.float()
+        opp_count = opp_valid_f.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        opposite_centroid = (
+            opposite_points * opp_valid_f.unsqueeze(-1)
+        ).sum(dim=1) / opp_count
+        delta_cent = opposite_centroid.unsqueeze(1) - query_points
+        cent_dist = torch.norm(delta_cent, dim=-1, keepdim=True)
+        dir_cent = delta_cent / cent_dist.clamp(min=1e-8)
+
+        proj_nn = torch.sum(dir_nn * query_normals, dim=-1, keepdim=True)
+        proj_cent = torch.sum(dir_cent * query_normals, dim=-1, keepdim=True)
+
+        features = torch.cat([nn_dist, proj_nn, proj_cent], dim=-1)
+        if query_valid_mask is not None:
+            features = features * query_valid_mask.unsqueeze(-1).float()
+        features = torch.where(
+            any_opp_valid.view(batch_size, 1, 1),
+            features,
+            torch.zeros_like(features),
+        )
+        return features
 
     def _compute_obj_cross_context(
         self,
@@ -482,35 +567,14 @@ class StaticHOCPTv3(nn.Module):
         hand_points: torch.Tensor,
         obj_normals: torch.Tensor,
         hand_normals: torch.Tensor,
-        hand_cano: torch.Tensor,
         obj_to_hand_knn_idx: torch.Tensor,
         obj_to_hand_knn_valid_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """计算"物体到手的 cross-attention 上下文"。
-
-        关键设计：
-          - Q 来自物体 token（z_obj）；
-          - K/V 来自手部 token 及其 K 个邻居的聚合（z_hand_neighbors）；
-          - 同时把 6D 边几何特征（delta / dist / signed_dist / normal_dot）
-            注入到 K/V 以及 attention bias；
-          - 把 hand_cano 的 embedding 注入到 V，让手部 canonical 信息参与聚合。
-
-        Returns:
-            z_obj_cross       : 聚合后的物体 token。
-            attn              : (B, N_obj, k_cross) cross-attention 权重。
-            edge_geo          : (B, N_obj, k_cross, 6) 边几何特征（已 stack）。
-            z_hand_neighbors  : (B, N_obj, k_cross, C) 邻居手部 token（已 gather）。
-        """
-        # 批大小。
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         batch_size = z_obj.shape[0]
-        # 准备按 batch 收集结果的临时列表。
         edge_geo_list: list[torch.Tensor] = []
         z_hand_neighbors_list: list[torch.Tensor] = []
-        hand_cano_neighbors_list: list[torch.Tensor] = []
 
-        # 逐 batch 计算（PTv3 已经做完 batch 内交互，这里按 batch 串行即可）。
         for batch_idx in range(batch_size):
-            # 计算 6D 边几何特征。
             edge_feats = compute_obj_to_hand_edge_features(
                 obj_points=obj_points[batch_idx],
                 hand_points=hand_points[batch_idx],
@@ -519,8 +583,6 @@ class StaticHOCPTv3(nn.Module):
                 obj_to_hand_knn_idx=obj_to_hand_knn_idx[batch_idx],
                 obj_to_hand_knn_valid_mask=obj_to_hand_knn_valid_mask[batch_idx],
             )
-            # 把所有标量/向量边特征 concat 成一个 6D 张量：
-            #   [delta(3), dist(1), signed_dist(1), normal_dot(1)]
             edge_geo = torch.cat(
                 [
                     edge_feats["delta"],
@@ -531,7 +593,6 @@ class StaticHOCPTv3(nn.Module):
                 dim=-1,
             )
             edge_geo_list.append(edge_geo)
-            # 拉取每个物体点对应的 K 个手部邻居 token。
             z_hand_neighbors_list.append(
                 gather_knn_features(
                     z_hand[batch_idx],
@@ -539,75 +600,57 @@ class StaticHOCPTv3(nn.Module):
                     obj_to_hand_knn_valid_mask[batch_idx],
                 )
             )
-            # 同样拉取邻居手部点的 canonical 坐标。
-            hand_cano_neighbors_list.append(
-                gather_knn_features(
-                    hand_cano[batch_idx],
-                    obj_to_hand_knn_idx[batch_idx],
-                    obj_to_hand_knn_valid_mask[batch_idx],
-                )
-            )
-
-        # 把 list 堆叠回 (B, N_obj, k_cross, ...) 形状。
         edge_geo = torch.stack(edge_geo_list, dim=0)
         z_hand_neighbors = torch.stack(z_hand_neighbors_list, dim=0)
-        hand_cano_neighbors = torch.stack(hand_cano_neighbors_list, dim=0)
 
-        # 边几何特征 / hand_cano 各自做一次 embedding。
         edge_geo_embed = self.edge_geo_mlp(edge_geo)
-        hand_cano_embed = self.hand_cano_mlp(hand_cano_neighbors)
-
-        # 构造 Q、K、V。
-        # Q：物体 token。
-        q = self.cross_q(z_obj).unsqueeze(2)  # (B, N_obj, 1, C)
-        # K：邻居手部 token + 边几何特征。
+        q = self.cross_q(z_obj).unsqueeze(2)
         k = self.cross_k(torch.cat([z_hand_neighbors, edge_geo_embed], dim=-1))
-        # V：邻居手部 token + 边几何特征 + canonical 注入。
-        v = self.cross_v(torch.cat([z_hand_neighbors, edge_geo_embed, hand_cano_embed], dim=-1))
+        v = self.cross_v(torch.cat([z_hand_neighbors, edge_geo_embed], dim=-1))
 
-        # 标准点积注意力 + 缩放。
         logits = (q * k).sum(dim=-1) / (self.token_dim**0.5)
-        # 加上几何偏置（每个边一个标量 bias）。
         logits = logits + self.cross_bias(edge_geo).squeeze(-1)
-        # masked softmax（无效邻居位置不参与）。
         attn = _masked_softmax(logits, obj_to_hand_knn_valid_mask)
-        # 加权求和得到 cross context。
         cross_ctx = torch.sum(attn.unsqueeze(-1) * v, dim=2)
-        # 如果一个物体点没有任何有效邻居，cross_ctx 全 0；
-        # 用 valid_obj_mask 把这种情况屏蔽掉，避免对残差产生污染。
         valid_obj_mask = obj_to_hand_knn_valid_mask.any(dim=-1, keepdim=True).float()
         cross_update = self.cross_out(cross_ctx) * valid_obj_mask
-        # 残差连接。
         z_obj_cross = z_obj + cross_update
-        return z_obj_cross, attn, edge_geo, z_hand_neighbors
+        return z_obj_cross, attn
+
+    @staticmethod
+    def _gather_batched_knn_features(
+        features: torch.Tensor,
+        knn_idx: torch.Tensor,
+        knn_valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        gathered: list[torch.Tensor] = []
+        for batch_idx in range(features.shape[0]):
+            gathered.append(
+                gather_knn_features(
+                    features[batch_idx],
+                    knn_idx[batch_idx],
+                    knn_valid_mask[batch_idx],
+                )
+            )
+        return torch.stack(gathered, dim=0)
 
     def _compute_shared_edge_features(
         self,
         z_obj_cross: torch.Tensor,
         z_hand_neighbors: torch.Tensor,
-        edge_geo: torch.Tensor,
     ) -> torch.Tensor:
-        """计算"边级共享特征"。
-
-        拼接近邻特征和边几何特征后通过一个共享 MLP 投影到
-        self.edge_shared_dim 维，便于后续多种边级预测头共用。
-        """
-        # K 数 = z_hand_neighbors 的第 3 维大小。
         k_cross = z_hand_neighbors.shape[2]
-        # 把 z_obj_cross 沿 K 维扩展为 (B, N_obj, k, C)，方便拼接。
         z_obj_expanded = z_obj_cross.unsqueeze(2).expand(-1, -1, k_cross, -1)
-        # 拼接 (z_obj, z_hand_neighbors, edge_geo) -> (B, N_obj, k, 2C+6)。
-        edge_input = torch.cat([z_obj_expanded, z_hand_neighbors, edge_geo], dim=-1)
-        # 通过共享 backbone 得到 (B, N_obj, k, edge_shared_dim)。
+        edge_input = torch.cat([z_obj_expanded, z_hand_neighbors], dim=-1)
         return self.edge_shared_backbone(edge_input)
 
     def _compute_cross_edge_predictions(
         self,
         edge_shared: torch.Tensor,
     ) -> torch.Tensor:
-        """基于边级共享特征预测"边是否接触"。
+        return self.cross_edge_head(edge_shared)
 
-        Returns:
-            (B, N_obj, k_cross) 边接触 logit。
-        """
-        return self.cross_edge_head(edge_shared).squeeze(-1)
+    @staticmethod
+    def _safe_logit_from_prob(prob: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+        prob = prob.clamp(min=eps, max=1.0 - eps)
+        return torch.log(prob) - torch.log1p(-prob)

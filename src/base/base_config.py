@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 class BaseConfig:
     """Base class for RoboGym-style nested class configs."""
@@ -247,24 +249,55 @@ def _load_mapping(path: Path) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8")
     if path.suffix.lower() == ".json":
         data = json.loads(text)
+    elif path.suffix.lower() in {".yaml", ".yml"}:
+        data = yaml.safe_load(text)
     else:
-        raise ValueError(f"Unsupported config format '{path.suffix}'. Use a Python config class or .json.")
+        raise ValueError(
+            f"Unsupported config format '{path.suffix}'. Use a Python config class, .json, or .yaml."
+        )
     if data is None:
         data = {}
     if not isinstance(data, dict):
         raise TypeError(f"Config file must contain a mapping, got {type(data).__name__}")
+    base_ref = data.pop("_base_", None)
+    if base_ref is not None:
+        if not isinstance(base_ref, str):
+            raise TypeError("Config '_base_' must be a string reference.")
+        base_target = base_ref
+        base_path = Path(base_ref)
+        if (
+            not base_path.is_absolute()
+            and (base_path.suffix or "/" in base_ref or "\\" in base_ref)
+        ):
+            candidate = (path.parent / base_path).resolve()
+            if candidate.exists():
+                base_target = str(candidate)
+        base_data = _load_config_reference(base_target)
+        data = _deep_merge_dict(base_data, data)
     return data
+
+
+def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = copy.deepcopy(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 def _load_config_reference(reference: str) -> dict[str, Any]:
     target, attr = _split_reference(reference)
     path = Path(target)
-    if path.suffix.lower() == ".json":
+    if path.suffix.lower() in {".json", ".yaml", ".yml"}:
         if attr is not None:
-            raise ValueError("JSON config references cannot include an attribute.")
+            raise ValueError("File config references cannot include an attribute.")
         return _load_mapping(path)
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        raise ValueError("YAML configs are not used in this framework. Use a Python config class instead.")
     if path.suffix.lower() == ".py" or path.exists():
         module = _load_python_module_from_path(path)
         value = _select_config_attr(module, attr)

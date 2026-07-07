@@ -34,7 +34,7 @@ R
 ================
 GT
     显示 Stage 3 的 ground truth 标签:
-      * 物体点云按 hard contact label 着色（手部用 GT 干净手）
+      * 物体点云按 soft contact label 着色（手部用 GT 干净手）
       * cross 视图下手部按到选中物体点的欧氏距离上色（基于 clean hand）
 Eval
     显示模型推理结果:
@@ -60,8 +60,9 @@ cross
 ========
 object 点云 (heatmap 视图)
     GT 模式:
-        红色 (0.98, 0.18, 0.12)   = hard contact (dist <= d_pos)
-        灰色 (0.45, 0.45, 0.48)   = non-contact
+        蓝色 (0.12, 0.36, 0.98)   = 概率 0.0  （无接触）
+        白色 (1.0 , 1.0 , 1.0 )   = 概率 0.5  （过渡带）
+        红色 (0.98, 0.16, 0.12)   = 概率 1.0  （强接触）
     Eval 模式 (按 sigmoid 后的概率 [0,1] 线性插值):
         蓝色 (0.12, 0.36, 0.98)   = 概率 0.0  （无接触）
         白色 (1.0 , 1.0 , 1.0 )   = 概率 0.5  （不确定）
@@ -75,13 +76,13 @@ object 点云 (cross 视图)
         GT 模式:  橙色 (0.95, 0.58, 0.12)  = clean hand
         Eval 模式: 品红 (0.85, 0.16, 0.85)  = noisy hand
     cross 视图 + 有选中点 (GT 模式，按 soft_contact_label 概率上色):
-        蓝色 (0.12, 0.36, 0.98)  = 概率 1.0  (更接近 / 更可能接触)
+        红色 (0.98, 0.16, 0.12)  = 概率 1.0  (更接近 / 更可能接触)
         灰色 (0.18, 0.18, 0.22)  = 概率 0.0  (更远 / 更不可能接触)
         概率由 clean hand 到选中物体点的距离经 d_pos/d_neg/gamma 映射得到
     cross 视图 + 有选中点 (Eval 模式，按 pred_cross_contact 概率上色):
-        蓝色 (0.12, 0.36, 0.98)  = 概率 1.0  (模型更认为接触)
+        红色 (0.98, 0.16, 0.12)  = 概率 1.0  (模型更认为接触)
         灰色 (0.18, 0.18, 0.22)  = 概率 0.0  (模型更认为不接触)
-        中间概率在线性插值为蓝灰渐变
+        中间概率在线性插值为红灰渐变
         这里是“选中物体点 × 全部 hand 点”的 dense 推理结果，不再只限于 KNN
 
 被选中的物体点 (任意视图)
@@ -118,7 +119,7 @@ import numpy as np
 import torch
 
 from src.base import build_runner_from_checkpoint
-from src.task.correspondence_ptv3.dataset import _compute_input_knn
+from src.task.correspondence_ptv3.dataset import _compute_runtime_hand_neighbors
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
     sample_object_indices,
@@ -170,8 +171,10 @@ class RuntimeFrame:
     noisy_hand_points: np.ndarray
     noisy_hand_normals: np.ndarray
     clean_knn_idx: np.ndarray
-    input_knn_idx: np.ndarray
-    input_knn_valid: np.ndarray
+    input_ctx_idx: np.ndarray
+    input_ctx_valid: np.ndarray
+    input_logit_idx: np.ndarray
+    input_logit_valid: np.ndarray
 
 
 @dataclass
@@ -286,11 +289,11 @@ def _binary_contact_colors(mask: np.ndarray) -> np.ndarray:
     return colors
 
 
-def _blue_gray_colors(score: np.ndarray) -> np.ndarray:
+def _red_gray_colors(score: np.ndarray) -> np.ndarray:
     score = np.clip(np.asarray(score, dtype=np.float32), 0.0, 1.0)
-    near_blue = np.asarray([0.12, 0.36, 0.98], dtype=np.float32)
+    near_red = np.asarray([0.98, 0.16, 0.12], dtype=np.float32)
     far_gray = np.asarray([0.18, 0.18, 0.22], dtype=np.float32)
-    return far_gray[None] * (1.0 - score[:, None]) + near_blue[None] * score[:, None]
+    return far_gray[None] * (1.0 - score[:, None]) + near_red[None] * score[:, None]
 
 
 def _distance_to_contact_probability(
@@ -311,7 +314,7 @@ def _distance_to_contact_probability(
 
 
 def _probability_hand_colors(probabilities: np.ndarray) -> np.ndarray:
-    return _blue_gray_colors(np.asarray(probabilities, dtype=np.float32))
+    return _red_gray_colors(np.asarray(probabilities, dtype=np.float32))
 
 
 def _build_runtime_frame(
@@ -382,11 +385,30 @@ def _build_runtime_frame(
         scale_range=tuple(args.scale_range),
     )
     obj_min_dist *= float(geometry.distance_scale)
-    input_knn_idx, input_knn_valid = _compute_input_knn(
+    (
+        input_ctx_idx,
+        input_ctx_valid,
+        input_logit_idx,
+        input_logit_valid,
+        _,
+    ) = _compute_runtime_hand_neighbors(
         geometry.input_obj_points,
         geometry.input_hand_points,
         obj_valid,
-        k_cross=int(args.k_cross),
+        k_ctx=int(args.k_ctx),
+        k_logit=int(args.k_logit),
+        k_logit_hard_neg=int(args.k_logit_hard_neg),
+        ctx_radius=float(args.ctx_radius),
+        logit_neg_radius=float(args.logit_neg_radius),
+        far_weight=1.0,
+        seed=stable_frame_seed(
+            base_seed=args.base_seed,
+            seq_id=seq_id,
+            side=side,
+            raw_frame_id=raw_frame_id,
+            epoch=epoch,
+            namespace="logit-neighbors",
+        ),
     )
     obj_contact_soft = soft_contact_label(
         torch.from_numpy(obj_min_dist),
@@ -414,8 +436,10 @@ def _build_runtime_frame(
         noisy_hand_points=geometry.input_hand_points,
         noisy_hand_normals=geometry.input_hand_normals,
         clean_knn_idx=clean_knn,
-        input_knn_idx=input_knn_idx,
-        input_knn_valid=input_knn_valid,
+        input_ctx_idx=input_ctx_idx,
+        input_ctx_valid=input_ctx_valid,
+        input_logit_idx=input_logit_idx,
+        input_logit_valid=input_logit_valid,
     )
 
 
@@ -433,8 +457,10 @@ def _build_model_batch(
         "points": torch.from_numpy(points).float().unsqueeze(0),
         "normals": torch.from_numpy(normals).float().unsqueeze(0),
         "point_valid_mask": torch.from_numpy(point_valid_mask).unsqueeze(0),
-        "input_obj_to_hand_knn_idx": torch.from_numpy(runtime.input_knn_idx).long().unsqueeze(0),
-        "input_obj_to_hand_knn_valid_mask": torch.from_numpy(runtime.input_knn_valid).unsqueeze(0),
+        "input_obj_to_hand_ctx_idx": torch.from_numpy(runtime.input_ctx_idx).long().unsqueeze(0),
+        "input_obj_to_hand_ctx_valid_mask": torch.from_numpy(runtime.input_ctx_valid).unsqueeze(0),
+        "input_obj_to_hand_logit_idx": torch.from_numpy(runtime.input_logit_idx).long().unsqueeze(0),
+        "input_obj_to_hand_logit_valid_mask": torch.from_numpy(runtime.input_logit_valid).unsqueeze(0),
         "hand_cano_points": torch.from_numpy(np.asarray(data["hand_cano_points"])).float().unsqueeze(0),
     }
     return batch
@@ -460,7 +486,7 @@ def _run_inference(
     pred_obj_contact = torch.sigmoid(preds["pred_obj_contact"][0]).detach().cpu().numpy()
     pred_cross_contact = torch.sigmoid(preds["pred_cross_contact"][0]).detach().cpu().numpy()
     pred_obj_contact[~runtime.obj_valid] = 0
-    pred_cross_contact[~runtime.input_knn_valid] = 0
+    pred_cross_contact[~runtime.input_logit_valid] = 0
     return PredictionFrame(
         pred_obj_contact=pred_obj_contact,
         pred_cross_contact=pred_cross_contact,
@@ -493,16 +519,9 @@ def _dense_cross_probabilities(
             np.asarray(runtime.noisy_hand_normals, dtype=np.float32)
         ).to(device=device)
 
-        delta = hand_points - obj_point.unsqueeze(0)
-        dist = torch.norm(delta, dim=-1, keepdim=True)
-        signed_dist = torch.sum(obj_normal.unsqueeze(0) * delta, dim=-1, keepdim=True)
-        normal_dot = torch.sum(obj_normal.unsqueeze(0) * hand_normals, dim=-1, keepdim=True)
-        edge_geo = torch.cat([delta, dist, signed_dist, normal_dot], dim=-1).unsqueeze(0).unsqueeze(0)
-
         edge_shared = model._compute_shared_edge_features(
             z_obj_cross=obj_token,
             z_hand_neighbors=hand_tokens,
-            edge_geo=edge_geo,
         )
         dense_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
     return torch.sigmoid(dense_logits).detach().cpu().numpy().astype(np.float32)
@@ -607,6 +626,11 @@ class EvalViewer:
             self.args.base_seed,
             self.args.num_obj_points,
             self.args.k_cross,
+            self.args.k_ctx,
+            self.args.k_logit,
+            self.args.k_logit_hard_neg,
+            self.args.ctx_radius,
+            self.args.logit_neg_radius,
             self.args.augment,
             self.args.hand_perturb,
             self.args.augment_rotation,
@@ -635,24 +659,37 @@ class EvalViewer:
         assert self._cache_prediction is not None
         return self._cache_runtime, self._cache_prediction
 
+    def _action_label(self, action: str) -> str:
+        return {
+            "move_next": "next_frame",
+            "move_prev": "prev_frame",
+            "epoch_next": "next_epoch",
+            "epoch_prev": "prev_epoch",
+            "toggle_mode": "toggle_mode",
+            "toggle_view": "toggle_view",
+            "object_next": "next_object",
+            "object_prev": "prev_object",
+            "reset_view": "reset_view",
+        }.get(action, action)
+
     def _move(self, delta: int) -> bool:
         self.frame = int(np.clip(self.frame + delta, 0, len(self.data["raw_frame_id"]) - 1))
-        self.refresh()
+        self.refresh(action="move_next" if delta > 0 else "move_prev")
         return False
 
     def _change_epoch(self, delta: int) -> bool:
         self.epoch = max(0, self.epoch + delta)
-        self.refresh()
+        self.refresh(action="epoch_next" if delta > 0 else "epoch_prev")
         return False
 
     def _toggle_mode(self) -> bool:
         self.show_gt = not self.show_gt
-        self.refresh()
+        self.refresh(action="toggle_mode")
         return False
 
     def _toggle_view(self) -> bool:
         self.show_cross = not self.show_cross
-        self.refresh()
+        self.refresh(action="toggle_view")
         return False
 
     def _select_object(self, delta: int) -> bool:
@@ -660,11 +697,11 @@ class EvalViewer:
         valid_count = int(runtime.obj_valid.sum())
         if valid_count > 0:
             self.selected_rank = int(np.clip(self.selected_rank + delta, 0, valid_count - 1))
-        self.refresh()
+        self.refresh(action="object_next" if delta > 0 else "object_prev")
         return False
 
     def _reset_view(self) -> bool:
-        self.refresh(reset_view=True)
+        self.refresh(reset_view=True, action="reset_view")
         return False
 
     def _set_point_cloud(
@@ -755,7 +792,7 @@ class EvalViewer:
         else:
             self.vis.update_geometry(sphere)
 
-    def refresh(self, reset_view: bool = False) -> None:
+    def refresh(self, reset_view: bool = False, action: str | None = None) -> None:
         runtime, prediction = self._get_cached_state()
         valid_slots = np.flatnonzero(runtime.obj_valid)
         if valid_slots.size == 0:
@@ -772,7 +809,7 @@ class EvalViewer:
                 (len(valid_slots), 1),
             )
         elif self.show_gt:
-            obj_colors = _binary_contact_colors(runtime.obj_contact_hard[valid_slots])
+            obj_colors = _probability_colors(runtime.obj_contact_soft[valid_slots])
         else:
             obj_colors = _probability_colors(prediction.pred_obj_contact[valid_slots])
         self._set_point_cloud(
@@ -854,8 +891,8 @@ class EvalViewer:
             cross_prob_max = float(dense_cross_prob.max())
         else:
             cross_prob_max = 0.0
-        print(
-            f"\r[eval] frame={self.frame}/{len(self.data['raw_frame_id']) - 1} "
+        status = (
+            f"[eval] frame={self.frame}/{len(self.data['raw_frame_id']) - 1} "
             f"raw={runtime.raw_frame_id} epoch={self.epoch} mode={mode_name} "
             f"view={view_name} valid={int(runtime.obj_valid.sum())} "
             f"obj={self.selected_rank + 1 if selected_slot is not None else 0}/"
@@ -863,10 +900,15 @@ class EvalViewer:
             f"point_id={selected_point_id} dist={selected_min_dist:.4f} "
             f"hand_min={cross_min:.4f} cross_max={cross_prob_max:.3f} "
             f"pred={selected_pred:.3f} "
-            f"hand_noise={runtime.hand_perturbed} seed={runtime.sample_seed}   ",
-            end="",
-            flush=True,
+            f"hand_noise={runtime.hand_perturbed} seed={runtime.sample_seed}"
         )
+        if action is None:
+            print(f"\r{status}   ", end="", flush=True)
+        else:
+            print(
+                f"\n[{self._action_label(action)}] {status}",
+                flush=True,
+            )
         if reset_view:
             self.vis.reset_view_point(True)
         self.vis.poll_events()
@@ -903,6 +945,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-seed", type=int, default=None)
     parser.add_argument("--num-obj-points", type=int, default=None)
     parser.add_argument("--k-cross", type=int, default=None)
+    parser.add_argument("--k-ctx", type=int, default=None)
+    parser.add_argument("--k-logit", type=int, default=None)
+    parser.add_argument("--k-logit-hard-neg", type=int, default=None)
+    parser.add_argument("--ctx-radius", type=float, default=None)
+    parser.add_argument("--logit-neg-radius", type=float, default=None)
     parser.add_argument("--marker-radius", type=float, default=0.003)
 
     _add_bool_flag(parser, "augment", default=False)
@@ -959,6 +1006,16 @@ def main() -> None:
         args.num_obj_points = int(runner.cfg.meta.num_obj_points)
     if args.k_cross is None:
         args.k_cross = int(runner.cfg.meta.k_cross)
+    if args.k_ctx is None:
+        args.k_ctx = int(getattr(runner.cfg.meta, "k_ctx", runner.cfg.meta.k_cross))
+    if args.k_logit is None:
+        args.k_logit = int(getattr(runner.cfg.meta, "k_logit", args.k_ctx))
+    if args.k_logit_hard_neg is None:
+        args.k_logit_hard_neg = int(getattr(runner.cfg.meta, "k_logit_hard_neg", 16))
+    if args.ctx_radius is None:
+        args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
+    if args.logit_neg_radius is None:
+        args.logit_neg_radius = float(getattr(runner.cfg.meta, "logit_neg_radius", 0.06))
     if args.d_pos is None:
         args.d_pos = float(runner.cfg.meta.d_pos)
     if args.d_neg is None:
@@ -975,6 +1032,16 @@ def main() -> None:
             f"--k-cross={args.k_cross} does not match checkpoint "
             f"meta.k_cross={runner.cfg.meta.k_cross}."
         )
+    if int(args.k_ctx) <= 0:
+        raise ValueError("--k-ctx must be positive.")
+    if int(args.k_logit) < int(args.k_ctx):
+        raise ValueError("--k-logit must be >= --k-ctx.")
+    if int(args.k_logit_hard_neg) < 0:
+        raise ValueError("--k-logit-hard-neg must be non-negative.")
+    if int(args.k_ctx) + int(args.k_logit_hard_neg) > int(args.k_logit):
+        raise ValueError("--k-ctx + --k-logit-hard-neg must be <= --k-logit.")
+    if float(args.logit_neg_radius) < float(args.ctx_radius):
+        raise ValueError("--logit-neg-radius must be >= --ctx-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
 
     runtime = _build_runtime_frame(data, args.frame, max(0, args.epoch), args)

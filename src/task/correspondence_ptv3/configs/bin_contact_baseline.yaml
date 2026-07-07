@@ -1,0 +1,48 @@
+_base_: src.task.correspondence_ptv3.config:Config
+
+name: correspondence_ptv3_bin_contact
+
+meta:
+  use_cross_attn: false
+  use_cano_head: false
+  use_finger_region_head: false
+  num_contact_bins: 10
+  contact_bin_decode_mode: expectation
+  k_ctx: 32
+  k_logit: 64
+  k_logit_hard_neg: 16
+  ctx_radius: 0.04
+  logit_neg_radius: 0.06
+  loss_obj_contact_weight: 1.0
+  loss_cross_edge_weight: 1.0
+  loss_cano_weight: 0.0
+  loss_cross_edge_rankk_weight: 0.0
+  loss_finger_weight: 0.0
+  loss_region_weight: 0.0
+  loss_cross_edge_far_weight: 0.5
+
+data:
+  batch_size: 8
+  val_batch_size: 16
+  num_workers: 0
+  sequence_locality_shuffle: true
+
+train:
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_steps: 1000
+  epochs: 100
+  amp: false
+  grad_clip_norm: 1.0
+  save_every_epochs: 5
+  eval_every_epochs: 1
+  metric_for_best: val/loss
+  lower_is_better: true
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, static, bin-contact]

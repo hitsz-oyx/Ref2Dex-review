@@ -156,6 +156,51 @@ def soft_contact_label(
     return label
 
 
+def contact_prob_to_bins(
+    contact_prob: torch.Tensor,
+    *,
+    num_bins: int = 10,
+) -> torch.Tensor:
+    """Map continuous contact probabilities in [0, 1] to integer bins.
+
+    This follows the ContactOpt convention:
+      [0.0, 0.1) -> 0
+      [0.1, 0.2) -> 1
+      ...
+      [0.9, 1.0] -> 9
+    """
+    if num_bins <= 0:
+        raise ValueError("num_bins must be positive.")
+    scaled = torch.floor(contact_prob.clamp(min=0.0, max=1.0) * float(num_bins))
+    return scaled.clamp(min=0, max=num_bins - 1).long()
+
+
+def decode_contact_bin_logits(
+    logits: torch.Tensor,
+    *,
+    mode: str = "expectation",
+) -> torch.Tensor:
+    """Decode per-bin logits back to a scalar contact probability in [0, 1]."""
+    if logits.shape[-1] <= 0:
+        raise ValueError("Last dimension of logits must be positive.")
+    num_bins = int(logits.shape[-1])
+    if mode == "expectation":
+        prob = torch.softmax(logits, dim=-1)
+        centers = (
+            torch.arange(
+                num_bins,
+                device=logits.device,
+                dtype=logits.dtype,
+            )
+            + 0.5
+        ) / float(num_bins)
+        return torch.sum(prob * centers, dim=-1)
+    if mode == "argmax":
+        cls = torch.argmax(logits, dim=-1)
+        return (cls.to(dtype=logits.dtype) + 0.5) / float(num_bins)
+    raise ValueError(f"Unsupported contact bin decode mode: {mode!r}")
+
+
 def gather_knn_features(
     features: torch.Tensor,
     knn_idx: torch.Tensor,

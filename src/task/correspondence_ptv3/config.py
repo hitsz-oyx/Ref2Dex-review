@@ -51,12 +51,32 @@ class Config(TaskConfig):
         num_obj_pool: int = 4096
         # 静态手部点云中保留的点数（合并 6 根手指/手掌表面采样）。
         num_hand_points: int = 1538
-        # 物体到手的交叉 KNN 邻居数，用于构造交叉注意力输入。
+        # Stage 3 中保存的 clean GT 邻居数（历史字段，当前数据为 32）。
         k_cross: int = 32
+        # runtime context 邻域大小：只用于 cross-attention / token 形成。
+        k_ctx: int = 32
+        # runtime logit 邻域大小：32 个 context hand + 16 个半难负样本
+        # + 16 个远负样本。
+        k_logit: int = 64
+        # runtime logit 邻域中，来自 (ctx_radius, logit_neg_radius] 的
+        # 半难负样本数量。
+        k_logit_hard_neg: int = 16
+        # runtime context 半径，单位 meter。
+        ctx_radius: float = 0.04
+        # runtime 半难负样本的外半径，单位 meter。
+        # 超过该半径的 hand 点只作为 far negatives 随机采样。
+        logit_neg_radius: float = 0.06
 
-        # ---- 主干网络与特征维度 ---------------------------------------------
-        # 隐藏层维度（stem 输出通道数），也是 PTv3 编码器第一阶段的通道数。
-        hidden_dim: int = 96
+        # ---- 主干网络与输入特征 ---------------------------------------------
+        # 当前共享点特征维度：
+        # xyz(3) + point_type one-hot(2) + normal(3)
+        # + nearest-opposite distance(1)
+        # + nearest-direction·normal(1)
+        # + centroid-direction·normal(1)
+        point_feat_dim: int = 11
+        # 是否启用 object->hand cross-attention。
+        # 当前基线默认关闭，只保留为可选增强开关。
+        use_cross_attn: bool = False
         # 指向官方 PointTransformerV3 仓库的本地路径。
         # 注意：本任务并不真的使用 PTv3 仓库的全部依赖（spconv/scatter/flash），
         # 但仍通过 importlib 动态加载其中的 `model.PointTransformerV3`。
@@ -128,7 +148,14 @@ class Config(TaskConfig):
         # 验证集是否也启用数据增强（默认关闭，保证评估稳定可复现）。
         val_augment: bool = False
 
-        # ---- 手指 / 手掌区域分类头相关参数 ----------------------------------
+        # ---- bin-contact 输出与可选 heads -----------------------------------
+        # ContactOpt 风格的 contact probability 离散 bin 数。
+        num_contact_bins: int = 10
+        # 如何从 bin logits 解码回 [0, 1] 标量概率。
+        # 可选: "expectation" / "argmax"
+        contact_bin_decode_mode: str = "expectation"
+        # 可选的 class weight。None 表示不做 bin reweight。
+        contact_bin_weights: list[float] | None = None
         # 手指类别数：通常 6（5 指 + 1 手掌），与数据集中 finger_id 取值一致。
         num_fingers: int = 6
         # 手掌区域数：通常 6（指尖 / 指节 / 手掌分区），由数据集 region_id 决定。
@@ -136,18 +163,37 @@ class Config(TaskConfig):
         # 是否启用 finger / region 分类头。
         # 关闭时模型不输出这两个预测，对应损失项权重也置零。
         use_finger_region_head: bool = False
+        # 是否启用 object canonical 对应点预测头。
+        # 当前阶段默认关闭，用 contact / cross-edge supervision 优先塑造 token。
+        use_cano_head: bool = False
 
         # ---- 损失项权重 -----------------------------------------------------
-        # 物体接触概率预测 (BCE) 的损失权重。
+        # 物体点 10-bin contact 分类损失权重。
+        loss_obj_contact_weight: float = 1.0
+        # 兼容旧配置名；runner 中会优先读取新字段。
         loss_contact_weight: float = 1.0
         # 物体到手的规范化（canonical）位置回归的损失权重。
-        loss_cano_weight: float = 1.0
+        loss_cano_weight: float = 0.0
         # 手指分类的交叉熵损失权重（仅在启用分类头时生效）。
-        loss_finger_weight: float = 0.25
+        loss_finger_weight: float = 0.0
         # 手掌区域分类的交叉熵损失权重（仅在启用分类头时生效）。
-        loss_region_weight: float = 0.25
+        loss_region_weight: float = 0.0
         # 交叉边（cross edge）接触预测的损失权重。
         loss_cross_edge_weight: float = 1.0
+        # far negative 的 edge BCE 权重系数。
+        # 用于避免新增的“很容易的远负样本”把整体预测压得过于保守。
+        loss_cross_edge_far_weight: float = 0.5
+        # cross-edge rank-k auxiliary loss 的损失权重。
+        # 当前只作为可选实验项，基线默认不反传。
+        loss_cross_edge_rankk_weight: float = 0.0
+        # rank-k auxiliary loss 中，每个 object 点保留多少个 GT top-k anchor。
+        rankk_loss_k: int = 4
+        # 只有当 label_pos - label_neg 至少达到该 gap 时，才构造 ranking pair。
+        rankk_label_gap: float = 0.15
+        # pairwise margin ranking 的 margin。
+        rankk_margin: float = 0.2
+        # AUPRC 使用的二值 GT 阈值；与 rank-k loss 解耦。
+        pr_label_threshold: float = 0.5
 
         # ---- 全局几何增强（训练时）开关与范围 -------------------------------
         # 是否在训练时对整帧点云施加随机旋转增强。
