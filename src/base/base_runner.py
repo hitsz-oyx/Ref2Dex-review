@@ -74,6 +74,7 @@ class BaseRunner:
         self.metadata: dict[str, Any] = {}
         self.train_loader = None
         self.val_loader = None
+        self.val_loaders: dict[str, Any] = {}
         self.model: torch.nn.Module | None = None
         self.optimizer: torch.optim.Optimizer | None = None
         self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
@@ -102,7 +103,7 @@ class BaseRunner:
     def run(self) -> dict[str, float]:
         if self.mode == "train":
             return self.learn()
-        metrics = self.evaluate(prefix="val/")
+        metrics = self.evaluate_all()
         if self.is_primary:
             for key, value in metrics.items():
                 print(f"{key}: {value:.6g}")
@@ -120,13 +121,13 @@ class BaseRunner:
             last_metrics.update(train_metrics)
 
             if (
-                self.val_loader is not None
+                self.val_loaders
                 and self.cfg.train.eval_every_steps is None
                 and self._epoch_due(getattr(self.cfg.train, "eval_every_epochs", 1), epoch + 1)
             ):
-                val_metrics = self.evaluate(prefix="val/")
+                val_metrics = self.evaluate_all()
                 last_metrics.update(val_metrics)
-                self._record_metrics(last_metrics, epoch + 1)
+                self._record_metrics(val_metrics, epoch + 1)
                 self._save_if_best(val_metrics, epoch + 1)
                 last_eval_epoch = epoch + 1
                 if self._check_early_stopping(val_metrics, epoch + 1):
@@ -138,8 +139,8 @@ class BaseRunner:
             if self.global_step >= self.total_steps:
                 break
 
-        if self.val_loader is not None and last_eval_epoch != final_epoch:
-            val_metrics = self.evaluate(prefix="val/")
+        if self.val_loaders and last_eval_epoch != final_epoch:
+            val_metrics = self.evaluate_all()
             last_metrics.update(val_metrics)
             self._record_metrics(val_metrics, final_epoch)
             self._save_if_best(val_metrics, final_epoch)
@@ -171,20 +172,20 @@ class BaseRunner:
 
             if self.global_step % self.cfg.train.log_every_steps == 0:
                 logged = {
-                    f"train/{key}": value
+                    f"train_step/{key}": value
                     for key, value in self._reduce_step_metrics(metrics).items()
                 }
                 self._record_metrics(logged, epoch + 1)
 
-            if self.val_loader is not None and self._step_due(self.cfg.train.eval_every_steps):
-                val_metrics = self.evaluate(prefix="val/")
+            if self.val_loaders and self._step_due(self.cfg.train.eval_every_steps):
+                val_metrics = self.evaluate_all()
                 self._record_metrics(val_metrics, epoch + 1)
                 self._save_if_best(val_metrics, epoch + 1)
 
             if self._step_due(self.cfg.train.save_every_steps):
                 self.save(epoch=epoch + 1, is_best=False)
 
-        epoch_metrics = self._compute_averager_metrics(averager, prefix="train/")
+        epoch_metrics = self._compute_averager_metrics(averager, prefix="train_epoch/")
         self._record_metrics(epoch_metrics, epoch + 1)
         return epoch_metrics
 
@@ -228,12 +229,21 @@ class BaseRunner:
 
     def evaluate(self, prefix: str = "val/") -> dict[str, float]:
         self._require_eval_ready()
-        if self.val_loader is None:
-            raise ValueError("No validation dataset is available. Set data.val_path or data.val_split > 0.")
+        val_loaders = self._resolve_val_loaders()
+        if prefix not in val_loaders:
+            raise ValueError(
+                f"Validation loader for prefix {prefix!r} is not available. "
+                f"Available prefixes: {sorted(val_loaders)}"
+            )
+        return self.evaluate_loader(val_loaders[prefix], prefix=prefix)
+
+    def evaluate_loader(self, loader: Any, *, prefix: str) -> dict[str, float]:
+        if loader is None:
+            raise ValueError("Validation loader is None.")
         was_training = self.model.training
         self.eval_mode()
         averager = MetricAverager()
-        for batch in self.val_loader:
+        for batch in loader:
             batch = self.prepare_batch(batch)
             with self.eval_context():
                 output = self.step(self.model, batch, mode="eval")
@@ -243,6 +253,12 @@ class BaseRunner:
         if was_training:
             self.train_mode()
         return self._compute_averager_metrics(averager, prefix=prefix)
+
+    def evaluate_all(self) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        for prefix, loader in self._resolve_val_loaders().items():
+            metrics.update(self.evaluate_loader(loader, prefix=prefix))
+        return metrics
 
     def make_dataloaders(self, data_cfg, seed: int):
         raise NotImplementedError(
@@ -364,7 +380,10 @@ class BaseRunner:
         if self.is_primary:
             save_config(self.cfg, self.output_dir / "config.json")
         barrier()
-        self.train_loader, self.val_loader, self.metadata = self.make_dataloaders(self.cfg.data, seed=self.seed)
+        dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
+        self.train_loader, self.val_loader, self.metadata, self.val_loaders = (
+            self._unpack_dataloader_bundle(dataloader_bundle)
+        )
         self.configure_data(self.metadata, self.train_loader.dataset)
         self._write_metadata()
         self.model = self.build_model(self.cfg.model).to(self.device)
@@ -386,8 +405,11 @@ class BaseRunner:
         self._log_train_setup()
 
     def _setup_eval(self, checkpoint: str | Path) -> None:
-        self.train_loader, self.val_loader, self.metadata = self.make_dataloaders(self.cfg.data, seed=self.seed)
-        if self.val_loader is None:
+        dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
+        self.train_loader, self.val_loader, self.metadata, self.val_loaders = (
+            self._unpack_dataloader_bundle(dataloader_bundle)
+        )
+        if not self.val_loaders:
             raise ValueError("No validation dataset is available. Set data.val_path or data.val_split > 0.")
         self.configure_data(self.metadata, self.train_loader.dataset)
         self.model = self.build_model(self.cfg.model).to(self.device)
@@ -592,6 +614,39 @@ class BaseRunner:
             f"amp={bool(self.cfg.train.amp)} output_dir={self.output_dir}"
         )
 
+    def _unpack_dataloader_bundle(self, bundle: Any) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
+        if not isinstance(bundle, tuple):
+            raise TypeError(
+                "make_dataloaders() must return a tuple of "
+                "(train_loader, val_loader, metadata) or "
+                "(train_loader, val_loader, metadata, val_loaders)."
+            )
+        if len(bundle) == 3:
+            train_loader, val_loader, metadata = bundle
+            val_loaders = {"val/": val_loader} if val_loader is not None else {}
+            return train_loader, val_loader, metadata, val_loaders
+        if len(bundle) == 4:
+            train_loader, val_loader, metadata, val_loaders = bundle
+            resolved_val_loaders = {
+                str(prefix): loader
+                for prefix, loader in dict(val_loaders or {}).items()
+                if loader is not None
+            }
+            if not resolved_val_loaders and val_loader is not None:
+                resolved_val_loaders = {"val/": val_loader}
+            return train_loader, val_loader, metadata, resolved_val_loaders
+        raise ValueError(
+            "make_dataloaders() returned an unexpected tuple length. "
+            f"Expected 3 or 4 values, got {len(bundle)}."
+        )
+
+    def _resolve_val_loaders(self) -> dict[str, Any]:
+        if self.val_loaders:
+            return self.val_loaders
+        if self.val_loader is not None:
+            return {"val/": self.val_loader}
+        return {}
+
     def _require_train_ready(self) -> None:
         self._require_model_ready()
         if self.train_loader is None or self.optimizer is None or self.scaler is None or self.checkpoints is None:
@@ -599,7 +654,7 @@ class BaseRunner:
 
     def _require_eval_ready(self) -> None:
         self._require_model_ready()
-        if self.val_loader is None:
+        if not self._resolve_val_loaders():
             raise RuntimeError("Runner is not initialized for evaluation.")
 
     def _require_model_ready(self) -> None:

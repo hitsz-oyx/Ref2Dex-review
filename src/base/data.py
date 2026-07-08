@@ -244,6 +244,60 @@ def split_items(items: list[Any], val_split: float, seed: int) -> tuple[list[Any
     return train_items, val_items
 
 
+def split_grouped_items(
+    items: Sequence[T],
+    *,
+    val_split: float,
+    seed: int,
+    group_fn: Callable[[T], str],
+) -> tuple[list[T], list[T], dict[str, Any]]:
+    if val_split <= 0:
+        group_keys = sorted({str(group_fn(item)) for item in items})
+        return list(items), [], {
+            "num_groups": len(group_keys),
+            "num_train_groups": len(group_keys),
+            "num_val_groups": 0,
+        }
+    if not 0 < val_split < 1:
+        raise ValueError(f"val_split must be in [0, 1), got {val_split}")
+    if not items:
+        return [], [], {
+            "num_groups": 0,
+            "num_train_groups": 0,
+            "num_val_groups": 0,
+        }
+
+    groups: dict[str, list[T]] = {}
+    for item in items:
+        key = str(group_fn(item))
+        groups.setdefault(key, []).append(item)
+    group_keys = sorted(groups)
+    if len(group_keys) < 2:
+        raise ValueError(
+            f"Need at least two groups for train/val split, got {len(group_keys)}."
+        )
+
+    rng = np.random.default_rng(int(seed))
+    permutation = rng.permutation(len(group_keys))
+    num_val_groups = max(1, int(round(len(group_keys) * val_split)))
+    num_val_groups = min(num_val_groups, len(group_keys) - 1)
+    val_group_keys = {
+        group_keys[int(index)]
+        for index in permutation[:num_val_groups].tolist()
+    }
+    train_items = [
+        item for item in items if str(group_fn(item)) not in val_group_keys
+    ]
+    val_items = [
+        item for item in items if str(group_fn(item)) in val_group_keys
+    ]
+    return train_items, val_items, {
+        "num_groups": len(group_keys),
+        "num_train_groups": len(group_keys) - len(val_group_keys),
+        "num_val_groups": len(val_group_keys),
+    }
+
+
 def select_items_for_split(
     items: Sequence[T],
     *,
@@ -360,6 +414,7 @@ def make_file_split_dataloaders(
     file_pattern: str = "*.npz",
     train_dataset_kwargs: dict[str, Any] | None = None,
     val_dataset_kwargs: dict[str, Any] | None = None,
+    split_group_fn: Callable[[Path], str] | None = None,
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any]]:
     train_path = resolve_data_path(data_cfg.train_path, root=root)
@@ -393,13 +448,23 @@ def make_file_split_dataloaders(
         if not file_list:
             raise ValueError(f"No files matching {file_pattern!r} found in {data_dir}")
 
+        split_metadata: dict[str, Any] = {}
         if 0.0 < val_split < 1.0:
-            train_files, val_files = split_items(file_list, val_split, seed)
+            if split_group_fn is not None:
+                train_files, val_files, split_metadata = split_grouped_items(
+                    file_list,
+                    val_split=val_split,
+                    seed=seed,
+                    group_fn=split_group_fn,
+                )
+            else:
+                train_files, val_files = split_items(file_list, val_split, seed)
             if not train_files:
                 raise ValueError("Training set size must be positive")
         else:
             train_files = file_list
             val_files = []
+            split_metadata = {}
 
         train_dataset = build_dataset(
             data_dir,
@@ -448,6 +513,7 @@ def make_file_split_dataloaders(
         "num_train_samples": len(train_dataset),
         "num_val_samples": 0 if val_dataset is None else len(val_dataset),
     }
+    metadata.update(split_metadata)
     return train_loader, val_loader, metadata
 
 

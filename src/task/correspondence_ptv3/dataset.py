@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.base import make_file_split_dataloaders
 from src.base.data import make_dataloader_kwargs
-from src.base.distributed import shard_sampler_for_distributed
+from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
     sample_object_indices,
@@ -47,6 +47,8 @@ class CorrStaticDataset(Dataset):
         k_logit: int = 64,
         k_logit_hard_neg: int = 16,
         ctx_radius: float = 0.04,
+        logit_pos_radius: float = 0.02,
+        logit_neg_min_radius: float = 0.04,
         logit_neg_radius: float = 0.06,
         logit_far_weight: float = 0.5,
         base_seed: int = 42,
@@ -77,20 +79,20 @@ class CorrStaticDataset(Dataset):
         self.k_logit = int(k_logit)
         self.k_logit_hard_neg = int(k_logit_hard_neg)
         self.ctx_radius = float(ctx_radius)
+        self.logit_pos_radius = float(logit_pos_radius)
+        self.logit_neg_min_radius = float(logit_neg_min_radius)
         self.logit_neg_radius = float(logit_neg_radius)
         self.logit_far_weight = float(logit_far_weight)
         if self.k_ctx <= 0:
             raise ValueError("k_ctx must be positive.")
-        if self.k_logit < self.k_ctx:
-            raise ValueError("k_logit must be >= k_ctx.")
+        if self.k_logit <= 0:
+            raise ValueError("k_logit must be positive.")
         if self.k_logit_hard_neg < 0:
             raise ValueError("k_logit_hard_neg must be non-negative.")
-        if self.k_ctx + self.k_logit_hard_neg > self.k_logit:
-            raise ValueError("k_ctx + k_logit_hard_neg must be <= k_logit.")
-        if self.logit_neg_radius < self.ctx_radius:
-            raise ValueError("logit_neg_radius must be >= ctx_radius.")
-        if not 0.0 < self.logit_far_weight <= 1.0:
-            raise ValueError("logit_far_weight must be in (0, 1].")
+        if self.logit_pos_radius <= 0.0:
+            raise ValueError("logit_pos_radius must be positive.")
+        if self.logit_neg_min_radius < self.logit_pos_radius:
+            raise ValueError("logit_neg_min_radius must be >= logit_pos_radius.")
         self.base_seed = int(base_seed)
         self.augment = bool(augment)
         self.apply_hand_perturb = bool(apply_hand_perturb)
@@ -233,22 +235,26 @@ class CorrStaticDataset(Dataset):
         )
         obj_min_dist *= float(geometry.distance_scale)
 
-        (
-            input_ctx_idx,
-            input_ctx_valid,
-            input_logit_idx,
-            input_logit_valid,
-            input_logit_weight,
-        ) = _compute_runtime_hand_neighbors(
+        input_ctx_idx, input_ctx_valid = _compute_runtime_context_neighbors(
             geometry.input_obj_points,
             geometry.input_hand_points,
             obj_valid,
             k_ctx=self.k_ctx,
-            k_logit=self.k_logit,
-            k_logit_hard_neg=self.k_logit_hard_neg,
             ctx_radius=self.ctx_radius,
-            logit_neg_radius=self.logit_neg_radius,
-            far_weight=self.logit_far_weight,
+        )
+        (
+            input_logit_idx,
+            input_logit_valid,
+            input_logit_weight,
+            input_logit_pos_count,
+            input_logit_neg_count,
+        ) = _compute_balanced_runtime_logit_neighbors(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            obj_valid,
+            k_logit=self.k_logit,
+            logit_pos_radius=self.logit_pos_radius,
+            logit_neg_min_radius=self.logit_neg_min_radius,
             seed=stable_frame_seed(
                 base_seed=self.base_seed,
                 seq_id=seq_id,
@@ -302,6 +308,8 @@ class CorrStaticDataset(Dataset):
             "input_obj_to_hand_logit_idx": torch.from_numpy(input_logit_idx).long(),
             "input_obj_to_hand_logit_valid_mask": torch.from_numpy(input_logit_valid),
             "input_obj_to_hand_logit_loss_weight": torch.from_numpy(input_logit_weight).float(),
+            "input_obj_to_hand_logit_pos_count": torch.from_numpy(input_logit_pos_count).long(),
+            "input_obj_to_hand_logit_neg_count": torch.from_numpy(input_logit_neg_count).long(),
             "hand_cano_points": torch.from_numpy(
                 np.asarray(
                     data.get(
@@ -331,38 +339,25 @@ class CorrStaticDataset(Dataset):
         }
 
 
-def _compute_runtime_hand_neighbors(
+def _compute_runtime_context_neighbors(
     obj_points: np.ndarray,
     hand_points: np.ndarray,
     obj_valid: np.ndarray,
     *,
     k_ctx: int,
-    k_logit: int,
-    k_logit_hard_neg: int,
     ctx_radius: float,
-    logit_neg_radius: float,
-    far_weight: float,
-    seed: int | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     num_obj = obj_points.shape[0]
     ctx_idx = np.full((num_obj, k_ctx), -1, dtype=np.int64)
     ctx_valid = np.zeros((num_obj, k_ctx), dtype=bool)
-    logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
-    logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
-    logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
     valid_obj_idx = np.flatnonzero(obj_valid)
     if valid_obj_idx.size == 0:
-        return ctx_idx, ctx_valid, logit_idx, logit_valid, logit_weight
+        return ctx_idx, ctx_valid
     obj = torch.from_numpy(np.asarray(obj_points[valid_obj_idx], dtype=np.float32))
     hand = torch.from_numpy(np.asarray(hand_points, dtype=np.float32))
     distance = torch.cdist(obj, hand).numpy()
-    rng = np.random.default_rng(seed)
-    extra_slots = int(k_logit - k_ctx)
-    hard_neg_slots = min(max(int(k_logit_hard_neg), 0), extra_slots)
-    far_neg_slots = max(0, extra_slots - hard_neg_slots)
     for row, obj_idx in enumerate(valid_obj_idx.tolist()):
         dist_row = distance[row]
-
         ctx_candidates = np.flatnonzero(dist_row <= float(ctx_radius))
         if ctx_candidates.size > 0:
             order = np.argsort(dist_row[ctx_candidates], kind="stable")
@@ -370,40 +365,66 @@ def _compute_runtime_hand_neighbors(
             ctx_count = int(chosen_ctx.size)
             ctx_idx[obj_idx, :ctx_count] = chosen_ctx
             ctx_valid[obj_idx, :ctx_count] = True
-            logit_idx[obj_idx, :ctx_count] = chosen_ctx
-            logit_valid[obj_idx, :ctx_count] = True
-            logit_weight[obj_idx, :ctx_count] = 1.0
+    return ctx_idx, ctx_valid
 
-        if extra_slots <= 0:
+
+def _compute_balanced_runtime_logit_neighbors(
+    gt_obj_points: np.ndarray,
+    gt_hand_points: np.ndarray,
+    obj_valid: np.ndarray,
+    *,
+    k_logit: int,
+    logit_pos_radius: float,
+    logit_neg_min_radius: float,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    num_obj = gt_obj_points.shape[0]
+    logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
+    logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
+    logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
+    pos_count = np.zeros((num_obj,), dtype=np.int64)
+    neg_count = np.zeros((num_obj,), dtype=np.int64)
+    valid_obj_idx = np.flatnonzero(obj_valid)
+    if valid_obj_idx.size == 0:
+        return logit_idx, logit_valid, logit_weight, pos_count, neg_count
+    obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
+    hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
+    distance = torch.cdist(obj, hand).numpy()
+    rng = np.random.default_rng(seed)
+    max_pos_slots = max(1, int(k_logit // 2))
+    for row, obj_idx in enumerate(valid_obj_idx.tolist()):
+        dist_row = distance[row]
+        pos_candidates = np.flatnonzero(dist_row <= float(logit_pos_radius))
+        if pos_candidates.size == 0:
             continue
-        hard_neg_candidates = np.flatnonzero(
-            (dist_row > float(ctx_radius))
-            & (dist_row <= float(logit_neg_radius))
+        pos_order = np.argsort(dist_row[pos_candidates], kind="stable")
+        chosen_pos = pos_candidates[pos_order[:max_pos_slots]]
+        chosen_pos_count = int(chosen_pos.size)
+        logit_idx[obj_idx, :chosen_pos_count] = chosen_pos
+        logit_valid[obj_idx, :chosen_pos_count] = True
+        logit_weight[obj_idx, :chosen_pos_count] = 1.0
+        pos_count[obj_idx] = chosen_pos_count
+
+        far_neg_candidates = np.flatnonzero(dist_row > float(logit_neg_min_radius))
+        neg_target = min(
+            chosen_pos_count,
+            max(0, int(k_logit - chosen_pos_count)),
+            int(far_neg_candidates.size),
         )
-        start = int(k_ctx)
-        if hard_neg_slots > 0 and hard_neg_candidates.size > 0:
-            hard_neg_order = np.argsort(dist_row[hard_neg_candidates], kind="stable")
-            chosen_hard_neg = hard_neg_candidates[hard_neg_order[:hard_neg_slots]]
-            hard_neg_count = int(chosen_hard_neg.size)
-            logit_idx[obj_idx, start : start + hard_neg_count] = chosen_hard_neg
-            logit_valid[obj_idx, start : start + hard_neg_count] = True
-            logit_weight[obj_idx, start : start + hard_neg_count] = 1.0
-            start += hard_neg_count
-        if far_neg_slots <= 0:
+        if neg_target <= 0:
             continue
-        far_neg_candidates = np.flatnonzero(dist_row > float(logit_neg_radius))
-        if far_neg_candidates.size == 0:
-            continue
-        far_neg_count = min(int(far_neg_slots), int(far_neg_candidates.size))
-        chosen_far_neg = rng.choice(
+        chosen_neg = rng.choice(
             far_neg_candidates,
-            size=far_neg_count,
+            size=int(neg_target),
             replace=False,
         )
-        logit_idx[obj_idx, start : start + far_neg_count] = chosen_far_neg
-        logit_valid[obj_idx, start : start + far_neg_count] = True
-        logit_weight[obj_idx, start : start + far_neg_count] = float(far_weight)
-    return ctx_idx, ctx_valid, logit_idx, logit_valid, logit_weight
+        start = chosen_pos_count
+        end = start + int(neg_target)
+        logit_idx[obj_idx, start:end] = chosen_neg
+        logit_valid[obj_idx, start:end] = True
+        logit_weight[obj_idx, start:end] = 1.0
+        neg_count[obj_idx] = int(neg_target)
+    return logit_idx, logit_valid, logit_weight, pos_count, neg_count
 
 
 def _compute_input_knn(
@@ -465,6 +486,14 @@ def _is_blacklisted(path: Path, root: Path, blacklist: set[str]) -> bool:
     return bool(keys.intersection(blacklist))
 
 
+def _sequence_group_key(path: Path) -> str:
+    stem = path.stem
+    if stem.endswith("_left") or stem.endswith("_right"):
+        stem = stem.rsplit("_", 1)[0]
+    parent = path.parent.as_posix()
+    return stem if parent in {"", "."} else f"{parent}/{stem}"
+
+
 class SequenceLocalitySampler(Sampler[int]):
     """Shuffle sequences and frames while keeping each sequence in one block.
 
@@ -508,7 +537,7 @@ def make_dataloaders(
     *,
     meta_cfg: Any,
     distributed: Any | None = None,
-) -> tuple[DataLoader, DataLoader | None, dict[str, Any]]:
+) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
@@ -517,6 +546,8 @@ def make_dataloaders(
         "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
         "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
+        "logit_pos_radius": float(getattr(meta_cfg, "logit_pos_radius", 0.02)),
+        "logit_neg_min_radius": float(getattr(meta_cfg, "logit_neg_min_radius", 0.04)),
         "logit_neg_radius": float(getattr(meta_cfg, "logit_neg_radius", 0.06)),
         "logit_far_weight": float(getattr(meta_cfg, "loss_cross_edge_far_weight", 0.5)),
         "base_seed": int(seed),
@@ -536,10 +567,17 @@ def make_dataloaders(
         "hand_perturb_prob": float(meta_cfg.hand_perturb_prob),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
     }
-    val_kwargs = {
+    val_clean_kwargs = {
+        **train_kwargs,
+        "augment": False,
+        "apply_hand_perturb": False,
+        "hand_perturb_prob": 0.0,
+    }
+    val_perturbed_kwargs = {
         **train_kwargs,
         "augment": False,
         "apply_hand_perturb": bool(getattr(meta_cfg, "val_augment", False)),
+        "hand_perturb_prob": float(getattr(meta_cfg, "val_hand_perturb_prob", 1.0)),
     }
     train_loader, val_loader, metadata = make_file_split_dataloaders(
         data_cfg,
@@ -547,7 +585,12 @@ def make_dataloaders(
         dataset_cls=CorrStaticDataset,
         file_pattern="**/*.npz",
         train_dataset_kwargs=train_kwargs,
-        val_dataset_kwargs=val_kwargs,
+        val_dataset_kwargs=val_clean_kwargs,
+        split_group_fn=(
+            _sequence_group_key
+            if bool(getattr(data_cfg, "group_val_by_sequence", True))
+            else None
+        ),
         distributed=distributed,
     )
     if bool(data_cfg.shuffle) and bool(
@@ -568,6 +611,33 @@ def make_dataloaders(
             sampler=train_sampler,
             **make_dataloader_kwargs(data_cfg, loader_seed),
         )
+    val_loaders: dict[str, DataLoader] = {}
+    if val_loader is not None:
+        val_loader.dataset.set_epoch(0)
+        val_loaders["val_clean/"] = val_loader
+        if bool(getattr(meta_cfg, "val_augment", False)):
+            val_perturbed_dataset = CorrStaticDataset(
+                val_loader.dataset.data_root,
+                file_list=val_loader.dataset.file_paths,
+                **val_perturbed_kwargs,
+            )
+            val_perturbed_dataset.set_epoch(0)
+            loader_seed = int(seed) + int(
+                getattr(distributed, "rank", 0)
+                if getattr(distributed, "enabled", False)
+                else 0
+            )
+            val_perturbed_loader = DataLoader(
+                val_perturbed_dataset,
+                batch_size=int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
+                shuffle=False,
+                sampler=make_default_eval_sampler(
+                    val_perturbed_dataset,
+                    distributed=distributed,
+                ),
+                **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
+            )
+            val_loaders["val_perturbed/"] = val_perturbed_loader
     first_path = train_loader.dataset.file_paths[0]
     with np.load(first_path, allow_pickle=False) as data:
         hand_finger_id = np.asarray(
@@ -584,11 +654,12 @@ def make_dataloaders(
                 "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
                 "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
                 "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
+                "logit_pos_radius": float(getattr(meta_cfg, "logit_pos_radius", 0.02)),
+                "logit_neg_min_radius": float(getattr(meta_cfg, "logit_neg_min_radius", 0.04)),
                 "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
                 "num_fingers": int(np.max(hand_finger_id)) + 1 if hand_finger_id.size > 0 else 0,
                 "num_regions": int(np.max(hand_region_id)) + 1 if hand_region_id.size > 0 else 0,
+                "val_loader_names": sorted(val_loaders),
             }
         )
-    if val_loader is not None:
-        val_loader.dataset.set_epoch(0)
-    return train_loader, val_loader, metadata
+    return train_loader, val_loader, metadata, val_loaders

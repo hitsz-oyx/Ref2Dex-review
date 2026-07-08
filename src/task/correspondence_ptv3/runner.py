@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -54,11 +55,20 @@ class CorrespondencePTV3Runner(BaseRunner):
             "k_ctx",
             "k_logit",
             "k_logit_hard_neg",
+            "logit_pos_radius",
+            "logit_neg_min_radius",
             "num_fingers",
             "num_regions",
         ):
-            if field in metadata and int(metadata[field]) > 0:
-                setattr(self.cfg.meta, field, int(metadata[field]))
+            if field not in metadata:
+                continue
+            value = metadata[field]
+            if field in {"logit_pos_radius", "logit_neg_min_radius"}:
+                if float(value) > 0:
+                    setattr(self.cfg.meta, field, float(value))
+                continue
+            if int(value) > 0:
+                setattr(self.cfg.meta, field, int(value))
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(
@@ -344,6 +354,23 @@ class CorrespondencePTV3Runner(BaseRunner):
     ) -> torch.Tensor | None:
         raw = getattr(self.cfg.meta, "contact_bin_weights", None)
         if raw is None:
+            cached = getattr(self, "_cached_contact_bin_weights", None)
+            if cached is None:
+                weight_path = getattr(self.cfg.meta, "contact_bin_weight_path", None)
+                if weight_path:
+                    path = Path(str(weight_path)).expanduser()
+                    if not path.exists():
+                        raise FileNotFoundError(
+                            f"contact_bin_weight_path does not exist: {path}"
+                        )
+                    cached = [
+                        float(item)
+                        for item in path.read_text(encoding="utf-8").split()
+                        if item.strip()
+                    ]
+                    self._cached_contact_bin_weights = cached
+            raw = cached
+        if raw is None:
             return None
         weight = torch.as_tensor(raw, device=device, dtype=dtype)
         if weight.numel() != int(getattr(self.cfg.meta, "num_contact_bins", 10)):
@@ -433,6 +460,8 @@ class CorrespondencePTV3Runner(BaseRunner):
                 continue
             sample_scores = scores[batch_idx].reshape(-1)[sample_valid]
             sample_labels = labels[batch_idx].reshape(-1)[sample_valid]
+            if int(sample_labels.bool().sum().item()) <= 0:
+                continue
             per_sample.append(self._binary_auprc(sample_scores, sample_labels))
         if not per_sample:
             return scores.new_tensor(0.0)
@@ -463,6 +492,8 @@ class CorrespondencePTV3Runner(BaseRunner):
                     continue
                 kk = min(int(k), int(valid_idx.numel()))
                 gt_scores = sample_target[obj_idx, valid_idx]
+                if float(gt_scores.max().item()) <= 0.0:
+                    continue
                 pred_scores = sample_pred[obj_idx, valid_idx]
                 gt_topk = torch.topk(gt_scores, k=kk, dim=-1).indices
                 pred_topk = torch.topk(pred_scores, k=kk, dim=-1).indices

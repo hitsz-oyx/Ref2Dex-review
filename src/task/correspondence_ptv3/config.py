@@ -61,16 +61,18 @@ class Config(TaskConfig):
         k_cross: int = 32
         # runtime context 邻域大小：只用于 cross-attention / token 形成。
         k_ctx: int = 32
-        # runtime logit 邻域大小：32 个 context hand + 16 个半难负样本
-        # + 16 个远负样本。
+        # runtime logit 邻域大小上限。当前默认采用“2cm 内正样本 + 按正样本数
+        # 配平的 >4cm 负样本”，总长度不足时 padding。
         k_logit: int = 64
-        # runtime logit 邻域中，来自 (ctx_radius, logit_neg_radius] 的
-        # 半难负样本数量。
+        # 兼容旧配置字段。balanced logit 采样默认不再使用固定的半难负样本配额。
         k_logit_hard_neg: int = 16
         # runtime context 半径，单位 meter。
         ctx_radius: float = 0.04
-        # runtime 半难负样本的外半径，单位 meter。
-        # 超过该半径的 hand 点只作为 far negatives 随机采样。
+        # runtime logit 正样本统计半径，单位 meter。
+        logit_pos_radius: float = 0.02
+        # runtime 远负样本的最小半径，单位 meter。
+        logit_neg_min_radius: float = 0.04
+        # 兼容旧配置字段。balanced logit 采样默认不再使用这个 6cm 上界。
         logit_neg_radius: float = 0.06
 
         # ---- 主干网络与输入特征 ---------------------------------------------
@@ -140,7 +142,7 @@ class Config(TaskConfig):
         # 距离 ≥ d_neg 时，soft label 接近 0（无接触）。
         d_neg: float = 0.03
         # 软标签过渡带的锐度（gamma 越大过渡越陡，越接近阶跃函数）。
-        gamma: float = 2.0
+        gamma: float = 1.0
         # 物体点是否参与对应关系（correspondence）学习的最小接触概率阈值。
         # 只有 `obj_contact_label > corr_contact_label_min` 的点会被视作
         # “正样本”参与对应关系头（如 object cano / finger / region）训练。
@@ -151,8 +153,10 @@ class Config(TaskConfig):
         hand_trans_std: float = 0.01
         # 训练时对手部施加扰动的概率（1.0 = 每个样本都做扰动）。
         hand_perturb_prob: float = 1.0
-        # 验证集是否也启用数据增强（默认关闭，保证评估稳定可复现）。
-        val_augment: bool = False
+        # 是否额外构建一套“固定手部扰动”的验证集。
+        val_augment: bool = True
+        # 固定扰动验证集的手部扰动概率。
+        val_hand_perturb_prob: float = 1.0
 
         # ---- bin-contact 输出与可选 heads -----------------------------------
         # ContactOpt 风格的 contact probability 离散 bin 数。
@@ -160,8 +164,22 @@ class Config(TaskConfig):
         # 如何从 bin logits 解码回 [0, 1] 标量概率。
         # 可选: "expectation" / "argmax"
         contact_bin_decode_mode: str = "expectation"
-        # 可选的 class weight。None 表示不做 bin reweight。
-        contact_bin_weights: list[float] | None = None
+        # 10-bin contact CE 的类别权重。这里直接写入从 ContactOpt 权重
+        # 导出的均值归一化版本，保留相对比例，同时让平均权重为 1。
+        contact_bin_weights: list[float] | None = [
+            0.04906267471446666,
+            0.124615854284691,
+            0.5289112177088706,
+            1.0479041499564616,
+            1.4865461685891466,
+            1.6614463943665032,
+            1.722506187101053,
+            1.5057927629354453,
+            1.0416008624789648,
+            0.8316137278643991,
+        ]
+        # 可选的外部权重路径，默认关闭；当前 baseline 直接使用上面的内嵌权重。
+        contact_bin_weight_path: str | None = None
         # 手指类别数：通常 6（5 指 + 1 手掌），与数据集中 finger_id 取值一致。
         num_fingers: int = 6
         # 手掌区域数：通常 6（指尖 / 指节 / 手掌分区），由数据集 region_id 决定。
@@ -186,8 +204,8 @@ class Config(TaskConfig):
         loss_region_weight: float = 0.0
         # 交叉边（cross edge）接触预测的损失权重。
         loss_cross_edge_weight: float = 1.0
-        # far negative 的 edge BCE 权重系数。
-        # 用于避免新增的“很容易的远负样本”把整体预测压得过于保守。
+        # 兼容旧配置字段。balanced logit 采样默认按样本数配平，通常不再依赖
+        # 额外的 far-negative reweight。
         loss_cross_edge_far_weight: float = 0.5
         # cross-edge rank-k auxiliary loss 的损失权重。
         # 当前只作为可选实验项，基线默认不反传。
@@ -234,6 +252,8 @@ class Config(TaskConfig):
         blacklist_path: str | None = None
         # 从训练集中切分出验证集的比例（仅在 val_path 为空时生效）。
         val_split: float = 0.1
+        # 留空切分时，是否按“原始序列分组”而不是按单个 npz 文件随机切分。
+        group_val_by_sequence: bool = True
         # 每个进程/每张卡上的训练批量大小。
         batch_size: int = 8
         # 每个进程/每张卡上的验证批量大小（一般可略大于训练以加速评估）。
@@ -302,8 +322,8 @@ class Config(TaskConfig):
         # 早停判定阈值（提升幅度小于该值则视为未提升）。
         early_stopping_threshold: float = 0.0
         # 用于挑选"最佳模型"的指标名（与 metrics 字典中的 key 对应）。
-        metric_for_best: str = "val/loss"
-        # `metric_for_best` 是否越低越好（例如 val/loss）。
+        metric_for_best: str = "val_clean/loss"
+        # `metric_for_best` 是否越低越好（例如 val_clean/loss）。
         lower_is_better: bool = True
 
         class distributed(TaskConfig.train.distributed):

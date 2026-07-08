@@ -6,25 +6,39 @@ meta:
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false
+  gamma: 1.0
   num_contact_bins: 10
   contact_bin_decode_mode: expectation
+  contact_bin_weights:
+    - 0.04906267471446666
+    - 0.124615854284691
+    - 0.5289112177088706
+    - 1.0479041499564616
+    - 1.4865461685891466
+    - 1.6614463943665032
+    - 1.722506187101053
+    - 1.5057927629354453
+    - 1.0416008624789648
+    - 0.8316137278643991
   k_ctx: 32
   k_logit: 64
-  k_logit_hard_neg: 16
   ctx_radius: 0.04
-  logit_neg_radius: 0.06
+  logit_pos_radius: 0.02
+  logit_neg_min_radius: 0.04
   loss_obj_contact_weight: 1.0
   loss_cross_edge_weight: 1.0
   loss_cano_weight: 0.0
   loss_cross_edge_rankk_weight: 0.0
   loss_finger_weight: 0.0
   loss_region_weight: 0.0
-  loss_cross_edge_far_weight: 0.5
+  val_augment: true
+  val_hand_perturb_prob: 1.0
 
 data:
   batch_size: 8
   val_batch_size: 24
   num_workers: 4
+  group_val_by_sequence: true
   sequence_locality_shuffle: true
   persistent_workers: true
   prefetch_factor: 4
@@ -40,7 +54,7 @@ train:
   grad_clip_norm: 1.0
   save_every_epochs: 5
   eval_every_epochs: 1
-  metric_for_best: val/loss
+  metric_for_best: val_clean/loss
   lower_is_better: true
   distributed:
     enable: false
