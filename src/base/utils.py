@@ -27,10 +27,15 @@ def set_seed(seed: int) -> int:
     return seed
 
 
-def resolve_device(device: str) -> torch.device:
+def resolve_device(device: str, *, local_rank: int | None = None) -> torch.device:
     if device == "auto":
+        if local_rank is not None and torch.cuda.is_available():
+            return torch.device("cuda", local_rank)
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    return torch.device(device)
+    resolved = torch.device(device)
+    if local_rank is not None and resolved.type == "cuda":
+        return torch.device("cuda", local_rank)
+    return resolved
 
 
 def import_from_path(dotted_path: str) -> Any:

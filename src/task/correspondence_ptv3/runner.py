@@ -33,7 +33,12 @@ class CorrespondencePTV3Runner(BaseRunner):
         )
 
     def make_dataloaders(self, data_cfg: Any, seed: int):
-        return make_dataloaders(data_cfg, meta_cfg=self.cfg.meta, seed=seed)
+        return make_dataloaders(
+            data_cfg,
+            meta_cfg=self.cfg.meta,
+            seed=seed,
+            distributed=self.distributed,
+        )
 
     def configure_data(
         self,
@@ -319,13 +324,18 @@ class CorrespondencePTV3Runner(BaseRunner):
         mask: torch.Tensor,
         eps: float = 1e-6,
     ) -> torch.Tensor:
-        pred_prob = pred_prob.clamp(min=eps, max=1.0 - eps)
-        return F.binary_cross_entropy(
-            pred_prob,
-            target,
-            weight=mask.float(),
-            reduction="sum",
-        ) / mask.float().sum().clamp(min=1.0)
+        # Metrics may be computed inside an autocast-enabled train step. BCE on
+        # probabilities is not autocast-safe, so force a float32 block.
+        with torch.autocast(device_type=pred_prob.device.type, enabled=False):
+            pred_prob = pred_prob.float().clamp(min=eps, max=1.0 - eps)
+            target = target.float()
+            mask = mask.float()
+            return F.binary_cross_entropy(
+                pred_prob,
+                target,
+                weight=mask,
+                reduction="sum",
+            ) / mask.sum().clamp(min=1.0)
 
     def _get_contact_bin_weights(
         self,
@@ -551,12 +561,14 @@ class CorrespondencePTV3Runner(BaseRunner):
         mask: torch.Tensor,
         eps: float = 1e-6,
     ) -> torch.Tensor:
-        target = target.clamp(min=eps, max=1.0 - eps)
-        entropy = -(
-            target * torch.log(target)
-            + (1.0 - target) * torch.log(1.0 - target)
-        )
-        return (entropy * mask).sum() / mask.sum().clamp(min=1.0)
+        with torch.autocast(device_type=target.device.type, enabled=False):
+            target = target.float().clamp(min=eps, max=1.0 - eps)
+            mask = mask.float()
+            entropy = -(
+                target * torch.log(target)
+                + (1.0 - target) * torch.log(1.0 - target)
+            )
+            return (entropy * mask).sum() / mask.sum().clamp(min=1.0)
 
     def inference(
         self,

@@ -105,6 +105,13 @@ class TaskConfig(BaseConfig):
         metric_for_best = "val/loss"
         lower_is_better = True
 
+        class distributed(BaseConfig):
+            enable = False
+            backend = "auto"
+            timeout_minutes = 30
+            broadcast_buffers = False
+            find_unused_parameters = False
+
     class wandb(BaseConfig):
         enable = True
         project = "sl-framework"

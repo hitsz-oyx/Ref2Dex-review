@@ -24,6 +24,19 @@ from .data import (
     split_train_val,
     resolve_data_path,
 )
+from .distributed import (
+    DistributedSamplerAdapter,
+    DistributedState,
+    barrier,
+    cleanup_distributed,
+    distributed_enabled,
+    init_distributed,
+    make_default_eval_sampler,
+    make_default_train_sampler,
+    reduce_dict,
+    shard_sampler_for_distributed,
+    wrap_model_for_distributed,
+)
 from .models import MLP, MLPModel, build_model
 from .utils import (
     JsonlLogger,
@@ -71,6 +84,17 @@ __all__ = [
     "split_items",
     "split_train_val",
     "resolve_data_path",
+    "DistributedSamplerAdapter",
+    "DistributedState",
+    "barrier",
+    "cleanup_distributed",
+    "distributed_enabled",
+    "init_distributed",
+    "make_default_eval_sampler",
+    "make_default_train_sampler",
+    "reduce_dict",
+    "shard_sampler_for_distributed",
+    "wrap_model_for_distributed",
     "MLP",
     "MLPModel",
     "build_model",

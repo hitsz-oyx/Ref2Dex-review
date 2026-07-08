@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.base import make_file_split_dataloaders
 from src.base.data import make_dataloader_kwargs
+from src.base.distributed import shard_sampler_for_distributed
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
     sample_object_indices,
@@ -506,6 +507,7 @@ def make_dataloaders(
     seed: int,
     *,
     meta_cfg: Any,
+    distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any]]:
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
@@ -546,17 +548,25 @@ def make_dataloaders(
         file_pattern="**/*.npz",
         train_dataset_kwargs=train_kwargs,
         val_dataset_kwargs=val_kwargs,
+        distributed=distributed,
     )
     if bool(data_cfg.shuffle) and bool(
         getattr(data_cfg, "sequence_locality_shuffle", True)
     ):
         train_sampler = SequenceLocalitySampler(train_loader.dataset, seed)
+        train_sampler = shard_sampler_for_distributed(
+            train_sampler,
+            distributed=distributed,
+            drop_last=bool(data_cfg.drop_last),
+            pad=True,
+        )
+        loader_seed = int(seed) + int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
         train_loader = DataLoader(
             train_loader.dataset,
             batch_size=int(data_cfg.batch_size),
             shuffle=False,
             sampler=train_sampler,
-            **make_dataloader_kwargs(data_cfg, seed),
+            **make_dataloader_kwargs(data_cfg, loader_seed),
         )
     first_path = train_loader.dataset.file_paths[0]
     with np.load(first_path, allow_pickle=False) as data:

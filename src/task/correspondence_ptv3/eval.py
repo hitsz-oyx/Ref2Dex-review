@@ -16,6 +16,7 @@ from __future__ import annotations
 
 # 命令行参数解析。
 import argparse
+import os
 # 用于把项目根目录加入 sys.path，支持以脚本方式运行。
 import sys
 # 面向对象的路径处理工具。
@@ -28,7 +29,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 # 加载检查点/配置的辅助函数。
-from src.base import load_checkpoint, load_config, task_config_from_dict
+from src.base import cleanup_distributed, load_checkpoint, load_config, task_config_from_dict
 # 评估时所使用的运行器入口（与训练共用同一个类）。
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 
@@ -48,6 +49,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=None, help="Optional Python config reference.")
     # 设备覆盖项，例如 cpu / cuda:0；缺省沿用检查点中的设备设置。
     parser.add_argument("--device", default="auto", help="Device override, for example cpu or cuda:0.")
+    # 显式打开分布式评估开关；实际多卡仍需要 torchrun。
+    parser.add_argument(
+        "--distributed",
+        action="store_true",
+        help="Enable distributed evaluation logic. Launch with torchrun for multi-GPU execution.",
+    )
+    parser.add_argument("--local-rank", "--local_rank", default=None, type=int, help=argparse.SUPPRESS)
     # 解析并返回 Namespace。
     return parser.parse_args()
 
@@ -71,13 +79,19 @@ def main() -> None:
 
     # 第三步：用命令行传入的设备覆盖配置中的设备设置。
     cfg.train.device = args.device
+    if args.distributed:
+        cfg.train.distributed.enable = True
 
     # 第四步：创建 Runner 并以 "eval" 模式启动评估流程。
     # Runner 在 eval 模式下会加载模型权重、跑前向推理、计算验证指标等。
-    CorrespondencePTV3Runner(cfg, mode="eval", checkpoint=args.checkpoint).run()
+    try:
+        CorrespondencePTV3Runner(cfg, mode="eval", checkpoint=args.checkpoint).run()
+    finally:
+        cleanup_distributed()
 
     # 第五步：在终端输出所评估的检查点路径，便于人工确认。
-    print(f"checkpoint: {args.checkpoint}")
+    if int(os.environ.get("RANK", "0")) == 0:
+        print(f"checkpoint: {args.checkpoint}")
 
 
 # 当脚本被直接执行（而非被 import）时，进入主流程。

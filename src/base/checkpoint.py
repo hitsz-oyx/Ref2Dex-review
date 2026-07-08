@@ -171,4 +171,14 @@ def load_checkpoint(path: str | Path, map_location: str | torch.device = "cpu") 
 
 
 def unwrap_model(model: torch.nn.Module) -> torch.nn.Module:
-    return getattr(model, "_orig_mod", model)
+    current = model
+    while True:
+        next_model = getattr(current, "module", None)
+        if next_model is not None:
+            current = next_model
+            continue
+        next_model = getattr(current, "_orig_mod", None)
+        if next_model is not None:
+            current = next_model
+            continue
+        return current

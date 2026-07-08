@@ -18,6 +18,13 @@ from .base_config import (
     task_config_from_dict,
 )
 from .checkpoint import CheckpointManager, load_checkpoint, unwrap_model
+from .distributed import (
+    DistributedState,
+    barrier,
+    init_distributed,
+    reduce_dict,
+    wrap_model_for_distributed,
+)
 from .utils import (
     JsonlLogger,
     MetricAverager,
@@ -55,9 +62,15 @@ class BaseRunner:
         if device is not None:
             self.cfg.train.device = device
 
+        self.distributed: DistributedState = init_distributed(self.cfg.train)
+        self.is_primary = self.distributed.is_primary
         self.output_dir = Path(cfg.train.output_dir)
-        self.seed = set_seed(cfg.train.seed)
-        self.device = resolve_device(cfg.train.device)
+        self.seed = int(cfg.train.seed)
+        self.process_seed = set_seed(self.seed + self.distributed.rank)
+        self.device = resolve_device(
+            cfg.train.device,
+            local_rank=self.distributed.local_rank if self.distributed.enabled else None,
+        )
         self.metadata: dict[str, Any] = {}
         self.train_loader = None
         self.val_loader = None
@@ -81,8 +94,6 @@ class BaseRunner:
                 self._setup_train()
                 if cfg.train.resume:
                     self.load(cfg.train.resume, load_optimizer=True)
-                if cfg.train.compile and self.model is not None:
-                    self.model = torch.compile(self.model)
             else:
                 if checkpoint is None:
                     raise ValueError("eval mode requires a checkpoint.")
@@ -92,8 +103,9 @@ class BaseRunner:
         if self.mode == "train":
             return self.learn()
         metrics = self.evaluate(prefix="val/")
-        for key, value in metrics.items():
-            print(f"{key}: {value:.6g}")
+        if self.is_primary:
+            for key, value in metrics.items():
+                print(f"{key}: {value:.6g}")
         return metrics
 
     def learn(self) -> dict[str, float]:
@@ -134,9 +146,11 @@ class BaseRunner:
         self.save(epoch=final_epoch, is_best=False)
         elapsed = format_seconds(time.time() - start_time)
         if self._early_stopping_triggered:
-            print(f"Training early stopped at step {self.global_step} in {elapsed}.")
+            if self.is_primary:
+                print(f"Training early stopped at step {self.global_step} in {elapsed}.")
         else:
-            print(f"Training finished at step {self.global_step} in {elapsed}.")
+            if self.is_primary:
+                print(f"Training finished at step {self.global_step} in {elapsed}.")
         if self.wandb_run is not None:
             self.wandb_run.finish()
         return last_metrics
@@ -156,7 +170,10 @@ class BaseRunner:
             self.global_step += 1
 
             if self.global_step % self.cfg.train.log_every_steps == 0:
-                logged = {f"train/{key}": value for key, value in metrics.items()}
+                logged = {
+                    f"train/{key}": value
+                    for key, value in self._reduce_step_metrics(metrics).items()
+                }
                 self._record_metrics(logged, epoch + 1)
 
             if self.val_loader is not None and self._step_due(self.cfg.train.eval_every_steps):
@@ -167,7 +184,7 @@ class BaseRunner:
             if self._step_due(self.cfg.train.save_every_steps):
                 self.save(epoch=epoch + 1, is_best=False)
 
-        epoch_metrics = averager.compute(prefix="train/")
+        epoch_metrics = self._compute_averager_metrics(averager, prefix="train/")
         self._record_metrics(epoch_metrics, epoch + 1)
         return epoch_metrics
 
@@ -225,7 +242,7 @@ class BaseRunner:
             averager.update(metrics, n=output.batch_size or self.batch_size(batch))
         if was_training:
             self.train_mode()
-        return averager.compute(prefix=prefix)
+        return self._compute_averager_metrics(averager, prefix=prefix)
 
     def make_dataloaders(self, data_cfg, seed: int):
         raise NotImplementedError(
@@ -297,6 +314,9 @@ class BaseRunner:
 
     def save(self, epoch: int, is_best: bool = False) -> Path:
         self._require_train_ready()
+        if not self.is_primary:
+            barrier()
+            return self.checkpoints.root / "latest.pt"
         path = self.checkpoints.save(
             step=self.global_step,
             epoch=epoch,
@@ -312,6 +332,7 @@ class BaseRunner:
         )
         if self.wandb_run is not None and self.cfg.wandb.log_model and is_best:
             self._log_checkpoint_artifact(path)
+        barrier()
         return path
 
     def load(
@@ -323,7 +344,8 @@ class BaseRunner:
         ckpt_path = self._resolve_resume_path(path)
         checkpoint = load_checkpoint(ckpt_path, map_location=map_location or self.device)
         self._load_checkpoint_payload(checkpoint, load_optimizer=load_optimizer)
-        print(f"Loaded checkpoint from {ckpt_path} at step {self.global_step}.")
+        if self.is_primary:
+            print(f"Loaded checkpoint from {ckpt_path} at step {self.global_step}.")
         return checkpoint
 
     resume = load
@@ -339,18 +361,29 @@ class BaseRunner:
 
     def _setup_train(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        save_config(self.cfg, self.output_dir / "config.json")
+        if self.is_primary:
+            save_config(self.cfg, self.output_dir / "config.json")
+        barrier()
         self.train_loader, self.val_loader, self.metadata = self.make_dataloaders(self.cfg.data, seed=self.seed)
         self.configure_data(self.metadata, self.train_loader.dataset)
         self._write_metadata()
         self.model = self.build_model(self.cfg.model).to(self.device)
+        if self.cfg.train.compile:
+            self.model = torch.compile(self.model)
+        self.model = wrap_model_for_distributed(
+            self.model,
+            device=self.device,
+            train_cfg=self.cfg.train,
+            state=self.distributed,
+        )
         self.optimizer = self._build_optimizer()
         self.total_steps = self._resolve_total_steps()
         self.scheduler = self._build_scheduler(self.total_steps)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp and self.device.type == "cuda")
         self.checkpoints = CheckpointManager(self.output_dir, max_to_keep=self.cfg.train.max_to_keep)
-        self.jsonl = JsonlLogger(self.output_dir / "metrics.jsonl")
+        self.jsonl = JsonlLogger(self.output_dir / "metrics.jsonl") if self.is_primary else None
         self.wandb_run = self._build_wandb_run()
+        self._log_train_setup()
 
     def _setup_eval(self, checkpoint: str | Path) -> None:
         self.train_loader, self.val_loader, self.metadata = self.make_dataloaders(self.cfg.data, seed=self.seed)
@@ -471,23 +504,26 @@ class BaseRunner:
 
         if self.epochs_without_improvement >= patience or self.evals_without_improvement >= patience:
             self._early_stopping_triggered = True
-            print(
-                f"Early stopping triggered at epoch {epoch} "
-                f"({self.epochs_without_improvement} epochs, {self.evals_without_improvement} evals without improvement)."
-            )
+            if self.is_primary:
+                print(
+                    f"Early stopping triggered at epoch {epoch} "
+                    f"({self.epochs_without_improvement} epochs, {self.evals_without_improvement} evals without improvement)."
+                )
             return True
         return False
 
     def _record_metrics(self, metrics: dict[str, float], epoch: int) -> None:
         payload = {"step": self.global_step, "epoch": epoch, **metrics}
-        self.jsonl.write(payload)
+        if self.jsonl is not None:
+            self.jsonl.write(payload)
         if self.wandb_run is not None:
             self.wandb_run.log(metrics, step=self.global_step)
-        message = " ".join(f"{key}={value:.6g}" for key, value in metrics.items())
-        print(f"step={self.global_step:06d} epoch={epoch:03d} {message}")
+        if self.is_primary:
+            message = " ".join(f"{key}={value:.6g}" for key, value in metrics.items())
+            print(f"step={self.global_step:06d} epoch={epoch:03d} {message}")
 
     def _build_wandb_run(self) -> Any | None:
-        if not self.cfg.wandb.enable:
+        if not self.cfg.wandb.enable or not self.is_primary:
             return None
         try:
             import wandb
@@ -521,9 +557,40 @@ class BaseRunner:
         self.wandb_run.log_artifact(artifact)
 
     def _write_metadata(self) -> None:
+        if not self.is_primary:
+            barrier()
+            return
         path = self.output_dir / "metadata.json"
         with path.open("w", encoding="utf-8") as f:
             json.dump(to_jsonable(self.metadata), f, indent=2, ensure_ascii=False)
+        barrier()
+
+    def _reduce_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        return reduce_dict(metrics, device=self.device, average=True)
+
+    def _compute_averager_metrics(self, averager: MetricAverager, prefix: str = "") -> dict[str, float]:
+        totals = {key: meter.total for key, meter in averager.meters.items()}
+        counts = {key: meter.count for key, meter in averager.meters.items()}
+        totals = reduce_dict(totals, device=self.device, average=False)
+        counts = reduce_dict(counts, device=self.device, average=False)
+        return {
+            f"{prefix}{key}": totals[key] / max(1.0, counts.get(key, 0.0))
+            for key in sorted(totals)
+        }
+
+    def _log_train_setup(self) -> None:
+        if not self.is_primary:
+            return
+        per_device_batch = int(self.cfg.data.batch_size)
+        global_batch = per_device_batch * self.distributed.world_size
+        val_batch = int(getattr(self.cfg.data, "val_batch_size", None) or per_device_batch)
+        print(
+            "train_setup "
+            f"device={self.device} world_size={self.distributed.world_size} "
+            f"per_device_batch={per_device_batch} global_batch={global_batch} "
+            f"val_batch={val_batch} num_workers={int(self.cfg.data.num_workers)} "
+            f"amp={bool(self.cfg.train.amp)} output_dir={self.output_dir}"
+        )
 
     def _require_train_ready(self) -> None:
         self._require_model_ready()

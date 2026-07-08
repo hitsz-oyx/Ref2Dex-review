@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
+from .distributed import make_default_eval_sampler, make_default_train_sampler
+
 T = TypeVar("T")
 
 
@@ -49,20 +51,31 @@ def create_dataloaders(
     val_dataset: Dataset | None,
     cfg: Any,
     seed: int = 1000,
+    *,
+    distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None]:
-    loader_kwargs = make_dataloader_kwargs(cfg, seed)
+    loader_seed = int(seed) + int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
+    train_sampler = make_default_train_sampler(
+        train_dataset,
+        shuffle=bool(cfg.shuffle),
+        seed=seed,
+        distributed=distributed,
+        drop_last=bool(cfg.drop_last),
+    )
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
-        shuffle=cfg.shuffle,
-        **loader_kwargs,
+        shuffle=bool(cfg.shuffle) and train_sampler is None,
+        sampler=train_sampler,
+        **make_dataloader_kwargs(cfg, loader_seed),
     )
     val_loader = (
         DataLoader(
             val_dataset,
             batch_size=getattr(cfg, "val_batch_size", None) or cfg.batch_size,
             shuffle=False,
-            **make_dataloader_kwargs(cfg, seed, drop_last=False),
+            sampler=make_default_eval_sampler(val_dataset, distributed=distributed),
+            **make_dataloader_kwargs(cfg, loader_seed, drop_last=False),
         )
         if val_dataset is not None
         else None
@@ -347,6 +360,7 @@ def make_file_split_dataloaders(
     file_pattern: str = "*.npz",
     train_dataset_kwargs: dict[str, Any] | None = None,
     val_dataset_kwargs: dict[str, Any] | None = None,
+    distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any]]:
     train_path = resolve_data_path(data_cfg.train_path, root=root)
     val_path = None if data_cfg.val_path in {None, ""} else resolve_data_path(data_cfg.val_path, root=root)
@@ -402,11 +416,20 @@ def make_file_split_dataloaders(
             else None
         )
 
+    loader_seed = int(seed) + int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
+    train_sampler = make_default_train_sampler(
+        train_dataset,
+        shuffle=bool(data_cfg.shuffle),
+        seed=seed,
+        distributed=distributed,
+        drop_last=bool(data_cfg.drop_last),
+    )
     train_loader = dataloader_cls(
         train_dataset,
         batch_size=int(data_cfg.batch_size),
-        shuffle=bool(data_cfg.shuffle),
-        **make_dataloader_kwargs(data_cfg, seed),
+        shuffle=bool(data_cfg.shuffle) and train_sampler is None,
+        sampler=train_sampler,
+        **make_dataloader_kwargs(data_cfg, loader_seed),
     )
     val_loader = None
     if val_dataset is not None:
@@ -415,7 +438,8 @@ def make_file_split_dataloaders(
             val_dataset,
             batch_size=int(val_batch_size),
             shuffle=False,
-            **make_dataloader_kwargs(data_cfg, seed, drop_last=False),
+            sampler=make_default_eval_sampler(val_dataset, distributed=distributed),
+            **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
         )
 
     metadata = {

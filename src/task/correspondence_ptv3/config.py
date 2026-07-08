@@ -21,10 +21,16 @@
 # 允许在类型注解中引用尚未定义的类型（例如本文件中的嵌套类）。
 from __future__ import annotations
 
+# 用于把 vendored third_party 路径写成仓库内相对固定的位置。
+from pathlib import Path
+
 # 导入基础任务配置类 `TaskConfig`。
 # 我们的 `Config` 类直接继承自它，复用其通用字段并在此基础上扩展本任务
 # 特有的配置项。
 from src.base import TaskConfig
+
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class Config(TaskConfig):
@@ -77,10 +83,10 @@ class Config(TaskConfig):
         # 是否启用 object->hand cross-attention。
         # 当前基线默认关闭，只保留为可选增强开关。
         use_cross_attn: bool = False
-        # 指向官方 PointTransformerV3 仓库的本地路径。
+        # 指向 vendored PointTransformerV3 仓库的本地路径。
         # 注意：本任务并不真的使用 PTv3 仓库的全部依赖（spconv/scatter/flash），
         # 但仍通过 importlib 动态加载其中的 `model.PointTransformerV3`。
-        ptv3_repo_path: str = "/home/oyx/test_ws/PointTransformerV3"
+        ptv3_repo_path: str = str(ROOT / "third_party" / "PointTransformerV3")
         # PTv3 体素化时的栅格粒度，单位与点云坐标一致。
         ptv3_grid_size: float = 0.003
         # PTv3 序列化所用的多种排序方式：z-order、z-trans、hilbert、hilbert-trans。
@@ -228,11 +234,11 @@ class Config(TaskConfig):
         blacklist_path: str | None = None
         # 从训练集中切分出验证集的比例（仅在 val_path 为空时生效）。
         val_split: float = 0.1
-        # 训练时的批量大小。
+        # 每个进程/每张卡上的训练批量大小。
         batch_size: int = 8
-        # 验证时的批量大小（一般可略大于训练以加速评估）。
+        # 每个进程/每张卡上的验证批量大小（一般可略大于训练以加速评估）。
         val_batch_size: int = 16
-        # DataLoader 的子进程数；0 表示在主进程内加载（便于调试）。
+        # 每个进程的 DataLoader 子进程数；0 表示在主进程内加载（便于调试）。
         num_workers: int = 0
         # 训练时是否打乱样本顺序。
         shuffle: bool = True
@@ -299,6 +305,20 @@ class Config(TaskConfig):
         metric_for_best: str = "val/loss"
         # `metric_for_best` 是否越低越好（例如 val/loss）。
         lower_is_better: bool = True
+
+        class distributed(TaskConfig.train.distributed):
+            """分布式训练/评估配置。"""
+
+            # 是否启用分布式逻辑。实际多卡需要配合 torchrun 启动。
+            enable: bool = False
+            # 通信后端。auto=CUDA 时优先 nccl，否则 gloo。
+            backend: str = "auto"
+            # 初始化进程组的超时时间（分钟）。
+            timeout_minutes: int = 30
+            # 是否在 DDP 中广播 buffers。
+            broadcast_buffers: bool = False
+            # 仅当模型存在条件分支、部分参数并非每步都参与反传时才需要打开。
+            find_unused_parameters: bool = False
 
     class wandb(TaskConfig.wandb):
         """Weights & Biases 实验追踪配置。"""

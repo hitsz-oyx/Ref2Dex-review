@@ -1,0 +1,2 @@
+# Corrupted Stage 3 archive detected during smoke test on 2026-07-07.
+s4/wineglass_toast_1_right.npz

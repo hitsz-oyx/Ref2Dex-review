@@ -29,8 +29,8 @@ from pathlib import Path
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-# 加载配置对象的工具函数。
-from src.base import load_config
+# 加载配置对象与分布式清理工具。
+from src.base import cleanup_distributed, load_config
 # 训练运行器入口。
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 
@@ -64,6 +64,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default=None, help="Optional override for train.output_dir.")
     # 快速覆盖训练设备，例如 cpu / cuda:0。
     parser.add_argument("--device", default=None, help="Optional override for train.device.")
+    # 显式打开分布式训练开关；实际多卡仍需要用 torchrun 启动多进程。
+    parser.add_argument(
+        "--distributed",
+        action="store_true",
+        help="Enable distributed training logic. Launch with torchrun for multi-GPU execution.",
+    )
+    # 兼容旧版 torch.distributed.launch 传入的参数；实际使用时优先读取环境变量。
+    parser.add_argument("--local-rank", "--local_rank", default=None, type=int, help=argparse.SUPPRESS)
     # 执行解析并返回 Namespace 对象。
     return parser.parse_args()
 
@@ -84,6 +92,8 @@ def main() -> None:
         cfg.train.output_dir = args.output_dir
     if args.device is not None:
         cfg.train.device = args.device
+    if args.distributed:
+        cfg.train.distributed.enable = True
 
     # 第四步：安全检查——train_path 必须非空，否则数据集无法加载。
     if not str(cfg.data.train_path).strip():
@@ -94,7 +104,10 @@ def main() -> None:
     # 第五步：创建 Runner 并以 "train" 模式启动完整训练流程。
     # Runner 内部会负责构建数据加载器、初始化模型、构建优化器、
     # 训练循环、评估、保存检查点、记录 wandb 等所有工作。
-    CorrespondencePTV3Runner(cfg, mode="train").run()
+    try:
+        CorrespondencePTV3Runner(cfg, mode="train").run()
+    finally:
+        cleanup_distributed()
 
 
 # 当脚本被直接执行（而非被 import）时，进入主流程。
