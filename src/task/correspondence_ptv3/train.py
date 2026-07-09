@@ -76,6 +76,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _override_keys(overrides: list[str]) -> set[str]:
+    keys: set[str] = set()
+    for override in overrides:
+        item = override.strip()
+        if item.startswith("--"):
+            item = item[2:]
+        if "=" not in item:
+            continue
+        key, _ = item.split("=", 1)
+        keys.add(key.strip())
+    return keys
+
+
 def main() -> None:
     """脚本主入口：解析参数 → 加载配置 → 启动训练。"""
     # 第一步：解析命令行参数。
@@ -84,6 +97,7 @@ def main() -> None:
     # 第二步：加载基础配置，并应用所有 `--set key=value` 形式的覆盖项。
     # load_config 会自动 import DEFAULT_CONFIG 指向的 Config 类并实例化。
     cfg = load_config(args.config, overrides=args.set)
+    override_keys = _override_keys(args.set)
 
     # 第三步：应用快速覆盖参数（与 --set 相比写起来更短）。
     if args.data is not None:
@@ -94,6 +108,13 @@ def main() -> None:
         cfg.train.device = args.device
     if args.distributed:
         cfg.train.distributed.enable = True
+    setattr(cfg, "_explicit_name", "name" in override_keys)
+    setattr(cfg.wandb, "_explicit_name", "wandb.name" in override_keys)
+    setattr(
+        cfg.train,
+        "_explicit_output_dir",
+        bool(args.output_dir is not None or "train.output_dir" in override_keys),
+    )
 
     # 第四步：安全检查——train_path 必须非空，否则数据集无法加载。
     if not str(cfg.data.train_path).strip():

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import math
+import re
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass, field
@@ -64,7 +65,8 @@ class BaseRunner:
 
         self.distributed: DistributedState = init_distributed(self.cfg.train)
         self.is_primary = self.distributed.is_primary
-        self.output_dir = Path(cfg.train.output_dir)
+        self.run_name, self.output_dir = self._resolve_run_identity()
+        self.cfg.train.output_dir = str(self.output_dir)
         self.seed = int(cfg.train.seed)
         self.process_seed = set_seed(self.seed + self.distributed.rank)
         self.device = resolve_device(
@@ -84,6 +86,9 @@ class BaseRunner:
         self.wandb_run: Any | None = None
         self.global_step = 0
         self.start_epoch = 0
+        self.total_steps = 0
+        self.resolved_warmup_steps = 0
+        self.resolved_warmup_ratio = 0.0
         self.best_metric: float | None = None
         self.train_dataset: Any | None = None
         self.epochs_without_improvement = 0
@@ -385,6 +390,21 @@ class BaseRunner:
             self._unpack_dataloader_bundle(dataloader_bundle)
         )
         self.configure_data(self.metadata, self.train_loader.dataset)
+        self.total_steps = self._resolve_total_steps()
+        self.resolved_warmup_steps = self._resolve_warmup_steps(self.total_steps)
+        self.resolved_warmup_ratio = (
+            float(self.resolved_warmup_steps) / float(self.total_steps)
+            if self.total_steps > 0
+            else 0.0
+        )
+        self.metadata.setdefault("run_name", self.run_name)
+        self.metadata.update(
+            {
+                "total_steps": int(self.total_steps),
+                "warmup_steps": int(self.resolved_warmup_steps),
+                "warmup_ratio": float(self.resolved_warmup_ratio),
+            }
+        )
         self._write_metadata()
         self.model = self.build_model(self.cfg.model).to(self.device)
         if self.cfg.train.compile:
@@ -396,7 +416,6 @@ class BaseRunner:
             state=self.distributed,
         )
         self.optimizer = self._build_optimizer()
-        self.total_steps = self._resolve_total_steps()
         self.scheduler = self._build_scheduler(self.total_steps)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp and self.device.type == "cuda")
         self.checkpoints = CheckpointManager(self.output_dir, max_to_keep=self.cfg.train.max_to_keep)
@@ -455,7 +474,7 @@ class BaseRunner:
         if name is None or str(name).lower() in {"none", "null"}:
             return None
         name = str(name).lower()
-        warmup = max(0, self.cfg.train.warmup_steps)
+        warmup = self._resolve_warmup_steps(total_steps)
         if name == "cosine":
             return torch.optim.lr_scheduler.LambdaLR(
                 self.optimizer,
@@ -474,6 +493,18 @@ class BaseRunner:
         if self.cfg.train.max_steps is not None:
             return int(self.cfg.train.max_steps)
         return max(1, self.cfg.train.epochs * len(self.train_loader))
+
+    def _resolve_warmup_steps(self, total_steps: int) -> int:
+        ratio = getattr(self.cfg.train, "warmup_ratio", None)
+        if ratio is not None:
+            ratio = float(ratio)
+            if not 0.0 <= ratio < 1.0:
+                raise ValueError(f"train.warmup_ratio must be in [0, 1), got {ratio}")
+            warmup_steps = int(round(total_steps * ratio))
+            if ratio > 0.0:
+                warmup_steps = max(1, warmup_steps)
+            return min(warmup_steps, max(0, total_steps - 1))
+        return min(max(0, int(self.cfg.train.warmup_steps)), max(0, total_steps - 1))
 
     def _step_due(self, interval: int | None) -> bool:
         return interval is not None and interval > 0 and self.global_step % interval == 0
@@ -556,11 +587,12 @@ class BaseRunner:
             "project": self.cfg.wandb.project,
             "entity": self.cfg.wandb.entity,
             "group": self.cfg.wandb.group,
-            "name": self.cfg.wandb.name or self.cfg.name,
+            "name": self.cfg.wandb.name or self.run_name,
             "tags": self.cfg.wandb.tags,
             "job_type": self.cfg.wandb.job_type,
             "dir": str(self.output_dir),
             "config": to_jsonable(self.cfg.to_dict()),
+            "settings": wandb.Settings(init_timeout=120),
         }
         if self.cfg.wandb.mode is not None:
             init_kwargs["mode"] = self.cfg.wandb.mode
@@ -571,7 +603,7 @@ class BaseRunner:
             import wandb
         except ImportError:
             return
-        artifact = wandb.Artifact(f"{self.cfg.name}-best", type="model")
+        artifact = wandb.Artifact(f"{self.run_name}-best", type="model")
         if checkpoint_path.is_dir():
             artifact.add_dir(str(checkpoint_path))
         else:
@@ -608,11 +640,67 @@ class BaseRunner:
         val_batch = int(getattr(self.cfg.data, "val_batch_size", None) or per_device_batch)
         print(
             "train_setup "
+            f"run_name={self.run_name} "
             f"device={self.device} world_size={self.distributed.world_size} "
             f"per_device_batch={per_device_batch} global_batch={global_batch} "
             f"val_batch={val_batch} num_workers={int(self.cfg.data.num_workers)} "
-            f"amp={bool(self.cfg.train.amp)} output_dir={self.output_dir}"
+            f"amp={bool(self.cfg.train.amp)} total_steps={int(self.total_steps)} "
+            f"warmup_steps={int(self.resolved_warmup_steps)} "
+            f"warmup_ratio={self.resolved_warmup_ratio:.6f} output_dir={self.output_dir}"
         )
+
+    def _resolve_run_identity(self) -> tuple[str, Path]:
+        if self.mode != "train":
+            run_name = self._slugify(
+                str(getattr(self.cfg.wandb, "name", None) or getattr(self.cfg, "name", "task") or "task")
+            )
+            return run_name, Path(self.cfg.train.output_dir)
+
+        explicit_output_dir = bool(getattr(self.cfg.train, "_explicit_output_dir", False))
+        explicit_cfg_name = bool(getattr(self.cfg, "_explicit_name", False))
+        explicit_wandb_name = bool(getattr(self.cfg.wandb, "_explicit_name", False))
+
+        task_slug = self._task_slug()
+        if explicit_wandb_name and str(getattr(self.cfg.wandb, "name", "")).strip():
+            run_name = self._slugify(str(self.cfg.wandb.name))
+        elif explicit_cfg_name and str(getattr(self.cfg, "name", "")).strip():
+            run_name = self._slugify(str(self.cfg.name))
+        else:
+            run_name = f"{task_slug}_{self._shared_timestamp()}"
+
+        output_value = str(getattr(self.cfg.train, "output_dir", "") or "").strip()
+        output_root = Path(output_value) if output_value else Path("outputs/train")
+        if not explicit_output_dir and output_root.name == task_slug:
+            output_root = output_root.parent
+        if getattr(self.cfg.train, "resume", None) is not None and not explicit_output_dir:
+            output_dir = Path(output_value) if output_value else output_root / run_name
+        else:
+            output_dir = output_root if explicit_output_dir else output_root / run_name
+
+        if not explicit_wandb_name:
+            self.cfg.wandb.name = run_name
+        return run_name, output_dir
+
+    def _task_slug(self) -> str:
+        runner_class = str(getattr(self.cfg, "runner_class", "") or "").strip()
+        parts = runner_class.split(".")
+        if len(parts) >= 3 and parts[0] == "src" and parts[1] == "task":
+            return self._slugify(parts[2])
+        return self._slugify(str(getattr(self.cfg, "name", "task") or "task"))
+
+    def _shared_timestamp(self) -> str:
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime()) if self.is_primary else None
+        if self.distributed.enabled and torch.distributed.is_available() and torch.distributed.is_initialized():
+            payload = [stamp]
+            torch.distributed.broadcast_object_list(payload, src=0)
+            stamp = payload[0]
+        return str(stamp)
+
+    @staticmethod
+    def _slugify(value: str) -> str:
+        slug = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+        slug = slug.strip("._-")
+        return slug or "task"
 
     def _unpack_dataloader_bundle(self, bundle: Any) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
         if not isinstance(bundle, tuple):

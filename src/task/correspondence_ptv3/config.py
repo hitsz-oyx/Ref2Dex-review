@@ -295,7 +295,9 @@ class Config(TaskConfig):
         weight_decay: float = 1e-4
         # 学习率调度器类型，例如 "cosine" / "step" / "constant"。
         scheduler: str = "cosine"
-        # 学习率 warmup 的步数。
+        # 学习率 warmup 占总训练步数的比例；设定后优先于 warmup_steps。
+        warmup_ratio: float | None = None
+        # 学习率 warmup 的绝对步数；仅在 warmup_ratio 为 None 时生效。
         warmup_steps: int = 1000
         # 梯度裁剪的 L2 范数上限，None 表示不裁剪。
         grad_clip_norm: float | None = 1.0

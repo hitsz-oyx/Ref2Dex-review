@@ -62,7 +62,7 @@ class TaskConfig(BaseConfig):
 
     class train(BaseConfig):
         # ========== 路径和随机种子 ==========
-        output_dir = "output/train_output/default"
+        output_dir = "outputs/train"
         seed = 42
 
         # ========== 设备和训练长度 ==========
@@ -77,6 +77,7 @@ class TaskConfig(BaseConfig):
 
         # ========== 学习率调度 ==========
         scheduler = "cosine"
+        warmup_ratio = None
         warmup_steps = 0
 
         # ========== 梯度裁剪和混合精度 ==========

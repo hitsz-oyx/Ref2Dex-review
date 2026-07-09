@@ -119,13 +119,19 @@ import numpy as np
 import torch
 
 from src.base import build_runner_from_checkpoint
-from src.task.correspondence_ptv3.dataset import _compute_runtime_hand_neighbors
+from src.task.correspondence_ptv3.dataset import (
+    _compute_balanced_runtime_logit_neighbors,
+    _compute_runtime_context_neighbors,
+)
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
     sample_object_indices,
     stable_frame_seed,
 )
-from src.utils.correspondence import soft_contact_label
+from src.utils.correspondence import (
+    decode_contact_bin_logits,
+    soft_contact_label,
+)
 
 
 os.environ.setdefault("DISPLAY", "localhost:10.0")
@@ -385,22 +391,27 @@ def _build_runtime_frame(
         scale_range=tuple(args.scale_range),
     )
     obj_min_dist *= float(geometry.distance_scale)
-    (
-        input_ctx_idx,
-        input_ctx_valid,
-        input_logit_idx,
-        input_logit_valid,
-        _,
-    ) = _compute_runtime_hand_neighbors(
+
+    input_ctx_idx, input_ctx_valid = _compute_runtime_context_neighbors(
         geometry.input_obj_points,
         geometry.input_hand_points,
         obj_valid,
         k_ctx=int(args.k_ctx),
-        k_logit=int(args.k_logit),
-        k_logit_hard_neg=int(args.k_logit_hard_neg),
         ctx_radius=float(args.ctx_radius),
-        logit_neg_radius=float(args.logit_neg_radius),
-        far_weight=1.0,
+    )
+    (
+        input_logit_idx,
+        input_logit_valid,
+        _input_logit_weight,
+        _input_logit_pos_count,
+        _input_logit_neg_count,
+    ) = _compute_balanced_runtime_logit_neighbors(
+        geometry.gt_obj_points,
+        geometry.gt_hand_points,
+        obj_valid,
+        k_logit=int(args.k_logit),
+        logit_pos_radius=float(args.logit_pos_radius),
+        logit_neg_min_radius=float(args.logit_neg_min_radius),
         seed=stable_frame_seed(
             base_seed=args.base_seed,
             seq_id=seq_id,
@@ -523,8 +534,12 @@ def _dense_cross_probabilities(
             z_obj_cross=obj_token,
             z_hand_neighbors=hand_tokens,
         )
-        dense_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
-    return torch.sigmoid(dense_logits).detach().cpu().numpy().astype(np.float32)
+        dense_bin_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
+        dense_prob = decode_contact_bin_logits(
+            dense_bin_logits,
+            mode=model.contact_bin_decode_mode,
+        )
+    return dense_prob.detach().cpu().numpy().astype(np.float32)
 
 
 def _build_selected_edges(
@@ -628,9 +643,9 @@ class EvalViewer:
             self.args.k_cross,
             self.args.k_ctx,
             self.args.k_logit,
-            self.args.k_logit_hard_neg,
             self.args.ctx_radius,
-            self.args.logit_neg_radius,
+            self.args.logit_pos_radius,
+            self.args.logit_neg_min_radius,
             self.args.augment,
             self.args.hand_perturb,
             self.args.augment_rotation,
@@ -949,7 +964,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k-logit", type=int, default=None)
     parser.add_argument("--k-logit-hard-neg", type=int, default=None)
     parser.add_argument("--ctx-radius", type=float, default=None)
-    parser.add_argument("--logit-neg-radius", type=float, default=None)
+    parser.add_argument("--logit-pos-radius", type=float, default=None)
+    parser.add_argument("--logit-neg-min-radius", type=float, default=None)
     parser.add_argument("--marker-radius", type=float, default=0.003)
 
     _add_bool_flag(parser, "augment", default=False)
@@ -1014,8 +1030,10 @@ def main() -> None:
         args.k_logit_hard_neg = int(getattr(runner.cfg.meta, "k_logit_hard_neg", 16))
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
-    if args.logit_neg_radius is None:
-        args.logit_neg_radius = float(getattr(runner.cfg.meta, "logit_neg_radius", 0.06))
+    if args.logit_pos_radius is None:
+        args.logit_pos_radius = float(getattr(runner.cfg.meta, "logit_pos_radius", 0.02))
+    if args.logit_neg_min_radius is None:
+        args.logit_neg_min_radius = float(getattr(runner.cfg.meta, "logit_neg_min_radius", 0.04))
     if args.d_pos is None:
         args.d_pos = float(runner.cfg.meta.d_pos)
     if args.d_neg is None:
@@ -1036,12 +1054,8 @@ def main() -> None:
         raise ValueError("--k-ctx must be positive.")
     if int(args.k_logit) < int(args.k_ctx):
         raise ValueError("--k-logit must be >= --k-ctx.")
-    if int(args.k_logit_hard_neg) < 0:
-        raise ValueError("--k-logit-hard-neg must be non-negative.")
-    if int(args.k_ctx) + int(args.k_logit_hard_neg) > int(args.k_logit):
-        raise ValueError("--k-ctx + --k-logit-hard-neg must be <= --k-logit.")
-    if float(args.logit_neg_radius) < float(args.ctx_radius):
-        raise ValueError("--logit-neg-radius must be >= --ctx-radius.")
+    if float(args.logit_neg_min_radius) < float(args.ctx_radius):
+        raise ValueError("--logit-neg-min-radius must be >= --ctx-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
 
     runtime = _build_runtime_frame(data, args.frame, max(0, args.epoch), args)
