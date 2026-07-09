@@ -23,9 +23,9 @@ meta:
   k_ctx: 32
   k_logit: 64
   ctx_radius: 0.04
-  logit_pos_radius: 0.02
-  logit_neg_min_radius: 0.04
-  loss_obj_contact_weight: 1.0
+  logit_near_radius: 0.025
+  logit_far_min_radius: 0.025
+  loss_obj_contact_weight: 0.0
   loss_cross_edge_weight: 1.0
   loss_cano_weight: 0.0
   loss_cross_edge_rankk_weight: 0.0

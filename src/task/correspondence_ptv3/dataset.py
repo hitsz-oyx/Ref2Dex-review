@@ -11,6 +11,10 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from src.base import make_file_split_dataloaders
 from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
+from src.task.correspondence_ptv3.config import (
+    resolve_logit_far_min_radius,
+    resolve_logit_near_radius,
+)
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
     sample_object_indices,
@@ -47,8 +51,10 @@ class CorrStaticDataset(Dataset):
         k_logit: int = 64,
         k_logit_hard_neg: int = 16,
         ctx_radius: float = 0.04,
-        logit_pos_radius: float = 0.02,
-        logit_neg_min_radius: float = 0.04,
+        logit_near_radius: float | None = None,
+        logit_far_min_radius: float | None = None,
+        logit_pos_radius: float | None = None,
+        logit_neg_min_radius: float | None = None,
         logit_neg_radius: float = 0.06,
         logit_far_weight: float = 0.5,
         base_seed: int = 42,
@@ -79,8 +85,22 @@ class CorrStaticDataset(Dataset):
         self.k_logit = int(k_logit)
         self.k_logit_hard_neg = int(k_logit_hard_neg)
         self.ctx_radius = float(ctx_radius)
-        self.logit_pos_radius = float(logit_pos_radius)
-        self.logit_neg_min_radius = float(logit_neg_min_radius)
+        resolved_logit_near_radius = (
+            logit_near_radius if logit_near_radius is not None else logit_pos_radius
+        )
+        resolved_logit_far_min_radius = (
+            logit_far_min_radius
+            if logit_far_min_radius is not None
+            else logit_neg_min_radius
+        )
+        if resolved_logit_near_radius is None:
+            resolved_logit_near_radius = resolve_logit_near_radius(None)
+        if resolved_logit_far_min_radius is None:
+            resolved_logit_far_min_radius = resolve_logit_far_min_radius(None)
+        self.logit_near_radius = float(resolved_logit_near_radius)
+        self.logit_far_min_radius = float(resolved_logit_far_min_radius)
+        self.logit_pos_radius = self.logit_near_radius
+        self.logit_neg_min_radius = self.logit_far_min_radius
         self.logit_neg_radius = float(logit_neg_radius)
         self.logit_far_weight = float(logit_far_weight)
         if self.k_ctx <= 0:
@@ -89,10 +109,10 @@ class CorrStaticDataset(Dataset):
             raise ValueError("k_logit must be positive.")
         if self.k_logit_hard_neg < 0:
             raise ValueError("k_logit_hard_neg must be non-negative.")
-        if self.logit_pos_radius <= 0.0:
-            raise ValueError("logit_pos_radius must be positive.")
-        if self.logit_neg_min_radius < self.logit_pos_radius:
-            raise ValueError("logit_neg_min_radius must be >= logit_pos_radius.")
+        if self.logit_near_radius <= 0.0:
+            raise ValueError("logit_near_radius must be positive.")
+        if self.logit_far_min_radius < self.logit_near_radius:
+            raise ValueError("logit_far_min_radius must be >= logit_near_radius.")
         self.base_seed = int(base_seed)
         self.augment = bool(augment)
         self.apply_hand_perturb = bool(apply_hand_perturb)
@@ -246,15 +266,15 @@ class CorrStaticDataset(Dataset):
             input_logit_idx,
             input_logit_valid,
             input_logit_weight,
-            input_logit_pos_count,
-            input_logit_neg_count,
+            input_logit_near_count,
+            input_logit_far_count,
         ) = _compute_balanced_runtime_logit_neighbors(
             geometry.gt_obj_points,
             geometry.gt_hand_points,
             obj_valid,
             k_logit=self.k_logit,
-            logit_pos_radius=self.logit_pos_radius,
-            logit_neg_min_radius=self.logit_neg_min_radius,
+            logit_near_radius=self.logit_near_radius,
+            logit_far_min_radius=self.logit_far_min_radius,
             seed=stable_frame_seed(
                 base_seed=self.base_seed,
                 seq_id=seq_id,
@@ -308,8 +328,8 @@ class CorrStaticDataset(Dataset):
             "input_obj_to_hand_logit_idx": torch.from_numpy(input_logit_idx).long(),
             "input_obj_to_hand_logit_valid_mask": torch.from_numpy(input_logit_valid),
             "input_obj_to_hand_logit_loss_weight": torch.from_numpy(input_logit_weight).float(),
-            "input_obj_to_hand_logit_pos_count": torch.from_numpy(input_logit_pos_count).long(),
-            "input_obj_to_hand_logit_neg_count": torch.from_numpy(input_logit_neg_count).long(),
+            "input_obj_to_hand_logit_near_count": torch.from_numpy(input_logit_near_count).long(),
+            "input_obj_to_hand_logit_far_count": torch.from_numpy(input_logit_far_count).long(),
             "hand_cano_points": torch.from_numpy(
                 np.asarray(
                     data.get(
@@ -374,57 +394,61 @@ def _compute_balanced_runtime_logit_neighbors(
     obj_valid: np.ndarray,
     *,
     k_logit: int,
-    logit_pos_radius: float,
-    logit_neg_min_radius: float,
+    logit_near_radius: float,
+    logit_far_min_radius: float,
     seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     num_obj = gt_obj_points.shape[0]
     logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
     logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
     logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
-    pos_count = np.zeros((num_obj,), dtype=np.int64)
-    neg_count = np.zeros((num_obj,), dtype=np.int64)
+    near_count = np.zeros((num_obj,), dtype=np.int64)
+    far_count = np.zeros((num_obj,), dtype=np.int64)
     valid_obj_idx = np.flatnonzero(obj_valid)
     if valid_obj_idx.size == 0:
-        return logit_idx, logit_valid, logit_weight, pos_count, neg_count
+        return logit_idx, logit_valid, logit_weight, near_count, far_count
     obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
     hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
     distance = torch.cdist(obj, hand).numpy()
     rng = np.random.default_rng(seed)
-    max_pos_slots = max(1, int(k_logit // 2))
+    max_near_slots = max(1, int(k_logit // 2))
     for row, obj_idx in enumerate(valid_obj_idx.tolist()):
         dist_row = distance[row]
-        pos_candidates = np.flatnonzero(dist_row <= float(logit_pos_radius))
-        if pos_candidates.size == 0:
+        near_candidates = np.flatnonzero(dist_row <= float(logit_near_radius))
+        if near_candidates.size == 0:
             continue
-        pos_order = np.argsort(dist_row[pos_candidates], kind="stable")
-        chosen_pos = pos_candidates[pos_order[:max_pos_slots]]
-        chosen_pos_count = int(chosen_pos.size)
-        logit_idx[obj_idx, :chosen_pos_count] = chosen_pos
-        logit_valid[obj_idx, :chosen_pos_count] = True
-        logit_weight[obj_idx, :chosen_pos_count] = 1.0
-        pos_count[obj_idx] = chosen_pos_count
-
-        far_neg_candidates = np.flatnonzero(dist_row > float(logit_neg_min_radius))
-        neg_target = min(
-            chosen_pos_count,
-            max(0, int(k_logit - chosen_pos_count)),
-            int(far_neg_candidates.size),
-        )
-        if neg_target <= 0:
-            continue
-        chosen_neg = rng.choice(
-            far_neg_candidates,
-            size=int(neg_target),
+        near_target = min(int(max_near_slots), int(near_candidates.size))
+        chosen_near = rng.choice(
+            near_candidates,
+            size=int(near_target),
             replace=False,
         )
-        start = chosen_pos_count
-        end = start + int(neg_target)
-        logit_idx[obj_idx, start:end] = chosen_neg
+        chosen_near_count = int(chosen_near.size)
+        logit_idx[obj_idx, :chosen_near_count] = chosen_near
+        logit_valid[obj_idx, :chosen_near_count] = True
+        logit_weight[obj_idx, :chosen_near_count] = 1.0
+        near_count[obj_idx] = chosen_near_count
+
+        far_candidates = np.flatnonzero(dist_row > float(logit_far_min_radius))
+        far_target = min(
+            chosen_near_count,
+            max(0, int(k_logit - chosen_near_count)),
+            int(far_candidates.size),
+        )
+        if far_target <= 0:
+            continue
+        chosen_far = rng.choice(
+            far_candidates,
+            size=int(far_target),
+            replace=False,
+        )
+        start = chosen_near_count
+        end = start + int(far_target)
+        logit_idx[obj_idx, start:end] = chosen_far
         logit_valid[obj_idx, start:end] = True
         logit_weight[obj_idx, start:end] = 1.0
-        neg_count[obj_idx] = int(neg_target)
-    return logit_idx, logit_valid, logit_weight, pos_count, neg_count
+        far_count[obj_idx] = int(far_target)
+    return logit_idx, logit_valid, logit_weight, near_count, far_count
 
 
 def _compute_input_knn(
@@ -546,8 +570,8 @@ def make_dataloaders(
         "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
         "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
-        "logit_pos_radius": float(getattr(meta_cfg, "logit_pos_radius", 0.02)),
-        "logit_neg_min_radius": float(getattr(meta_cfg, "logit_neg_min_radius", 0.04)),
+        "logit_near_radius": resolve_logit_near_radius(meta_cfg),
+        "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
         "logit_neg_radius": float(getattr(meta_cfg, "logit_neg_radius", 0.06)),
         "logit_far_weight": float(getattr(meta_cfg, "loss_cross_edge_far_weight", 0.5)),
         "base_seed": int(seed),
@@ -654,8 +678,8 @@ def make_dataloaders(
                 "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
                 "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
                 "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
-                "logit_pos_radius": float(getattr(meta_cfg, "logit_pos_radius", 0.02)),
-                "logit_neg_min_radius": float(getattr(meta_cfg, "logit_neg_min_radius", 0.04)),
+                "logit_near_radius": resolve_logit_near_radius(meta_cfg),
+                "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
                 "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
                 "num_fingers": int(np.max(hand_finger_id)) + 1 if hand_finger_id.size > 0 else 0,
                 "num_regions": int(np.max(hand_region_id)) + 1 if hand_region_id.size > 0 else 0,

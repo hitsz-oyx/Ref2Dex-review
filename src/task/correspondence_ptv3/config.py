@@ -23,6 +23,7 @@ from __future__ import annotations
 
 # 用于把 vendored third_party 路径写成仓库内相对固定的位置。
 from pathlib import Path
+from typing import Any
 
 # 导入基础任务配置类 `TaskConfig`。
 # 我们的 `Config` 类直接继承自它，复用其通用字段并在此基础上扩展本任务
@@ -31,6 +32,29 @@ from src.base import TaskConfig
 
 
 ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LOGIT_NEAR_RADIUS = 0.02
+DEFAULT_LOGIT_FAR_MIN_RADIUS = 0.04
+
+
+def resolve_logit_near_radius(meta_cfg: Any, default: float = DEFAULT_LOGIT_NEAR_RADIUS) -> float:
+    value = getattr(meta_cfg, "logit_near_radius", None)
+    if value is None:
+        value = getattr(meta_cfg, "logit_pos_radius", None)
+    if value is None:
+        value = default
+    return float(value)
+
+
+def resolve_logit_far_min_radius(
+    meta_cfg: Any,
+    default: float = DEFAULT_LOGIT_FAR_MIN_RADIUS,
+) -> float:
+    value = getattr(meta_cfg, "logit_far_min_radius", None)
+    if value is None:
+        value = getattr(meta_cfg, "logit_neg_min_radius", None)
+    if value is None:
+        value = default
+    return float(value)
 
 
 class Config(TaskConfig):
@@ -61,17 +85,20 @@ class Config(TaskConfig):
         k_cross: int = 32
         # runtime context 邻域大小：只用于 cross-attention / token 形成。
         k_ctx: int = 32
-        # runtime logit 邻域大小上限。当前默认采用“2cm 内正样本 + 按正样本数
-        # 配平的 >4cm 负样本”，总长度不足时 padding。
+        # runtime logit 邻域大小上限。近点/远点各最多占一半槽位，总长度不足时
+        # padding。
         k_logit: int = 64
-        # 兼容旧配置字段。balanced logit 采样默认不再使用固定的半难负样本配额。
+        # 兼容旧配置字段。runtime logit 采样默认不再使用固定的半难远点配额。
         k_logit_hard_neg: int = 16
         # runtime context 半径，单位 meter。
         ctx_radius: float = 0.04
-        # runtime logit 正样本统计半径，单位 meter。
-        logit_pos_radius: float = 0.02
-        # runtime 远负样本的最小半径，单位 meter。
-        logit_neg_min_radius: float = 0.04
+        # runtime logit 近点采样半径，单位 meter。
+        logit_near_radius: float | None = None
+        # runtime logit 远点采样最小半径，单位 meter。
+        logit_far_min_radius: float | None = None
+        # 兼容旧配置字段；读取时会回退到这两个名字。
+        logit_pos_radius: float | None = DEFAULT_LOGIT_NEAR_RADIUS
+        logit_neg_min_radius: float | None = DEFAULT_LOGIT_FAR_MIN_RADIUS
         # 兼容旧配置字段。balanced logit 采样默认不再使用这个 6cm 上界。
         logit_neg_radius: float = 0.06
 
@@ -144,8 +171,8 @@ class Config(TaskConfig):
         # 软标签过渡带的锐度（gamma 越大过渡越陡，越接近阶跃函数）。
         gamma: float = 1.0
         # 物体点是否参与对应关系（correspondence）学习的最小接触概率阈值。
-        # 只有 `obj_contact_label > corr_contact_label_min` 的点会被视作
-        # “正样本”参与对应关系头（如 object cano / finger / region）训练。
+        # 只有 `obj_contact_label > corr_contact_label_min` 的点会参与
+        # object cano / finger / region 等对应关系头训练。
         corr_contact_label_min: float = 0.1
         # 训练时对手部进行随机旋转扰动的标准差（度），模拟手部姿态噪声。
         hand_rot_std_deg: float = 10.0
@@ -178,8 +205,14 @@ class Config(TaskConfig):
             1.0416008624789648,
             0.8316137278643991,
         ]
+        # cross-edge CE 的独立类别权重。None 时回退到 contact_bin_weights。
+        edge_contact_bin_weights: list[float] | None = None
         # 可选的外部权重路径，默认关闭；当前 baseline 直接使用上面的内嵌权重。
         contact_bin_weight_path: str | None = None
+        # 兼容旧字段；当前 cross-edge 监督固定走 soft_contact_label -> 10-bin CE，
+        # 不再读取这些字段。
+        edge_label_mode: str = "soft"
+        edge_label_pos_radius: float | None = None
         # 手指类别数：通常 6（5 指 + 1 手掌），与数据集中 finger_id 取值一致。
         num_fingers: int = 6
         # 手掌区域数：通常 6（指尖 / 指节 / 手掌分区），由数据集 region_id 决定。

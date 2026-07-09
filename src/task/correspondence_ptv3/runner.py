@@ -57,15 +57,28 @@ class CorrespondencePTV3Runner(BaseRunner):
             "k_logit_hard_neg",
             "logit_pos_radius",
             "logit_neg_min_radius",
+            "logit_near_radius",
+            "logit_far_min_radius",
             "num_fingers",
             "num_regions",
         ):
             if field not in metadata:
                 continue
             value = metadata[field]
-            if field in {"logit_pos_radius", "logit_neg_min_radius"}:
-                if float(value) > 0:
-                    setattr(self.cfg.meta, field, float(value))
+            if field in {
+                "logit_near_radius",
+                "logit_far_min_radius",
+                "logit_pos_radius",
+                "logit_neg_min_radius",
+            }:
+                if float(value) <= 0:
+                    continue
+                if field in {"logit_near_radius", "logit_pos_radius"}:
+                    self.cfg.meta.logit_near_radius = float(value)
+                    self.cfg.meta.logit_pos_radius = float(value)
+                else:
+                    self.cfg.meta.logit_far_min_radius = float(value)
+                    self.cfg.meta.logit_neg_min_radius = float(value)
                 continue
             if int(value) > 0:
                 setattr(self.cfg.meta, field, int(value))
@@ -131,15 +144,16 @@ class CorrespondencePTV3Runner(BaseRunner):
             target_contact_prob,
             num_bins=num_bins,
         )
-        bin_weights = self._get_contact_bin_weights(
+        obj_bin_weights = self._get_contact_bin_weights(
             preds["pred_obj_contact_bin"].device,
             preds["pred_obj_contact_bin"].dtype,
+            attr_name="contact_bin_weights",
         )
         contact_loss = self._masked_cross_entropy(
             preds["pred_obj_contact_bin"],
             target_contact_bin,
             obj_valid,
-            class_weight=bin_weights,
+            class_weight=obj_bin_weights,
         )
 
         edge_contact_prob = self._compute_dynamic_edge_labels(batch)
@@ -147,11 +161,17 @@ class CorrespondencePTV3Runner(BaseRunner):
             edge_contact_prob,
             num_bins=num_bins,
         )
+        edge_bin_weights = self._get_contact_bin_weights(
+            preds["pred_cross_contact_bin"].device,
+            preds["pred_cross_contact_bin"].dtype,
+            attr_name="edge_contact_bin_weights",
+            fallback_attr_name="contact_bin_weights",
+        )
         edge_contact_loss = self._masked_cross_entropy(
             preds["pred_cross_contact_bin"],
             edge_contact_bin,
             input_edge_weight,
-            class_weight=bin_weights,
+            class_weight=edge_bin_weights,
         )
         cross_edge_rankk_loss, cross_edge_rankk_pairs = self._compute_cross_edge_rankk_loss(
             preds["pred_cross_contact_prob"],
@@ -351,25 +371,15 @@ class CorrespondencePTV3Runner(BaseRunner):
         self,
         device: torch.device,
         dtype: torch.dtype,
+        *,
+        attr_name: str = "contact_bin_weights",
+        fallback_attr_name: str | None = None,
     ) -> torch.Tensor | None:
-        raw = getattr(self.cfg.meta, "contact_bin_weights", None)
+        raw = getattr(self.cfg.meta, attr_name, None)
+        if raw is None and fallback_attr_name is not None:
+            raw = getattr(self.cfg.meta, fallback_attr_name, None)
         if raw is None:
-            cached = getattr(self, "_cached_contact_bin_weights", None)
-            if cached is None:
-                weight_path = getattr(self.cfg.meta, "contact_bin_weight_path", None)
-                if weight_path:
-                    path = Path(str(weight_path)).expanduser()
-                    if not path.exists():
-                        raise FileNotFoundError(
-                            f"contact_bin_weight_path does not exist: {path}"
-                        )
-                    cached = [
-                        float(item)
-                        for item in path.read_text(encoding="utf-8").split()
-                        if item.strip()
-                    ]
-                    self._cached_contact_bin_weights = cached
-            raw = cached
+            raw = self._load_default_contact_bin_weights()
         if raw is None:
             return None
         weight = torch.as_tensor(raw, device=device, dtype=dtype)
@@ -379,6 +389,26 @@ class CorrespondencePTV3Runner(BaseRunner):
                 f"{weight.numel()} vs {int(getattr(self.cfg.meta, 'num_contact_bins', 10))}."
             )
         return weight
+
+    def _load_default_contact_bin_weights(self) -> list[float] | None:
+        cached = getattr(self, "_cached_contact_bin_weights", None)
+        if cached is not None:
+            return cached
+        weight_path = getattr(self.cfg.meta, "contact_bin_weight_path", None)
+        if not weight_path:
+            return None
+        path = Path(str(weight_path)).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"contact_bin_weight_path does not exist: {path}"
+            )
+        cached = [
+            float(item)
+            for item in path.read_text(encoding="utf-8").split()
+            if item.strip()
+        ]
+        self._cached_contact_bin_weights = cached
+        return cached
 
     def _compute_cross_edge_rankk_loss(
         self,
@@ -552,7 +582,7 @@ class CorrespondencePTV3Runner(BaseRunner):
         self,
         batch: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        """Build edge labels from noisy input KNN and clean GT geometry."""
+        """Build cross-edge soft labels from clean GT geometry."""
         meta = self.cfg.meta
         points = batch.get("gt_points", batch["points"])
         num_obj = int(meta.num_obj_points)
