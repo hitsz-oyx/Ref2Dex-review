@@ -37,7 +37,7 @@ import torch.nn as nn
 # 与"对应关系"相关的几何特征计算 / 邻居特征聚合工具。
 from src.utils.correspondence import (
     compute_obj_to_hand_edge_features,
-    decode_contact_bin_logits,
+    decode_contact_logits,
     gather_knn_features,
 )
 
@@ -261,7 +261,7 @@ class StaticHOCPTv3(nn.Module):
       1. 直接使用 runtime noisy geometry 构造共享点特征；
       2. 不使用 hand/object 双 stem；
       3. cross-attn 默认关闭，但保留 config 开关；
-      4. 物体点和 cross-edge 都输出 10-bin contact logits；
+      4. 物体点和 cross-edge 都由同一 supervision mode 控制输出维度；
       5. 同时导出解码后的连续概率，供指标和可视化使用。
     """
 
@@ -287,9 +287,20 @@ class StaticHOCPTv3(nn.Module):
         self.num_fingers = int(meta.num_fingers)
         self.num_regions = int(meta.num_regions)
         self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
+        self.contact_supervision_mode = str(
+            getattr(meta, "contact_supervision_mode", "bin")
+        ).lower()
         self.num_contact_bins = int(getattr(meta, "num_contact_bins", 10))
         self.contact_bin_decode_mode = str(
             getattr(meta, "contact_bin_decode_mode", "expectation")
+        )
+        if self.contact_supervision_mode not in {"bin", "soft"}:
+            raise ValueError(
+                "contact_supervision_mode must be 'bin' or 'soft', got "
+                f"{self.contact_supervision_mode!r}."
+            )
+        self.contact_output_dim = (
+            self.num_contact_bins if self.contact_supervision_mode == "bin" else 1
         )
         self.use_cross_attn = bool(getattr(meta, "use_cross_attn", False))
         self.use_finger_region_head = bool(getattr(meta, "use_finger_region_head", False))
@@ -310,7 +321,7 @@ class StaticHOCPTv3(nn.Module):
         self.contact_head = nn.Sequential(
             nn.Linear(self.token_dim, self.token_dim // 2),
             nn.GELU(),
-            nn.Linear(self.token_dim // 2, self.num_contact_bins),
+            nn.Linear(self.token_dim // 2, self.contact_output_dim),
         )
         if self.use_cano_head:
             self.cano_head = nn.Sequential(
@@ -341,7 +352,7 @@ class StaticHOCPTv3(nn.Module):
             nn.Linear(self.token_dim, self.edge_shared_dim),
             nn.GELU(),
         )
-        self.cross_edge_head = nn.Linear(self.edge_shared_dim, self.num_contact_bins)
+        self.cross_edge_head = nn.Linear(self.edge_shared_dim, self.contact_output_dim)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         points = batch["points"].float()
@@ -424,14 +435,16 @@ class StaticHOCPTv3(nn.Module):
             logit_valid,
         )
 
-        pred_obj_contact_bin = self.contact_head(z_obj_cross)
+        pred_obj_contact_logits = self.contact_head(z_obj_cross)
         outputs = {
-            "pred_obj_contact_bin": pred_obj_contact_bin,
+            "pred_obj_contact_logits": pred_obj_contact_logits,
             "obj_dense_tokens": z_obj_cross,
             "hand_dense_tokens": z_hand,
             "ptv3_obj_tokens": z_obj,
             "obj_to_hand_attn": obj_to_hand_attn,
         }
+        if self.contact_supervision_mode == "bin":
+            outputs["pred_obj_contact_bin"] = pred_obj_contact_logits
         if self.use_cano_head:
             outputs["pred_obj_cano"] = self.cano_head(z_obj_cross)
 
@@ -439,23 +452,29 @@ class StaticHOCPTv3(nn.Module):
             z_obj_cross=z_obj_cross,
             z_hand_neighbors=z_hand_logit_neighbors,
         )
-        pred_cross_contact_bin = self._compute_cross_edge_predictions(
+        pred_cross_contact_logits = self._compute_cross_edge_predictions(
             edge_shared=edge_shared,
         )
-        outputs["pred_cross_contact_bin"] = pred_cross_contact_bin
+        outputs["pred_cross_contact_logits"] = pred_cross_contact_logits
+        if self.contact_supervision_mode == "bin":
+            outputs["pred_cross_contact_bin"] = pred_cross_contact_logits
 
-        pred_obj_contact_prob = decode_contact_bin_logits(
-            pred_obj_contact_bin,
-            mode=self.contact_bin_decode_mode,
+        pred_obj_contact_prob = self.decode_contact_logits(
+            pred_obj_contact_logits,
         )
-        pred_cross_contact_prob = decode_contact_bin_logits(
-            pred_cross_contact_bin,
-            mode=self.contact_bin_decode_mode,
+        pred_cross_contact_prob = self.decode_contact_logits(
+            pred_cross_contact_logits,
         )
         outputs["pred_obj_contact_prob"] = pred_obj_contact_prob
         outputs["pred_cross_contact_prob"] = pred_cross_contact_prob
-        outputs["pred_obj_contact"] = self._safe_logit_from_prob(pred_obj_contact_prob)
-        outputs["pred_cross_contact"] = self._safe_logit_from_prob(pred_cross_contact_prob)
+        outputs["pred_obj_contact"] = self._export_contact_logits(
+            pred_obj_contact_logits,
+            pred_obj_contact_prob,
+        )
+        outputs["pred_cross_contact"] = self._export_contact_logits(
+            pred_cross_contact_logits,
+            pred_cross_contact_prob,
+        )
 
         if self.use_finger_region_head:
             outputs["pred_obj_finger"] = self.finger_head(z_obj_cross)
@@ -649,6 +668,27 @@ class StaticHOCPTv3(nn.Module):
         edge_shared: torch.Tensor,
     ) -> torch.Tensor:
         return self.cross_edge_head(edge_shared)
+
+    def decode_contact_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        return decode_contact_logits(
+            logits,
+            supervision_mode=self.contact_supervision_mode,
+            mode=self.contact_bin_decode_mode,
+        )
+
+    def _export_contact_logits(
+        self,
+        raw_logits: torch.Tensor,
+        pred_prob: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.contact_supervision_mode == "soft":
+            if raw_logits.shape[-1] != 1:
+                raise ValueError(
+                    "Soft contact supervision expects last logit dimension to be 1, got "
+                    f"{tuple(raw_logits.shape)}."
+                )
+            return raw_logits.squeeze(-1)
+        return self._safe_logit_from_prob(pred_prob)
 
     @staticmethod
     def _safe_logit_from_prob(prob: torch.Tensor, eps: float = 1e-4) -> torch.Tensor:

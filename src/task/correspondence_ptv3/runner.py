@@ -127,6 +127,7 @@ class CorrespondencePTV3Runner(BaseRunner):
         batch: dict[str, torch.Tensor],
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         meta = self.cfg.meta
+        contact_mode = self._get_contact_supervision_mode()
         num_bins = int(getattr(meta, "num_contact_bins", 10))
         obj_valid_bool = batch["runtime_obj_valid_mask"].bool()
         obj_valid = obj_valid_bool.float()
@@ -140,39 +141,67 @@ class CorrespondencePTV3Runner(BaseRunner):
         else:
             input_edge_weight = input_edge_weight.float() * input_edge_valid.float()
         target_contact_prob = batch["obj_contact_label"].float()
-        target_contact_bin = contact_prob_to_bins(
-            target_contact_prob,
-            num_bins=num_bins,
+        pred_obj_contact_logits = preds.get(
+            "pred_obj_contact_logits",
+            preds.get("pred_obj_contact_bin"),
         )
-        obj_bin_weights = self._get_contact_bin_weights(
-            preds["pred_obj_contact_bin"].device,
-            preds["pred_obj_contact_bin"].dtype,
-            attr_name="contact_bin_weights",
+        if pred_obj_contact_logits is None:
+            raise KeyError("preds must contain pred_obj_contact_logits or pred_obj_contact_bin.")
+        pred_cross_contact_logits = preds.get(
+            "pred_cross_contact_logits",
+            preds.get("pred_cross_contact_bin"),
         )
-        contact_loss = self._masked_cross_entropy(
-            preds["pred_obj_contact_bin"],
-            target_contact_bin,
-            obj_valid,
-            class_weight=obj_bin_weights,
-        )
+        if pred_cross_contact_logits is None:
+            raise KeyError("preds must contain pred_cross_contact_logits or pred_cross_contact_bin.")
+        if contact_mode == "bin":
+            target_contact_bin = contact_prob_to_bins(
+                target_contact_prob,
+                num_bins=num_bins,
+            )
+            obj_bin_weights = self._get_contact_bin_weights(
+                pred_obj_contact_logits.device,
+                pred_obj_contact_logits.dtype,
+                attr_name="contact_bin_weights",
+            )
+            contact_loss = self._masked_cross_entropy(
+                pred_obj_contact_logits,
+                target_contact_bin,
+                obj_valid,
+                class_weight=obj_bin_weights,
+            )
+        else:
+            contact_loss = self._masked_bce_with_logits(
+                pred_obj_contact_logits,
+                target_contact_prob,
+                obj_valid,
+            )
 
         edge_contact_prob = self._compute_dynamic_edge_labels(batch)
-        edge_contact_bin = contact_prob_to_bins(
-            edge_contact_prob,
-            num_bins=num_bins,
-        )
-        edge_bin_weights = self._get_contact_bin_weights(
-            preds["pred_cross_contact_bin"].device,
-            preds["pred_cross_contact_bin"].dtype,
-            attr_name="edge_contact_bin_weights",
-            fallback_attr_name="contact_bin_weights",
-        )
-        edge_contact_loss = self._masked_cross_entropy(
-            preds["pred_cross_contact_bin"],
-            edge_contact_bin,
-            input_edge_weight,
-            class_weight=edge_bin_weights,
-        )
+        if contact_mode == "bin":
+            edge_contact_bin = contact_prob_to_bins(
+                edge_contact_prob,
+                num_bins=num_bins,
+            )
+            edge_bin_weights = self._get_contact_bin_weights(
+                pred_cross_contact_logits.device,
+                pred_cross_contact_logits.dtype,
+                attr_name="edge_contact_bin_weights",
+                fallback_attr_name="contact_bin_weights",
+            )
+            edge_contact_loss = self._masked_cross_entropy_per_object(
+                pred_cross_contact_logits,
+                edge_contact_bin,
+                input_edge_weight,
+                obj_valid_bool,
+                class_weight=edge_bin_weights,
+            )
+        else:
+            edge_contact_loss = self._masked_bce_with_logits_per_object(
+                pred_cross_contact_logits,
+                edge_contact_prob,
+                input_edge_weight,
+                obj_valid_bool,
+            )
         cross_edge_rankk_loss, cross_edge_rankk_pairs = self._compute_cross_edge_rankk_loss(
             preds["pred_cross_contact_prob"],
             edge_contact_prob,
@@ -346,6 +375,107 @@ class CorrespondencePTV3Runner(BaseRunner):
         )
         loss_map = loss_map.view_as(target).float()
         return (loss_map * mask.float()).sum() / mask.float().sum().clamp(min=1.0)
+
+    @staticmethod
+    def _masked_bce_with_logits(
+        logits: torch.Tensor,
+        target: torch.Tensor,
+        mask: torch.Tensor,
+    ) -> torch.Tensor:
+        with torch.autocast(device_type=logits.device.type, enabled=False):
+            logits = CorrespondencePTV3Runner._flatten_binary_logits(logits, target).float()
+            target = target.float()
+            mask = mask.float()
+            loss_map = F.binary_cross_entropy_with_logits(
+                logits,
+                target,
+                reduction="none",
+            )
+            return (loss_map * mask).sum() / mask.sum().clamp(min=1.0)
+
+    @staticmethod
+    def _masked_cross_entropy_per_object(
+        logits: torch.Tensor,
+        target: torch.Tensor,
+        edge_weight: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+        *,
+        class_weight: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        num_classes = int(logits.shape[-1])
+        loss_map = F.cross_entropy(
+            logits.reshape(-1, num_classes),
+            target.reshape(-1),
+            reduction="none",
+            weight=class_weight,
+        )
+        loss_map = loss_map.view_as(target).float()
+        return CorrespondencePTV3Runner._reduce_loss_map_per_object(
+            loss_map,
+            edge_weight,
+            obj_valid_mask,
+        )
+
+    @staticmethod
+    def _masked_bce_with_logits_per_object(
+        logits: torch.Tensor,
+        target: torch.Tensor,
+        edge_weight: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        with torch.autocast(device_type=logits.device.type, enabled=False):
+            logits = CorrespondencePTV3Runner._flatten_binary_logits(logits, target).float()
+            target = target.float()
+            loss_map = F.binary_cross_entropy_with_logits(
+                logits,
+                target,
+                reduction="none",
+            )
+        return CorrespondencePTV3Runner._reduce_loss_map_per_object(
+            loss_map,
+            edge_weight,
+            obj_valid_mask,
+        )
+
+    @staticmethod
+    def _reduce_loss_map_per_object(
+        loss_map: torch.Tensor,
+        edge_weight: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        edge_weight = edge_weight.float()
+        weighted_loss = loss_map.float() * edge_weight
+        per_obj_weight = edge_weight.sum(dim=-1)
+        per_obj_loss = weighted_loss.sum(dim=-1) / per_obj_weight.clamp_min(
+            torch.finfo(weighted_loss.dtype).eps
+        )
+        valid_obj_mask = obj_valid_mask.bool() & (per_obj_weight > 0)
+        if bool(valid_obj_mask.any()):
+            return per_obj_loss[valid_obj_mask].mean()
+        return weighted_loss.sum() * 0.0
+
+    @staticmethod
+    def _flatten_binary_logits(
+        logits: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        if logits.shape == target.shape:
+            return logits
+        if logits.shape[:-1] == target.shape and logits.shape[-1] == 1:
+            return logits.squeeze(-1)
+        raise ValueError(
+            "Binary contact logits must have shape matching target or trailing singleton "
+            f"dimension, got logits={tuple(logits.shape)} target={tuple(target.shape)}."
+        )
+
+    def _get_contact_supervision_mode(self) -> str:
+        mode = str(getattr(self.cfg.meta, "contact_supervision_mode", "bin")).lower()
+        if mode not in {"bin", "soft"}:
+            raise ValueError(
+                "contact_supervision_mode must be 'bin' or 'soft', got "
+                f"{mode!r}."
+            )
+        return mode
 
     @staticmethod
     def _masked_bce_from_prob(

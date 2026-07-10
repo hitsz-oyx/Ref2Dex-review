@@ -187,6 +187,11 @@ class Config(TaskConfig):
         val_hand_perturb_prob: float = 1.0
 
         # ---- bin-contact 输出与可选 heads -----------------------------------
+        # contact supervision 模式：
+        #   - "bin" : soft label -> 10-bin CE
+        #   - "soft": 直接对连续 soft label 做 BCEWithLogits
+        # 默认保持为 bin，保证现有实验行为不变。
+        contact_supervision_mode: str = "bin"
         # ContactOpt 风格的 contact probability 离散 bin 数。
         num_contact_bins: int = 10
         # 如何从 bin logits 解码回 [0, 1] 标量概率。

@@ -201,6 +201,30 @@ def decode_contact_bin_logits(
     raise ValueError(f"Unsupported contact bin decode mode: {mode!r}")
 
 
+def decode_contact_logits(
+    logits: torch.Tensor,
+    *,
+    supervision_mode: str = "bin",
+    mode: str = "expectation",
+) -> torch.Tensor:
+    """Decode contact head outputs to scalar probabilities in [0, 1].
+
+    Args:
+        logits: Raw head outputs. Bin mode expects [..., num_bins], soft mode
+            expects [..., 1] or [...] scalar logits.
+        supervision_mode: "bin" or "soft".
+        mode: Bin-mode decode rule passed to decode_contact_bin_logits.
+    """
+    supervision_mode = str(supervision_mode).lower()
+    if supervision_mode == "bin":
+        return decode_contact_bin_logits(logits, mode=mode)
+    if supervision_mode == "soft":
+        if logits.shape[-1] == 1:
+            logits = logits.squeeze(-1)
+        return torch.sigmoid(logits)
+    raise ValueError(f"Unsupported contact supervision mode: {supervision_mode!r}")
+
+
 def gather_knn_features(
     features: torch.Tensor,
     knn_idx: torch.Tensor,

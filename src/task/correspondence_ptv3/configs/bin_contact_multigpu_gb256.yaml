@@ -3,6 +3,7 @@ _base_: src.task.correspondence_ptv3.config:Config
 name: correspondence_ptv3_bin_contact_multigpu_gb256
 
 meta:
+  contact_supervision_mode: bin
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false

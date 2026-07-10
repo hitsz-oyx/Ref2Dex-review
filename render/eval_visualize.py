@@ -133,7 +133,7 @@ from src.task.correspondence_ptv3.sampling import (
     stable_frame_seed,
 )
 from src.utils.correspondence import (
-    decode_contact_bin_logits,
+    decode_contact_logits,
     soft_contact_label,
 )
 
@@ -539,9 +539,10 @@ def _dense_cross_probabilities(
             z_obj_cross=obj_token,
             z_hand_neighbors=hand_tokens,
         )
-        dense_bin_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
-        dense_prob = decode_contact_bin_logits(
-            dense_bin_logits,
+        dense_logits = model._compute_cross_edge_predictions(edge_shared)[0, 0]
+        dense_prob = decode_contact_logits(
+            dense_logits,
+            supervision_mode=model.contact_supervision_mode,
             mode=model.contact_bin_decode_mode,
         )
     return dense_prob.detach().cpu().numpy().astype(np.float32)
