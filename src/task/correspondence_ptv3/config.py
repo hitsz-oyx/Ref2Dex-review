@@ -102,6 +102,10 @@ class Config(TaskConfig):
         logit_neg_min_radius: float | None = DEFAULT_LOGIT_FAR_MIN_RADIUS
         # 兼容旧配置字段。balanced logit 采样默认不再使用这个 6cm 上界。
         logit_neg_radius: float = 0.06
+        # 纯过拟合测试开关：True 时把 object 采样 / 数据增强 / logit 邻居
+        # 的 stable_frame_seed 中的 epoch 项强制置 0，使得每 epoch 重新
+        # 训练时这些随机源完全一致。仅用于 1 帧 / 固定 object 的 overfit 测试。
+        fix_overfit_seed: bool = False
 
         # ---- 主干网络与输入特征 ---------------------------------------------
         # 当前共享点特征维度：

@@ -82,6 +82,7 @@ class CorrStaticDataset(Dataset):
         hand_rot_std_deg: float = 10.0,
         hand_trans_std: float = 0.01,
         hand_perturb_prob: float = 1.0,
+        fix_overfit_seed: bool = False,
         blacklist_path: str | None = None,
         **_: Any,
     ) -> None:
@@ -170,6 +171,9 @@ class CorrStaticDataset(Dataset):
         self.hand_rot_std_deg = float(hand_rot_std_deg)
         self.hand_trans_std = float(hand_trans_std)
         self.hand_perturb_prob = float(hand_perturb_prob)
+        # 纯过拟合测试：把 stable_frame_seed 中的 epoch 项强制置 0，
+        # 让 object 采样 / 增强 / logit 邻居在每个 epoch 保持完全一致。
+        self.fix_overfit_seed = bool(fix_overfit_seed)
         # 跨进程共享的 epoch 计数；DataLoader worker 进程会读这个值决定采样随机性
         self._epoch = mp.Value("q", 0, lock=True)
         # 简单的文件级缓存：避免同一 worker 内反复读取同一个 .npz
@@ -263,6 +267,9 @@ class CorrStaticDataset(Dataset):
         side = self._scalar_string(data, "side", "")
         raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame_idx])
         epoch = self.epoch
+        # 纯过拟合测试：固定 object / augment / edge 邻居的 seed，
+        # 让每个 epoch 喂给模型的输入完全一致。
+        seed_epoch = 0 if self.fix_overfit_seed else epoch
         # 由 (seq, side, frame, epoch) 派生稳定种子：保证每个 epoch 重新采样，
         # 但不同 worker 拿到同一 index 时结果一致。
         sample_seed = stable_frame_seed(
@@ -270,7 +277,7 @@ class CorrStaticDataset(Dataset):
             seq_id=seq_id,
             side=side,
             raw_frame_id=raw_frame_id,
-            epoch=epoch,
+            epoch=seed_epoch,
         )
         # 从 5cm 候选池中采样 num_obj_points 个 object 点
         selected_idx, obj_valid = sample_object_indices(
@@ -309,7 +316,7 @@ class CorrStaticDataset(Dataset):
             seq_id=seq_id,
             side=side,
             raw_frame_id=raw_frame_id,
-            epoch=epoch,
+            epoch=seed_epoch,
             namespace="augmentation",
         )
         # 几何增强：返回 input（可能含扰动）+ gt（clean）两套点云
@@ -362,7 +369,7 @@ class CorrStaticDataset(Dataset):
                 seq_id=seq_id,
                 side=side,
                 raw_frame_id=raw_frame_id,
-                epoch=epoch,
+                epoch=seed_epoch,
                 namespace="logit-neighbors",
             ),
         )
@@ -735,6 +742,7 @@ def make_dataloaders(
         "hand_rot_std_deg": float(meta_cfg.hand_rot_std_deg),
         "hand_trans_std": float(meta_cfg.hand_trans_std),
         "hand_perturb_prob": float(meta_cfg.hand_perturb_prob),
+        "fix_overfit_seed": bool(getattr(meta_cfg, "fix_overfit_seed", False)),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
     }
     # val_clean：关闭全局增强和手部扰动，保证 GT 几何不被破坏
