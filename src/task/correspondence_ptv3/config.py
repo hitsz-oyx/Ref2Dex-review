@@ -85,9 +85,10 @@ class Config(TaskConfig):
         k_cross: int = 32
         # runtime context 邻域大小：只用于 cross-attention / token 形成。
         k_ctx: int = 32
-        # runtime logit 邻域大小上限。近点/远点各最多占一半槽位，总长度不足时
-        # padding。
-        k_logit: int = 64
+        # 每个物体点的 logit 近点采样数，在正样本半径内随机选，不够 padding。
+        k_near_logit: int = 32
+        # 每个物体点的 logit 远点采样数，在负样本最小半径外随机选，不够 padding。
+        k_far_logit: int = 32
         # 兼容旧配置字段。runtime logit 采样默认不再使用固定的半难远点配额。
         k_logit_hard_neg: int = 16
         # runtime context 半径，单位 meter。

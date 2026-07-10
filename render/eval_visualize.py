@@ -124,8 +124,8 @@ from src.task.correspondence_ptv3.config import (
     resolve_logit_near_radius,
 )
 from src.task.correspondence_ptv3.dataset import (
-    _compute_balanced_runtime_logit_neighbors,
     _compute_runtime_context_neighbors,
+    _compute_runtime_logit_neighbors,
 )
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
@@ -409,11 +409,12 @@ def _build_runtime_frame(
         _input_logit_weight,
         _input_logit_near_count,
         _input_logit_far_count,
-    ) = _compute_balanced_runtime_logit_neighbors(
+    ) = _compute_runtime_logit_neighbors(
         geometry.gt_obj_points,
         geometry.gt_hand_points,
         obj_valid,
-        k_logit=int(args.k_logit),
+        k_near_logit=int(args.k_near_logit),
+        k_far_logit=int(args.k_far_logit),
         logit_near_radius=float(args.logit_near_radius),
         logit_far_min_radius=float(args.logit_far_min_radius),
         seed=stable_frame_seed(
@@ -646,7 +647,8 @@ class EvalViewer:
             self.args.num_obj_points,
             self.args.k_cross,
             self.args.k_ctx,
-            self.args.k_logit,
+            self.args.k_near_logit,
+            self.args.k_far_logit,
             self.args.ctx_radius,
             self.args.logit_near_radius,
             self.args.logit_far_min_radius,
@@ -965,8 +967,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-obj-points", type=int, default=None)
     parser.add_argument("--k-cross", type=int, default=None)
     parser.add_argument("--k-ctx", type=int, default=None)
-    parser.add_argument("--k-logit", type=int, default=None)
-    parser.add_argument("--k-logit-hard-neg", type=int, default=None)
+    parser.add_argument("--k-near-logit", type=int, default=None)
+    parser.add_argument("--k-far-logit", type=int, default=None)
     parser.add_argument("--ctx-radius", type=float, default=None)
     parser.add_argument("--logit-near-radius", "--logit-pos-radius", dest="logit_near_radius", type=float, default=None)
     parser.add_argument("--logit-far-min-radius", "--logit-neg-min-radius", dest="logit_far_min_radius", type=float, default=None)
@@ -1020,6 +1022,11 @@ def main() -> None:
     )
     runner.setup_inference(args.checkpoint)
 
+    # 强制从 checkpoint 内部的 config 加载解码模式（而非外部 config.json）
+    runner.model.contact_bin_decode_mode = str(
+        getattr(runner.cfg.meta, "contact_bin_decode_mode", "expectation")
+    )
+
     if args.base_seed is None:
         args.base_seed = int(runner.cfg.train.seed)
     if args.num_obj_points is None:
@@ -1028,10 +1035,10 @@ def main() -> None:
         args.k_cross = int(runner.cfg.meta.k_cross)
     if args.k_ctx is None:
         args.k_ctx = int(getattr(runner.cfg.meta, "k_ctx", runner.cfg.meta.k_cross))
-    if args.k_logit is None:
-        args.k_logit = int(getattr(runner.cfg.meta, "k_logit", args.k_ctx))
-    if args.k_logit_hard_neg is None:
-        args.k_logit_hard_neg = int(getattr(runner.cfg.meta, "k_logit_hard_neg", 16))
+    if args.k_near_logit is None:
+        args.k_near_logit = int(getattr(runner.cfg.meta, "k_near_logit", 32))
+    if args.k_far_logit is None:
+        args.k_far_logit = int(getattr(runner.cfg.meta, "k_far_logit", 32))
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
     if args.logit_near_radius is None:
@@ -1056,8 +1063,8 @@ def main() -> None:
         )
     if int(args.k_ctx) <= 0:
         raise ValueError("--k-ctx must be positive.")
-    if int(args.k_logit) < int(args.k_ctx):
-        raise ValueError("--k-logit must be >= --k-ctx.")
+    if int(args.k_near_logit) <= 0 or int(args.k_far_logit) <= 0:
+        raise ValueError("--k-near-logit and --k-far-logit must be positive.")
     if float(args.logit_far_min_radius) < float(args.logit_near_radius):
         raise ValueError("--logit-far-min-radius must be >= --logit-near-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))

@@ -423,6 +423,7 @@ def make_file_split_dataloaders(
     resolve_data_dir = resolve_data_dir or (lambda path: path)
     train_dataset_kwargs = dict(train_dataset_kwargs or {})
     val_dataset_kwargs = dict(val_dataset_kwargs or {})
+    split_metadata: dict[str, Any] = {}
 
     def build_dataset(path, *, file_list=None, kwargs: dict[str, Any]):
         payload = dict(kwargs)
@@ -448,7 +449,6 @@ def make_file_split_dataloaders(
         if not file_list:
             raise ValueError(f"No files matching {file_pattern!r} found in {data_dir}")
 
-        split_metadata: dict[str, Any] = {}
         if 0.0 < val_split < 1.0:
             if split_group_fn is not None:
                 train_files, val_files, split_metadata = split_grouped_items(

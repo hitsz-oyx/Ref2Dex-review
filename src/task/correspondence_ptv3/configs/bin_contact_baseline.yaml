@@ -21,7 +21,8 @@ meta:
     - 1.0416008624789648
     - 0.8316137278643991
   k_ctx: 32
-  k_logit: 64
+  k_near_logit: 32
+  k_far_logit: 32
   ctx_radius: 0.04
   logit_near_radius: 0.025
   logit_far_min_radius: 0.025

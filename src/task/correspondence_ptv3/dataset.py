@@ -24,8 +24,18 @@ from src.utils.correspondence import soft_contact_label
 
 
 class CorrStaticDataset(Dataset):
-    """Stage 3 point-pool dataset with deterministic per-epoch object sampling."""
+    """Stage 3 点池数据集，支持每个 epoch 确定性地从候选池中采样 object 点。
 
+    数据流概览：
+        1. 从 Stage 3 落盘的 .npz 文件加载 clean object / hand 几何及 GT 邻接表
+        2. 每个 epoch 从 5cm 候选池中确定性随机采样 num_obj_points 个 object 点
+        3. 对采样的 object 点应用几何增强（全局旋转/平移/缩放）以及手部扰动
+        4. 在 noisy geometry 上计算 runtime context 邻域，用于 cross-attn
+        5. 在 clean GT geometry 上计算 runtime logit 邻域（近点 + 远点）用于 cross-edge 监督
+        6. 返回训练所需的 input/gt 点云、邻接关系、contact soft label 等字段
+    """
+
+    # Stage 3 .npz 文件必须包含的字段（缺一不可）
     REQUIRED_FIELDS = {
         "raw_frame_id",
         "obj_points",
@@ -48,8 +58,8 @@ class CorrStaticDataset(Dataset):
         num_hand_points: int = 1538,
         k_cross: int = 32,
         k_ctx: int = 32,
-        k_logit: int = 64,
-        k_logit_hard_neg: int = 16,
+        k_near_logit: int = 32,
+        k_far_logit: int = 32,
         ctx_radius: float = 0.04,
         logit_near_radius: float | None = None,
         logit_far_min_radius: float | None = None,
@@ -75,16 +85,49 @@ class CorrStaticDataset(Dataset):
         blacklist_path: str | None = None,
         **_: Any,
     ) -> None:
+        """初始化数据集，构建文件索引和样本列表。
+
+        Args:
+            data_path: 数据集根目录或单个 .npz 文件路径
+            file_list: 显式指定的文件列表，None 时自动扫描目录下所有 .npz
+            num_obj_points: 每个样本采样的 object 点数（默认 512）
+            num_hand_points: 手部点云大小（默认 1538）
+            k_cross: GT KNN 邻居数
+            k_ctx: runtime context 邻域最大点数
+            k_near_logit: logit 邻域中近点最大采样数
+            k_far_logit: logit 邻域中远点最大采样数
+            ctx_radius: context 邻域半径（米）
+            logit_near_radius: 近点判定半径（米），None 时退化到 logit_pos_radius
+            logit_far_min_radius: 远点判定半径（米），None 时退化到 logit_neg_min_radius
+            logit_pos_radius: 旧版近点半径别名
+            logit_neg_min_radius: 旧版远点半径别名
+            logit_neg_radius: logit 负样本外圈半径
+            logit_far_weight: 远点 loss 权重
+            base_seed: 随机种子基址
+            augment: 是否应用全局几何增强
+            apply_hand_perturb: 是否对手部施加高斯扰动
+            augment_rotation/translation/scale: 各类增强开关
+            rotation_range/translation_range/scale_range: 各类增强幅度
+            d_pos/d_neg/gamma: soft contact label 的参数（d_pos 内=1，d_neg 外=0，中间软过渡）
+            hand_rot_std_deg: 手部旋转扰动标准差（度）
+            hand_trans_std: 手部位移扰动标准差（米）
+            hand_perturb_prob: 手部扰动应用概率
+            blacklist_path: 可选的黑名单文件路径，用于排除某些序列
+        """
         super().__init__()
         self.data_path = Path(data_path)
+        # 如果 data_path 是单文件，把它的父目录作为 root；否则直接使用
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
         self.k_gt = int(k_cross)
         self.k_ctx = int(k_ctx)
-        self.k_logit = int(k_logit)
-        self.k_logit_hard_neg = int(k_logit_hard_neg)
+        self.k_near_logit = int(k_near_logit)
+        self.k_far_logit = int(k_far_logit)
         self.ctx_radius = float(ctx_radius)
+        # 兼容新旧命名：新参数（logit_near_radius / logit_far_min_radius）优先，
+        # 未提供时退化到旧参数（logit_pos_radius / logit_neg_min_radius），
+        # 再未提供时调用 resolve_*_radius 从 config 解析。
         resolved_logit_near_radius = (
             logit_near_radius if logit_near_radius is not None else logit_pos_radius
         )
@@ -99,16 +142,15 @@ class CorrStaticDataset(Dataset):
             resolved_logit_far_min_radius = resolve_logit_far_min_radius(None)
         self.logit_near_radius = float(resolved_logit_near_radius)
         self.logit_far_min_radius = float(resolved_logit_far_min_radius)
+        # 同步保存旧别名，便于下游访问
         self.logit_pos_radius = self.logit_near_radius
         self.logit_neg_min_radius = self.logit_far_min_radius
         self.logit_neg_radius = float(logit_neg_radius)
         self.logit_far_weight = float(logit_far_weight)
         if self.k_ctx <= 0:
             raise ValueError("k_ctx must be positive.")
-        if self.k_logit <= 0:
-            raise ValueError("k_logit must be positive.")
-        if self.k_logit_hard_neg < 0:
-            raise ValueError("k_logit_hard_neg must be non-negative.")
+        if self.k_near_logit <= 0 or self.k_far_logit <= 0:
+            raise ValueError("k_near_logit and k_far_logit must be positive.")
         if self.logit_near_radius <= 0.0:
             raise ValueError("logit_near_radius must be positive.")
         if self.logit_far_min_radius < self.logit_near_radius:
@@ -128,10 +170,13 @@ class CorrStaticDataset(Dataset):
         self.hand_rot_std_deg = float(hand_rot_std_deg)
         self.hand_trans_std = float(hand_trans_std)
         self.hand_perturb_prob = float(hand_perturb_prob)
+        # 跨进程共享的 epoch 计数；DataLoader worker 进程会读这个值决定采样随机性
         self._epoch = mp.Value("q", 0, lock=True)
+        # 简单的文件级缓存：避免同一 worker 内反复读取同一个 .npz
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
 
+        # 解析输入文件列表：优先 file_list，其次扫目录，最后当作单文件
         paths = (
             sorted(Path(path) for path in file_list)
             if file_list is not None
@@ -141,11 +186,14 @@ class CorrStaticDataset(Dataset):
                 else [self.data_path]
             )
         )
+        # 应用黑名单过滤
         blacklist = _load_blacklist(blacklist_path)
         self.file_paths = [path for path in paths if not _is_blacklisted(path, self.data_root, blacklist)]
         if not self.file_paths:
             raise ValueError(f"No Stage 3 npz files found in {self.data_path}")
 
+        # 构建 (file, frame_idx) 的样本级索引，并记录每个文件对应的样本区间
+        # （后者用于 SequenceLocalitySampler 按文件块打乱）
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
         for path in self.file_paths:
@@ -160,9 +208,11 @@ class CorrStaticDataset(Dataset):
 
     @property
     def epoch(self) -> int:
+        """当前 epoch（线程安全读）。"""
         return int(self._epoch.value)
 
     def set_epoch(self, epoch: int) -> None:
+        """设置当前 epoch，使得每个 epoch 内的 object 采样结果可复现且彼此不同。"""
         with self._epoch.get_lock():
             self._epoch.value = int(epoch)
 
@@ -170,6 +220,7 @@ class CorrStaticDataset(Dataset):
         return len(self._samples)
 
     def _load_file(self, path: Path) -> dict[str, np.ndarray]:
+        """带缓存的 .npz 加载：同一 worker 进程内对同一 path 只读一次磁盘。"""
         if self._cached_path == path and self._cached_data is not None:
             return self._cached_data
         with np.load(path, allow_pickle=False) as data:
@@ -180,6 +231,7 @@ class CorrStaticDataset(Dataset):
 
     @staticmethod
     def _scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> str:
+        """从 npz 中读取 0-d 字符串标量；不存在或形状不对时返回 default。"""
         value = data.get(key)
         if value is None:
             return default
@@ -187,12 +239,32 @@ class CorrStaticDataset(Dataset):
         return str(array.item()) if array.size == 1 else default
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        """取一个样本。
+
+        Returns:
+            dict, 字段含义：
+            - points / normals: 拼接后的 noisy 物体+手部点云
+            - gt_points / gt_normals: 拼接后的 clean GT 点云
+            - point_valid_mask: 拼接后各点是否有效
+            - runtime_obj_valid_mask: 当前帧采样的 object 点是否 valid
+            - selected_obj_idx / selected_obj_point_id: 采样的 object 点在原 pool 中的索引和 ID
+            - selected_obj_min_dist: 每个采样 object 点到最近 hand 点的距离
+            - obj_contact_label: soft contact label（基于 clean GT）
+            - gt_obj_to_hand_knn_idx: clean GT 的 KNN 邻居表
+            - input_obj_to_hand_ctx_idx / _valid_mask: noisy 几何上的 context 邻域
+            - input_obj_to_hand_logit_idx / _valid_mask / _loss_weight / _near_count / _far_count:
+              clean GT 几何上的 logit 邻域（用于 cross-edge 监督）
+            - hand_cano_points / hand_finger_id / hand_region_id: 手部元信息
+            - num_obj_points / num_hand_points: 张量形式的几何尺寸
+        """
         path, frame_idx = self._samples[index]
         data = self._load_file(path)
         seq_id = self._scalar_string(data, "seq_id", path.stem)
         side = self._scalar_string(data, "side", "")
         raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame_idx])
         epoch = self.epoch
+        # 由 (seq, side, frame, epoch) 派生稳定种子：保证每个 epoch 重新采样，
+        # 但不同 worker 拿到同一 index 时结果一致。
         sample_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -200,11 +272,14 @@ class CorrStaticDataset(Dataset):
             raw_frame_id=raw_frame_id,
             epoch=epoch,
         )
+        # 从 5cm 候选池中采样 num_obj_points 个 object 点
         selected_idx, obj_valid = sample_object_indices(
             data["obj_candidate_mask_5cm"][frame_idx],
             num_samples=self.num_obj_points,
             seed=sample_seed,
         )
+        # safe_idx: 把 padding（-1）夹到 0，避免 fancy indexing 报错；
+        # 后续会把这些位置用 0 / -1 / False 标记为 invalid
         safe_idx = np.maximum(selected_idx, 0)
 
         obj_points = np.asarray(data["obj_points"][frame_idx, safe_idx], dtype=np.float32).copy()
@@ -219,6 +294,7 @@ class CorrStaticDataset(Dataset):
             dtype=np.int64,
         ).copy()
 
+        # 无效点用 0 / -1 占位，避免污染下游数值计算
         obj_points[~obj_valid] = 0
         obj_normals[~obj_valid] = 0
         obj_point_id[~obj_valid] = -1
@@ -227,6 +303,7 @@ class CorrStaticDataset(Dataset):
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
+        # 几何增强使用独立 seed，与采样 seed 解耦，方便单独复现
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -235,6 +312,7 @@ class CorrStaticDataset(Dataset):
             epoch=epoch,
             namespace="augmentation",
         )
+        # 几何增强：返回 input（可能含扰动）+ gt（clean）两套点云
         geometry = augment_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
@@ -253,8 +331,10 @@ class CorrStaticDataset(Dataset):
             augment_scale=self.augment_scale,
             scale_range=self.scale_range,
         )
+        # 如果全局增强做了 isotropic 缩放，把距离按缩放系数同步更新
         obj_min_dist *= float(geometry.distance_scale)
 
+        # runtime context 邻域（noisy 几何上做 KNN，按 4cm 半径截断）
         input_ctx_idx, input_ctx_valid = _compute_runtime_context_neighbors(
             geometry.input_obj_points,
             geometry.input_hand_points,
@@ -262,17 +342,19 @@ class CorrStaticDataset(Dataset):
             k_ctx=self.k_ctx,
             ctx_radius=self.ctx_radius,
         )
+        # runtime logit 邻域（clean GT 几何上采样近点 + 远点）
         (
             input_logit_idx,
             input_logit_valid,
             input_logit_weight,
             input_logit_near_count,
             input_logit_far_count,
-        ) = _compute_balanced_runtime_logit_neighbors(
+        ) = _compute_runtime_logit_neighbors(
             geometry.gt_obj_points,
             geometry.gt_hand_points,
             obj_valid,
-            k_logit=self.k_logit,
+            k_near_logit=self.k_near_logit,
+            k_far_logit=self.k_far_logit,
             logit_near_radius=self.logit_near_radius,
             logit_far_min_radius=self.logit_far_min_radius,
             seed=stable_frame_seed(
@@ -284,6 +366,7 @@ class CorrStaticDataset(Dataset):
                 namespace="logit-neighbors",
             ),
         )
+        # 把 object 和 hand 拼成单个点云（前半 object，后半 hand）
         input_points = np.concatenate(
             [geometry.input_obj_points, geometry.input_hand_points],
             axis=0,
@@ -304,6 +387,7 @@ class CorrStaticDataset(Dataset):
             [obj_valid, np.ones((self.num_hand_points,), dtype=bool)],
             axis=0,
         )
+        # soft contact label：d_pos 内=1，d_neg 外=0，中段用 gamma 控制过渡斜率
         contact_label = soft_contact_label(
             torch.from_numpy(obj_min_dist),
             d_pos=self.d_pos,
@@ -367,6 +451,22 @@ def _compute_runtime_context_neighbors(
     k_ctx: int,
     ctx_radius: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """在 noisy 几何上为每个 valid object 点计算 context 邻域。
+
+    规则：取 ctx_radius 半径内的所有 hand 点，按距离升序取前 k_ctx 个；
+    不足 k_ctx 时剩余位置用 -1 / False 填充。
+
+    Args:
+        obj_points: (N, 3) noisy object 点
+        hand_points: (M, 3) noisy hand 点
+        obj_valid: (N,) bool，标记每个 object 点是否有效
+        k_ctx: 最大邻域大小
+        ctx_radius: 邻域半径
+
+    Returns:
+        ctx_idx: (N, k_ctx) int64，hand 点的索引；-1 表示 padding
+        ctx_valid: (N, k_ctx) bool
+    """
     num_obj = obj_points.shape[0]
     ctx_idx = np.full((num_obj, k_ctx), -1, dtype=np.int64)
     ctx_valid = np.zeros((num_obj, k_ctx), dtype=bool)
@@ -375,11 +475,13 @@ def _compute_runtime_context_neighbors(
         return ctx_idx, ctx_valid
     obj = torch.from_numpy(np.asarray(obj_points[valid_obj_idx], dtype=np.float32))
     hand = torch.from_numpy(np.asarray(hand_points, dtype=np.float32))
+    # 一次 cdist 拿到所有 valid obj 点到所有 hand 点的距离
     distance = torch.cdist(obj, hand).numpy()
     for row, obj_idx in enumerate(valid_obj_idx.tolist()):
         dist_row = distance[row]
         ctx_candidates = np.flatnonzero(dist_row <= float(ctx_radius))
         if ctx_candidates.size > 0:
+            # 按距离升序取前 k_ctx（np.argsort + stable 保证可复现）
             order = np.argsort(dist_row[ctx_candidates], kind="stable")
             chosen_ctx = ctx_candidates[order[:k_ctx]]
             ctx_count = int(chosen_ctx.size)
@@ -388,16 +490,42 @@ def _compute_runtime_context_neighbors(
     return ctx_idx, ctx_valid
 
 
-def _compute_balanced_runtime_logit_neighbors(
+def _compute_runtime_logit_neighbors(
     gt_obj_points: np.ndarray,
     gt_hand_points: np.ndarray,
     obj_valid: np.ndarray,
     *,
-    k_logit: int,
+    k_near_logit: int,
+    k_far_logit: int,
     logit_near_radius: float,
     logit_far_min_radius: float,
     seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """在 clean GT 几何上为每个 valid object 点采样 logit 监督邻域。
+
+    每个物体点独立固定采样 k_near_logit 个近点 + k_far_logit 个远点，不够就 padding。
+    - 近点：到该 obj 点距离 <= logit_near_radius 的 hand 点
+    - 远点：到该 obj 点距离 > logit_far_min_radius 的 hand 点
+    近点/远点都在各自候选池中随机抽取；候选不足时取全部，剩余位置 padding。
+
+    Args:
+        gt_obj_points: (N, 3) clean GT object 点
+        gt_hand_points: (M, 3) clean GT hand 点
+        obj_valid: (N,) bool
+        k_near_logit: 近点最大采样数
+        k_far_logit: 远点最大采样数
+        logit_near_radius: 近点判定半径（米）
+        logit_far_min_radius: 远点判定半径（米）
+        seed: 随机种子
+
+    Returns:
+        logit_idx: (N, k_near_logit + k_far_logit) int64
+        logit_valid: (N, k_near_logit + k_far_logit) bool
+        logit_weight: (N, k_near_logit + k_far_logit) float32，当前默认 valid 全 1.0
+        near_count: (N,) int64，实际近点采样数
+        far_count: (N,) int64，实际远点采样数
+    """
+    k_logit = int(k_near_logit) + int(k_far_logit)
     num_obj = gt_obj_points.shape[0]
     logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
     logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
@@ -411,43 +539,27 @@ def _compute_balanced_runtime_logit_neighbors(
     hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
     distance = torch.cdist(obj, hand).numpy()
     rng = np.random.default_rng(seed)
-    max_near_slots = max(1, int(k_logit // 2))
     for row, obj_idx in enumerate(valid_obj_idx.tolist()):
         dist_row = distance[row]
+        # 近点采样：在 logit_near_radius 半径内的 hand 点里随机抽不超过 k_near_logit 个
         near_candidates = np.flatnonzero(dist_row <= float(logit_near_radius))
-        if near_candidates.size == 0:
-            continue
-        near_target = min(int(max_near_slots), int(near_candidates.size))
-        chosen_near = rng.choice(
-            near_candidates,
-            size=int(near_target),
-            replace=False,
-        )
-        chosen_near_count = int(chosen_near.size)
-        logit_idx[obj_idx, :chosen_near_count] = chosen_near
-        logit_valid[obj_idx, :chosen_near_count] = True
-        logit_weight[obj_idx, :chosen_near_count] = 1.0
-        near_count[obj_idx] = chosen_near_count
-
+        if near_candidates.size > 0:
+            n_near = min(int(k_near_logit), int(near_candidates.size))
+            chosen = rng.choice(near_candidates, size=int(n_near), replace=False)
+            logit_idx[obj_idx, :n_near] = chosen
+            logit_valid[obj_idx, :n_near] = True
+            logit_weight[obj_idx, :n_near] = 1.0
+            near_count[obj_idx] = int(n_near)
+        # 远点采样：在 logit_far_min_radius 半径之外的 hand 点里随机抽不超过 k_far_logit 个
         far_candidates = np.flatnonzero(dist_row > float(logit_far_min_radius))
-        far_target = min(
-            chosen_near_count,
-            max(0, int(k_logit - chosen_near_count)),
-            int(far_candidates.size),
-        )
-        if far_target <= 0:
-            continue
-        chosen_far = rng.choice(
-            far_candidates,
-            size=int(far_target),
-            replace=False,
-        )
-        start = chosen_near_count
-        end = start + int(far_target)
-        logit_idx[obj_idx, start:end] = chosen_far
-        logit_valid[obj_idx, start:end] = True
-        logit_weight[obj_idx, start:end] = 1.0
-        far_count[obj_idx] = int(far_target)
+        if far_candidates.size > 0:
+            n_far = min(int(k_far_logit), int(far_candidates.size))
+            chosen = rng.choice(far_candidates, size=int(n_far), replace=False)
+            start = int(k_near_logit)
+            logit_idx[obj_idx, start:start + n_far] = chosen
+            logit_valid[obj_idx, start:start + n_far] = True
+            logit_weight[obj_idx, start:start + n_far] = 1.0
+            far_count[obj_idx] = int(n_far)
     return logit_idx, logit_valid, logit_weight, near_count, far_count
 
 
@@ -458,11 +570,19 @@ def _compute_input_knn(
     *,
     k_cross: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Backward-compatible helper for visualization scripts.
+    """保持向后兼容的辅助函数（供可视化脚本使用）。
 
-    This preserves the old name/signature and returns only the context
-    neighborhood with a very large radius, i.e. classic top-k over all hand
-    points for each valid object point.
+    行为：取每个 valid object 点到所有 hand 点的 top-k（即经典 KNN，无半径限制）。
+
+    Args:
+        obj_points: (N, 3) object 点
+        hand_points: (M, 3) hand 点
+        obj_valid: (N,) bool
+        k_cross: top-k 数量
+
+    Returns:
+        result: (N, k_cross) int64，hand 索引
+        valid: (N, k_cross) bool
     """
     num_obj = obj_points.shape[0]
     result = np.full((num_obj, k_cross), -1, dtype=np.int64)
@@ -480,6 +600,11 @@ def _compute_input_knn(
 
 
 def _load_blacklist(path: str | None) -> set[str]:
+    """加载黑名单文件。
+
+    支持 .json（列表）或纯文本（每行一个，支持 # 注释）。
+    未指定路径时返回空集。
+    """
     if not path:
         return set()
     blacklist_path = Path(path)
@@ -500,6 +625,11 @@ def _load_blacklist(path: str | None) -> set[str]:
 
 
 def _is_blacklisted(path: Path, root: Path, blacklist: set[str]) -> bool:
+    """判断文件是否在黑名单中。
+
+    黑名单键可以匹配：绝对路径、文件名、不带后缀的文件名、
+    POSIX 路径、或相对 root 的 POSIX 路径。
+    """
     if not blacklist:
         return False
     keys = {str(path), path.name, path.stem, path.as_posix()}
@@ -511,6 +641,11 @@ def _is_blacklisted(path: Path, root: Path, blacklist: set[str]) -> bool:
 
 
 def _sequence_group_key(path: Path) -> str:
+    """为 train/val 文件划分生成序列组 key。
+
+    规则：去掉路径末尾的 _left / _right 后缀，使同序列的 left/right 进入同一组，
+    这样划分时不会把同序列的左右手分散到 train 和 val。
+    """
     stem = path.stem
     if stem.endswith("_left") or stem.endswith("_right"):
         stem = stem.rsplit("_", 1)[0]
@@ -519,12 +654,12 @@ def _sequence_group_key(path: Path) -> str:
 
 
 class SequenceLocalitySampler(Sampler[int]):
-    """Shuffle sequences and frames while keeping each sequence in one block.
+    """按文件块打乱的采样器：先随机选文件，再在文件内随机打乱 frame 顺序。
 
-    An npz member is extracted as a whole array. Fully random frame ordering
-    would therefore reload a large sequence file for nearly every sample.
-    Block-local shuffling preserves stochastic frame order but loads each
-    sequence only once per worker and epoch.
+    设计动机：.npz 内的整个序列是按帧存盘的；如果完全打乱 frame 顺序，
+    几乎每个 sample 都要从磁盘重读整个 sequence。
+    按文件块打乱可以保留 frame 维度的随机性，但每个 sequence 文件
+    在每个 worker / epoch 中只被读一次，显著降低 I/O 开销。
     """
 
     def __init__(self, dataset: CorrStaticDataset, seed: int) -> None:
@@ -536,6 +671,7 @@ class SequenceLocalitySampler(Sampler[int]):
         self.epoch = int(epoch)
 
     def __iter__(self):
+        # 用稳定 seed 派生文件/frame 顺序，保证不同 epoch 间可复现且彼此不同
         rng = np.random.default_rng(
             stable_frame_seed(
                 base_seed=self.seed,
@@ -546,8 +682,10 @@ class SequenceLocalitySampler(Sampler[int]):
                 namespace="frame-order",
             )
         )
+        # 1. 随机排列文件顺序
         file_order = rng.permutation(len(self.dataset.file_sample_ranges))
         for file_idx in file_order:
+            # 2. 对该文件内的 frame 区间再随机打乱
             start, end = self.dataset.file_sample_ranges[int(file_idx)]
             yield from rng.permutation(np.arange(start, end, dtype=np.int64)).tolist()
 
@@ -562,13 +700,21 @@ def make_dataloaders(
     meta_cfg: Any,
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    """构建 train / val DataLoader。
+
+    Returns:
+        train_loader: 训练 DataLoader
+        val_loader: 简单 val loader（val_clean），可与 train 用同一 file-split
+        metadata: 数据集元信息（点数、维度等）
+        val_loaders: 命名 val loader 字典（val_clean/、val_perturbed/）
+    """
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
         "k_cross": int(meta_cfg.k_cross),
         "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
-        "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
-        "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
+        "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
+        "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
         "logit_near_radius": resolve_logit_near_radius(meta_cfg),
         "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
@@ -591,12 +737,15 @@ def make_dataloaders(
         "hand_perturb_prob": float(meta_cfg.hand_perturb_prob),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
     }
+    # val_clean：关闭全局增强和手部扰动，保证 GT 几何不被破坏
     val_clean_kwargs = {
         **train_kwargs,
         "augment": False,
         "apply_hand_perturb": False,
         "hand_perturb_prob": 0.0,
     }
+    # val_perturbed：保留手部扰动（不改变 GT 几何和 GT logit 邻居集），
+    # 用于评估模型在 noisy hand 下的鲁棒性
     val_perturbed_kwargs = {
         **train_kwargs,
         "augment": False,
@@ -617,6 +766,7 @@ def make_dataloaders(
         ),
         distributed=distributed,
     )
+    # 默认开启按 sequence 块打乱，显著降低 .npz 的随机 I/O
     if bool(data_cfg.shuffle) and bool(
         getattr(data_cfg, "sequence_locality_shuffle", True)
     ):
@@ -639,6 +789,7 @@ def make_dataloaders(
     if val_loader is not None:
         val_loader.dataset.set_epoch(0)
         val_loaders["val_clean/"] = val_loader
+        # 显式开启 val_augment 时才构造扰动版 val loader
         if bool(getattr(meta_cfg, "val_augment", False)):
             val_perturbed_dataset = CorrStaticDataset(
                 val_loader.dataset.data_root,
@@ -662,6 +813,7 @@ def make_dataloaders(
                 **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
             )
             val_loaders["val_perturbed/"] = val_perturbed_loader
+    # 从第一个 npz 文件读出 dataset 维度信息塞进 metadata，下游 model 用来构图
     first_path = train_loader.dataset.file_paths[0]
     with np.load(first_path, allow_pickle=False) as data:
         hand_finger_id = np.asarray(
@@ -677,7 +829,8 @@ def make_dataloaders(
                 "num_hand_points": int(data["hand_points"].shape[1]),
                 "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
                 "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
-                "k_logit": int(getattr(meta_cfg, "k_logit", getattr(meta_cfg, "k_ctx", meta_cfg.k_cross))),
+                "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
+                "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
                 "logit_near_radius": resolve_logit_near_radius(meta_cfg),
                 "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
                 "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),

@@ -13,7 +13,10 @@ import yaml
 
 
 class BaseConfig:
-    """Base class for RoboGym-style nested class configs."""
+    """RoboGym 风格嵌套类配置的基类。
+
+    自动将内部嵌套类实例化为成员对象，支持深度嵌套配置结构。
+    """
 
     def __init__(self) -> None:
         self.init_member_classes(self)
@@ -23,6 +26,10 @@ class BaseConfig:
 
     @staticmethod
     def init_member_classes(obj: Any) -> None:
+        """遍历对象的所有属性：
+        - 如果是 class，则实例化并递归初始化其成员
+        - 如果是可序列化的值，则深拷贝一份，避免多个实例共享同一配置对象
+        """
         for key in dir(obj):
             if key.startswith("_") or key == "__class__":
                 continue
@@ -37,7 +44,7 @@ class BaseConfig:
 
 
 class TaskConfig(BaseConfig):
-    """Template for task configs. Tasks should copy and override fields explicitly."""
+    """任务配置模板。具体任务应继承此类并显式覆盖字段。"""
 
     name = "task"
 
@@ -126,10 +133,20 @@ class TaskConfig(BaseConfig):
 
 
 class ConfigNode(BaseConfig):
+    """通用配置节点，用于动态构建嵌套配置结构。"""
     pass
 
 
 def load_config(config: str | Path | dict[str, Any] | TaskConfig | type[Any], overrides: list[str] | None = None) -> TaskConfig:
+    """加载配置，支持路径字符串、文件路径、字典、配置对象或配置类。
+
+    Args:
+        config: 配置来源，支持多种格式（文件路径、字典、配置对象等）
+        overrides: 命令行覆盖参数列表，格式为 ["key=value", ...]
+
+    Returns:
+        解析后的 TaskConfig 对象
+    """
     raw = config_to_dict(config)
     if overrides:
         raw = copy.deepcopy(raw)
@@ -139,6 +156,7 @@ def load_config(config: str | Path | dict[str, Any] | TaskConfig | type[Any], ov
 
 
 def save_config(cfg: TaskConfig, path: str | Path) -> None:
+    """将配置保存为 JSON 文件。"""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -146,12 +164,18 @@ def save_config(cfg: TaskConfig, path: str | Path) -> None:
 
 
 def task_config_from_dict(raw: dict[str, Any]) -> TaskConfig:
+    """从字典构建 TaskConfig 对象。"""
     cfg = TaskConfig()
     _apply_mapping(cfg, raw)
     return cfg
 
 
 def config_to_dict(config: str | Path | dict[str, Any] | BaseConfig | type[Any] | Any) -> dict[str, Any]:
+    """将多种格式的配置统一转换为字典。
+
+    支持：字典、路径/字符串（文件引用）、BaseConfig 对象/类，
+    以及定义了 to_config() 或 to_dict() 方法的任意对象。
+    """
     if isinstance(config, dict):
         return config
     if isinstance(config, (str, Path)):
@@ -171,6 +195,11 @@ def config_to_dict(config: str | Path | dict[str, Any] | BaseConfig | type[Any] 
 
 
 def class_to_dict(obj: Any) -> dict[str, Any] | Any:
+    """将任意对象递归转换为可序列化的字典。
+
+    处理 None、基本类型、Path、dict、list/tuple、BaseConfig 等类型，
+    对于普通对象则提取所有非私有属性。
+    """
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
     if isinstance(obj, Path):
@@ -196,6 +225,10 @@ def class_to_dict(obj: Any) -> dict[str, Any] | Any:
 
 
 def apply_override(raw: dict[str, Any], override: str) -> None:
+    """将命令行覆盖参数（如 'data.batch_size=128'）应用到配置字典。
+
+    支持点号分隔的嵌套路径，自动创建中间字典节点。
+    """
     item = override.strip()
     if item.startswith("--"):
         item = item[2:]
@@ -215,6 +248,11 @@ def apply_override(raw: dict[str, Any], override: str) -> None:
 
 
 def parse_override_value(value_text: str) -> Any:
+    """解析命令行覆盖参数的值字符串为 Python 对象。
+
+    支持：bool（true/false）、None（none/null）、JSON 类型（数字、列表、字典等），
+    以及普通字符串。
+    """
     lowered = value_text.lower()
     if lowered in {"true", "false"}:
         return lowered == "true"
@@ -227,6 +265,10 @@ def parse_override_value(value_text: str) -> Any:
 
 
 def _apply_mapping(obj: Any, values: dict[str, Any]) -> None:
+    """将字典中的键值对递归应用到配置对象上。
+
+    对于字典类型的值，会递归创建/更新嵌套的 ConfigNode 或 BaseConfig 子对象。
+    """
     for key, value in values.items():
         if isinstance(value, dict):
             child = getattr(obj, key, None)
@@ -242,16 +284,22 @@ def _apply_mapping(obj: Any, values: dict[str, Any]) -> None:
 
 
 def _object_to_dict(obj: Any) -> dict[str, Any]:
+    """将 BaseConfig 对象的实例属性转换为字典。"""
     return {key: class_to_dict(value) for key, value in vars(obj).items() if not key.startswith("_")}
 
 
 def _is_config_value(value: Any) -> bool:
+    """判断一个值是否为可序列化的配置值（非模块、非函数、非可调用对象）。"""
     if inspect.ismodule(value) or inspect.isfunction(value) or inspect.ismethod(value):
         return False
     return not callable(value)
 
 
 def _load_mapping(path: Path) -> dict[str, Any]:
+    """从 JSON 或 YAML 文件加载配置字典。
+
+    支持通过 _base_ 字段继承另一个配置文件，自动合并。
+    """
     if not path.exists():
         raise FileNotFoundError(path)
     text = path.read_text(encoding="utf-8")
@@ -286,6 +334,9 @@ def _load_mapping(path: Path) -> dict[str, Any]:
 
 
 def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """深度合并两个字典：override 中的键会覆盖 base 中的对应键，
+    对于嵌套字典则递归合并。
+    """
     merged = copy.deepcopy(base)
     for key, value in override.items():
         if (
@@ -300,6 +351,13 @@ def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str
 
 
 def _load_config_reference(reference: str) -> dict[str, Any]:
+    """根据引用字符串加载配置。
+
+    支持三种格式：
+    1. JSON/YAML 文件路径：直接加载
+    2. .py 文件路径或存在的文件：加载为 Python 模块并提取配置属性
+    3. Python 模块引用（如 'package.module:attr'）：导入模块并提取属性
+    """
     target, attr = _split_reference(reference)
     path = Path(target)
     if path.suffix.lower() in {".json", ".yaml", ".yml"}:
@@ -316,6 +374,7 @@ def _load_config_reference(reference: str) -> dict[str, Any]:
 
 
 def _split_reference(reference: str) -> tuple[str, str | None]:
+    """将 'module:attr' 格式的引用拆分为模块路径和属性名。"""
     if ":" in reference:
         target, attr = reference.rsplit(":", 1)
         return target, attr
@@ -323,6 +382,7 @@ def _split_reference(reference: str) -> tuple[str, str | None]:
 
 
 def _load_python_module_from_path(path: Path) -> Any:
+    """从文件路径动态加载 Python 模块。"""
     if not path.exists():
         raise FileNotFoundError(path)
     module_name = f"_sl_config_{path.stem}_{abs(hash(path.resolve()))}"
@@ -336,6 +396,11 @@ def _load_python_module_from_path(path: Path) -> Any:
 
 
 def _load_python_module_reference(target: str, attr: str | None) -> tuple[Any, Any | None]:
+    """通过模块导入语法加载 Python 配置。
+
+    如果指定了 attr，直接获取该属性；否则尝试自动推断配置属性名。
+    支持 'package.module.ClassName' 格式自动推断 attr。
+    """
     if attr is not None:
         module = importlib.import_module(target)
         return module, _resolve_attr(module, attr)
@@ -352,6 +417,11 @@ def _load_python_module_reference(target: str, attr: str | None) -> tuple[Any, A
 
 
 def _select_config_attr(module: Any, attr: str | None) -> Any:
+    """从模块中选择配置属性。
+
+    如果指定了 attr，直接按路径解析；否则按优先级尝试
+    'cfg' -> 'config' -> 'Config'。
+    """
     if attr is not None:
         return _resolve_attr(module, attr)
     for candidate in ("cfg", "config", "Config"):
@@ -363,6 +433,7 @@ def _select_config_attr(module: Any, attr: str | None) -> Any:
 
 
 def _resolve_attr(obj: Any, attr_path: str) -> Any:
+    """按点号分隔的路径解析对象的嵌套属性，如 'ModelConfig.data.batch_size'。"""
     value = obj
     for part in attr_path.split("."):
         value = getattr(value, part)
