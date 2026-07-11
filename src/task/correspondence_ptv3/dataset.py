@@ -23,6 +23,69 @@ from src.task.correspondence_ptv3.sampling import (
 from src.utils.correspondence import soft_contact_label
 
 
+def _validate_stratified_logit_config(
+    distance_edges: tuple[float, ...] | list[float],
+    quotas: tuple[int, ...] | list[int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Validate the fixed 5-band stratified sampler configuration."""
+    edges = tuple(float(value) for value in distance_edges)
+    quota_values = tuple(int(value) for value in quotas)
+    if len(edges) != 4:
+        raise ValueError(
+            "logit_stratified_distance_edges must contain exactly 4 values for the "
+            f"fixed 5-band sampler, got {len(edges)}."
+        )
+    if len(quota_values) != len(edges) + 1:
+        raise ValueError(
+            "logit_stratified_quotas must have len(distance_edges) + 1 entries, got "
+            f"{len(quota_values)} vs {len(edges)} + 1."
+        )
+    if sum(quota_values) != 128:
+        raise ValueError(
+            "logit_stratified_quotas must sum to 128 for the K=128 experiment, got "
+            f"{sum(quota_values)} from {quota_values}."
+        )
+    if any(quota < 0 for quota in quota_values):
+        raise ValueError(
+            "logit_stratified_quotas must be non-negative, got "
+            f"{quota_values}."
+        )
+    if any(edge <= 0.0 for edge in edges):
+        raise ValueError(
+            "logit_stratified_distance_edges must be positive, got "
+            f"{edges}."
+        )
+    if any(curr <= prev for prev, curr in zip(edges[:-1], edges[1:])):
+        raise ValueError(
+            "logit_stratified_distance_edges must be strictly increasing, got "
+            f"{edges}."
+        )
+    return (
+        np.asarray(edges, dtype=np.float32),
+        np.asarray(quota_values, dtype=np.int64),
+    )
+
+
+def _stratified_distance_bucket_candidates(
+    dist_row: np.ndarray,
+    distance_edges: np.ndarray,
+) -> list[np.ndarray]:
+    """Split one object's hand-point distances into the fixed 5 stratified bands."""
+    if int(distance_edges.shape[0]) != 4:
+        raise ValueError(
+            "Stratified sampler expects 4 distance edges, got "
+            f"{int(distance_edges.shape[0])}."
+        )
+    edge0, edge1, edge2, edge3 = (float(value) for value in distance_edges.tolist())
+    return [
+        np.flatnonzero(dist_row <= edge0),
+        np.flatnonzero((dist_row > edge0) & (dist_row <= edge1)),
+        np.flatnonzero((dist_row > edge1) & (dist_row < edge2)),
+        np.flatnonzero((dist_row >= edge2) & (dist_row <= edge3)),
+        np.flatnonzero(dist_row > edge3),
+    ]
+
+
 class CorrStaticDataset(Dataset):
     """Stage 3 点池数据集，支持每个 epoch 确定性地从候选池中采样 object 点。
 
@@ -60,6 +123,20 @@ class CorrStaticDataset(Dataset):
         k_ctx: int = 32,
         k_near_logit: int = 32,
         k_far_logit: int = 32,
+        logit_sampling_mode: str = "balanced",
+        logit_stratified_distance_edges: tuple[float, ...] = (
+            0.005,
+            0.015,
+            0.03,
+            0.06,
+        ),
+        logit_stratified_quotas: tuple[int, ...] = (
+            16,
+            32,
+            32,
+            32,
+            16,
+        ),
         ctx_radius: float = 0.04,
         logit_near_radius: float | None = None,
         logit_far_min_radius: float | None = None,
@@ -125,6 +202,14 @@ class CorrStaticDataset(Dataset):
         self.k_ctx = int(k_ctx)
         self.k_near_logit = int(k_near_logit)
         self.k_far_logit = int(k_far_logit)
+        self.logit_sampling_mode = str(logit_sampling_mode).lower()
+        (
+            self.logit_stratified_distance_edges,
+            self.logit_stratified_quotas,
+        ) = _validate_stratified_logit_config(
+            logit_stratified_distance_edges,
+            logit_stratified_quotas,
+        )
         self.ctx_radius = float(ctx_radius)
         # 兼容新旧命名：新参数（logit_near_radius / logit_far_min_radius）优先，
         # 未提供时退化到旧参数（logit_pos_radius / logit_neg_min_radius），
@@ -148,10 +233,21 @@ class CorrStaticDataset(Dataset):
         self.logit_neg_min_radius = self.logit_far_min_radius
         self.logit_neg_radius = float(logit_neg_radius)
         self.logit_far_weight = float(logit_far_weight)
+        if self.logit_sampling_mode not in {"balanced", "dense", "stratified"}:
+            raise ValueError(
+                "logit_sampling_mode must be 'balanced', 'dense', or 'stratified', got "
+                f"{self.logit_sampling_mode!r}."
+            )
         if self.k_ctx <= 0:
             raise ValueError("k_ctx must be positive.")
-        if self.k_near_logit <= 0 or self.k_far_logit <= 0:
-            raise ValueError("k_near_logit and k_far_logit must be positive.")
+        if self.logit_sampling_mode == "balanced":
+            if self.k_near_logit <= 0 or self.k_far_logit <= 0:
+                raise ValueError("k_near_logit and k_far_logit must be positive.")
+        elif self.logit_sampling_mode == "stratified":
+            if int(self.logit_stratified_quotas.sum()) <= 0:
+                raise ValueError("logit_stratified_quotas must sum to a positive K.")
+        elif self.k_near_logit < 0 or self.k_far_logit < 0:
+            raise ValueError("k_near_logit and k_far_logit must be non-negative.")
         if self.logit_near_radius <= 0.0:
             raise ValueError("logit_near_radius must be positive.")
         if self.logit_far_min_radius < self.logit_near_radius:
@@ -349,30 +445,69 @@ class CorrStaticDataset(Dataset):
             k_ctx=self.k_ctx,
             ctx_radius=self.ctx_radius,
         )
-        # runtime logit 邻域（clean GT 几何上采样近点 + 远点）
-        (
-            input_logit_idx,
-            input_logit_valid,
-            input_logit_weight,
-            input_logit_near_count,
-            input_logit_far_count,
-        ) = _compute_runtime_logit_neighbors(
-            geometry.gt_obj_points,
-            geometry.gt_hand_points,
-            obj_valid,
-            k_near_logit=self.k_near_logit,
-            k_far_logit=self.k_far_logit,
-            logit_near_radius=self.logit_near_radius,
-            logit_far_min_radius=self.logit_far_min_radius,
-            seed=stable_frame_seed(
-                base_seed=self.base_seed,
-                seq_id=seq_id,
-                side=side,
-                raw_frame_id=raw_frame_id,
-                epoch=seed_epoch,
-                namespace="logit-neighbors",
-            ),
-        )
+        # runtime logit 邻域（clean GT 几何上定义 cross-edge 监督集合）
+        if self.logit_sampling_mode == "dense":
+            (
+                input_logit_idx,
+                input_logit_valid,
+                input_logit_weight,
+                input_logit_near_count,
+                input_logit_far_count,
+            ) = _compute_dense_logit_neighbors(
+                geometry.gt_obj_points,
+                geometry.gt_hand_points,
+                obj_valid,
+                logit_near_radius=self.logit_near_radius,
+                logit_far_min_radius=self.logit_far_min_radius,
+            )
+        elif self.logit_sampling_mode == "stratified":
+            (
+                input_logit_idx,
+                input_logit_valid,
+                input_logit_weight,
+                input_logit_near_count,
+                input_logit_far_count,
+            ) = _compute_stratified_logit_neighbors(
+                geometry.gt_obj_points,
+                geometry.gt_hand_points,
+                obj_valid,
+                distance_edges=self.logit_stratified_distance_edges,
+                quotas=self.logit_stratified_quotas,
+                logit_near_radius=self.logit_near_radius,
+                logit_far_min_radius=self.logit_far_min_radius,
+                seed=stable_frame_seed(
+                    base_seed=self.base_seed,
+                    seq_id=seq_id,
+                    side=side,
+                    raw_frame_id=raw_frame_id,
+                    epoch=seed_epoch,
+                    namespace="logit-neighbors",
+                ),
+            )
+        else:
+            (
+                input_logit_idx,
+                input_logit_valid,
+                input_logit_weight,
+                input_logit_near_count,
+                input_logit_far_count,
+            ) = _compute_runtime_logit_neighbors(
+                geometry.gt_obj_points,
+                geometry.gt_hand_points,
+                obj_valid,
+                k_near_logit=self.k_near_logit,
+                k_far_logit=self.k_far_logit,
+                logit_near_radius=self.logit_near_radius,
+                logit_far_min_radius=self.logit_far_min_radius,
+                seed=stable_frame_seed(
+                    base_seed=self.base_seed,
+                    seq_id=seq_id,
+                    side=side,
+                    raw_frame_id=raw_frame_id,
+                    epoch=seed_epoch,
+                    namespace="logit-neighbors",
+                ),
+            )
         # 把 object 和 hand 拼成单个点云（前半 object，后半 hand）
         input_points = np.concatenate(
             [geometry.input_obj_points, geometry.input_hand_points],
@@ -570,6 +705,136 @@ def _compute_runtime_logit_neighbors(
     return logit_idx, logit_valid, logit_weight, near_count, far_count
 
 
+def _compute_dense_logit_neighbors(
+    gt_obj_points: np.ndarray,
+    gt_hand_points: np.ndarray,
+    obj_valid: np.ndarray,
+    *,
+    logit_near_radius: float,
+    logit_far_min_radius: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Use every hand point as a logit supervision edge for each valid object point."""
+    num_obj = gt_obj_points.shape[0]
+    num_hand = gt_hand_points.shape[0]
+    all_hand_idx = np.arange(num_hand, dtype=np.int64)
+    logit_idx = np.broadcast_to(all_hand_idx[None, :], (num_obj, num_hand)).copy()
+    logit_valid = np.broadcast_to(
+        np.asarray(obj_valid, dtype=bool)[:, None],
+        (num_obj, num_hand),
+    ).copy()
+    logit_weight = logit_valid.astype(np.float32)
+    logit_idx[~logit_valid] = -1
+
+    near_count = np.zeros((num_obj,), dtype=np.int64)
+    far_count = np.zeros((num_obj,), dtype=np.int64)
+    valid_obj_idx = np.flatnonzero(obj_valid)
+    if valid_obj_idx.size == 0:
+        return logit_idx, logit_valid, logit_weight, near_count, far_count
+
+    obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
+    hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
+    distance = torch.cdist(obj, hand).numpy()
+    near_count[valid_obj_idx] = np.count_nonzero(
+        distance <= float(logit_near_radius),
+        axis=-1,
+    ).astype(np.int64)
+    far_count[valid_obj_idx] = np.count_nonzero(
+        distance > float(logit_far_min_radius),
+        axis=-1,
+    ).astype(np.int64)
+    return logit_idx, logit_valid, logit_weight, near_count, far_count
+
+
+def _compute_stratified_logit_neighbors(
+    gt_obj_points: np.ndarray,
+    gt_hand_points: np.ndarray,
+    obj_valid: np.ndarray,
+    *,
+    distance_edges: np.ndarray | tuple[float, ...] | list[float],
+    quotas: np.ndarray | tuple[int, ...] | list[int],
+    logit_near_radius: float,
+    logit_far_min_radius: float,
+    seed: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Sample a fixed K=128 logit neighborhood with distance-stratified quotas."""
+    distance_edges_array, quotas_array = _validate_stratified_logit_config(
+        tuple(float(value) for value in np.asarray(distance_edges).tolist()),
+        tuple(int(value) for value in np.asarray(quotas).tolist()),
+    )
+    k_logit = int(quotas_array.sum())
+    num_obj = gt_obj_points.shape[0]
+    logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
+    logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
+    logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
+    near_count = np.zeros((num_obj,), dtype=np.int64)
+    far_count = np.zeros((num_obj,), dtype=np.int64)
+    valid_obj_idx = np.flatnonzero(obj_valid)
+    if valid_obj_idx.size == 0:
+        return logit_idx, logit_valid, logit_weight, near_count, far_count
+
+    obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
+    hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
+    distance = torch.cdist(obj, hand).numpy()
+    rng = np.random.default_rng(seed)
+    supplement_order = (1, 2, 3, 0, 4)
+    for row, obj_idx in enumerate(valid_obj_idx.tolist()):
+        dist_row = distance[row]
+        layer_candidates = _stratified_distance_bucket_candidates(
+            dist_row,
+            distance_edges_array,
+        )
+        chosen_parts: list[np.ndarray] = []
+        remaining_parts: list[np.ndarray] = []
+        for layer_idx, candidates in enumerate(layer_candidates):
+            shuffled = (
+                rng.permutation(candidates)
+                if candidates.size > 0
+                else np.empty((0,), dtype=np.int64)
+            )
+            take_count = min(int(quotas_array[layer_idx]), int(shuffled.size))
+            chosen_parts.append(np.asarray(shuffled[:take_count], dtype=np.int64))
+            remaining_parts.append(np.asarray(shuffled[take_count:], dtype=np.int64))
+
+        chosen = (
+            np.concatenate(chosen_parts, axis=0)
+            if chosen_parts
+            else np.empty((0,), dtype=np.int64)
+        )
+        remaining_offsets = [0] * len(remaining_parts)
+        while int(chosen.size) < k_logit:
+            progress = False
+            for layer_idx in supplement_order:
+                if remaining_offsets[layer_idx] >= int(remaining_parts[layer_idx].size):
+                    continue
+                next_idx = remaining_parts[layer_idx][remaining_offsets[layer_idx]]
+                remaining_offsets[layer_idx] += 1
+                chosen = np.concatenate(
+                    [chosen, np.asarray([next_idx], dtype=np.int64)],
+                    axis=0,
+                )
+                progress = True
+                if int(chosen.size) >= k_logit:
+                    break
+            if not progress:
+                break
+
+        selected_count = min(k_logit, int(chosen.size))
+        if selected_count <= 0:
+            continue
+        selected = np.asarray(chosen[:selected_count], dtype=np.int64)
+        logit_idx[obj_idx, :selected_count] = selected
+        logit_valid[obj_idx, :selected_count] = True
+        logit_weight[obj_idx, :selected_count] = 1.0
+        selected_dist = dist_row[selected]
+        near_count[obj_idx] = int(
+            np.count_nonzero(selected_dist <= float(logit_near_radius))
+        )
+        far_count[obj_idx] = int(
+            np.count_nonzero(selected_dist > float(logit_far_min_radius))
+        )
+    return logit_idx, logit_valid, logit_weight, near_count, far_count
+
+
 def _compute_input_knn(
     obj_points: np.ndarray,
     hand_points: np.ndarray,
@@ -722,14 +987,31 @@ def make_dataloaders(
         "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
         "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
         "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
+        "logit_sampling_mode": str(getattr(meta_cfg, "logit_sampling_mode", "balanced")),
+        "logit_stratified_distance_edges": tuple(
+            getattr(
+                meta_cfg,
+                "logit_stratified_distance_edges",
+                (0.005, 0.015, 0.03, 0.06),
+            )
+        ),
+        "logit_stratified_quotas": tuple(
+            getattr(
+                meta_cfg,
+                "logit_stratified_quotas",
+                (16, 32, 32, 32, 16),
+            )
+        ),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
         "logit_near_radius": resolve_logit_near_radius(meta_cfg),
         "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
         "logit_neg_radius": float(getattr(meta_cfg, "logit_neg_radius", 0.06)),
         "logit_far_weight": float(getattr(meta_cfg, "loss_cross_edge_far_weight", 0.5)),
         "base_seed": int(seed),
-        "augment": True,
-        "apply_hand_perturb": True,
+        "augment": bool(getattr(meta_cfg, "augment", True)),
+        "apply_hand_perturb": bool(
+            getattr(meta_cfg, "apply_hand_perturb", True)
+        ),
         "augment_rotation": bool(meta_cfg.augment_rotation),
         "augment_translation": bool(meta_cfg.augment_translation),
         "augment_scale": bool(meta_cfg.augment_scale),
@@ -839,11 +1121,36 @@ def make_dataloaders(
                 "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
                 "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
                 "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
+                "logit_sampling_mode": str(getattr(meta_cfg, "logit_sampling_mode", "balanced")),
+                "logit_stratified_distance_edges": tuple(
+                    getattr(
+                        meta_cfg,
+                        "logit_stratified_distance_edges",
+                        (0.005, 0.015, 0.03, 0.06),
+                    )
+                ),
+                "logit_stratified_quotas": tuple(
+                    getattr(
+                        meta_cfg,
+                        "logit_stratified_quotas",
+                        (16, 32, 32, 32, 16),
+                    )
+                ),
+                "k_logit": (
+                    int(np.sum(getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))))
+                    if str(getattr(meta_cfg, "logit_sampling_mode", "balanced")).lower() == "stratified"
+                    else (
+                        int(data["hand_points"].shape[1])
+                        if str(getattr(meta_cfg, "logit_sampling_mode", "balanced")).lower() == "dense"
+                        else int(getattr(meta_cfg, "k_near_logit", 32)) + int(getattr(meta_cfg, "k_far_logit", 32))
+                    )
+                ),
                 "logit_near_radius": resolve_logit_near_radius(meta_cfg),
                 "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
                 "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
                 "num_fingers": int(np.max(hand_finger_id)) + 1 if hand_finger_id.size > 0 else 0,
                 "num_regions": int(np.max(hand_region_id)) + 1 if hand_region_id.size > 0 else 0,
+                "fix_overfit_seed": bool(getattr(meta_cfg, "fix_overfit_seed", False)),
                 "val_loader_names": sorted(val_loaders),
             }
         )

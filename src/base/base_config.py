@@ -71,6 +71,7 @@ class TaskConfig(BaseConfig):
         # ========== 路径和随机种子 ==========
         output_dir = "outputs/train"
         seed = 42
+        overfit_mode = False
 
         # ========== 设备和训练长度 ==========
         device = "auto"
@@ -264,6 +265,26 @@ def parse_override_value(value_text: str) -> Any:
         return value_text
 
 
+def set_config_default_if_not_explicit(
+    cfg: Any,
+    *,
+    key: str,
+    value: Any,
+    explicit_override_keys: set[str] | None,
+) -> bool:
+    """Set a dotted config key only when the user did not explicitly override it.
+
+    Returns:
+        True if the default was applied, False if it was skipped due to an
+        explicit override.
+    """
+    explicit_override_keys = set(explicit_override_keys or set())
+    if key in explicit_override_keys:
+        return False
+    _set_dotted_attr(cfg, key, value)
+    return True
+
+
 def _apply_mapping(obj: Any, values: dict[str, Any]) -> None:
     """将字典中的键值对递归应用到配置对象上。
 
@@ -281,6 +302,18 @@ def _apply_mapping(obj: Any, values: dict[str, Any]) -> None:
             setattr(obj, key, child)
         else:
             setattr(obj, key, copy.deepcopy(value))
+
+
+def _set_dotted_attr(obj: Any, key: str, value: Any) -> None:
+    cursor = obj
+    parts = key.split(".")
+    for part in parts[:-1]:
+        child = getattr(cursor, part, None)
+        if child is None:
+            child = ConfigNode()
+            setattr(cursor, part, child)
+        cursor = child
+    setattr(cursor, parts[-1], copy.deepcopy(value))
 
 
 def _object_to_dict(obj: Any) -> dict[str, Any]:

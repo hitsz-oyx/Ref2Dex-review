@@ -102,12 +102,17 @@ def main() -> None:
     # 第三步：应用快速覆盖参数（与 --set 相比写起来更短）。
     if args.data is not None:
         cfg.data.train_path = args.data
+        override_keys.add("data.train_path")
     if args.output_dir is not None:
         cfg.train.output_dir = args.output_dir
+        override_keys.add("train.output_dir")
     if args.device is not None:
         cfg.train.device = args.device
+        override_keys.add("train.device")
     if args.distributed:
         cfg.train.distributed.enable = True
+        override_keys.add("train.distributed.enable")
+    setattr(cfg, "_explicit_override_keys", set(override_keys))
     setattr(cfg, "_explicit_name", "name" in override_keys)
     setattr(cfg.wandb, "_explicit_name", "wandb.name" in override_keys)
     setattr(

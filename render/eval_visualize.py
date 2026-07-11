@@ -124,6 +124,8 @@ from src.task.correspondence_ptv3.config import (
     resolve_logit_near_radius,
 )
 from src.task.correspondence_ptv3.dataset import (
+    _compute_stratified_logit_neighbors,
+    _compute_dense_logit_neighbors,
     _compute_runtime_context_neighbors,
     _compute_runtime_logit_neighbors,
 )
@@ -336,12 +338,13 @@ def _build_runtime_frame(
     seq_id = _scalar(data, "seq_id", "unknown")
     side = _scalar(data, "side", "")
     raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame])
+    seed_epoch = 0 if bool(args.fix_overfit_seed) else epoch
     sample_seed = stable_frame_seed(
         base_seed=args.base_seed,
         seq_id=seq_id,
         side=side,
         raw_frame_id=raw_frame_id,
-        epoch=epoch,
+        epoch=seed_epoch,
     )
     selected_idx, obj_valid = sample_object_indices(
         np.asarray(data["obj_candidate_mask_5cm"][frame]),
@@ -373,7 +376,7 @@ def _build_runtime_frame(
         seq_id=seq_id,
         side=side,
         raw_frame_id=raw_frame_id,
-        epoch=epoch,
+        epoch=seed_epoch,
         namespace="augmentation",
     )
     geometry = augment_geometry(
@@ -403,29 +406,68 @@ def _build_runtime_frame(
         k_ctx=int(args.k_ctx),
         ctx_radius=float(args.ctx_radius),
     )
-    (
-        input_logit_idx,
-        input_logit_valid,
-        _input_logit_weight,
-        _input_logit_near_count,
-        _input_logit_far_count,
-    ) = _compute_runtime_logit_neighbors(
-        geometry.gt_obj_points,
-        geometry.gt_hand_points,
-        obj_valid,
-        k_near_logit=int(args.k_near_logit),
-        k_far_logit=int(args.k_far_logit),
-        logit_near_radius=float(args.logit_near_radius),
-        logit_far_min_radius=float(args.logit_far_min_radius),
-        seed=stable_frame_seed(
-            base_seed=args.base_seed,
-            seq_id=seq_id,
-            side=side,
-            raw_frame_id=raw_frame_id,
-            epoch=epoch,
-            namespace="logit-neighbors",
-        ),
-    )
+    if str(args.logit_sampling_mode).lower() == "dense":
+        (
+            input_logit_idx,
+            input_logit_valid,
+            _input_logit_weight,
+            _input_logit_near_count,
+            _input_logit_far_count,
+        ) = _compute_dense_logit_neighbors(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            obj_valid,
+            logit_near_radius=float(args.logit_near_radius),
+            logit_far_min_radius=float(args.logit_far_min_radius),
+        )
+    elif str(args.logit_sampling_mode).lower() == "stratified":
+        (
+            input_logit_idx,
+            input_logit_valid,
+            _input_logit_weight,
+            _input_logit_near_count,
+            _input_logit_far_count,
+        ) = _compute_stratified_logit_neighbors(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            obj_valid,
+            distance_edges=tuple(args.logit_stratified_distance_edges),
+            quotas=tuple(args.logit_stratified_quotas),
+            logit_near_radius=float(args.logit_near_radius),
+            logit_far_min_radius=float(args.logit_far_min_radius),
+            seed=stable_frame_seed(
+                base_seed=args.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=seed_epoch,
+                namespace="logit-neighbors",
+            ),
+        )
+    else:
+        (
+            input_logit_idx,
+            input_logit_valid,
+            _input_logit_weight,
+            _input_logit_near_count,
+            _input_logit_far_count,
+        ) = _compute_runtime_logit_neighbors(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            obj_valid,
+            k_near_logit=int(args.k_near_logit),
+            k_far_logit=int(args.k_far_logit),
+            logit_near_radius=float(args.logit_near_radius),
+            logit_far_min_radius=float(args.logit_far_min_radius),
+            seed=stable_frame_seed(
+                base_seed=args.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=seed_epoch,
+                namespace="logit-neighbors",
+            ),
+        )
     obj_contact_soft = soft_contact_label(
         torch.from_numpy(obj_min_dist),
         d_pos=float(args.d_pos),
@@ -645,6 +687,8 @@ class EvalViewer:
             self.frame,
             self.epoch,
             self.args.base_seed,
+            self.args.fix_overfit_seed,
+            self.args.logit_sampling_mode,
             self.args.num_obj_points,
             self.args.k_cross,
             self.args.k_ctx,
@@ -970,6 +1014,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k-ctx", type=int, default=None)
     parser.add_argument("--k-near-logit", type=int, default=None)
     parser.add_argument("--k-far-logit", type=int, default=None)
+    parser.add_argument("--logit-stratified-distance-edges", type=float, nargs=4, default=None)
+    parser.add_argument("--logit-stratified-quotas", type=int, nargs=5, default=None)
     parser.add_argument("--ctx-radius", type=float, default=None)
     parser.add_argument("--logit-near-radius", "--logit-pos-radius", dest="logit_near_radius", type=float, default=None)
     parser.add_argument("--logit-far-min-radius", "--logit-neg-min-radius", dest="logit_far_min_radius", type=float, default=None)
@@ -1027,6 +1073,15 @@ def main() -> None:
     runner.model.contact_bin_decode_mode = str(
         getattr(runner.cfg.meta, "contact_bin_decode_mode", "expectation")
     )
+    args.fix_overfit_seed = bool(getattr(runner.cfg.meta, "fix_overfit_seed", False))
+    args.logit_sampling_mode = str(
+        getattr(runner.cfg.meta, "logit_sampling_mode", "balanced")
+    ).lower()
+    if args.logit_sampling_mode not in {"balanced", "dense", "stratified"}:
+        raise ValueError(
+            "Checkpoint meta.logit_sampling_mode must be 'balanced', 'dense', or "
+            f"'stratified', got {args.logit_sampling_mode!r}."
+        )
 
     if args.base_seed is None:
         args.base_seed = int(runner.cfg.train.seed)
@@ -1040,6 +1095,22 @@ def main() -> None:
         args.k_near_logit = int(getattr(runner.cfg.meta, "k_near_logit", 32))
     if args.k_far_logit is None:
         args.k_far_logit = int(getattr(runner.cfg.meta, "k_far_logit", 32))
+    if args.logit_stratified_distance_edges is None:
+        args.logit_stratified_distance_edges = tuple(
+            getattr(
+                runner.cfg.meta,
+                "logit_stratified_distance_edges",
+                (0.005, 0.015, 0.03, 0.06),
+            )
+        )
+    if args.logit_stratified_quotas is None:
+        args.logit_stratified_quotas = tuple(
+            getattr(
+                runner.cfg.meta,
+                "logit_stratified_quotas",
+                (16, 32, 32, 32, 16),
+            )
+        )
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
     if args.logit_near_radius is None:
@@ -1064,8 +1135,18 @@ def main() -> None:
         )
     if int(args.k_ctx) <= 0:
         raise ValueError("--k-ctx must be positive.")
-    if int(args.k_near_logit) <= 0 or int(args.k_far_logit) <= 0:
+    if (
+        args.logit_sampling_mode == "balanced"
+        and (int(args.k_near_logit) <= 0 or int(args.k_far_logit) <= 0)
+    ):
         raise ValueError("--k-near-logit and --k-far-logit must be positive.")
+    if args.logit_sampling_mode == "stratified":
+        if len(tuple(args.logit_stratified_distance_edges)) != 4:
+            raise ValueError("--logit-stratified-distance-edges must contain 4 values.")
+        if len(tuple(args.logit_stratified_quotas)) != 5:
+            raise ValueError("--logit-stratified-quotas must contain 5 values.")
+        if int(sum(int(value) for value in args.logit_stratified_quotas)) != 128:
+            raise ValueError("--logit-stratified-quotas must sum to 128.")
     if float(args.logit_far_min_radius) < float(args.logit_near_radius):
         raise ValueError("--logit-far-min-radius must be >= --logit-near-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
@@ -1081,6 +1162,10 @@ def main() -> None:
         f"K={stats['k']}\n"
         f"  candidate[min/median/max]={stats['candidate_min']}/"
         f"{stats['candidate_median']}/{stats['candidate_max']}\n"
+        f"  fix_overfit_seed={str(args.fix_overfit_seed).lower()} "
+        f"logit_sampling_mode={args.logit_sampling_mode} "
+        f"num_obj_points={int(args.num_obj_points)} "
+        f"num_hand_points={int(stats['hand'])}\n"
         f"  frame={args.frame} epoch={max(0, args.epoch)} "
         f"selected={int(runtime.obj_valid.sum())} "
         f"padding={int((~runtime.obj_valid).sum())} "

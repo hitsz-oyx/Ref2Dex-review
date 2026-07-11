@@ -97,6 +97,31 @@ class Config(TaskConfig):
         logit_near_radius: float | None = None
         # runtime logit 远点采样最小半径，单位 meter。
         logit_far_min_radius: float | None = None
+        # cross-edge supervision 的邻域定义方式：
+        #   - "balanced":   保持当前 near/far 随机采样
+        #   - "dense":      对每个有效 object point 监督全部 hand points
+        #   - "stratified": 按距离层配额采样 128 条 edge
+        logit_sampling_mode: str = "balanced"
+        # stratified logit 采样使用的 4 个距离分界（单位 meter），对应 5 个层：
+        #   S0: d <= 5mm
+        #   S1: 5mm < d <= 15mm
+        #   S2: 15mm < d < 30mm
+        #   S3: 30mm <= d <= 60mm
+        #   S4: d > 60mm
+        logit_stratified_distance_edges: tuple[float, ...] = (
+            0.005,
+            0.015,
+            0.03,
+            0.06,
+        )
+        # stratified 5 层的默认采样配额，总和固定为 128。
+        logit_stratified_quotas: tuple[int, ...] = (
+            16,
+            32,
+            32,
+            32,
+            16,
+        )
         # 兼容旧配置字段；读取时会回退到这两个名字。
         logit_pos_radius: float | None = DEFAULT_LOGIT_NEAR_RADIUS
         logit_neg_min_radius: float | None = DEFAULT_LOGIT_FAR_MIN_RADIUS
@@ -185,6 +210,10 @@ class Config(TaskConfig):
         hand_trans_std: float = 0.01
         # 训练时对手部施加扰动的概率（1.0 = 每个样本都做扰动）。
         hand_perturb_prob: float = 1.0
+        # 是否应用整帧几何增强。
+        augment: bool = True
+        # 是否显式开启手部扰动分支。
+        apply_hand_perturb: bool = True
         # 是否额外构建一套“固定手部扰动”的验证集。
         val_augment: bool = True
         # 固定扰动验证集的手部扰动概率。

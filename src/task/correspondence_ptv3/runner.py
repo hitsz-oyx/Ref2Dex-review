@@ -6,7 +6,12 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from src.base import BaseRunner, RunnerOutput, TaskConfig
+from src.base import (
+    BaseRunner,
+    RunnerOutput,
+    TaskConfig,
+    set_config_default_if_not_explicit,
+)
 from src.task.correspondence_ptv3.dataset import make_dataloaders
 from src.utils.correspondence import (
     contact_prob_to_bins,
@@ -16,6 +21,74 @@ from src.utils.correspondence import (
 
 class CorrespondencePTV3Runner(BaseRunner):
     """Training runner for the runtime-sampled Stage 3 representation."""
+
+    @classmethod
+    def configure_overfit_mode(
+        cls,
+        cfg: TaskConfig,
+        explicit_override_keys: set[str],
+    ) -> None:
+        super().configure_overfit_mode(cfg, explicit_override_keys)
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.fix_overfit_seed",
+            value=True,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.augment",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.apply_hand_perturb",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.augment_rotation",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.augment_translation",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.augment_scale",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.hand_perturb_prob",
+            value=0.0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.val_augment",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.ptv3_drop_path",
+            value=0.0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="meta.ptv3_shuffle_orders",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
 
     def __init__(
         self,

@@ -16,6 +16,7 @@ from .base_config import (
     TaskConfig,
     load_config,
     save_config,
+    set_config_default_if_not_explicit,
     task_config_from_dict,
 )
 from .checkpoint import CheckpointManager, load_checkpoint, unwrap_model
@@ -48,6 +49,86 @@ class RunnerOutput:
 class BaseRunner:
     """Runner with train/eval control flow plus overridable data, model, loss, and inference hooks."""
 
+    @classmethod
+    def configure_overfit_mode(
+        cls,
+        cfg: TaskConfig,
+        explicit_override_keys: set[str],
+    ) -> None:
+        """Apply generic overfit-diagnosis defaults without overriding explicit CLI values."""
+        set_config_default_if_not_explicit(
+            cfg,
+            key="data.shuffle",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="data.drop_last",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="data.num_workers",
+            value=0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="data.persistent_workers",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.weight_decay",
+            value=0.0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.scheduler",
+            value=None,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.warmup_ratio",
+            value=0.0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.warmup_steps",
+            value=0,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.grad_clip_norm",
+            value=None,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.amp",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.compile",
+            value=False,
+            explicit_override_keys=explicit_override_keys,
+        )
+        set_config_default_if_not_explicit(
+            cfg,
+            key="train.early_stopping_patience",
+            value=None,
+            explicit_override_keys=explicit_override_keys,
+        )
+
     def __init__(
         self,
         cfg: TaskConfig,
@@ -62,6 +143,14 @@ class BaseRunner:
         self.mode = mode
         if device is not None:
             self.cfg.train.device = device
+        self.explicit_override_keys = set(
+            getattr(self.cfg, "_explicit_override_keys", set()) or set()
+        )
+        if self.mode == "train" and bool(getattr(self.cfg.train, "overfit_mode", False)):
+            type(self).configure_overfit_mode(
+                self.cfg,
+                self.explicit_override_keys,
+            )
 
         self.distributed: DistributedState = init_distributed(self.cfg.train)
         self.is_primary = self.distributed.is_primary

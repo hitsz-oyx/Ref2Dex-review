@@ -1,6 +1,13 @@
 """Shared base configuration, runner, utilities, datasets, checkpoints, and models."""
 
-from .base_config import BaseConfig, TaskConfig, load_config, save_config, task_config_from_dict
+from .base_config import (
+    BaseConfig,
+    TaskConfig,
+    load_config,
+    save_config,
+    set_config_default_if_not_explicit,
+    task_config_from_dict,
+)
 from .checkpoint import (
     CheckpointManager,
     load_checkpoint,
@@ -65,6 +72,7 @@ __all__ = [
     "task_config_from_dict",
     "load_config",
     "save_config",
+    "set_config_default_if_not_explicit",
     "CheckpointManager",
     "load_checkpoint",
     "resolve_checkpoint_dir",
