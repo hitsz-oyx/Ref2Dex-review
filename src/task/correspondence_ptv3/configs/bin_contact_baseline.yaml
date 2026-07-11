@@ -1,26 +1,17 @@
 _base_: src.task.correspondence_ptv3.config:Config
 
-name: correspondence_ptv3_bin_contact
+name: correspondence_ptv3_soft_contact
 
 meta:
-  contact_supervision_mode: bin
+  contact_supervision_mode: soft
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false
   gamma: 1.0
   num_contact_bins: 10
   contact_bin_decode_mode: expectation
-  contact_bin_weights:
-    - 0.04906267471446666
-    - 0.124615854284691
-    - 0.5289112177088706
-    - 1.0479041499564616
-    - 1.4865461685891466
-    - 1.6614463943665032
-    - 1.722506187101053
-    - 1.5057927629354453
-    - 1.0416008624789648
-    - 0.8316137278643991
+  contact_bin_weights: null
+  edge_contact_bin_weights: null
   k_ctx: 32
   k_near_logit: 32
   k_far_logit: 32
@@ -70,4 +61,4 @@ wandb:
   enable: true
   project: ref2dex
   mode: online
-  tags: [correspondence, ptv3, static, bin-contact]
+  tags: [correspondence, ptv3, static, soft-contact]

@@ -30,6 +30,7 @@ from .distributed import (
 from .utils import (
     JsonlLogger,
     MetricAverager,
+    MetricStat,
     format_seconds,
     import_from_path,
     resolve_device,
@@ -42,7 +43,7 @@ from .utils import (
 @dataclass
 class RunnerOutput:
     loss: torch.Tensor
-    metrics: dict[str, float] = field(default_factory=dict)
+    metrics: dict[str, float | MetricStat] = field(default_factory=dict)
     batch_size: int | None = None
 
 
@@ -708,18 +709,48 @@ class BaseRunner:
             json.dump(to_jsonable(self.metadata), f, indent=2, ensure_ascii=False)
         barrier()
 
-    def _reduce_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
-        return reduce_dict(metrics, device=self.device, average=True)
+    def _reduce_step_metrics(
+        self,
+        metrics: dict[str, float | MetricStat],
+    ) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        counts: dict[str, float] = {}
+        expose_validity: dict[str, bool] = {}
+        for key, value in metrics.items():
+            if isinstance(value, MetricStat):
+                totals[key] = float(value.total)
+                counts[key] = float(value.count)
+                expose_validity[key] = value.expose_validity
+            else:
+                totals[key] = float(value)
+                counts[key] = 1.0
+
+        totals = reduce_dict(totals, device=self.device, average=False)
+        counts = reduce_dict(counts, device=self.device, average=False)
+        reduced: dict[str, float] = {}
+        for key in sorted(totals):
+            count = counts.get(key, 0.0)
+            if count > 0:
+                reduced[key] = totals[key] / count
+            if expose_validity.get(key, False):
+                reduced[f"{key}_valid_count"] = float(count)
+                reduced[f"{key}_valid"] = float(count > 0)
+        return reduced
 
     def _compute_averager_metrics(self, averager: MetricAverager, prefix: str = "") -> dict[str, float]:
         totals = {key: meter.total for key, meter in averager.meters.items()}
         counts = {key: meter.count for key, meter in averager.meters.items()}
         totals = reduce_dict(totals, device=self.device, average=False)
         counts = reduce_dict(counts, device=self.device, average=False)
-        return {
-            f"{prefix}{key}": totals[key] / max(1.0, counts.get(key, 0.0))
-            for key in sorted(totals)
-        }
+        result: dict[str, float] = {}
+        for key in sorted(totals):
+            count = counts.get(key, 0.0)
+            if count > 0:
+                result[f"{prefix}{key}"] = totals[key] / count
+            if averager.expose_validity.get(key, False):
+                result[f"{prefix}{key}_valid_count"] = float(count)
+                result[f"{prefix}{key}_valid"] = float(count > 0)
+        return result
 
     def _log_train_setup(self) -> None:
         if not self.is_primary:

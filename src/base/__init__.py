@@ -48,6 +48,7 @@ from .models import MLP, MLPModel, build_model
 from .utils import (
     JsonlLogger,
     MetricAverager,
+    MetricStat,
     flatten_features,
     format_seconds,
     import_from_path,
@@ -108,6 +109,7 @@ __all__ = [
     "build_model",
     "JsonlLogger",
     "MetricAverager",
+    "MetricStat",
     "flatten_features",
     "format_seconds",
     "import_from_path",

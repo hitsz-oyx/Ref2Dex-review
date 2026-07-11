@@ -7,11 +7,43 @@ import random
 import time
 from collections import defaultdict
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import torch
 from torch import nn
+
+
+@dataclass(frozen=True)
+class MetricStat:
+    """A metric represented by a reducible numerator and valid count."""
+
+    total: float
+    count: float
+    expose_validity: bool = False
+
+    @classmethod
+    def from_value(
+        cls,
+        value: float,
+        *,
+        count: float = 1.0,
+        valid: bool = True,
+        expose_validity: bool = False,
+    ) -> "MetricStat":
+        if not valid or count <= 0:
+            return cls.invalid(expose_validity=expose_validity)
+        count = float(count)
+        return cls(
+            total=float(value) * count,
+            count=count,
+            expose_validity=expose_validity,
+        )
+
+    @classmethod
+    def invalid(cls, *, expose_validity: bool = False) -> "MetricStat":
+        return cls(total=0.0, count=0.0, expose_validity=expose_validity)
 
 
 def set_seed(seed: int) -> int:
@@ -119,21 +151,39 @@ class AverageMeter:
         self.total += float(value) * n
         self.count += n
 
+    def update_total_count(self, total: float, count: float) -> None:
+        self.total += float(total)
+        self.count += float(count)
+
     @property
     def avg(self) -> float:
-        return self.total / max(1, self.count)
+        return self.total / self.count
 
 
 class MetricAverager:
     def __init__(self) -> None:
         self.meters: dict[str, AverageMeter] = defaultdict(AverageMeter)
+        self.expose_validity: dict[str, bool] = {}
 
-    def update(self, metrics: dict[str, float], n: int = 1) -> None:
+    def update(self, metrics: dict[str, float | MetricStat], n: int = 1) -> None:
         for key, value in metrics.items():
-            self.meters[key].update(float(value), n)
+            if isinstance(value, MetricStat):
+                self.meters[key].update_total_count(value.total, value.count)
+                self.expose_validity[key] = (
+                    self.expose_validity.get(key, False) or value.expose_validity
+                )
+            else:
+                self.meters[key].update(float(value), n)
 
     def compute(self, prefix: str = "") -> dict[str, float]:
-        return {f"{prefix}{key}": meter.avg for key, meter in self.meters.items()}
+        result: dict[str, float] = {}
+        for key, meter in self.meters.items():
+            if meter.count > 0:
+                result[f"{prefix}{key}"] = meter.total / meter.count
+            if self.expose_validity.get(key, False):
+                result[f"{prefix}{key}_valid_count"] = float(meter.count)
+                result[f"{prefix}{key}_valid"] = float(meter.count > 0)
+        return result
 
 
 class JsonlLogger:

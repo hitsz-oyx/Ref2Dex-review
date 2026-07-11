@@ -382,8 +382,61 @@ class DatasetModeTests(unittest.TestCase):
         self.assertEqual(len(set(logit_idx[0, logit_valid[0]].tolist())), 128)
         self.assertEqual(
             self._bucket_counts(hand_points, logit_idx[0]),
-            (4, 8, 44, 44, 28),
+            (4, 8, 50, 50, 16),
         )
+
+    def test_stratified_refill_uses_s0_before_s4(self) -> None:
+        obj_points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+        hand_points = self._make_hand_points_by_distance((100, 8, 8, 8, 100))
+        logit_idx, logit_valid, *_ = _compute_stratified_logit_neighbors(
+            obj_points,
+            hand_points,
+            np.asarray([True]),
+            distance_edges=(0.005, 0.015, 0.03, 0.06),
+            quotas=(16, 32, 32, 32, 16),
+            logit_near_radius=0.005,
+            logit_far_min_radius=0.03,
+            seed=7,
+        )
+        self.assertEqual(int(logit_valid[0].sum()), 128)
+        self.assertEqual(self._bucket_counts(hand_points, logit_idx[0]), (88, 8, 8, 8, 16))
+
+    def test_stratified_refill_uses_s4_only_after_other_layers(self) -> None:
+        obj_points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+        hand_points = self._make_hand_points_by_distance((20, 8, 8, 8, 100))
+        logit_idx, logit_valid, *_ = _compute_stratified_logit_neighbors(
+            obj_points,
+            hand_points,
+            np.asarray([True]),
+            distance_edges=(0.005, 0.015, 0.03, 0.06),
+            quotas=(16, 32, 32, 32, 16),
+            logit_near_radius=0.005,
+            logit_far_min_radius=0.03,
+            seed=8,
+        )
+        self.assertEqual(self._bucket_counts(hand_points, logit_idx[0]), (20, 8, 8, 8, 84))
+
+    def test_stratified_small_hand_pool_and_boundaries(self) -> None:
+        obj_points = np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32)
+        hand_points = np.asarray(
+            [[0.0, 0.0, value] for value in (0.005, 0.015, 0.03, 0.06)],
+            dtype=np.float32,
+        )
+        logit_idx, logit_valid, logit_weight, *_ = _compute_stratified_logit_neighbors(
+            obj_points,
+            hand_points,
+            np.asarray([True]),
+            distance_edges=(0.005, 0.015, 0.03, 0.06),
+            quotas=(16, 32, 32, 32, 16),
+            logit_near_radius=0.005,
+            logit_far_min_radius=0.03,
+            seed=9,
+        )
+        self.assertEqual(self._bucket_counts(hand_points, logit_idx[0]), (1, 1, 0, 2, 0))
+        self.assertEqual(int(logit_valid[0].sum()), 4)
+        self.assertEqual(len(set(logit_idx[0, logit_valid[0]].tolist())), 4)
+        self.assertTrue(np.all(logit_idx[0, ~logit_valid[0]] == -1))
+        self.assertTrue(np.all(logit_weight[0, ~logit_valid[0]] == 0.0))
 
     def test_stratified_logit_neighbors_invalid_object_rows_are_padding(self) -> None:
         obj_points = np.asarray(

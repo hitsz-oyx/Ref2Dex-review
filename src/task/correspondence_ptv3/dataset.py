@@ -27,56 +27,28 @@ def _validate_stratified_logit_config(
     distance_edges: tuple[float, ...] | list[float],
     quotas: tuple[int, ...] | list[int],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Validate the fixed 5-band stratified sampler configuration."""
     edges = tuple(float(value) for value in distance_edges)
     quota_values = tuple(int(value) for value in quotas)
     if len(edges) != 4:
-        raise ValueError(
-            "logit_stratified_distance_edges must contain exactly 4 values for the "
-            f"fixed 5-band sampler, got {len(edges)}."
-        )
+        raise ValueError("logit_stratified_distance_edges must contain exactly 4 values.")
     if len(quota_values) != len(edges) + 1:
-        raise ValueError(
-            "logit_stratified_quotas must have len(distance_edges) + 1 entries, got "
-            f"{len(quota_values)} vs {len(edges)} + 1."
-        )
+        raise ValueError("logit_stratified_quotas must have len(distance_edges) + 1 entries.")
     if sum(quota_values) != 128:
-        raise ValueError(
-            "logit_stratified_quotas must sum to 128 for the K=128 experiment, got "
-            f"{sum(quota_values)} from {quota_values}."
-        )
+        raise ValueError("logit_stratified_quotas must sum to 128.")
     if any(quota < 0 for quota in quota_values):
-        raise ValueError(
-            "logit_stratified_quotas must be non-negative, got "
-            f"{quota_values}."
-        )
-    if any(edge <= 0.0 for edge in edges):
-        raise ValueError(
-            "logit_stratified_distance_edges must be positive, got "
-            f"{edges}."
-        )
-    if any(curr <= prev for prev, curr in zip(edges[:-1], edges[1:])):
-        raise ValueError(
-            "logit_stratified_distance_edges must be strictly increasing, got "
-            f"{edges}."
-        )
-    return (
-        np.asarray(edges, dtype=np.float32),
-        np.asarray(quota_values, dtype=np.int64),
-    )
+        raise ValueError("logit_stratified_quotas must be non-negative.")
+    if any(edge <= 0.0 for edge in edges) or any(
+        curr <= prev for prev, curr in zip(edges[:-1], edges[1:])
+    ):
+        raise ValueError("logit_stratified_distance_edges must be positive and strictly increasing.")
+    return np.asarray(edges, dtype=np.float32), np.asarray(quota_values, dtype=np.int64)
 
 
 def _stratified_distance_bucket_candidates(
     dist_row: np.ndarray,
     distance_edges: np.ndarray,
 ) -> list[np.ndarray]:
-    """Split one object's hand-point distances into the fixed 5 stratified bands."""
-    if int(distance_edges.shape[0]) != 4:
-        raise ValueError(
-            "Stratified sampler expects 4 distance edges, got "
-            f"{int(distance_edges.shape[0])}."
-        )
-    edge0, edge1, edge2, edge3 = (float(value) for value in distance_edges.tolist())
+    edge0, edge1, edge2, edge3 = (float(value) for value in distance_edges)
     return [
         np.flatnonzero(dist_row <= edge0),
         np.flatnonzero((dist_row > edge0) & (dist_row <= edge1)),
@@ -124,19 +96,8 @@ class CorrStaticDataset(Dataset):
         k_near_logit: int = 32,
         k_far_logit: int = 32,
         logit_sampling_mode: str = "balanced",
-        logit_stratified_distance_edges: tuple[float, ...] = (
-            0.005,
-            0.015,
-            0.03,
-            0.06,
-        ),
-        logit_stratified_quotas: tuple[int, ...] = (
-            16,
-            32,
-            32,
-            32,
-            16,
-        ),
+        logit_stratified_distance_edges: tuple[float, ...] = (0.005, 0.015, 0.03, 0.06),
+        logit_stratified_quotas: tuple[int, ...] = (16, 32, 32, 32, 16),
         ctx_radius: float = 0.04,
         logit_near_radius: float | None = None,
         logit_far_min_radius: float | None = None,
@@ -756,13 +717,13 @@ def _compute_stratified_logit_neighbors(
     logit_far_min_radius: float,
     seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Sample a fixed K=128 logit neighborhood with distance-stratified quotas."""
-    distance_edges_array, quotas_array = _validate_stratified_logit_config(
+    """Sample K=128 cross-edge targets across contact-relevant distance bands."""
+    edges, quota_values = _validate_stratified_logit_config(
         tuple(float(value) for value in np.asarray(distance_edges).tolist()),
         tuple(int(value) for value in np.asarray(quotas).tolist()),
     )
-    k_logit = int(quotas_array.sum())
-    num_obj = gt_obj_points.shape[0]
+    k_logit = int(quota_values.sum())
+    num_obj = int(gt_obj_points.shape[0])
     logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
     logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
     logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
@@ -776,62 +737,52 @@ def _compute_stratified_logit_neighbors(
     hand = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
     distance = torch.cdist(obj, hand).numpy()
     rng = np.random.default_rng(seed)
-    supplement_order = (1, 2, 3, 0, 4)
     for row, obj_idx in enumerate(valid_obj_idx.tolist()):
-        dist_row = distance[row]
-        layer_candidates = _stratified_distance_bucket_candidates(
-            dist_row,
-            distance_edges_array,
-        )
-        chosen_parts: list[np.ndarray] = []
+        selected: list[int] = []
         remaining_parts: list[np.ndarray] = []
-        for layer_idx, candidates in enumerate(layer_candidates):
-            shuffled = (
-                rng.permutation(candidates)
-                if candidates.size > 0
-                else np.empty((0,), dtype=np.int64)
-            )
-            take_count = min(int(quotas_array[layer_idx]), int(shuffled.size))
-            chosen_parts.append(np.asarray(shuffled[:take_count], dtype=np.int64))
+        dist_row = distance[row]
+        for layer_idx, candidates in enumerate(
+            _stratified_distance_bucket_candidates(dist_row, edges)
+        ):
+            shuffled = rng.permutation(candidates)
+            take_count = min(int(quota_values[layer_idx]), int(shuffled.size))
+            selected.extend(int(value) for value in shuffled[:take_count])
             remaining_parts.append(np.asarray(shuffled[take_count:], dtype=np.int64))
 
-        chosen = (
-            np.concatenate(chosen_parts, axis=0)
-            if chosen_parts
-            else np.empty((0,), dtype=np.int64)
-        )
-        remaining_offsets = [0] * len(remaining_parts)
-        while int(chosen.size) < k_logit:
-            progress = False
-            for layer_idx in supplement_order:
-                if remaining_offsets[layer_idx] >= int(remaining_parts[layer_idx].size):
-                    continue
-                next_idx = remaining_parts[layer_idx][remaining_offsets[layer_idx]]
-                remaining_offsets[layer_idx] += 1
-                chosen = np.concatenate(
-                    [chosen, np.asarray([next_idx], dtype=np.int64)],
-                    axis=0,
-                )
-                progress = True
-                if int(chosen.size) >= k_logit:
-                    break
-            if not progress:
-                break
+        offsets = [0] * len(remaining_parts)
 
-        selected_count = min(k_logit, int(chosen.size))
-        if selected_count <= 0:
+        def refill_round_robin(layer_indices: tuple[int, ...]) -> None:
+            while len(selected) < k_logit:
+                progress = False
+                for layer_idx in layer_indices:
+                    offset = offsets[layer_idx]
+                    remaining = remaining_parts[layer_idx]
+                    if offset >= int(remaining.size):
+                        continue
+                    selected.append(int(remaining[offset]))
+                    offsets[layer_idx] += 1
+                    progress = True
+                    if len(selected) >= k_logit:
+                        break
+                if not progress:
+                    break
+
+        refill_round_robin((1, 2, 3))
+        if len(selected) < k_logit:
+            refill_round_robin((0,))
+        if len(selected) < k_logit:
+            refill_round_robin((4,))
+
+        count = min(k_logit, len(selected))
+        if count <= 0:
             continue
-        selected = np.asarray(chosen[:selected_count], dtype=np.int64)
-        logit_idx[obj_idx, :selected_count] = selected
-        logit_valid[obj_idx, :selected_count] = True
-        logit_weight[obj_idx, :selected_count] = 1.0
-        selected_dist = dist_row[selected]
-        near_count[obj_idx] = int(
-            np.count_nonzero(selected_dist <= float(logit_near_radius))
-        )
-        far_count[obj_idx] = int(
-            np.count_nonzero(selected_dist > float(logit_far_min_radius))
-        )
+        chosen = np.asarray(selected[:count], dtype=np.int64)
+        logit_idx[obj_idx, :count] = chosen
+        logit_valid[obj_idx, :count] = True
+        logit_weight[obj_idx, :count] = 1.0
+        selected_dist = dist_row[chosen]
+        near_count[obj_idx] = int(np.count_nonzero(selected_dist <= logit_near_radius))
+        far_count[obj_idx] = int(np.count_nonzero(selected_dist > logit_far_min_radius))
     return logit_idx, logit_valid, logit_weight, near_count, far_count
 
 
@@ -989,18 +940,10 @@ def make_dataloaders(
         "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
         "logit_sampling_mode": str(getattr(meta_cfg, "logit_sampling_mode", "balanced")),
         "logit_stratified_distance_edges": tuple(
-            getattr(
-                meta_cfg,
-                "logit_stratified_distance_edges",
-                (0.005, 0.015, 0.03, 0.06),
-            )
+            getattr(meta_cfg, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06))
         ),
         "logit_stratified_quotas": tuple(
-            getattr(
-                meta_cfg,
-                "logit_stratified_quotas",
-                (16, 32, 32, 32, 16),
-            )
+            getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))
         ),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
         "logit_near_radius": resolve_logit_near_radius(meta_cfg),
@@ -1123,21 +1066,13 @@ def make_dataloaders(
                 "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
                 "logit_sampling_mode": str(getattr(meta_cfg, "logit_sampling_mode", "balanced")),
                 "logit_stratified_distance_edges": tuple(
-                    getattr(
-                        meta_cfg,
-                        "logit_stratified_distance_edges",
-                        (0.005, 0.015, 0.03, 0.06),
-                    )
+                    getattr(meta_cfg, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06))
                 ),
                 "logit_stratified_quotas": tuple(
-                    getattr(
-                        meta_cfg,
-                        "logit_stratified_quotas",
-                        (16, 32, 32, 32, 16),
-                    )
+                    getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))
                 ),
                 "k_logit": (
-                    int(np.sum(getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))))
+                    int(sum(getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))))
                     if str(getattr(meta_cfg, "logit_sampling_mode", "balanced")).lower() == "stratified"
                     else (
                         int(data["hand_points"].shape[1])

@@ -98,23 +98,16 @@ class Config(TaskConfig):
         # runtime logit 远点采样最小半径，单位 meter。
         logit_far_min_radius: float | None = None
         # cross-edge supervision 的邻域定义方式：
-        #   - "balanced":   保持当前 near/far 随机采样
-        #   - "dense":      对每个有效 object point 监督全部 hand points
+        #   - "balanced": 保持当前 near/far 随机采样
+        #   - "dense":    对每个有效 object point 监督全部 hand points
         #   - "stratified": 按距离层配额采样 128 条 edge
         logit_sampling_mode: str = "balanced"
-        # stratified logit 采样使用的 4 个距离分界（单位 meter），对应 5 个层：
-        #   S0: d <= 5mm
-        #   S1: 5mm < d <= 15mm
-        #   S2: 15mm < d < 30mm
-        #   S3: 30mm <= d <= 60mm
-        #   S4: d > 60mm
         logit_stratified_distance_edges: tuple[float, ...] = (
             0.005,
             0.015,
             0.03,
             0.06,
         )
-        # stratified 5 层的默认采样配额，总和固定为 128。
         logit_stratified_quotas: tuple[int, ...] = (
             16,
             32,
