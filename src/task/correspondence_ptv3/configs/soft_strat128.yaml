@@ -1,13 +1,23 @@
 _base_: src.task.correspondence_ptv3.config:Config
 
-# DEPRECATED compatibility recipe: despite the filename, this recipe is soft-contact.
-name: correspondence_ptv3_soft_contact
+name: correspondence_ptv3_soft_contact_strat128
 
 model:
   name: ptv3_concat
 
 meta:
+  contact_supervision:
+    name: soft
+  edge_sampler:
+    name: stratified
+    distance_edges: [0.005, 0.015, 0.03, 0.06]
+    quotas: [16, 32, 32, 32, 16]
+    logit_near_radius: 0.005
+    logit_far_min_radius: 0.03
   contact_supervision_mode: soft
+  logit_sampling_mode: stratified
+  logit_stratified_distance_edges: [0.005, 0.015, 0.03, 0.06]
+  logit_stratified_quotas: [16, 32, 32, 32, 16]
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false
@@ -17,11 +27,9 @@ meta:
   contact_bin_weights: null
   edge_contact_bin_weights: null
   k_ctx: 32
-  k_near_logit: 32
-  k_far_logit: 32
   ctx_radius: 0.04
-  logit_near_radius: 0.025
-  logit_far_min_radius: 0.025
+  logit_near_radius: 0.005
+  logit_far_min_radius: 0.03
   loss_obj_contact_weight: 0.0
   loss_cross_edge_weight: 1.0
   loss_cano_weight: 0.0
@@ -65,4 +73,4 @@ wandb:
   enable: true
   project: ref2dex
   mode: online
-  tags: [correspondence, ptv3, static, soft-contact]
+  tags: [correspondence, ptv3, static, soft-contact, strat128]

@@ -1,6 +1,10 @@
 _base_: src.task.correspondence_ptv3.config:Config
 
+# DEPRECATED compatibility recipe: despite the filename, this recipe is soft-contact.
 name: correspondence_ptv3_soft_contact_multigpu_gb256
+
+model:
+  name: ptv3_concat
 
 meta:
   contact_supervision_mode: soft

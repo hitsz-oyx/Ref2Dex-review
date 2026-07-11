@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 # 用于把 vendored third_party 路径写成仓库内相对固定的位置。
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +56,215 @@ def resolve_logit_far_min_radius(
     if value is None:
         value = default
     return float(value)
+
+
+@dataclass(frozen=True)
+class EdgeSamplerConfig:
+    name: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ContactSupervisionConfig:
+    name: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CorrespondenceModelConfig:
+    name: str
+    params: dict[str, Any]
+
+
+def _get_explicit_override_keys(owner: Any, explicit_override_keys: set[str] | None = None) -> set[str]:
+    if explicit_override_keys is not None:
+        return set(explicit_override_keys)
+    return set(getattr(owner, "_explicit_override_keys", set()) or set())
+
+
+def _selector_conflict(
+    *,
+    explicit_override_keys: set[str],
+    new_selector_key: str,
+    new_selector_value: str | None,
+    legacy_selector_key: str,
+    legacy_selector_value: str | None,
+    error_label: str,
+) -> None:
+    if not new_selector_value or legacy_selector_key not in explicit_override_keys:
+        return
+    if str(new_selector_value).lower() != str(legacy_selector_value).lower():
+        raise ValueError(
+            f"Conflicting {error_label} configuration: "
+            f"{new_selector_key}={new_selector_value!r} vs "
+            f"{legacy_selector_key}={legacy_selector_value!r}."
+        )
+
+
+def resolve_edge_sampler_config(
+    meta_cfg: Any,
+    *,
+    explicit_override_keys: set[str] | None = None,
+) -> EdgeSamplerConfig:
+    explicit = _get_explicit_override_keys(meta_cfg, explicit_override_keys)
+    edge_sampler = getattr(meta_cfg, "edge_sampler", None)
+    new_name = None
+    if edge_sampler is not None:
+        new_name = getattr(edge_sampler, "name", None)
+    legacy_name = str(getattr(meta_cfg, "logit_sampling_mode", "balanced")).lower()
+    _selector_conflict(
+        explicit_override_keys=explicit,
+        new_selector_key="meta.edge_sampler.name",
+        new_selector_value=str(new_name).lower() if new_name is not None else None,
+        legacy_selector_key="meta.logit_sampling_mode",
+        legacy_selector_value=legacy_name,
+        error_label="edge sampler",
+    )
+    if new_name is not None:
+        name = str(new_name).lower()
+        if name == "balanced":
+            return EdgeSamplerConfig(
+                name=name,
+                params={
+                    "k_near_logit": int(getattr(edge_sampler, "k_near_logit", getattr(meta_cfg, "k_near_logit", 32))),
+                    "k_far_logit": int(getattr(edge_sampler, "k_far_logit", getattr(meta_cfg, "k_far_logit", 32))),
+                    "logit_near_radius": float(getattr(edge_sampler, "logit_near_radius", resolve_logit_near_radius(meta_cfg))),
+                    "logit_far_min_radius": float(
+                        getattr(edge_sampler, "logit_far_min_radius", resolve_logit_far_min_radius(meta_cfg))
+                    ),
+                },
+            )
+        if name == "stratified":
+            return EdgeSamplerConfig(
+                name=name,
+                params={
+                    "distance_edges": tuple(
+                        getattr(
+                            edge_sampler,
+                            "distance_edges",
+                            getattr(meta_cfg, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06)),
+                        )
+                    ),
+                    "quotas": tuple(
+                        getattr(
+                            edge_sampler,
+                            "quotas",
+                            getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16)),
+                        )
+                    ),
+                    "logit_near_radius": float(getattr(edge_sampler, "logit_near_radius", resolve_logit_near_radius(meta_cfg))),
+                    "logit_far_min_radius": float(
+                        getattr(edge_sampler, "logit_far_min_radius", resolve_logit_far_min_radius(meta_cfg))
+                    ),
+                },
+            )
+        if name == "dense":
+            return EdgeSamplerConfig(
+                name=name,
+                params={
+                    "logit_near_radius": float(getattr(edge_sampler, "logit_near_radius", resolve_logit_near_radius(meta_cfg))),
+                    "logit_far_min_radius": float(
+                        getattr(edge_sampler, "logit_far_min_radius", resolve_logit_far_min_radius(meta_cfg))
+                    ),
+                },
+            )
+        raise ValueError(f"Unsupported edge sampler: {name!r}.")
+
+    if legacy_name == "balanced":
+        return EdgeSamplerConfig(
+            name="balanced",
+            params={
+                "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
+                "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
+                "logit_near_radius": resolve_logit_near_radius(meta_cfg),
+                "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
+            },
+        )
+    if legacy_name == "stratified":
+        return EdgeSamplerConfig(
+            name="stratified",
+            params={
+                "distance_edges": tuple(getattr(meta_cfg, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06))),
+                "quotas": tuple(getattr(meta_cfg, "logit_stratified_quotas", (16, 32, 32, 32, 16))),
+                "logit_near_radius": resolve_logit_near_radius(meta_cfg),
+                "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
+            },
+        )
+    if legacy_name == "dense":
+        return EdgeSamplerConfig(
+            name="dense",
+            params={
+                "logit_near_radius": resolve_logit_near_radius(meta_cfg),
+                "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
+            },
+        )
+    raise ValueError(f"logit_sampling_mode must be 'balanced', 'dense', or 'stratified', got {legacy_name!r}.")
+
+
+def resolve_contact_supervision_config(
+    meta_cfg: Any,
+    *,
+    explicit_override_keys: set[str] | None = None,
+) -> ContactSupervisionConfig:
+    explicit = _get_explicit_override_keys(meta_cfg, explicit_override_keys)
+    contact_supervision = getattr(meta_cfg, "contact_supervision", None)
+    new_name = None
+    if contact_supervision is not None:
+        new_name = getattr(contact_supervision, "name", None)
+    legacy_name = str(getattr(meta_cfg, "contact_supervision_mode", "bin")).lower()
+    _selector_conflict(
+        explicit_override_keys=explicit,
+        new_selector_key="meta.contact_supervision.name",
+        new_selector_value=str(new_name).lower() if new_name is not None else None,
+        legacy_selector_key="meta.contact_supervision_mode",
+        legacy_selector_value=legacy_name,
+        error_label="contact supervision",
+    )
+    name = str(new_name).lower() if new_name is not None else legacy_name
+    if name == "soft":
+        return ContactSupervisionConfig(
+            name=name,
+            params={},
+        )
+    if name == "bin":
+        source = contact_supervision if contact_supervision is not None else meta_cfg
+        return ContactSupervisionConfig(
+            name=name,
+            params={
+                "num_contact_bins": int(getattr(source, "num_contact_bins", getattr(meta_cfg, "num_contact_bins", 10))),
+                "decode_mode": str(
+                    getattr(
+                        source,
+                        "contact_bin_decode_mode",
+                        getattr(meta_cfg, "contact_bin_decode_mode", "expectation"),
+                    )
+                ),
+                "contact_bin_weights": getattr(source, "contact_bin_weights", getattr(meta_cfg, "contact_bin_weights", None)),
+                "edge_contact_bin_weights": getattr(
+                    source,
+                    "edge_contact_bin_weights",
+                    getattr(meta_cfg, "edge_contact_bin_weights", None),
+                ),
+                "contact_bin_weight_path": getattr(
+                    source,
+                    "contact_bin_weight_path",
+                    getattr(meta_cfg, "contact_bin_weight_path", None),
+                ),
+            },
+        )
+    raise ValueError(f"contact_supervision_mode must be 'bin' or 'soft', got {name!r}.")
+
+
+def resolve_correspondence_model_config(model_cfg: Any) -> CorrespondenceModelConfig:
+    name = getattr(model_cfg, "name", None)
+    if name is not None:
+        return CorrespondenceModelConfig(name=str(name).lower(), params={})
+
+    class_path = str(getattr(model_cfg, "class_path", "") or "")
+    type_name = str(getattr(model_cfg, "type", "") or "")
+    if class_path.endswith(".StaticHOCPTv3") or type_name in {"static_hoc_ptv3", "ptv3_concat"}:
+        return CorrespondenceModelConfig(name="ptv3_concat", params={})
+    return CorrespondenceModelConfig(name="ptv3_concat", params={})
 
 
 class Config(TaskConfig):

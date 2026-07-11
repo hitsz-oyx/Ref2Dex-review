@@ -1,12 +1,19 @@
 _base_: src.task.correspondence_ptv3.config:Config
 
-# DEPRECATED compatibility recipe: despite the filename, this recipe is soft-contact.
 name: correspondence_ptv3_soft_contact
 
 model:
   name: ptv3_concat
 
 meta:
+  contact_supervision:
+    name: soft
+  edge_sampler:
+    name: balanced
+    k_near_logit: 32
+    k_far_logit: 32
+    logit_near_radius: 0.025
+    logit_far_min_radius: 0.025
   contact_supervision_mode: soft
   use_cross_attn: false
   use_cano_head: false
