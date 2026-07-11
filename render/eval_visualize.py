@@ -127,6 +127,7 @@ from src.task.correspondence_ptv3.dataset import (
     _compute_dense_logit_neighbors,
     _compute_runtime_context_neighbors,
     _compute_runtime_logit_neighbors,
+    _compute_stratified_logit_neighbors,
 )
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
@@ -418,6 +419,30 @@ def _build_runtime_frame(
             obj_valid,
             logit_near_radius=float(args.logit_near_radius),
             logit_far_min_radius=float(args.logit_far_min_radius),
+        )
+    elif str(args.logit_sampling_mode).lower() == "stratified":
+        (
+            input_logit_idx,
+            input_logit_valid,
+            _input_logit_weight,
+            _input_logit_near_count,
+            _input_logit_far_count,
+        ) = _compute_stratified_logit_neighbors(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            obj_valid,
+            distance_edges=args.logit_stratified_distance_edges,
+            quotas=args.logit_stratified_quotas,
+            logit_near_radius=float(args.logit_near_radius),
+            logit_far_min_radius=float(args.logit_far_min_radius),
+            seed=stable_frame_seed(
+                base_seed=args.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=seed_epoch,
+                namespace="logit-neighbors",
+            ),
         )
     else:
         (
@@ -989,6 +1014,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--k-ctx", type=int, default=None)
     parser.add_argument("--k-near-logit", type=int, default=None)
     parser.add_argument("--k-far-logit", type=int, default=None)
+    parser.add_argument("--logit-stratified-distance-edges", type=float, nargs=4, default=None)
+    parser.add_argument("--logit-stratified-quotas", type=int, nargs=5, default=None)
     parser.add_argument("--ctx-radius", type=float, default=None)
     parser.add_argument("--logit-near-radius", "--logit-pos-radius", dest="logit_near_radius", type=float, default=None)
     parser.add_argument("--logit-far-min-radius", "--logit-neg-min-radius", dest="logit_far_min_radius", type=float, default=None)
@@ -1050,9 +1077,9 @@ def main() -> None:
     args.logit_sampling_mode = str(
         getattr(runner.cfg.meta, "logit_sampling_mode", "balanced")
     ).lower()
-    if args.logit_sampling_mode not in {"balanced", "dense"}:
+    if args.logit_sampling_mode not in {"balanced", "dense", "stratified"}:
         raise ValueError(
-            "Checkpoint meta.logit_sampling_mode must be 'balanced' or 'dense', got "
+            "Checkpoint meta.logit_sampling_mode must be 'balanced', 'dense', or 'stratified', got "
             f"{args.logit_sampling_mode!r}."
         )
 
@@ -1068,6 +1095,14 @@ def main() -> None:
         args.k_near_logit = int(getattr(runner.cfg.meta, "k_near_logit", 32))
     if args.k_far_logit is None:
         args.k_far_logit = int(getattr(runner.cfg.meta, "k_far_logit", 32))
+    if args.logit_stratified_distance_edges is None:
+        args.logit_stratified_distance_edges = tuple(
+            getattr(runner.cfg.meta, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06))
+        )
+    if args.logit_stratified_quotas is None:
+        args.logit_stratified_quotas = tuple(
+            getattr(runner.cfg.meta, "logit_stratified_quotas", (16, 32, 32, 32, 16))
+        )
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
     if args.logit_near_radius is None:
@@ -1097,6 +1132,13 @@ def main() -> None:
         and (int(args.k_near_logit) <= 0 or int(args.k_far_logit) <= 0)
     ):
         raise ValueError("--k-near-logit and --k-far-logit must be positive.")
+    if args.logit_sampling_mode == "stratified":
+        if len(tuple(args.logit_stratified_distance_edges)) != 4:
+            raise ValueError("--logit-stratified-distance-edges must contain 4 values.")
+        if len(tuple(args.logit_stratified_quotas)) != 5:
+            raise ValueError("--logit-stratified-quotas must contain 5 values.")
+        if int(sum(args.logit_stratified_quotas)) != 128:
+            raise ValueError("--logit-stratified-quotas must sum to 128.")
     if float(args.logit_far_min_radius) < float(args.logit_near_radius):
         raise ValueError("--logit-far-min-radius must be >= --logit-near-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
