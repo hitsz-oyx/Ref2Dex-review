@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 from src.task.correspondence_ptv3.contracts import ContactLossResult
 
-from .common import reduce_loss_map_per_object
+from .base import reduce_loss_map_per_object
 
 
 def flatten_binary_logits(

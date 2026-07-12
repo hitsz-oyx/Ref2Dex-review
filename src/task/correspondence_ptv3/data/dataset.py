@@ -9,14 +9,14 @@ import torch
 from torch.utils.data import Dataset
 
 from src.task.correspondence_ptv3.contracts import EdgeSample, Stage3Frame
-from src.task.correspondence_ptv3.data.neighbors import _compute_runtime_context_neighbors
-from src.task.correspondence_ptv3.data.stage3 import Stage3Store
-from src.task.correspondence_ptv3.sampling import (
+from src.task.correspondence_ptv3.data.runtime import (
     AugmentedGeometry,
     augment_geometry,
+    compute_runtime_context_neighbors,
     sample_object_indices,
     stable_frame_seed,
 )
+from src.task.correspondence_ptv3.data.stage3 import Stage3Store
 from src.utils.correspondence import soft_contact_label
 
 
@@ -189,7 +189,7 @@ class CorrStaticDataset(Dataset):
         geometry: AugmentedGeometry,
         obj_valid_mask: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
-        return _compute_runtime_context_neighbors(
+        return compute_runtime_context_neighbors(
             geometry.input_obj_points,
             geometry.input_hand_points,
             obj_valid_mask,

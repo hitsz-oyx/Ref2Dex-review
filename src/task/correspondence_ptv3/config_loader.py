@@ -37,12 +37,10 @@ def load_correspondence_raw_config(
     overrides: list[str] | None = None,
 ) -> dict[str, Any]:
     if isinstance(config, TaskConfig):
-        raw = config.to_dict()
-    elif isinstance(config, Mapping):
-        raw = copy.deepcopy(dict(config))
-    else:
-        raw = _load_raw_config_reference(config)
-    return apply_runtime_overrides(raw, overrides or [])
+        return apply_resolved_overrides(config.to_dict(), overrides or [])
+    if isinstance(config, Mapping):
+        return apply_resolved_overrides(dict(config), overrides or [])
+    return _load_raw_config_reference(config, overrides=overrides or [])
 
 
 def load_correspondence_config_from_args(args: Any) -> TaskConfig:
@@ -88,7 +86,7 @@ def runtime_task_config_from_mapping(raw: Mapping[str, Any]) -> TaskConfig:
     return cfg
 
 
-def apply_runtime_overrides(
+def apply_resolved_overrides(
     raw: Mapping[str, Any],
     overrides: list[str],
 ) -> dict[str, Any]:
@@ -96,33 +94,51 @@ def apply_runtime_overrides(
     for override in overrides:
         key, value = _split_override(override)
         if key in COMPONENT_KEYS and "." not in key and value:
-            payload[key] = _load_component_group(key, value)
-            continue
+            raise ValueError(
+                f"Component-group override {key}={value} requires a Hydra recipe source. "
+                "Load by config name or by a YAML path under correspondence_ptv3/configs."
+            )
         apply_override(payload, override)
     return payload
 
 
 def _load_raw_config_reference(
     config: str | Path | None,
+    *,
+    overrides: list[str],
 ) -> dict[str, Any]:
     if config is None:
-        return compose_correspondence_config(DEFAULT_CONFIG_NAME)
+        return compose_correspondence_config(DEFAULT_CONFIG_NAME, overrides=overrides)
 
     path = Path(str(config)).expanduser()
     if path.suffix.lower() == ".json" and path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        return apply_resolved_overrides(
+            json.loads(path.read_text(encoding="utf-8")),
+            overrides,
+        )
 
     if path.exists() and path.suffix.lower() in {".yaml", ".yml"}:
         try:
             config_name = _path_to_config_name(path.resolve())
         except ValueError:
-            return OmegaConf.to_container(
+            raw = OmegaConf.to_container(
                 OmegaConf.load(path),
-                resolve=True,
+                resolve=False,
             )
-        return compose_correspondence_config(config_name)
+            if not isinstance(raw, dict):
+                raise TypeError(f"Expected YAML mapping, got {type(raw).__name__}.")
+            if "defaults" in raw:
+                raise ValueError(
+                    "External YAML with Hydra defaults is not supported. "
+                    "Move the recipe under correspondence_ptv3/configs or load it by config name."
+                )
+            return apply_resolved_overrides(raw, overrides)
+        return compose_correspondence_config(config_name, overrides=overrides)
 
-    return compose_correspondence_config(_normalize_config_name(str(config)))
+    return compose_correspondence_config(
+        _normalize_config_name(str(config)),
+        overrides=overrides,
+    )
 
 
 def compose_correspondence_config(
@@ -165,19 +181,6 @@ def _path_to_config_name(path: Path) -> str:
     return relative.with_suffix("").as_posix()
 
 
-def _load_component_group(group: str, name: str) -> dict[str, Any]:
-    path = CONFIG_DIR / group / f"{name}.yaml"
-    if not path.exists():
-        raise FileNotFoundError(f"Unknown {group} config: {name!r}")
-    raw = OmegaConf.to_container(
-        OmegaConf.load(path),
-        resolve=True,
-    )
-    if not isinstance(raw, dict):
-        raise TypeError(f"Expected {group}/{name}.yaml to be a mapping.")
-    return raw
-
-
 def _split_override(override: str) -> tuple[str, str]:
     item = override.strip()
     if item.startswith("--"):
@@ -190,7 +193,7 @@ def _split_override(override: str) -> tuple[str, str]:
 
 __all__ = [
     "DEFAULT_CONFIG_NAME",
-    "apply_runtime_overrides",
+    "apply_resolved_overrides",
     "compose_correspondence_config",
     "config_dir",
     "load_correspondence_config",

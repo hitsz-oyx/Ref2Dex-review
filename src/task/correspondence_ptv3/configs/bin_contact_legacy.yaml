@@ -1,2 +1,57 @@
 defaults:
-  - /experiment/bin_contact_legacy
+  - /base
+  - override /edge_sampler: balanced
+  - override /contact_supervision: bin
+  - override /model: ptv3_concat
+  - _self_
+
+name: correspondence_ptv3_bin_contact_legacy
+
+meta:
+  gamma: 1.0
+  k_ctx: 32
+  ctx_radius: 0.04
+  loss_obj_contact_weight: 1.0
+  loss_cross_edge_weight: 1.0
+  loss_cano_weight: 0.0
+  loss_cross_edge_rankk_weight: 0.0
+  loss_finger_weight: 0.0
+  loss_region_weight: 0.0
+  val_augment: true
+  val_hand_perturb_prob: 1.0
+
+data:
+  batch_size: 8
+  val_batch_size: 24
+  num_workers: 4
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+train:
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.03
+  warmup_steps: 0
+  epochs: 100
+  amp: true
+  grad_clip_norm: 1.0
+  save_every_epochs: 5
+  eval_every_epochs: 1
+  metric_for_best: val_clean/loss
+  lower_is_better: true
+  distributed:
+    enable: false
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, static, bin-contact, legacy]

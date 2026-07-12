@@ -51,8 +51,8 @@ class DummyRunner(BaseRunner):
 
 
 class FakeBackbone(nn.Module):
-    def __init__(self, meta, in_channels: int) -> None:
-        del meta, in_channels
+    def __init__(self, ptv3_cfg, in_channels: int) -> None:
+        del ptv3_cfg, in_channels
         super().__init__()
         self.output_dim = 32
 
@@ -182,8 +182,8 @@ class OverfitModeTests(unittest.TestCase):
         cfg = load_correspondence_config("bin_contact_legacy")
         cfg.train.overfit_mode = True
         cfg.meta.augment = True
-        cfg.meta.ptv3_drop_path = 0.2
-        explicit = {"meta.augment", "meta.ptv3_drop_path"}
+        cfg.model["ptv3"]["drop_path"] = 0.2
+        explicit = {"meta.augment", "model.ptv3.drop_path"}
 
         CorrespondencePTV3Runner.configure_overfit_mode(cfg, explicit)
 
@@ -195,8 +195,8 @@ class OverfitModeTests(unittest.TestCase):
         self.assertFalse(cfg.meta.augment_scale)
         self.assertEqual(cfg.meta.hand_perturb_prob, 0.0)
         self.assertFalse(cfg.meta.val_augment)
-        self.assertAlmostEqual(cfg.meta.ptv3_drop_path, 0.2)
-        self.assertFalse(cfg.meta.ptv3_shuffle_orders)
+        self.assertAlmostEqual(cfg.model["ptv3"]["drop_path"], 0.2)
+        self.assertFalse(cfg.model["ptv3"]["shuffle_orders"])
 
 
 class DatasetAndSamplerTests(unittest.TestCase):
@@ -290,6 +290,22 @@ class DatasetAndSamplerTests(unittest.TestCase):
         )
         self.assertEqual(counts, (4, 8, 50, 50, 16))
 
+    def test_stratified_sampler_accepts_non_128_quota_sum(self) -> None:
+        sample = StratifiedEdgeSampler(
+            distance_edges=(0.005, 0.015, 0.03, 0.06),
+            quotas=(1, 2, 1, 2, 2),
+        ).sample(
+            gt_obj_points=np.asarray([[0.0, 0.0, 0.0]], dtype=np.float32),
+            gt_hand_points=np.asarray(
+                [[0.0, 0.0, z] for z in (0.003, 0.010, 0.020, 0.040, 0.080, 0.090, 0.100, 0.110)],
+                dtype=np.float32,
+            ),
+            obj_valid=np.asarray([True]),
+            seed=11,
+        )
+        self.assertEqual(sample.idx.shape, (1, 8))
+        self.assertEqual(int(sample.valid_mask.sum()), 8)
+
     def test_fixed_overfit_seed_keeps_sampling_augmentation_and_edges_identical(self) -> None:
         with tempfile.TemporaryDirectory(prefix="corr_overfit_seed_") as tmpdir:
             _write_stage3_npz(Path(tmpdir))
@@ -337,14 +353,14 @@ class DatasetAndSamplerTests(unittest.TestCase):
                 soft_cfg.model,
                 _recursive_=False,
                 _convert_="object",
-                cfg=soft_cfg,
+                task_meta=soft_cfg.meta,
                 contact_supervision=instantiate(soft_cfg.contact_supervision),
             )
             bin_model = instantiate(
                 bin_cfg.model,
                 _recursive_=False,
                 _convert_="object",
-                cfg=bin_cfg,
+                task_meta=bin_cfg.meta,
                 contact_supervision=instantiate(bin_cfg.contact_supervision),
             )
 

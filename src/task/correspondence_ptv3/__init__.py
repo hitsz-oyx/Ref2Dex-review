@@ -5,7 +5,7 @@ The task kernel defines correspondence data, target, and runner semantics.
 Experiment implementations live in:
 - sampling/
 - supervision/
-- objectives/
+- objectives.py
 - models/
 """
 

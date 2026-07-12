@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 import torch.nn as nn
@@ -36,8 +36,18 @@ def masked_softmax(logits: torch.Tensor, mask: torch.Tensor, dim: int = -1) -> t
     return torch.where(denom > 0, exp_logits / denom.clamp(min=1e-12), torch.zeros_like(exp_logits))
 
 
+def resolve_ref2dex_repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def resolve_ptv3_repo_path(repo_path: str | Path | None) -> Path:
+    if repo_path is None:
+        return resolve_ref2dex_repo_root() / "third_party" / "PointTransformerV3"
+    return Path(repo_path).expanduser().resolve()
+
+
 def _load_ptv3_model_class(repo_path: str | Path):
-    repo_path = Path(repo_path).expanduser().resolve()
+    repo_path = resolve_ptv3_repo_path(repo_path)
     if not repo_path.exists():
         raise FileNotFoundError(f"PointTransformerV3 repo path not found: {repo_path}")
     parent = str(repo_path.parent)
@@ -48,36 +58,37 @@ def _load_ptv3_model_class(repo_path: str | Path):
 
 
 class PTv3DenseBackbone(nn.Module):
-    def __init__(self, meta: Any, in_channels: int) -> None:
+    def __init__(self, ptv3_cfg: Mapping[str, Any], in_channels: int) -> None:
         super().__init__()
-        ptv3_cls = _load_ptv3_model_class(getattr(meta, "ptv3_repo_path"))
-        self.grid_size = float(meta.ptv3_grid_size)
-        self.output_dim = int(tuple(meta.ptv3_dec_channels)[0])
-        self.shuffle_orders = bool(meta.ptv3_shuffle_orders)
+        ptv3_cfg = dict(ptv3_cfg)
+        ptv3_cls = _load_ptv3_model_class(ptv3_cfg.get("repo_path"))
+        self.grid_size = float(ptv3_cfg["grid_size"])
+        self.output_dim = int(tuple(ptv3_cfg["dec_channels"])[0])
+        self.shuffle_orders = bool(ptv3_cfg["shuffle_orders"])
         self.backbone = ptv3_cls(
             in_channels=int(in_channels),
-            order=tuple(meta.ptv3_order),
-            stride=tuple(meta.ptv3_stride),
-            enc_depths=tuple(meta.ptv3_enc_depths),
-            enc_channels=tuple(meta.ptv3_enc_channels),
-            enc_num_head=tuple(meta.ptv3_enc_num_head),
-            enc_patch_size=tuple(meta.ptv3_enc_patch_size),
-            dec_depths=tuple(meta.ptv3_dec_depths),
-            dec_channels=tuple(meta.ptv3_dec_channels),
-            dec_num_head=tuple(meta.ptv3_dec_num_head),
-            dec_patch_size=tuple(meta.ptv3_dec_patch_size),
-            mlp_ratio=float(meta.ptv3_mlp_ratio),
-            qkv_bias=bool(meta.ptv3_qkv_bias),
+            order=tuple(ptv3_cfg["order"]),
+            stride=tuple(ptv3_cfg["stride"]),
+            enc_depths=tuple(ptv3_cfg["enc_depths"]),
+            enc_channels=tuple(ptv3_cfg["enc_channels"]),
+            enc_num_head=tuple(ptv3_cfg["enc_num_head"]),
+            enc_patch_size=tuple(ptv3_cfg["enc_patch_size"]),
+            dec_depths=tuple(ptv3_cfg["dec_depths"]),
+            dec_channels=tuple(ptv3_cfg["dec_channels"]),
+            dec_num_head=tuple(ptv3_cfg["dec_num_head"]),
+            dec_patch_size=tuple(ptv3_cfg["dec_patch_size"]),
+            mlp_ratio=float(ptv3_cfg["mlp_ratio"]),
+            qkv_bias=bool(ptv3_cfg["qkv_bias"]),
             qk_scale=None,
-            attn_drop=float(meta.ptv3_attn_drop),
-            proj_drop=float(meta.ptv3_proj_drop),
-            drop_path=float(meta.ptv3_drop_path),
-            pre_norm=bool(meta.ptv3_pre_norm),
-            shuffle_orders=bool(meta.ptv3_shuffle_orders),
-            enable_rpe=bool(meta.ptv3_enable_rpe),
-            enable_flash=bool(meta.ptv3_enable_flash),
-            upcast_attention=bool(meta.ptv3_upcast_attention),
-            upcast_softmax=bool(meta.ptv3_upcast_softmax),
+            attn_drop=float(ptv3_cfg["attn_drop"]),
+            proj_drop=float(ptv3_cfg["proj_drop"]),
+            drop_path=float(ptv3_cfg["drop_path"]),
+            pre_norm=bool(ptv3_cfg["pre_norm"]),
+            shuffle_orders=bool(ptv3_cfg["shuffle_orders"]),
+            enable_rpe=bool(ptv3_cfg["enable_rpe"]),
+            enable_flash=bool(ptv3_cfg["enable_flash"]),
+            upcast_attention=bool(ptv3_cfg["upcast_attention"]),
+            upcast_softmax=bool(ptv3_cfg["upcast_softmax"]),
             cls_mode=False,
             pdnorm_bn=False,
             pdnorm_ln=False,

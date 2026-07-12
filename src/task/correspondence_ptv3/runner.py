@@ -13,7 +13,7 @@ from src.task.correspondence_ptv3.metrics import (
     batched_cross_edge_rank_at_k_stat,
 )
 from src.task.correspondence_ptv3.objectives import CrossEdgeRankKObjective
-from src.task.correspondence_ptv3.supervision.common import reduce_loss_map_per_object
+from src.task.correspondence_ptv3.supervision.base import reduce_loss_map_per_object
 from src.task.correspondence_ptv3.supervision.soft import (
     binary_entropy_floor_map,
     flatten_binary_logits,
@@ -31,6 +31,32 @@ def prefix_metrics(
     metrics: dict[str, torch.Tensor],
 ) -> dict[str, torch.Tensor]:
     return {f"{prefix}_{key}": value for key, value in metrics.items()}
+
+
+def set_model_config_default_if_not_explicit(
+    cfg: TaskConfig,
+    *,
+    key: str,
+    value: Any,
+    explicit_override_keys: set[str] | None,
+) -> bool:
+    explicit_override_keys = set(explicit_override_keys or set())
+    dotted_key = f"model.{key}"
+    if dotted_key in explicit_override_keys:
+        return False
+    model_cfg = getattr(cfg, "model", None)
+    if not isinstance(model_cfg, dict):
+        raise TypeError("Correspondence runner expects cfg.model to be a dict-backed Hydra component config.")
+    cursor = model_cfg
+    parts = key.split(".")
+    for part in parts[:-1]:
+        child = cursor.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            cursor[part] = child
+        cursor = child
+    cursor[parts[-1]] = value
+    return True
 
 
 class CorrespondencePTV3Runner(BaseRunner):
@@ -89,15 +115,15 @@ class CorrespondencePTV3Runner(BaseRunner):
             value=False,
             explicit_override_keys=explicit_override_keys,
         )
-        set_config_default_if_not_explicit(
+        set_model_config_default_if_not_explicit(
             cfg,
-            key="meta.ptv3_drop_path",
+            key="ptv3.drop_path",
             value=0.0,
             explicit_override_keys=explicit_override_keys,
         )
-        set_config_default_if_not_explicit(
+        set_model_config_default_if_not_explicit(
             cfg,
-            key="meta.ptv3_shuffle_orders",
+            key="ptv3.shuffle_orders",
             value=False,
             explicit_override_keys=explicit_override_keys,
         )
@@ -160,12 +186,11 @@ class CorrespondencePTV3Runner(BaseRunner):
                 setattr(self.cfg.meta, field, int(value))
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
-        del model_cfg
         return instantiate(
-            self.cfg.model,
+            model_cfg,
             _convert_="object",
             _recursive_=False,
-            cfg=self.cfg,
+            task_meta=self.cfg.meta,
             contact_supervision=self.contact_supervision,
         )
 
@@ -254,11 +279,16 @@ class CorrespondencePTV3Runner(BaseRunner):
             edge_weight=input_edge_weight,
             obj_valid_mask=obj_valid_bool,
         )
-        cross_edge_rankk_loss, cross_edge_rankk_pairs = self.rankk_objective.compute(
-            preds["pred_cross_contact_prob"],
-            edge_contact_prob,
-            edge_valid,
-        )
+        rankk_weight = float(getattr(meta, "loss_cross_edge_rankk_weight", 0.0))
+        if rankk_weight > 0.0:
+            cross_edge_rankk_loss, cross_edge_rankk_pairs = self.rankk_objective.compute(
+                preds["pred_cross_contact_prob"],
+                edge_contact_prob,
+                edge_valid,
+            )
+        else:
+            cross_edge_rankk_loss = edge_result.loss.new_tensor(0.0)
+            cross_edge_rankk_pairs = edge_result.loss.new_tensor(0.0)
 
         need_clean_targets = any(
             key in preds
@@ -317,14 +347,12 @@ class CorrespondencePTV3Runner(BaseRunner):
                 region_loss = (region_map * region_valid).sum() / region_valid.sum().clamp(min=1.0)
 
         losses = {
-            "obj_contact": float(
-                getattr(meta, "loss_obj_contact_weight", getattr(meta, "loss_contact_weight", 1.0))
-            ) * obj_result.loss,
+            "obj_contact": float(getattr(meta, "loss_obj_contact_weight", 1.0)) * obj_result.loss,
             "obj_cano": float(meta.loss_cano_weight) * cano_loss,
             "obj_finger": float(meta.loss_finger_weight) * finger_loss,
             "obj_region": float(meta.loss_region_weight) * region_loss,
             "cross_edge_contact": float(meta.loss_cross_edge_weight) * edge_result.loss,
-            "cross_edge_rankk": float(getattr(meta, "loss_cross_edge_rankk_weight", 0.0)) * cross_edge_rankk_loss,
+            "cross_edge_rankk": rankk_weight * cross_edge_rankk_loss,
         }
 
         pr_label_threshold = float(getattr(meta, "pr_label_threshold", 0.5))
@@ -405,7 +433,7 @@ class CorrespondencePTV3Runner(BaseRunner):
 
     # -------------------------------------------------------------------------
     # Legacy test/import compatibility.
-    # New code must import from supervision/, metrics/, objectives/, or targets/.
+    # New code must import from supervision/, metrics/, objectives.py, or targets/.
     # -------------------------------------------------------------------------
 
     @staticmethod

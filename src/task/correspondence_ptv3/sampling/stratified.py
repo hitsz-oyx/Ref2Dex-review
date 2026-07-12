@@ -18,8 +18,6 @@ def validate_stratified_edge_sampler_config(
         raise ValueError("logit_stratified_distance_edges must contain exactly 4 values.")
     if len(quota_values) != len(edges) + 1:
         raise ValueError("logit_stratified_quotas must have len(distance_edges) + 1 entries.")
-    if sum(quota_values) != 128:
-        raise ValueError("logit_stratified_quotas must sum to 128.")
     if any(quota < 0 for quota in quota_values):
         raise ValueError("logit_stratified_quotas must be non-negative.")
     if any(edge <= 0.0 for edge in edges) or any(

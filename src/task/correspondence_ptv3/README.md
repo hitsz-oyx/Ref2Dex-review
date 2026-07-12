@@ -14,7 +14,7 @@
 
 可选项：
 
-- `meta.use_finger_region_head=true` 时启用 finger / region 分类头
+- `model.use_finger_region_head=true` 时启用 finger / region 分类头
 
 训练：
 

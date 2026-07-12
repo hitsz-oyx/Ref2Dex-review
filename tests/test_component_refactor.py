@@ -18,6 +18,7 @@ from src.task.correspondence_ptv3.config_loader import (
     load_correspondence_config,
     load_correspondence_config_from_args,
 )
+from src.task.correspondence_ptv3.models.common import resolve_ptv3_repo_path
 from src.task.correspondence_ptv3.models.ptv3_concat import PTv3ConcatModel
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 
@@ -59,8 +60,8 @@ def _write_stage3_npz(root: Path) -> Path:
 
 
 class FakeBackbone(nn.Module):
-    def __init__(self, meta, in_channels: int) -> None:
-        del meta, in_channels
+    def __init__(self, ptv3_cfg, in_channels: int) -> None:
+        del ptv3_cfg, in_channels
         super().__init__()
         self.output_dim = 32
 
@@ -75,6 +76,24 @@ class FakeBackbone(nn.Module):
 
 
 class HydraConfigTests(unittest.TestCase):
+    def test_model_config_owns_ptv3_structure_and_repo_path_defaults(self) -> None:
+        cfg = load_correspondence_config("base")
+        meta_dict = cfg.meta.to_dict()
+
+        self.assertNotIn("point_feat_dim", meta_dict)
+        self.assertNotIn("use_cross_attn", meta_dict)
+        self.assertNotIn("use_cano_head", meta_dict)
+        self.assertNotIn("use_finger_region_head", meta_dict)
+        self.assertNotIn("ptv3_grid_size", meta_dict)
+        self.assertNotIn("ptv3_enc_depths", meta_dict)
+        self.assertIn("point_feat_dim", cfg.model)
+        self.assertIn("ptv3", cfg.model)
+        self.assertIsNone(cfg.model["ptv3"]["repo_path"])
+        self.assertEqual(
+            resolve_ptv3_repo_path(cfg.model["ptv3"]["repo_path"]),
+            Path(__file__).resolve().parents[1] / "third_party" / "PointTransformerV3",
+        )
+
     def test_hydra_composition_exposes_only_component_specific_fields(self) -> None:
         balanced = load_correspondence_config("base")
         self.assertEqual(
@@ -128,6 +147,18 @@ class HydraConfigTests(unittest.TestCase):
 
             reloaded = load_correspondence_config(path)
             self.assertEqual(type(instantiate(reloaded.edge_sampler)).__name__, "StratifiedEdgeSampler")
+
+    def test_resolved_component_override_requires_recipe_source(self) -> None:
+        cfg = load_correspondence_config("base")
+        with self.assertRaisesRegex(ValueError, "Hydra recipe source"):
+            load_correspondence_config(cfg.to_dict(), overrides=["edge_sampler=stratified"])
+
+    def test_external_yaml_with_defaults_must_live_under_config_dir(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="corr_ext_yaml_") as tmpdir:
+            path = Path(tmpdir) / "external.yaml"
+            path.write_text("defaults:\n  - base\nname: external\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "External YAML with Hydra defaults"):
+                load_correspondence_config(path)
 
     def test_cli_override_loader_tracks_explicit_keys(self) -> None:
         parser = build_train_parser(

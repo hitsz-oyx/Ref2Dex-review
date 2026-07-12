@@ -8,9 +8,9 @@ from typing import Any
 
 import numpy as np
 
-from src.task.correspondence_ptv3.dataset import _compute_input_knn
-from src.task.correspondence_ptv3.sampling import (
+from src.task.correspondence_ptv3.data import (
     augment_geometry,
+    compute_input_knn,
     sample_object_indices,
     stable_frame_seed,
 )
@@ -239,7 +239,7 @@ def _build_runtime_frame(
         **common_kwargs,
     )
     selected_distance *= float(selected_geometry.distance_scale)
-    input_knn_idx, input_knn_valid = _compute_input_knn(
+    input_knn_idx, input_knn_valid = compute_input_knn(
         selected_geometry.input_obj_points,
         selected_geometry.input_hand_points,
         selected_valid,

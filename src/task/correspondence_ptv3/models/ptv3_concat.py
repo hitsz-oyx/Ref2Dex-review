@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 import torch.nn as nn
@@ -15,31 +15,35 @@ class PTv3ConcatModel(nn.Module):
 
     def __init__(
         self,
-        cfg: Any,
+        task_meta: Any,
         *,
         contact_supervision: ContactSupervision,
+        point_feat_dim: int,
+        use_cross_attn: bool,
+        use_cano_head: bool,
+        use_finger_region_head: bool,
+        ptv3: Mapping[str, Any],
         condition_shape: list[int] | tuple[int, ...] | None = None,
         target_shape: list[int] | tuple[int, ...] | None = None,
     ) -> None:
         del condition_shape, target_shape
         super().__init__()
-        self.cfg = cfg
-        meta = cfg.meta
+        self.task_meta = task_meta
 
-        self.num_obj_points = int(meta.num_obj_points)
-        self.num_hand_points = int(meta.num_hand_points)
-        self.num_fingers = int(meta.num_fingers)
-        self.num_regions = int(meta.num_regions)
-        self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
+        self.num_obj_points = int(task_meta.num_obj_points)
+        self.num_hand_points = int(task_meta.num_hand_points)
+        self.num_fingers = int(task_meta.num_fingers)
+        self.num_regions = int(task_meta.num_regions)
+        self.point_feat_dim = int(point_feat_dim)
         self.contact_supervision = contact_supervision
         self.contact_supervision_mode = self.contact_supervision.name
         self.contact_output_dim = self.contact_supervision.output_dim
         self.contact_bin_decode_mode = str(getattr(self.contact_supervision, "decode_mode", "expectation"))
-        self.use_cross_attn = bool(getattr(meta, "use_cross_attn", False))
-        self.use_finger_region_head = bool(getattr(meta, "use_finger_region_head", False))
-        self.use_cano_head = bool(getattr(meta, "use_cano_head", False))
+        self.use_cross_attn = bool(use_cross_attn)
+        self.use_finger_region_head = bool(use_finger_region_head)
+        self.use_cano_head = bool(use_cano_head)
 
-        self.backbone = self.backbone_cls(meta, in_channels=self.point_feat_dim)
+        self.backbone = self.backbone_cls(ptv3, in_channels=self.point_feat_dim)
         self.token_dim = int(self.backbone.output_dim)
 
         if self.use_cross_attn:

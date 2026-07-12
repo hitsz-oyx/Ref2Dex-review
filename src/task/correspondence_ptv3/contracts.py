@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 import torch
@@ -36,6 +37,18 @@ class EdgeSample:
     idx: np.ndarray
     valid_mask: np.ndarray
     loss_weight: np.ndarray
+
+
+class EdgeSampler(Protocol):
+    def sample(
+        self,
+        *,
+        gt_obj_points: np.ndarray,
+        gt_hand_points: np.ndarray,
+        obj_valid: np.ndarray,
+        seed: int,
+    ) -> EdgeSample:
+        ...
 
 
 @dataclass(frozen=True)

@@ -121,9 +121,9 @@ from hydra.utils import instantiate
 
 from src.base import load_checkpoint
 from src.task.correspondence_ptv3.config_loader import load_correspondence_config
-from src.task.correspondence_ptv3.data import _compute_runtime_context_neighbors
-from src.task.correspondence_ptv3.sampling import (
+from src.task.correspondence_ptv3.data import (
     augment_geometry,
+    compute_runtime_context_neighbors,
     sample_object_indices,
     stable_frame_seed,
 )
@@ -395,7 +395,7 @@ def _build_runtime_frame(
     )
     obj_min_dist *= float(geometry.distance_scale)
 
-    input_ctx_idx, input_ctx_valid = _compute_runtime_context_neighbors(
+    input_ctx_idx, input_ctx_valid = compute_runtime_context_neighbors(
         geometry.input_obj_points,
         geometry.input_hand_points,
         obj_valid,

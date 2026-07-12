@@ -1,2 +1,30 @@
 _target_: src.task.correspondence_ptv3.models.ptv3_concat.PTv3ConcatModel
 _recursive_: false
+point_feat_dim: 11
+use_cross_attn: false
+use_cano_head: false
+use_finger_region_head: false
+ptv3:
+  repo_path: null
+  grid_size: 0.003
+  order: [z, z-trans, hilbert, hilbert-trans]
+  stride: [2, 2, 2, 2]
+  enc_depths: [2, 2, 2, 6, 2]
+  enc_channels: [96, 192, 384, 384, 384]
+  enc_num_head: [6, 12, 24, 24, 24]
+  enc_patch_size: [1024, 1024, 1024, 1024, 1024]
+  dec_depths: [2, 2, 2, 2]
+  dec_channels: [96, 192, 384, 384]
+  dec_num_head: [6, 12, 24, 24]
+  dec_patch_size: [1024, 1024, 1024, 1024]
+  mlp_ratio: 4.0
+  qkv_bias: true
+  attn_drop: 0.0
+  proj_drop: 0.0
+  drop_path: 0.1
+  pre_norm: true
+  shuffle_orders: true
+  enable_rpe: false
+  enable_flash: true
+  upcast_attention: false
+  upcast_softmax: false

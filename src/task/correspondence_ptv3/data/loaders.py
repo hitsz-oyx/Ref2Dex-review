@@ -150,6 +150,4 @@ def make_dataloaders(
     return train_loader, val_loader, metadata, val_loaders
 
 
-__all__ = [
-    "make_dataloaders",
-]
+__all__ = ["make_dataloaders"]

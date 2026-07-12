@@ -4,7 +4,7 @@ import numpy as np
 from pathlib import Path
 from torch.utils.data import Sampler
 
-from src.task.correspondence_ptv3.sampling import stable_frame_seed
+from src.task.correspondence_ptv3.data.runtime import stable_frame_seed
 
 
 def sequence_group_key(path: Path) -> str:
