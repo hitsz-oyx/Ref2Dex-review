@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from src.task.correspondence_ptv3.contracts import ContactLossResult
 from src.utils.correspondence import contact_prob_to_bins, decode_contact_logits
 
-from .soft import reduce_loss_map_per_object
+from .common import reduce_loss_map_per_object
 
 
 @dataclass(frozen=True)

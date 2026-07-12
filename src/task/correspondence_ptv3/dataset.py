@@ -1,4 +1,14 @@
+"""Legacy import compatibility for correspondence data APIs.
+
+New code should import from:
+    src.task.correspondence_ptv3.data
+
+Do not add new dataset or sampling implementations here.
+"""
+
 from __future__ import annotations
+
+# DEPRECATED: compatibility only.
 
 from src.task.correspondence_ptv3.data import (
     CorrStaticDataset,

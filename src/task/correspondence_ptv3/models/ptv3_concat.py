@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from src.task.correspondence_ptv3.models.common import PTv3DenseBackbone, _build_mlp, masked_softmax
-from src.task.correspondence_ptv3.supervision import build_contact_supervision
+from src.task.correspondence_ptv3.supervision.base import ContactSupervision
 from src.utils.correspondence import compute_obj_to_hand_edge_features, gather_knn_features
 
 
@@ -17,6 +17,7 @@ class PTv3ConcatModel(nn.Module):
         self,
         cfg: Any,
         *,
+        contact_supervision: ContactSupervision,
         condition_shape: list[int] | tuple[int, ...] | None = None,
         target_shape: list[int] | tuple[int, ...] | None = None,
     ) -> None:
@@ -30,9 +31,10 @@ class PTv3ConcatModel(nn.Module):
         self.num_fingers = int(meta.num_fingers)
         self.num_regions = int(meta.num_regions)
         self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
-        self.contact_supervision = build_contact_supervision(meta)
+        self.contact_supervision = contact_supervision
         self.contact_supervision_mode = self.contact_supervision.name
         self.contact_output_dim = self.contact_supervision.output_dim
+        self.contact_bin_decode_mode = str(getattr(self.contact_supervision, "decode_mode", "expectation"))
         self.use_cross_attn = bool(getattr(meta, "use_cross_attn", False))
         self.use_finger_region_head = bool(getattr(meta, "use_finger_region_head", False))
         self.use_cano_head = bool(getattr(meta, "use_cano_head", False))

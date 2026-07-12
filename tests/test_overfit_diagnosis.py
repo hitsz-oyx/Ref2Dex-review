@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 
 from render.eval_visualize import _build_runtime_frame
 from src.base import BaseRunner, RunnerOutput, TaskConfig
+from src.task.correspondence_ptv3.composition import EdgeSamplerConfig
 from src.task.correspondence_ptv3.config import Config as CorrConfig
 from src.task.correspondence_ptv3.dataset import (
     CorrStaticDataset,
@@ -23,6 +24,7 @@ from src.task.correspondence_ptv3.dataset import (
 )
 from src.task.correspondence_ptv3.model import StaticHOCPTv3
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
+from src.task.correspondence_ptv3.sampling import build_edge_sampler
 import src.task.correspondence_ptv3.model as correspondence_model
 
 
@@ -711,8 +713,31 @@ class VisualizerSeedTests(unittest.TestCase):
             d_neg=0.03,
             gamma=1.0,
         )
-        runtime0 = _build_runtime_frame(data, frame=0, epoch=0, args=args)
-        runtime10 = _build_runtime_frame(data, frame=0, epoch=10, args=args)
+        edge_sampler = build_edge_sampler(
+            EdgeSamplerConfig(
+                name="balanced",
+                params={
+                    "k_near_logit": 2,
+                    "k_far_logit": 2,
+                    "logit_near_radius": 0.025,
+                    "logit_far_min_radius": 0.025,
+                },
+            )
+        )
+        runtime0 = _build_runtime_frame(
+            data,
+            frame=0,
+            epoch=0,
+            args=args,
+            edge_sampler=edge_sampler,
+        )
+        runtime10 = _build_runtime_frame(
+            data,
+            frame=0,
+            epoch=10,
+            args=args,
+            edge_sampler=edge_sampler,
+        )
         np.testing.assert_array_equal(runtime0.selected_obj_idx, runtime10.selected_obj_idx)
         np.testing.assert_array_equal(runtime0.input_logit_idx, runtime10.input_logit_idx)
         np.testing.assert_allclose(runtime0.noisy_hand_points, runtime10.noisy_hand_points)

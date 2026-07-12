@@ -8,6 +8,11 @@ from .base_config import (
     set_config_default_if_not_explicit,
     task_config_from_dict,
 )
+from .cli import (
+    build_train_parser,
+    collect_override_keys,
+    load_train_config_from_args,
+)
 from .checkpoint import (
     CheckpointManager,
     load_checkpoint,
@@ -74,6 +79,9 @@ __all__ = [
     "load_config",
     "save_config",
     "set_config_default_if_not_explicit",
+    "build_train_parser",
+    "collect_override_keys",
+    "load_train_config_from_args",
     "CheckpointManager",
     "load_checkpoint",
     "resolve_checkpoint_dir",

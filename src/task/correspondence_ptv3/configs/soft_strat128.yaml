@@ -14,10 +14,6 @@ meta:
     quotas: [16, 32, 32, 32, 16]
     logit_near_radius: 0.005
     logit_far_min_radius: 0.03
-  contact_supervision_mode: soft
-  logit_sampling_mode: stratified
-  logit_stratified_distance_edges: [0.005, 0.015, 0.03, 0.06]
-  logit_stratified_quotas: [16, 32, 32, 32, 16]
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false
@@ -28,8 +24,6 @@ meta:
   edge_contact_bin_weights: null
   k_ctx: 32
   ctx_radius: 0.04
-  logit_near_radius: 0.005
-  logit_far_min_radius: 0.03
   loss_obj_contact_weight: 0.0
   loss_cross_edge_weight: 1.0
   loss_cano_weight: 0.0

@@ -14,7 +14,6 @@ meta:
     k_far_logit: 32
     logit_near_radius: 0.025
     logit_far_min_radius: 0.025
-  contact_supervision_mode: soft
   use_cross_attn: false
   use_cano_head: false
   use_finger_region_head: false
@@ -24,11 +23,7 @@ meta:
   contact_bin_weights: null
   edge_contact_bin_weights: null
   k_ctx: 32
-  k_near_logit: 32
-  k_far_logit: 32
   ctx_radius: 0.04
-  logit_near_radius: 0.025
-  logit_far_min_radius: 0.025
   loss_obj_contact_weight: 0.0
   loss_cross_edge_weight: 1.0
   loss_cano_weight: 0.0

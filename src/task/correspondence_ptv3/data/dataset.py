@@ -3,6 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -12,8 +13,10 @@ from torch.utils.data import DataLoader, Dataset
 from src.base import make_file_split_dataloaders
 from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
-from src.task.correspondence_ptv3.config import (
+from src.task.correspondence_ptv3.composition import (
     EdgeSamplerConfig,
+    ResolvedCorrespondenceComponents,
+    resolve_correspondence_components,
     resolve_edge_sampler_config,
     resolve_logit_far_min_radius,
     resolve_logit_near_radius,
@@ -164,14 +167,7 @@ class CorrStaticDataset(Dataset):
         if edge_sampler is None:
             sampler_cfg = edge_sampler_config or self._legacy_edge_sampler_config()
             edge_sampler = build_edge_sampler(sampler_cfg)
-            self.logit_sampling_mode = sampler_cfg.name
-            if sampler_cfg.name == "stratified":
-                self.logit_stratified_distance_edges = np.asarray(
-                    sampler_cfg.params["distance_edges"], dtype=np.float32
-                )
-                self.logit_stratified_quotas = np.asarray(
-                    sampler_cfg.params["quotas"], dtype=np.int64
-                )
+            self._apply_edge_sampler_config(sampler_cfg)
         self.edge_sampler = edge_sampler
 
     @property
@@ -237,6 +233,26 @@ class CorrStaticDataset(Dataset):
             "logit_sampling_mode must be 'balanced', 'dense', or 'stratified', got "
             f"{self.logit_sampling_mode!r}."
         )
+
+    def _apply_edge_sampler_config(self, sampler_cfg: EdgeSamplerConfig) -> None:
+        self.logit_sampling_mode = sampler_cfg.name
+        self.logit_near_radius = float(sampler_cfg.params["logit_near_radius"])
+        self.logit_far_min_radius = float(sampler_cfg.params["logit_far_min_radius"])
+        self.logit_pos_radius = self.logit_near_radius
+        self.logit_neg_min_radius = self.logit_far_min_radius
+        if sampler_cfg.name == "balanced":
+            self.k_near_logit = int(sampler_cfg.params["k_near_logit"])
+            self.k_far_logit = int(sampler_cfg.params["k_far_logit"])
+            return
+        if sampler_cfg.name == "stratified":
+            self.logit_stratified_distance_edges = np.asarray(
+                sampler_cfg.params["distance_edges"],
+                dtype=np.float32,
+            )
+            self.logit_stratified_quotas = np.asarray(
+                sampler_cfg.params["quotas"],
+                dtype=np.int64,
+            )
 
     def _sample_object_points(self, frame: Stage3Frame) -> ObjectPointSample:
         selected_idx, valid_mask = sample_object_indices(
@@ -520,35 +536,68 @@ def _compute_input_knn(
     return result, valid
 
 
+def _resolved_components_metadata(
+    components: ResolvedCorrespondenceComponents,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "model": {
+            "name": components.model.name,
+            "params": dict(components.model.params),
+        },
+        "contact_supervision": {
+            "name": components.contact_supervision.name,
+            "params": dict(components.contact_supervision.params),
+        },
+        "edge_sampler": {
+            "name": components.edge_sampler.name,
+            "params": dict(components.edge_sampler.params),
+        },
+    }
+
+
 def make_dataloaders(
     data_cfg: Any,
     seed: int,
     *,
     meta_cfg: Any,
+    components: ResolvedCorrespondenceComponents | None = None,
     distributed: Any | None = None,
     explicit_override_keys: set[str] | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
-    edge_sampler_cfg = resolve_edge_sampler_config(
-        meta_cfg,
-        explicit_override_keys=explicit_override_keys,
-    )
+    if distributed is None:
+        distributed = SimpleNamespace(enabled=False, rank=0)
+    if components is None:
+        wrapper = type("CompositionWrapper", (), {})()
+        wrapper.meta = meta_cfg
+        wrapper.model = None
+        setattr(
+            wrapper,
+            "_explicit_override_keys",
+            set(explicit_override_keys or getattr(meta_cfg, "_explicit_override_keys", set()) or set()),
+        )
+        components = resolve_correspondence_components(
+            wrapper,
+            explicit_override_keys=explicit_override_keys,
+        )
+    edge_sampler_cfg = components.edge_sampler
+    edge_sampler_params = edge_sampler_cfg.params
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
         "k_cross": int(meta_cfg.k_cross),
         "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
-        "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
-        "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
+        "k_near_logit": int(edge_sampler_params.get("k_near_logit", getattr(meta_cfg, "k_near_logit", 32))),
+        "k_far_logit": int(edge_sampler_params.get("k_far_logit", getattr(meta_cfg, "k_far_logit", 32))),
         "logit_sampling_mode": edge_sampler_cfg.name,
         "logit_stratified_distance_edges": tuple(
-            edge_sampler_cfg.params.get("distance_edges", (0.005, 0.015, 0.03, 0.06))
+            edge_sampler_params.get("distance_edges", (0.005, 0.015, 0.03, 0.06))
         ),
         "logit_stratified_quotas": tuple(
-            edge_sampler_cfg.params.get("quotas", (16, 32, 32, 32, 16))
+            edge_sampler_params.get("quotas", (16, 32, 32, 32, 16))
         ),
         "ctx_radius": float(getattr(meta_cfg, "ctx_radius", 0.04)),
-        "logit_near_radius": resolve_logit_near_radius(meta_cfg),
-        "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
+        "logit_near_radius": float(edge_sampler_params["logit_near_radius"]),
+        "logit_far_min_radius": float(edge_sampler_params["logit_far_min_radius"]),
         "logit_neg_radius": float(getattr(meta_cfg, "logit_neg_radius", 0.06)),
         "logit_far_weight": float(getattr(meta_cfg, "loss_cross_edge_far_weight", 0.5)),
         "base_seed": int(seed),
@@ -657,31 +706,32 @@ def make_dataloaders(
     )
     metadata.update(
         {
+            "resolved_components": _resolved_components_metadata(components),
             "num_obj_pool": int(data["obj_points"].shape[1]),
             "num_obj_points": int(meta_cfg.num_obj_points),
             "num_hand_points": int(data["hand_points"].shape[1]),
             "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
             "k_ctx": int(getattr(meta_cfg, "k_ctx", meta_cfg.k_cross)),
-            "k_near_logit": int(getattr(meta_cfg, "k_near_logit", 32)),
-            "k_far_logit": int(getattr(meta_cfg, "k_far_logit", 32)),
+            "k_near_logit": int(edge_sampler_params.get("k_near_logit", getattr(meta_cfg, "k_near_logit", 32))),
+            "k_far_logit": int(edge_sampler_params.get("k_far_logit", getattr(meta_cfg, "k_far_logit", 32))),
             "logit_sampling_mode": edge_sampler_cfg.name,
             "logit_stratified_distance_edges": tuple(
-                edge_sampler_cfg.params.get("distance_edges", (0.005, 0.015, 0.03, 0.06))
+                edge_sampler_params.get("distance_edges", (0.005, 0.015, 0.03, 0.06))
             ),
             "logit_stratified_quotas": tuple(
-                edge_sampler_cfg.params.get("quotas", (16, 32, 32, 32, 16))
+                edge_sampler_params.get("quotas", (16, 32, 32, 32, 16))
             ),
             "k_logit": (
-                int(sum(edge_sampler_cfg.params["quotas"]))
+                int(sum(edge_sampler_params["quotas"]))
                 if edge_sampler_cfg.name == "stratified"
                 else (
                     int(data["hand_points"].shape[1])
                     if edge_sampler_cfg.name == "dense"
-                    else int(getattr(meta_cfg, "k_near_logit", 32)) + int(getattr(meta_cfg, "k_far_logit", 32))
+                    else int(edge_sampler_params["k_near_logit"]) + int(edge_sampler_params["k_far_logit"])
                 )
             ),
-            "logit_near_radius": resolve_logit_near_radius(meta_cfg),
-            "logit_far_min_radius": resolve_logit_far_min_radius(meta_cfg),
+            "logit_near_radius": float(edge_sampler_params["logit_near_radius"]),
+            "logit_far_min_radius": float(edge_sampler_params["logit_far_min_radius"]),
             "k_logit_hard_neg": int(getattr(meta_cfg, "k_logit_hard_neg", 16)),
             "num_fingers": int(np.max(hand_finger_id)) + 1 if hand_finger_id.size > 0 else 0,
             "num_regions": int(np.max(hand_region_id)) + 1 if hand_region_id.size > 0 else 0,

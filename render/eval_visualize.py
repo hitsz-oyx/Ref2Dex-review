@@ -119,18 +119,16 @@ import numpy as np
 import torch
 
 from src.base import build_runner_from_checkpoint
-from src.task.correspondence_ptv3.config import (
-    resolve_logit_far_min_radius,
-    resolve_logit_near_radius,
+from src.task.correspondence_ptv3.composition import (
+    EdgeSamplerConfig,
+    resolve_correspondence_components,
 )
 from src.task.correspondence_ptv3.dataset import (
     _compute_runtime_context_neighbors,
 )
 from src.task.correspondence_ptv3.sampling import (
-    BalancedEdgeSampler,
-    DenseEdgeSampler,
-    StratifiedEdgeSampler,
     augment_geometry,
+    build_edge_sampler,
     sample_object_indices,
     stable_frame_seed,
 )
@@ -334,6 +332,8 @@ def _build_runtime_frame(
     frame: int,
     epoch: int,
     args: argparse.Namespace,
+    *,
+    edge_sampler: Any,
 ) -> RuntimeFrame:
     seq_id = _scalar(data, "seq_id", "unknown")
     side = _scalar(data, "side", "")
@@ -406,57 +406,19 @@ def _build_runtime_frame(
         k_ctx=int(args.k_ctx),
         ctx_radius=float(args.ctx_radius),
     )
-    if str(args.logit_sampling_mode).lower() == "dense":
-        edge_sampler = DenseEdgeSampler(
-            logit_near_radius=float(args.logit_near_radius),
-            logit_far_min_radius=float(args.logit_far_min_radius),
-        )
-        edge_sample = edge_sampler.sample(
-            gt_obj_points=geometry.gt_obj_points,
-            gt_hand_points=geometry.gt_hand_points,
-            obj_valid=obj_valid,
-            seed=0,
-        )
-    elif str(args.logit_sampling_mode).lower() == "stratified":
-        edge_sampler = StratifiedEdgeSampler(
-            distance_edges=tuple(args.logit_stratified_distance_edges),
-            quotas=tuple(args.logit_stratified_quotas),
-            logit_near_radius=float(args.logit_near_radius),
-            logit_far_min_radius=float(args.logit_far_min_radius),
-        )
-        edge_sample = edge_sampler.sample(
-            gt_obj_points=geometry.gt_obj_points,
-            gt_hand_points=geometry.gt_hand_points,
-            obj_valid=obj_valid,
-            seed=stable_frame_seed(
-                base_seed=args.base_seed,
-                seq_id=seq_id,
-                side=side,
-                raw_frame_id=raw_frame_id,
-                epoch=seed_epoch,
-                namespace="logit-neighbors",
-            ),
-        )
-    else:
-        edge_sampler = BalancedEdgeSampler(
-            k_near_logit=int(args.k_near_logit),
-            k_far_logit=int(args.k_far_logit),
-            logit_near_radius=float(args.logit_near_radius),
-            logit_far_min_radius=float(args.logit_far_min_radius),
-        )
-        edge_sample = edge_sampler.sample(
-            gt_obj_points=geometry.gt_obj_points,
-            gt_hand_points=geometry.gt_hand_points,
-            obj_valid=obj_valid,
-            seed=stable_frame_seed(
-                base_seed=args.base_seed,
-                seq_id=seq_id,
-                side=side,
-                raw_frame_id=raw_frame_id,
-                epoch=seed_epoch,
-                namespace="logit-neighbors",
-            ),
-        )
+    edge_sample = edge_sampler.sample(
+        gt_obj_points=geometry.gt_obj_points,
+        gt_hand_points=geometry.gt_hand_points,
+        obj_valid=obj_valid,
+        seed=stable_frame_seed(
+            base_seed=args.base_seed,
+            seq_id=seq_id,
+            side=side,
+            raw_frame_id=raw_frame_id,
+            epoch=seed_epoch,
+            namespace="logit-neighbors",
+        ),
+    )
     input_logit_idx = edge_sample.idx
     input_logit_valid = edge_sample.valid_mask
     obj_contact_soft = soft_contact_label(
@@ -542,6 +504,16 @@ def _run_inference(
         obj_dense_tokens=preds["obj_dense_tokens"][0].detach(),
         hand_dense_tokens=preds["hand_dense_tokens"][0].detach(),
     )
+
+
+def _edge_sampler_signature(config: EdgeSamplerConfig) -> tuple[Any, ...]:
+    items: list[tuple[str, Any]] = []
+    for key, value in sorted(config.params.items()):
+        if isinstance(value, (list, tuple)):
+            items.append((key, tuple(value)))
+        else:
+            items.append((key, value))
+    return (config.name, tuple(items))
 
 
 def _dense_cross_probabilities(
@@ -679,15 +651,11 @@ class EvalViewer:
             self.epoch,
             self.args.base_seed,
             self.args.fix_overfit_seed,
-            self.args.logit_sampling_mode,
+            self.args.edge_sampler_signature,
             self.args.num_obj_points,
             self.args.k_cross,
             self.args.k_ctx,
-            self.args.k_near_logit,
-            self.args.k_far_logit,
             self.args.ctx_radius,
-            self.args.logit_near_radius,
-            self.args.logit_far_min_radius,
             self.args.augment,
             self.args.hand_perturb,
             self.args.augment_rotation,
@@ -707,7 +675,13 @@ class EvalViewer:
     def _get_cached_state(self) -> tuple[RuntimeFrame, PredictionFrame]:
         signature = self._runtime_signature()
         if signature != self._cache_signature:
-            runtime = _build_runtime_frame(self.data, self.frame, self.epoch, self.args)
+            runtime = _build_runtime_frame(
+                self.data,
+                self.frame,
+                self.epoch,
+                self.args,
+                edge_sampler=self.args.edge_sampler,
+            )
             prediction = _run_inference(self.runner, runtime, self.data)
             self._cache_signature = signature
             self._cache_runtime = runtime
@@ -1062,20 +1036,32 @@ def main() -> None:
     runner.model.contact_bin_decode_mode = str(
         getattr(runner.cfg.meta, "contact_bin_decode_mode", "expectation")
     )
+    components = resolve_correspondence_components(
+        runner.cfg,
+        explicit_override_keys=getattr(runner, "explicit_override_keys", None),
+    )
+    edge_sampler_params = dict(components.edge_sampler.params)
+    if args.k_near_logit is not None and components.edge_sampler.name == "balanced":
+        edge_sampler_params["k_near_logit"] = int(args.k_near_logit)
+    if args.k_far_logit is not None and components.edge_sampler.name == "balanced":
+        edge_sampler_params["k_far_logit"] = int(args.k_far_logit)
+    if args.logit_near_radius is not None:
+        edge_sampler_params["logit_near_radius"] = float(args.logit_near_radius)
+    if args.logit_far_min_radius is not None:
+        edge_sampler_params["logit_far_min_radius"] = float(args.logit_far_min_radius)
+    edge_sampler_cfg = EdgeSamplerConfig(
+        name=components.edge_sampler.name,
+        params=edge_sampler_params,
+    )
+    args.edge_sampler = build_edge_sampler(edge_sampler_cfg)
+    args.edge_sampler_signature = _edge_sampler_signature(edge_sampler_cfg)
     args.fix_overfit_seed = bool(getattr(runner.cfg.meta, "fix_overfit_seed", False))
-    args.logit_sampling_mode = str(
-        getattr(runner.cfg.meta, "logit_sampling_mode", "balanced")
-    ).lower()
-    if args.logit_sampling_mode not in {"balanced", "dense", "stratified"}:
-        raise ValueError(
-            "Checkpoint meta.logit_sampling_mode must be 'balanced', 'dense', or 'stratified', got "
-            f"{args.logit_sampling_mode!r}."
-        )
+    args.logit_sampling_mode = edge_sampler_cfg.name
     args.logit_stratified_distance_edges = tuple(
-        getattr(runner.cfg.meta, "logit_stratified_distance_edges", (0.005, 0.015, 0.03, 0.06))
+        edge_sampler_params.get("distance_edges", ())
     )
     args.logit_stratified_quotas = tuple(
-        getattr(runner.cfg.meta, "logit_stratified_quotas", (16, 32, 32, 32, 16))
+        edge_sampler_params.get("quotas", ())
     )
 
     if args.base_seed is None:
@@ -1087,15 +1073,13 @@ def main() -> None:
     if args.k_ctx is None:
         args.k_ctx = int(getattr(runner.cfg.meta, "k_ctx", runner.cfg.meta.k_cross))
     if args.k_near_logit is None:
-        args.k_near_logit = int(getattr(runner.cfg.meta, "k_near_logit", 32))
+        args.k_near_logit = int(edge_sampler_params.get("k_near_logit", getattr(runner.cfg.meta, "k_near_logit", 32)))
     if args.k_far_logit is None:
-        args.k_far_logit = int(getattr(runner.cfg.meta, "k_far_logit", 32))
+        args.k_far_logit = int(edge_sampler_params.get("k_far_logit", getattr(runner.cfg.meta, "k_far_logit", 32)))
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
-    if args.logit_near_radius is None:
-        args.logit_near_radius = resolve_logit_near_radius(runner.cfg.meta)
-    if args.logit_far_min_radius is None:
-        args.logit_far_min_radius = resolve_logit_far_min_radius(runner.cfg.meta)
+    args.logit_near_radius = float(edge_sampler_params["logit_near_radius"])
+    args.logit_far_min_radius = float(edge_sampler_params["logit_far_min_radius"])
     if args.d_pos is None:
         args.d_pos = float(runner.cfg.meta.d_pos)
     if args.d_neg is None:
@@ -1125,7 +1109,13 @@ def main() -> None:
         raise ValueError("--logit-far-min-radius must be >= --logit-near-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
 
-    runtime = _build_runtime_frame(data, args.frame, max(0, args.epoch), args)
+    runtime = _build_runtime_frame(
+        data,
+        args.frame,
+        max(0, args.epoch),
+        args,
+        edge_sampler=args.edge_sampler,
+    )
     prediction = _run_inference(runner, runtime, data)
     valid_contact = prediction.pred_obj_contact[runtime.obj_valid]
     print(

@@ -147,7 +147,9 @@ class CorrespondenceMetricTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(obj_logits.grad).all())
         self.assertTrue(torch.isfinite(edge_logits.grad).all())
 
+        runner = object.__new__(CorrespondencePTV3Runner)
         cfg.meta.contact_supervision_mode = "bin"
+        runner.cfg = cfg
         bin_obj = torch.zeros(1, 2, 10, requires_grad=True)
         bin_edge = torch.zeros(1, 2, 2, 10, requires_grad=True)
         bin_preds = {

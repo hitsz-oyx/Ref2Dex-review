@@ -6,21 +6,29 @@ import torch
 import torch.nn.functional as F
 
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
+from src.task.correspondence_ptv3.composition import (
+    ResolvedCorrespondenceComponents,
+    resolve_correspondence_components,
+)
 from src.task.correspondence_ptv3.data.dataset import make_dataloaders
 from src.task.correspondence_ptv3.metrics import (
     batched_binary_auprc_stat,
     batched_cross_edge_rank_at_k_stat,
 )
 from src.task.correspondence_ptv3.model import build_correspondence_model
+from src.task.correspondence_ptv3.objectives import CrossEdgeRankKObjective
 from src.task.correspondence_ptv3.supervision import build_contact_supervision
+from src.task.correspondence_ptv3.supervision.common import reduce_loss_map_per_object
 from src.task.correspondence_ptv3.supervision.soft import (
     binary_entropy_floor_map,
     flatten_binary_logits,
     masked_bce_with_logits,
     masked_bce_with_logits_per_object,
-    reduce_loss_map_per_object,
 )
-from src.utils.correspondence import soft_contact_label
+from src.task.correspondence_ptv3.targets import (
+    build_clean_correspondence_targets,
+    build_dynamic_edge_contact_targets,
+)
 
 
 def prefix_metrics(
@@ -99,10 +107,45 @@ class CorrespondencePTV3Runner(BaseRunner):
             explicit_override_keys=explicit_override_keys,
         )
 
+    @property
+    def components(self) -> ResolvedCorrespondenceComponents:
+        components = getattr(self, "_resolved_components", None)
+        if components is None:
+            components = resolve_correspondence_components(
+                self.cfg,
+                explicit_override_keys=getattr(self, "explicit_override_keys", None),
+            )
+            self._resolved_components = components
+        return components
+
+    @property
+    def contact_supervision(self):
+        supervision = getattr(self, "_contact_supervision", None)
+        if supervision is None:
+            supervision = build_contact_supervision(
+                self.components.contact_supervision,
+            )
+            self._contact_supervision = supervision
+        return supervision
+
+    @property
+    def rankk_objective(self) -> CrossEdgeRankKObjective:
+        objective = getattr(self, "_rankk_objective", None)
+        if objective is None:
+            meta = self.cfg.meta
+            objective = CrossEdgeRankKObjective(
+                k=int(getattr(meta, "rankk_loss_k", 4)),
+                label_gap=float(getattr(meta, "rankk_label_gap", 0.15)),
+                margin=float(getattr(meta, "rankk_margin", 0.2)),
+            )
+            self._rankk_objective = objective
+        return objective
+
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(
             data_cfg,
             meta_cfg=self.cfg.meta,
+            components=self.components,
             seed=seed,
             distributed=self.distributed,
             explicit_override_keys=self.explicit_override_keys,
@@ -152,8 +195,9 @@ class CorrespondencePTV3Runner(BaseRunner):
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return build_correspondence_model(
-            model_cfg=model_cfg,
+            model_config=self.components.model,
             meta_cfg=self.cfg.meta,
+            contact_supervision_config=self.components.contact_supervision,
         )
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
@@ -188,19 +232,13 @@ class CorrespondencePTV3Runner(BaseRunner):
             batch_size=int(batch["points"].shape[0]),
         )
 
-    def _get_contact_supervision(self):
-        return build_contact_supervision(
-            self.cfg.meta,
-            explicit_override_keys=getattr(self, "explicit_override_keys", None),
-        )
-
     def _compute_losses(
         self,
         preds: dict[str, torch.Tensor],
         batch: dict[str, torch.Tensor],
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor | MetricStat]]:
         meta = self.cfg.meta
-        contact_supervision = self._get_contact_supervision()
+        contact_supervision = self.contact_supervision
         obj_valid_bool = batch["runtime_obj_valid_mask"].bool()
         obj_valid = obj_valid_bool.float()
         input_edge_valid = batch.get("input_obj_to_hand_logit_valid_mask")
@@ -232,17 +270,25 @@ class CorrespondencePTV3Runner(BaseRunner):
             valid_mask=obj_valid,
         )
 
-        edge_contact_prob = self._compute_dynamic_edge_labels(batch)
+        edge_valid = input_edge_valid & obj_valid_bool.unsqueeze(-1)
+        edge_contact_prob = build_dynamic_edge_contact_targets(
+            batch,
+            num_obj_points=int(meta.num_obj_points),
+            num_hand_points=int(meta.num_hand_points),
+            d_pos=float(meta.d_pos),
+            d_neg=float(meta.d_neg),
+            gamma=float(meta.gamma),
+        )
         edge_result = contact_supervision.compute_edge_loss(
             logits=pred_cross_contact_logits,
             target_probability=edge_contact_prob,
             edge_weight=input_edge_weight,
             obj_valid_mask=obj_valid_bool,
         )
-        cross_edge_rankk_loss, cross_edge_rankk_pairs = self._compute_cross_edge_rankk_loss(
+        cross_edge_rankk_loss, cross_edge_rankk_pairs = self.rankk_objective.compute(
             preds["pred_cross_contact_prob"],
             edge_contact_prob,
-            input_edge_valid & obj_valid_bool.unsqueeze(-1),
+            edge_valid,
         )
 
         need_clean_targets = any(
@@ -260,7 +306,12 @@ class CorrespondencePTV3Runner(BaseRunner):
                 corr_valid,
                 target_finger,
                 target_region,
-            ) = self._build_clean_correspondence_targets(batch)
+            ) = build_clean_correspondence_targets(
+                batch,
+                corr_contact_label_min=float(
+                    getattr(self.cfg.meta, "corr_contact_label_min", 0.1)
+                ),
+            )
 
         cano_loss = zero
         if "pred_obj_cano" in preds:
@@ -317,24 +368,24 @@ class CorrespondencePTV3Runner(BaseRunner):
             cross_edge_auprc = batched_binary_auprc_stat(
                 preds["pred_cross_contact_prob"].detach(),
                 edge_contact_prob > pr_label_threshold,
-                input_edge_valid & obj_valid_bool.unsqueeze(-1),
+                edge_valid,
             )
             cross_edge_rank1 = batched_cross_edge_rank_at_k_stat(
                 preds["pred_cross_contact_prob"].detach(),
                 edge_contact_prob,
-                input_edge_valid & obj_valid_bool.unsqueeze(-1),
+                edge_valid,
                 k=1,
             )
             cross_edge_rank4 = batched_cross_edge_rank_at_k_stat(
                 preds["pred_cross_contact_prob"].detach(),
                 edge_contact_prob,
-                input_edge_valid & obj_valid_bool.unsqueeze(-1),
+                edge_valid,
                 k=4,
             )
             cross_edge_rank8 = batched_cross_edge_rank_at_k_stat(
                 preds["pred_cross_contact_prob"].detach(),
                 edge_contact_prob,
-                input_edge_valid & obj_valid_bool.unsqueeze(-1),
+                edge_valid,
                 k=8,
             )
             obj_contact_decoded_bce = self._masked_bce_from_prob(
@@ -383,116 +434,10 @@ class CorrespondencePTV3Runner(BaseRunner):
                 reduction="sum",
             ) / mask.sum().clamp(min=1.0)
 
-    def _compute_cross_edge_rankk_loss(
-        self,
-        pred: torch.Tensor,
-        target: torch.Tensor,
-        valid_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        meta = self.cfg.meta
-        k = max(0, int(getattr(meta, "rankk_loss_k", 4)))
-        if k <= 0:
-            zero = pred.new_tensor(0.0)
-            return zero, zero
-        label_gap_min = float(getattr(meta, "rankk_label_gap", 0.15))
-        margin = float(getattr(meta, "rankk_margin", 0.2))
-        num_slots = pred.shape[-1]
-        topk = min(k, num_slots)
-        if topk <= 0:
-            zero = pred.new_tensor(0.0)
-            return zero, zero
-
-        masked_target = target.masked_fill(~valid_mask, float("-inf"))
-        anchor_idx = torch.topk(masked_target, k=topk, dim=-1).indices
-        valid_count = valid_mask.sum(dim=-1)
-        rank_range = torch.arange(topk, device=pred.device).view(1, 1, topk)
-        anchor_valid = rank_range < valid_count.unsqueeze(-1)
-
-        anchor_target = target.gather(dim=-1, index=anchor_idx)
-        anchor_pred = pred.gather(dim=-1, index=anchor_idx)
-        label_gap = anchor_target.unsqueeze(-1) - target.unsqueeze(-2)
-        score_gap = anchor_pred.unsqueeze(-1) - pred.unsqueeze(-2)
-
-        slot_idx = torch.arange(num_slots, device=pred.device).view(1, 1, 1, num_slots)
-        pair_valid = (
-            anchor_valid.unsqueeze(-1)
-            & valid_mask.unsqueeze(-2)
-            & (slot_idx != anchor_idx.unsqueeze(-1))
-            & (label_gap >= label_gap_min)
-        )
-        pair_weight = label_gap.clamp(min=0.0)
-        pair_loss = F.relu(margin - score_gap) * pair_weight
-        pair_valid_f = pair_valid.float()
-        pair_count = pair_valid_f.sum()
-        loss = (pair_loss * pair_valid_f).sum() / pair_count.clamp(min=1.0)
-        return loss, pair_count
-
-    def _build_clean_correspondence_targets(
-        self,
-        batch: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        clean_knn = batch["gt_obj_to_hand_knn_idx"].long()
-        nearest_idx = clean_knn[..., 0]
-        safe_idx = nearest_idx.clamp(min=0)
-
-        hand_cano = batch["hand_cano_points"].float()
-        hand_finger = batch["hand_finger_id"].long()
-        hand_region = batch["hand_region_id"].long()
-        if hand_cano.dim() == 2:
-            hand_cano = hand_cano.unsqueeze(0)
-            hand_finger = hand_finger.unsqueeze(0)
-            hand_region = hand_region.unsqueeze(0)
-
-        target_cano = self._batch_gather(hand_cano, safe_idx)
-        target_finger = self._batch_gather(hand_finger, safe_idx)
-        target_region = self._batch_gather(hand_region, safe_idx)
-        corr_valid = (
-            batch["runtime_obj_valid_mask"].bool()
-            & (nearest_idx >= 0)
-            & (
-                batch["obj_contact_label"]
-                > float(getattr(self.cfg.meta, "corr_contact_label_min", 0.1))
-            )
-        ).float()
-        return target_cano, corr_valid, target_finger, target_region
-
-    @staticmethod
-    def _batch_gather(
-        values: torch.Tensor,
-        indices: torch.Tensor,
-    ) -> torch.Tensor:
-        batch_idx = torch.arange(values.shape[0], device=values.device).view(-1, 1)
-        return values[batch_idx, indices]
-
-    def _compute_dynamic_edge_labels(
-        self,
-        batch: dict[str, torch.Tensor],
-    ) -> torch.Tensor:
-        meta = self.cfg.meta
-        points = batch.get("gt_points", batch["points"])
-        num_obj = int(meta.num_obj_points)
-        num_hand = int(meta.num_hand_points)
-        obj_points = points[:, :num_obj]
-        hand_points = points[:, num_obj : num_obj + num_hand]
-        knn_idx = batch.get("input_obj_to_hand_logit_idx")
-        if knn_idx is None:
-            knn_idx = batch["input_obj_to_hand_knn_idx"]
-        edge_valid = batch.get("input_obj_to_hand_logit_valid_mask")
-        if edge_valid is None:
-            edge_valid = batch["input_obj_to_hand_knn_valid_mask"]
-        knn_idx = knn_idx.long()
-        edge_valid = edge_valid.bool()
-        safe_idx = knn_idx.clamp(min=0)
-        batch_idx = torch.arange(points.shape[0], device=points.device).view(-1, 1, 1)
-        neighbor_hand = hand_points[batch_idx, safe_idx]
-        distance = torch.norm(neighbor_hand - obj_points.unsqueeze(2), dim=-1)
-        labels = soft_contact_label(
-            distance,
-            d_pos=float(meta.d_pos),
-            d_neg=float(meta.d_neg),
-            gamma=float(meta.gamma),
-        )
-        return labels * edge_valid.float()
+    # -------------------------------------------------------------------------
+    # Legacy test/import compatibility.
+    # New code must import from supervision/, metrics/, objectives/, or targets/.
+    # -------------------------------------------------------------------------
 
     @staticmethod
     def _flatten_binary_logits(
@@ -605,9 +550,6 @@ class CorrespondencePTV3Runner(BaseRunner):
         if stat.count <= 0.0:
             return pred.new_tensor(0.0)
         return pred.new_tensor(stat.total / stat.count)
-
-    def _get_contact_supervision_mode(self) -> str:
-        return self._get_contact_supervision().name
 
     def inference(
         self,
