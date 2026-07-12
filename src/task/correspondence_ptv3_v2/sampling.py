@@ -45,6 +45,32 @@ def sample_object_indices(
     return selected, valid
 
 
+def sample_random_supervision_edges(
+    *,
+    num_obj_points: int,
+    num_hand_points: int,
+    obj_valid_mask: np.ndarray,
+    num_supervision_edges: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    if num_supervision_edges <= 0:
+        raise ValueError("num_supervision_edges must be positive.")
+    if num_hand_points <= 0:
+        raise ValueError("num_hand_points must be positive.")
+    if num_supervision_edges > num_hand_points:
+        raise ValueError("num_supervision_edges must be <= num_hand_points for no-replacement sampling.")
+    obj_valid_mask = np.asarray(obj_valid_mask, dtype=bool)
+    edge_idx = np.full((num_obj_points, num_supervision_edges), -1, dtype=np.int64)
+    edge_valid = np.zeros((num_obj_points, num_supervision_edges), dtype=bool)
+    rng = np.random.default_rng(seed)
+    all_hand_idx = np.arange(num_hand_points, dtype=np.int64)
+    for obj_idx in np.flatnonzero(obj_valid_mask).tolist():
+        chosen = rng.choice(all_hand_idx, size=num_supervision_edges, replace=False)
+        edge_idx[obj_idx] = chosen
+        edge_valid[obj_idx] = True
+    return edge_idx, edge_valid
+
+
 def _rotation_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
     axis = np.asarray(axis, dtype=np.float64)
     norm = float(np.linalg.norm(axis))

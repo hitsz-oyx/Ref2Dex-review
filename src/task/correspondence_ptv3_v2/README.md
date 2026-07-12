@@ -1,25 +1,47 @@
-# correspondence_ptv3
+# correspondence_ptv3_v2
 
-`correspondence_ptv3` 直接读取当前 Stage 3 点池格式，训练时按 epoch 采样
-512 个物体点并生成增强后的输入 KNN。
+`correspondence_ptv3_v2` 是一个独立任务，用于从 noisy hand-object geometry 中预测：
 
-实现上参考了 `/home/oyx/test_ws/PointTransformerV3` 的序列化思路，但为了适配当前环境，去掉了 `spconv / torch_scatter / flash_attn` 依赖，保留：
+1. object point contact target
+2. sampled object-hand cross-edge contact target
 
-- object stem: `[xyz, normal] -> hidden`
-- hand stem: `[xyz, normal, hand_cano] -> hidden`
-- unified serialized patch self-attention backbone
-- object contact head
-- object-to-hand canonical correspondence head
-- hand-to-object cross-edge contact head
+固定设计：
 
-可选项：
-
-- `meta.use_finger_region_head=true` 时启用 finger / region 分类头
+- continuous 0-1 cm linear contact target
+- uniform random 128 supervision edges per object
+- Quality Focal Loss
+- scalar sigmoid outputs
+- PTv3 unified point backbone
 
 训练：
 
 ```bash
-python -m src.task.correspondence_ptv3.train \
-  --data processed_data/generated/stage3/... \
-  --output-dir outputs/train/correspondence_ptv3
+PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.train \
+  --config src/task/correspondence_ptv3_v2/configs/baseline.yaml \
+  --data <stage3_dataset> \
+  --output-dir outputs/train/<run>
 ```
+
+评估：
+
+```bash
+PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.eval \
+  --checkpoint outputs/train/<run>/checkpoints/latest.pt
+```
+
+可视化：
+
+```bash
+PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.visualize \
+  --checkpoint <checkpoint> \
+  --input <stage3_npz>
+```
+
+交互键位：
+
+- `A / D` 或左右键：切 frame
+- `[` / `]`：切 sampling epoch
+- `G`：GT / Eval
+- `C`：heatmap / cross
+- `,` / `.`：切 selected object point
+- `R`：reset camera

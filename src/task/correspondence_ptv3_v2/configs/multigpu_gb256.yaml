@@ -1,29 +1,17 @@
-_base_: src.task.correspondence_ptv3.config:Config
+_base_: src.task.correspondence_ptv3_v2.config:Config
 
-name: correspondence_ptv3_soft_contact_multigpu_gb256
+name: correspondence_ptv3_v2_multigpu_gb256
 
 meta:
-  contact_supervision_mode: soft
-  use_cross_attn: false
-  use_cano_head: false
-  use_finger_region_head: false
-  gamma: 1.0
-  num_contact_bins: 10
-  contact_bin_decode_mode: expectation
-  contact_bin_weights: null
-  edge_contact_bin_weights: null
+  num_obj_points: 512
+  num_hand_points: 1538
   k_ctx: 32
-  k_near_logit: 32
-  k_far_logit: 32
   ctx_radius: 0.04
-  logit_near_radius: 0.025
-  logit_far_min_radius: 0.025
-  loss_obj_contact_weight: 0.0
+  num_supervision_edges: 128
+  contact_radius: 0.01
+  quality_focal_beta: 2.0
+  loss_obj_contact_weight: 1.0
   loss_cross_edge_weight: 1.0
-  loss_cano_weight: 0.0
-  loss_cross_edge_rankk_weight: 0.0
-  loss_finger_weight: 0.0
-  loss_region_weight: 0.0
   val_augment: true
   val_hand_perturb_prob: 1.0
 
@@ -62,4 +50,4 @@ wandb:
   enable: true
   project: ref2dex
   mode: online
-  tags: [correspondence, ptv3, static, soft-contact, multigpu, gb256]
+  tags: [correspondence, ptv3, v2, soft-contact, qfl, multigpu, gb256]
