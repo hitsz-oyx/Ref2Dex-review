@@ -28,10 +28,8 @@ class CorrStaticDatasetV2(Dataset):
         "obj_point_id",
         "hand_points",
         "hand_normals",
-        "hand_point_id",
         "obj_to_hand_min_dist",
         "obj_candidate_mask_5cm",
-        "gt_obj_to_hand_knn_idx",
     }
 
     def __init__(
@@ -41,7 +39,6 @@ class CorrStaticDatasetV2(Dataset):
         file_list: list[str | Path] | None = None,
         num_obj_points: int = 512,
         num_hand_points: int = 1538,
-        k_cross: int = 32,
         k_ctx: int = 32,
         ctx_radius: float = 0.04,
         num_supervision_edges: int = 128,
@@ -67,7 +64,6 @@ class CorrStaticDatasetV2(Dataset):
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
-        self.k_gt = int(k_cross)
         self.k_ctx = int(k_ctx)
         self.ctx_radius = float(ctx_radius)
         self.num_supervision_edges = int(num_supervision_edges)
@@ -174,13 +170,11 @@ class CorrStaticDatasetV2(Dataset):
         obj_normals = np.asarray(data["obj_normals"][frame_idx, safe_idx], dtype=np.float32).copy()
         obj_point_id = np.asarray(data["obj_point_id"][safe_idx], dtype=np.int64).copy()
         obj_min_dist = np.asarray(data["obj_to_hand_min_dist"][frame_idx, safe_idx], dtype=np.float32).copy()
-        clean_knn_idx = np.asarray(data["gt_obj_to_hand_knn_idx"][frame_idx, safe_idx], dtype=np.int64).copy()
 
         obj_points[~obj_valid] = 0
         obj_normals[~obj_valid] = 0
         obj_point_id[~obj_valid] = -1
         obj_min_dist[~obj_valid] = 0
-        clean_knn_idx[~obj_valid] = -1
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
@@ -269,22 +263,10 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "contact_target": contact_target,
             "edge_contact_target": edge_contact_target.float(),
-            "gt_obj_to_hand_knn_idx": torch.from_numpy(clean_knn_idx).long(),
             "input_obj_to_hand_ctx_idx": torch.from_numpy(input_ctx_idx).long(),
             "input_obj_to_hand_ctx_valid_mask": torch.from_numpy(input_ctx_valid),
             "supervision_edge_idx": torch.from_numpy(supervision_edge_idx).long(),
             "supervision_edge_valid_mask": torch.from_numpy(supervision_edge_valid),
-            "hand_cano_points": torch.from_numpy(
-                np.asarray(
-                    data.get("hand_cano_points", np.zeros((self.num_hand_points, 3), dtype=np.float32))
-                )
-            ).float(),
-            "hand_finger_id": torch.from_numpy(
-                np.asarray(data.get("hand_finger_id", np.full((self.num_hand_points,), -1, dtype=np.int64)))
-            ).long(),
-            "hand_region_id": torch.from_numpy(
-                np.asarray(data.get("hand_region_id", np.full((self.num_hand_points,), -1, dtype=np.int64)))
-            ).long(),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
@@ -417,7 +399,6 @@ def make_dataloaders(
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
-        "k_cross": int(meta_cfg.k_cross),
         "k_ctx": int(meta_cfg.k_ctx),
         "ctx_radius": float(meta_cfg.ctx_radius),
         "num_supervision_edges": int(meta_cfg.num_supervision_edges),
@@ -505,7 +486,6 @@ def make_dataloaders(
                 "num_obj_pool": int(data["obj_points"].shape[1]),
                 "num_obj_points": int(train_kwargs["num_obj_points"]),
                 "num_hand_points": int(data["hand_points"].shape[1]),
-                "k_cross": int(data["gt_obj_to_hand_knn_idx"].shape[2]),
                 "k_ctx": int(meta_cfg.k_ctx),
                 "ctx_radius": float(meta_cfg.ctx_radius),
                 "num_supervision_edges": int(meta_cfg.num_supervision_edges),

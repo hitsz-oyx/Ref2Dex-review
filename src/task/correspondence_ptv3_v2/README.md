@@ -13,6 +13,11 @@
 - scalar sigmoid outputs
 - PTv3 unified point backbone
 
+说明：
+
+- object points 仍从 Stage 3 的 `obj_candidate_mask_5cm` 候选池中随机采样
+- cross-edge supervision 才是对全部 hand points 的 uniform random 128
+
 训练：
 
 ```bash

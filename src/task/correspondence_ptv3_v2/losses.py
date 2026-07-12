@@ -34,10 +34,10 @@ def reduce_loss_map(
     mask: torch.Tensor,
 ) -> torch.Tensor:
     mask_f = mask.float()
+    weighted = (loss_map.float() * mask_f).sum()
     denom = mask_f.sum()
-    if float(denom.item()) <= 0.0:
-        return loss_map.sum() * 0.0
-    return (loss_map.float() * mask_f).sum() / denom
+    safe = weighted / denom.clamp_min(torch.finfo(loss_map.dtype).eps)
+    return torch.where(denom > 0, safe, weighted * 0.0)
 
 
 def reduce_loss_map_per_object(
@@ -51,6 +51,8 @@ def reduce_loss_map_per_object(
         torch.finfo(loss_map.dtype).eps
     )
     valid_obj_mask = obj_valid_mask.bool() & (per_obj_weight > 0)
-    if bool(valid_obj_mask.any()):
-        return per_obj_loss[valid_obj_mask].mean()
-    return loss_map.sum() * 0.0
+    valid_obj_f = valid_obj_mask.float()
+    total = (per_obj_loss * valid_obj_f).sum()
+    count = valid_obj_f.sum()
+    safe = total / count.clamp_min(torch.finfo(loss_map.dtype).eps)
+    return torch.where(count > 0, safe, loss_map.sum() * 0.0)

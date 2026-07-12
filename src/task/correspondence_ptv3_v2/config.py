@@ -16,7 +16,6 @@ class Config(TaskConfig):
         num_obj_points: int = 512
         num_obj_pool: int = 4096
         num_hand_points: int = 1538
-        k_cross: int = 32
         k_ctx: int = 32
         ctx_radius: float = 0.04
         num_supervision_edges: int = 128
@@ -65,7 +64,6 @@ class Config(TaskConfig):
 
         loss_obj_contact_weight: float = 1.0
         loss_cross_edge_weight: float = 1.0
-        pr_label_threshold: float = 0.5
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

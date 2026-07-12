@@ -5,7 +5,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from src.base import BaseRunner, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
+from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
 from src.task.correspondence_ptv3_v2.dataset import make_dataloaders
 from src.task.correspondence_ptv3_v2.losses import (
     quality_focal_loss_map,
@@ -54,7 +54,6 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             "num_obj_pool",
             "num_obj_points",
             "num_hand_points",
-            "k_cross",
             "k_ctx",
             "ctx_radius",
             "num_supervision_edges",
@@ -68,8 +67,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
         dataset = getattr(getattr(self, "train_loader", None), "dataset", None)
+        dataset_epoch = 0 if bool(getattr(self.cfg.train, "overfit_mode", False)) else epoch
         if dataset is not None and hasattr(dataset, "set_epoch"):
-            dataset.set_epoch(epoch)
+            dataset.set_epoch(dataset_epoch)
         sampler = getattr(getattr(self, "train_loader", None), "sampler", None)
         if sampler is not None and hasattr(sampler, "set_epoch"):
             sampler.set_epoch(epoch)
@@ -80,8 +80,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         preds = model(batch)
         losses, aux_metrics = self._compute_losses(preds, batch)
         total_loss = sum(losses.values())
-        metrics = {key: float(value.detach().cpu()) for key, value in {**losses, **aux_metrics}.items()}
-        metrics["loss"] = float(total_loss.detach().cpu())
+        metrics: dict[str, float | MetricStat] = {**losses, **aux_metrics}
+        metrics["loss"] = total_loss
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(batch["points"].shape[0]))
 
     def _compute_losses(
@@ -117,10 +117,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         sampled_nonzero_mask = (edge_target > 0) & edge_valid_mask
         sampled_nonzero_edge_count = sampled_nonzero_mask.sum()
         valid_edge_count = edge_valid_mask.sum()
-        sampled_nonzero_edge_fraction = sampled_nonzero_edge_count.float() / valid_edge_count.clamp(min=1).float()
         per_obj_has_nonzero = sampled_nonzero_mask.any(dim=-1) & obj_valid_mask
         num_valid_obj = obj_valid_mask.sum()
-        object_nonzero_edge_coverage = per_obj_has_nonzero.sum().float() / num_valid_obj.clamp(min=1).float()
+        num_obj_with_nonzero = per_obj_has_nonzero.sum()
 
         losses = {
             "obj_contact": float(meta.loss_obj_contact_weight) * obj_contact_qfl,
@@ -136,8 +135,14 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             "num_valid_obj": num_valid_obj.float(),
             "num_valid_edges": valid_edge_count.float(),
             "sampled_nonzero_edge_count": sampled_nonzero_edge_count.float(),
-            "sampled_nonzero_edge_fraction": sampled_nonzero_edge_fraction,
-            "object_nonzero_edge_coverage": object_nonzero_edge_coverage,
+            "sampled_nonzero_edge_fraction": MetricStat(
+                total=float(sampled_nonzero_edge_count.detach().cpu()),
+                count=float(valid_edge_count.detach().cpu()),
+            ),
+            "object_nonzero_edge_coverage": MetricStat(
+                total=float(num_obj_with_nonzero.detach().cpu()),
+                count=float(num_valid_obj.detach().cpu()),
+            ),
         }
         return losses, aux_metrics
 

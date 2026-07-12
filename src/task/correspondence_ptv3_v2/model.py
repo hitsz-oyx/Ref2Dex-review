@@ -117,6 +117,27 @@ class StaticHOCPTv3V2(nn.Module):
         self.cross_edge_head = nn.Linear(self.token_dim // 2, 1)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        z_obj, z_hand = self.encode_points(batch)
+        supervision_edge_idx = batch["supervision_edge_idx"].long()
+        supervision_edge_valid_mask = batch["supervision_edge_valid_mask"].bool()
+        z_hand_neighbors = self._gather_batched_knn_features(
+            z_hand,
+            supervision_edge_idx,
+            supervision_edge_valid_mask,
+        )
+
+        pred_obj_contact_logits = self.contact_head(z_obj).squeeze(-1)
+        edge_shared = self._compute_shared_edge_features(z_obj=z_obj, z_hand_neighbors=z_hand_neighbors)
+        pred_cross_contact_logits = self.cross_edge_head(edge_shared).squeeze(-1)
+
+        return {
+            "pred_obj_contact_logits": pred_obj_contact_logits,
+            "pred_obj_contact_prob": torch.sigmoid(pred_obj_contact_logits),
+            "pred_cross_contact_logits": pred_cross_contact_logits,
+            "pred_cross_contact_prob": torch.sigmoid(pred_cross_contact_logits),
+        }
+
+    def encode_points(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         points = batch["points"].float()
         normals = batch["normals"].float()
         point_valid_mask = batch["point_valid_mask"].bool()
@@ -142,27 +163,26 @@ class StaticHOCPTv3V2(nn.Module):
         tokens = self.backbone(feat, coord, point_valid_mask)
         z_obj = tokens[:, : self.num_obj_points]
         z_hand = tokens[:, self.num_obj_points : expected_total]
+        return z_obj, z_hand
 
-        supervision_edge_idx = batch["supervision_edge_idx"].long()
-        supervision_edge_valid_mask = batch["supervision_edge_valid_mask"].bool()
-        z_hand_neighbors = self._gather_batched_knn_features(
-            z_hand,
-            supervision_edge_idx,
-            supervision_edge_valid_mask,
+    def predict_dense_cross_for_object(
+        self,
+        batch: dict[str, torch.Tensor],
+        obj_idx: int,
+    ) -> torch.Tensor:
+        z_obj, z_hand = self.encode_points(batch)
+        obj_token = z_obj[:, obj_idx : obj_idx + 1]
+        hand_token = z_hand
+        edge_input = torch.cat(
+            [
+                obj_token.unsqueeze(2).expand(-1, -1, hand_token.shape[1], -1),
+                hand_token.unsqueeze(1),
+            ],
+            dim=-1,
         )
-
-        pred_obj_contact_logits = self.contact_head(z_obj).squeeze(-1)
-        edge_shared = self._compute_shared_edge_features(z_obj=z_obj, z_hand_neighbors=z_hand_neighbors)
-        pred_cross_contact_logits = self.cross_edge_head(edge_shared).squeeze(-1)
-
-        return {
-            "pred_obj_contact_logits": pred_obj_contact_logits,
-            "pred_obj_contact_prob": torch.sigmoid(pred_obj_contact_logits),
-            "pred_cross_contact_logits": pred_cross_contact_logits,
-            "pred_cross_contact_prob": torch.sigmoid(pred_cross_contact_logits),
-            "obj_dense_tokens": z_obj,
-            "hand_dense_tokens": z_hand,
-        }
+        edge_shared = self.edge_shared_backbone(edge_input)
+        dense_logits = self.cross_edge_head(edge_shared).squeeze(1).squeeze(-1)
+        return torch.sigmoid(dense_logits)
 
     def _build_point_features(
         self,
