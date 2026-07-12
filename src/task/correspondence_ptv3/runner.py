@@ -4,20 +4,15 @@ from typing import Any
 
 import torch
 import torch.nn.functional as F
+from hydra.utils import instantiate
 
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
-from src.task.correspondence_ptv3.composition import (
-    ResolvedCorrespondenceComponents,
-    resolve_correspondence_components,
-)
-from src.task.correspondence_ptv3.data.dataset import make_dataloaders
+from src.task.correspondence_ptv3.data import make_dataloaders
 from src.task.correspondence_ptv3.metrics import (
     batched_binary_auprc_stat,
     batched_cross_edge_rank_at_k_stat,
 )
-from src.task.correspondence_ptv3.model import build_correspondence_model
 from src.task.correspondence_ptv3.objectives import CrossEdgeRankKObjective
-from src.task.correspondence_ptv3.supervision import build_contact_supervision
 from src.task.correspondence_ptv3.supervision.common import reduce_loss_map_per_object
 from src.task.correspondence_ptv3.supervision.soft import (
     binary_entropy_floor_map,
@@ -108,23 +103,18 @@ class CorrespondencePTV3Runner(BaseRunner):
         )
 
     @property
-    def components(self) -> ResolvedCorrespondenceComponents:
-        components = getattr(self, "_resolved_components", None)
-        if components is None:
-            components = resolve_correspondence_components(
-                self.cfg,
-                explicit_override_keys=getattr(self, "explicit_override_keys", None),
-            )
-            self._resolved_components = components
-        return components
+    def edge_sampler(self):
+        sampler = getattr(self, "_edge_sampler", None)
+        if sampler is None:
+            sampler = instantiate(self.cfg.edge_sampler)
+            self._edge_sampler = sampler
+        return sampler
 
     @property
     def contact_supervision(self):
         supervision = getattr(self, "_contact_supervision", None)
         if supervision is None:
-            supervision = build_contact_supervision(
-                self.components.contact_supervision,
-            )
+            supervision = instantiate(self.cfg.contact_supervision)
             self._contact_supervision = supervision
         return supervision
 
@@ -145,10 +135,9 @@ class CorrespondencePTV3Runner(BaseRunner):
         return make_dataloaders(
             data_cfg,
             meta_cfg=self.cfg.meta,
-            components=self.components,
+            edge_sampler=self.edge_sampler,
             seed=seed,
             distributed=self.distributed,
-            explicit_override_keys=self.explicit_override_keys,
         )
 
     def configure_data(
@@ -159,45 +148,25 @@ class CorrespondencePTV3Runner(BaseRunner):
         super().configure_data(metadata, train_dataset)
         for field in (
             "num_obj_pool",
-            "num_obj_points",
             "num_hand_points",
             "k_cross",
-            "k_ctx",
-            "k_near_logit",
-            "k_far_logit",
-            "logit_pos_radius",
-            "logit_neg_min_radius",
-            "logit_near_radius",
-            "logit_far_min_radius",
             "num_fingers",
             "num_regions",
         ):
             if field not in metadata:
                 continue
             value = metadata[field]
-            if field in {
-                "logit_near_radius",
-                "logit_far_min_radius",
-                "logit_pos_radius",
-                "logit_neg_min_radius",
-            }:
-                if float(value) <= 0:
-                    continue
-                if field in {"logit_near_radius", "logit_pos_radius"}:
-                    self.cfg.meta.logit_near_radius = float(value)
-                    self.cfg.meta.logit_pos_radius = float(value)
-                else:
-                    self.cfg.meta.logit_far_min_radius = float(value)
-                    self.cfg.meta.logit_neg_min_radius = float(value)
-                continue
             if int(value) > 0:
                 setattr(self.cfg.meta, field, int(value))
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
-        return build_correspondence_model(
-            model_config=self.components.model,
-            meta_cfg=self.cfg.meta,
-            contact_supervision_config=self.components.contact_supervision,
+        del model_cfg
+        return instantiate(
+            self.cfg.model,
+            _convert_="object",
+            _recursive_=False,
+            cfg=self.cfg,
+            contact_supervision=self.contact_supervision,
         )
 
     def train_epoch(self, epoch: int) -> dict[str, float]:

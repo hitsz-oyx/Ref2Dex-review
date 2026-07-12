@@ -1,0 +1,5 @@
+_target_: src.task.correspondence_ptv3.sampling.balanced.BalancedEdgeSampler
+k_near_logit: 32
+k_far_logit: 32
+logit_near_radius: 0.025
+logit_far_min_radius: 0.025

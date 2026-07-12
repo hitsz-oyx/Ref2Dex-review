@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
 import torch.nn.functional as F
 
@@ -76,9 +74,8 @@ def masked_bce_with_logits_per_object(
     )
 
 
-@dataclass(frozen=True)
 class SoftContactSupervision:
-    name: str = "soft"
+    name = "soft"
 
     @property
     def output_dim(self) -> int:

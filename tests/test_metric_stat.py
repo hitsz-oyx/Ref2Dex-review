@@ -6,7 +6,8 @@ from unittest import mock
 
 import torch
 
-from src.base import BaseRunner, MetricAverager, MetricStat, TaskConfig, load_config
+from src.base import BaseRunner, MetricAverager, MetricStat, TaskConfig
+from src.task.correspondence_ptv3.config_loader import load_correspondence_config
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 
 
@@ -114,7 +115,7 @@ class CorrespondenceMetricTests(unittest.TestCase):
 
     def test_soft_loss_uses_excess_bce_and_bin_remains_finite(self) -> None:
         runner = object.__new__(CorrespondencePTV3Runner)
-        cfg = load_config("src/task/correspondence_ptv3/configs/bin_contact_baseline.yaml")
+        cfg = load_correspondence_config("soft_contact_baseline")
         cfg.meta.num_obj_points = 2
         cfg.meta.num_hand_points = 2
         cfg.meta.loss_obj_contact_weight = 1.0
@@ -148,8 +149,14 @@ class CorrespondenceMetricTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(edge_logits.grad).all())
 
         runner = object.__new__(CorrespondencePTV3Runner)
-        cfg.meta.contact_supervision_mode = "bin"
-        runner.cfg = cfg
+        bin_cfg = load_correspondence_config("bin_contact_legacy")
+        bin_cfg.meta.num_obj_points = 2
+        bin_cfg.meta.num_hand_points = 2
+        bin_cfg.meta.loss_obj_contact_weight = 1.0
+        bin_cfg.meta.loss_cross_edge_weight = 1.0
+        bin_cfg.meta.d_pos = 0.005
+        bin_cfg.meta.d_neg = 0.03
+        runner.cfg = bin_cfg
         bin_obj = torch.zeros(1, 2, 10, requires_grad=True)
         bin_edge = torch.zeros(1, 2, 2, 10, requires_grad=True)
         bin_preds = {
@@ -164,13 +171,14 @@ class CorrespondenceMetricTests(unittest.TestCase):
 
     def test_formal_yamls_default_to_soft(self) -> None:
         for path in (
-            "src/task/correspondence_ptv3/configs/bin_contact_baseline.yaml",
-            "src/task/correspondence_ptv3/configs/bin_contact_multigpu_gb256.yaml",
+            "bin_contact_baseline",
+            "bin_contact_multigpu_gb256",
         ):
-            cfg = load_config(path)
-            self.assertEqual(cfg.meta.contact_supervision_mode, "soft")
-            self.assertIsNone(cfg.meta.contact_bin_weights)
-            self.assertIsNone(cfg.meta.edge_contact_bin_weights)
+            cfg = load_correspondence_config(path)
+            self.assertEqual(
+                cfg.contact_supervision["_target_"],
+                "src.task.correspondence_ptv3.supervision.soft.SoftContactSupervision",
+            )
             self.assertIn("soft_contact", cfg.name)
             self.assertIn("soft-contact", cfg.wandb.tags)
 

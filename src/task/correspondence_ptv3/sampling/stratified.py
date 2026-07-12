@@ -47,8 +47,6 @@ def stratified_distance_bucket_candidates(
 class StratifiedEdgeSampler:
     distance_edges: tuple[float, ...] | list[float]
     quotas: tuple[int, ...] | list[int]
-    logit_near_radius: float
-    logit_far_min_radius: float
 
     def __post_init__(self) -> None:
         edges, quotas = validate_stratified_edge_sampler_config(
@@ -75,15 +73,12 @@ class StratifiedEdgeSampler:
         logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
         logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
         logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
-        near_count = np.zeros((num_obj,), dtype=np.int64)
-        far_count = np.zeros((num_obj,), dtype=np.int64)
         valid_obj_idx = np.flatnonzero(obj_valid)
         if valid_obj_idx.size == 0:
             return EdgeSample(
                 idx=logit_idx,
                 valid_mask=logit_valid,
                 loss_weight=logit_weight,
-                stats={"near_count": near_count, "far_count": far_count},
             )
 
         obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
@@ -133,12 +128,8 @@ class StratifiedEdgeSampler:
             logit_idx[obj_idx, :count] = chosen
             logit_valid[obj_idx, :count] = True
             logit_weight[obj_idx, :count] = 1.0
-            selected_dist = dist_row[chosen]
-            near_count[obj_idx] = int(np.count_nonzero(selected_dist <= self.logit_near_radius))
-            far_count[obj_idx] = int(np.count_nonzero(selected_dist > self.logit_far_min_radius))
         return EdgeSample(
             idx=logit_idx,
             valid_mask=logit_valid,
             loss_weight=logit_weight,
-            stats={"near_count": near_count, "far_count": far_count},
         )

@@ -36,7 +36,6 @@ class EdgeSample:
     idx: np.ndarray
     valid_mask: np.ndarray
     loss_weight: np.ndarray
-    stats: dict[str, np.ndarray]
 
 
 @dataclass(frozen=True)

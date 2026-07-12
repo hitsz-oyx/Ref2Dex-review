@@ -1,0 +1,3 @@
+_target_: src.task.correspondence_ptv3.sampling.stratified.StratifiedEdgeSampler
+distance_edges: [0.005, 0.015, 0.03, 0.06]
+quotas: [16, 32, 32, 32, 16]

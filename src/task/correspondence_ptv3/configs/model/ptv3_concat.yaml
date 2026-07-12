@@ -1,0 +1,2 @@
+_target_: src.task.correspondence_ptv3.models.ptv3_concat.PTv3ConcatModel
+_recursive_: false

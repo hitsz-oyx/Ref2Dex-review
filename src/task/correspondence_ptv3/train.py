@@ -7,21 +7,19 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from src.base import cleanup_distributed
-from src.base.cli import build_train_parser, load_train_config_from_args
+from src.base.cli import build_train_parser
 
+from .config_loader import DEFAULT_CONFIG_NAME, load_correspondence_config_from_args
 from .runner import CorrespondencePTV3Runner
-
-
-DEFAULT_CONFIG = "src.task.correspondence_ptv3.config:Config"
 
 
 def main() -> None:
     parser = build_train_parser(
         description="Train the correspondence task.",
-        default_config=DEFAULT_CONFIG,
+        default_config=DEFAULT_CONFIG_NAME,
     )
     args = parser.parse_args()
-    cfg = load_train_config_from_args(args)
+    cfg = load_correspondence_config_from_args(args)
 
     if not str(cfg.data.train_path).strip():
         raise ValueError(

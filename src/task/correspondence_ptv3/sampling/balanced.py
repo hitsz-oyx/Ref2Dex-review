@@ -28,15 +28,12 @@ class BalancedEdgeSampler:
         logit_idx = np.full((num_obj, k_logit), -1, dtype=np.int64)
         logit_valid = np.zeros((num_obj, k_logit), dtype=bool)
         logit_weight = np.zeros((num_obj, k_logit), dtype=np.float32)
-        near_count = np.zeros((num_obj,), dtype=np.int64)
-        far_count = np.zeros((num_obj,), dtype=np.int64)
         valid_obj_idx = np.flatnonzero(obj_valid)
         if valid_obj_idx.size == 0:
             return EdgeSample(
                 idx=logit_idx,
                 valid_mask=logit_valid,
                 loss_weight=logit_weight,
-                stats={"near_count": near_count, "far_count": far_count},
             )
 
         obj = torch.from_numpy(np.asarray(gt_obj_points[valid_obj_idx], dtype=np.float32))
@@ -52,7 +49,6 @@ class BalancedEdgeSampler:
                 logit_idx[obj_idx, :n_near] = chosen
                 logit_valid[obj_idx, :n_near] = True
                 logit_weight[obj_idx, :n_near] = 1.0
-                near_count[obj_idx] = int(n_near)
 
             far_candidates = np.flatnonzero(dist_row > float(self.logit_far_min_radius))
             if far_candidates.size > 0:
@@ -62,10 +58,8 @@ class BalancedEdgeSampler:
                 logit_idx[obj_idx, start:start + n_far] = chosen
                 logit_valid[obj_idx, start:start + n_far] = True
                 logit_weight[obj_idx, start:start + n_far] = 1.0
-                far_count[obj_idx] = int(n_far)
         return EdgeSample(
             idx=logit_idx,
             valid_mask=logit_valid,
             loss_weight=logit_weight,
-            stats={"near_count": near_count, "far_count": far_count},
         )

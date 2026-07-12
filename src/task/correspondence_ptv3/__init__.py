@@ -7,14 +7,12 @@ Experiment implementations live in:
 - supervision/
 - objectives/
 - models/
-
-Experiment recipes are resolved through composition.py.
 """
 
-from .config import Config
+from .config_loader import load_correspondence_config
 from .runner import CorrespondencePTV3Runner
 
 __all__ = [
-    "Config",
     "CorrespondencePTV3Runner",
+    "load_correspondence_config",
 ]

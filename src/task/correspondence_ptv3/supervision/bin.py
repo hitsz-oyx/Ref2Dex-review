@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -12,14 +11,23 @@ from src.utils.correspondence import contact_prob_to_bins, decode_contact_logits
 from .common import reduce_loss_map_per_object
 
 
-@dataclass(frozen=True)
 class BinContactSupervision:
-    num_contact_bins: int
-    decode_mode: str
-    contact_bin_weights: list[float] | None
-    edge_contact_bin_weights: list[float] | None
-    contact_bin_weight_path: str | None
-    name: str = "bin"
+    name = "bin"
+
+    def __init__(
+        self,
+        *,
+        num_contact_bins: int,
+        decode_mode: str,
+        contact_bin_weights: list[float] | None,
+        edge_contact_bin_weights: list[float] | None,
+        contact_bin_weight_path: str | None,
+    ) -> None:
+        self.num_contact_bins = int(num_contact_bins)
+        self.decode_mode = str(decode_mode)
+        self.contact_bin_weights = contact_bin_weights
+        self.edge_contact_bin_weights = edge_contact_bin_weights
+        self.contact_bin_weight_path = contact_bin_weight_path
 
     @property
     def output_dim(self) -> int:

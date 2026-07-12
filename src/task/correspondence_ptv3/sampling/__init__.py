@@ -1,7 +1,3 @@
-from __future__ import annotations
-
-from typing import Any
-
 from .balanced import BalancedEdgeSampler
 from .base import EdgeSampler
 from .dense import DenseEdgeSampler
@@ -18,18 +14,6 @@ from .utils import (
 )
 
 
-def build_edge_sampler(config: Any) -> EdgeSampler:
-    name = str(getattr(config, "name", "")).lower()
-    params = dict(getattr(config, "params", {}) or {})
-    if name == "balanced":
-        return BalancedEdgeSampler(**params)
-    if name == "stratified":
-        return StratifiedEdgeSampler(**params)
-    if name == "dense":
-        return DenseEdgeSampler(**params)
-    raise ValueError(f"Unsupported edge sampler: {name!r}.")
-
-
 __all__ = [
     "AugmentedGeometry",
     "BalancedEdgeSampler",
@@ -37,7 +21,6 @@ __all__ = [
     "EdgeSampler",
     "StratifiedEdgeSampler",
     "augment_geometry",
-    "build_edge_sampler",
     "sample_object_indices",
     "stable_frame_seed",
     "stratified_distance_bucket_candidates",

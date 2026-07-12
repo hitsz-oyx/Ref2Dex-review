@@ -117,21 +117,17 @@ from typing import Any
 
 import numpy as np
 import torch
+from hydra.utils import instantiate
 
-from src.base import build_runner_from_checkpoint
-from src.task.correspondence_ptv3.composition import (
-    EdgeSamplerConfig,
-    resolve_correspondence_components,
-)
-from src.task.correspondence_ptv3.dataset import (
-    _compute_runtime_context_neighbors,
-)
+from src.base import load_checkpoint
+from src.task.correspondence_ptv3.config_loader import load_correspondence_config
+from src.task.correspondence_ptv3.data import _compute_runtime_context_neighbors
 from src.task.correspondence_ptv3.sampling import (
     augment_geometry,
-    build_edge_sampler,
     sample_object_indices,
     stable_frame_seed,
 )
+from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 from src.utils.correspondence import (
     decode_contact_logits,
     soft_contact_label,
@@ -506,14 +502,16 @@ def _run_inference(
     )
 
 
-def _edge_sampler_signature(config: EdgeSamplerConfig) -> tuple[Any, ...]:
-    items: list[tuple[str, Any]] = []
-    for key, value in sorted(config.params.items()):
-        if isinstance(value, (list, tuple)):
-            items.append((key, tuple(value)))
-        else:
-            items.append((key, value))
-    return (config.name, tuple(items))
+def _freeze_config_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return tuple((key, _freeze_config_value(val)) for key, val in sorted(value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_config_value(item) for item in value)
+    return value
+
+
+def _edge_sampler_signature(config: dict[str, Any]) -> tuple[Any, ...]:
+    return _freeze_config_value(config)
 
 
 def _dense_cross_probabilities(
@@ -968,7 +966,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", required=True, help="Checkpoint directory or checkpoint.pt path")
     parser.add_argument("--input", required=True, help="Stage 3 .npz file")
-    parser.add_argument("--config", default=None, help="Optional config override")
+    parser.add_argument("--config", default=None, help="Optional Hydra config name or saved config path")
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        help="Optional Hydra-style override, for example edge_sampler=stratified.",
+    )
     parser.add_argument("--device", default="auto", help="Device override, for example cpu or cuda:0")
     parser.add_argument("--frame", type=int, default=0)
     parser.add_argument("--step", type=int, default=1)
@@ -977,11 +981,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-obj-points", type=int, default=None)
     parser.add_argument("--k-cross", type=int, default=None)
     parser.add_argument("--k-ctx", type=int, default=None)
-    parser.add_argument("--k-near-logit", type=int, default=None)
-    parser.add_argument("--k-far-logit", type=int, default=None)
     parser.add_argument("--ctx-radius", type=float, default=None)
-    parser.add_argument("--logit-near-radius", "--logit-pos-radius", dest="logit_near_radius", type=float, default=None)
-    parser.add_argument("--logit-far-min-radius", "--logit-neg-min-radius", dest="logit_far_min_radius", type=float, default=None)
     parser.add_argument("--marker-radius", type=float, default=0.003)
 
     _add_bool_flag(parser, "augment", default=False)
@@ -1023,46 +1023,25 @@ def main() -> None:
         data = {key: np.asarray(archive[key]) for key in archive.files}
     stats = _validate(data, input_path)
 
-    runner = build_runner_from_checkpoint(
-        checkpoint=args.checkpoint,
-        config=args.config,
+    checkpoint = load_checkpoint(args.checkpoint, map_location="cpu")
+    config_source = args.config if args.config is not None else checkpoint["config"]
+    cfg = load_correspondence_config(
+        config_source,
+        overrides=list(args.set),
+    )
+    cfg.train.device = args.device
+    runner = CorrespondencePTV3Runner(
+        cfg,
         mode="eval",
-        device=args.device,
+        checkpoint=args.checkpoint,
         build_data=False,
     )
     runner.setup_inference(args.checkpoint)
 
-    # 强制从 checkpoint 内部的 config 加载解码模式（而非外部 config.json）
-    runner.model.contact_bin_decode_mode = str(
-        getattr(runner.cfg.meta, "contact_bin_decode_mode", "expectation")
-    )
-    components = resolve_correspondence_components(
-        runner.cfg,
-        explicit_override_keys=getattr(runner, "explicit_override_keys", None),
-    )
-    edge_sampler_params = dict(components.edge_sampler.params)
-    if args.k_near_logit is not None and components.edge_sampler.name == "balanced":
-        edge_sampler_params["k_near_logit"] = int(args.k_near_logit)
-    if args.k_far_logit is not None and components.edge_sampler.name == "balanced":
-        edge_sampler_params["k_far_logit"] = int(args.k_far_logit)
-    if args.logit_near_radius is not None:
-        edge_sampler_params["logit_near_radius"] = float(args.logit_near_radius)
-    if args.logit_far_min_radius is not None:
-        edge_sampler_params["logit_far_min_radius"] = float(args.logit_far_min_radius)
-    edge_sampler_cfg = EdgeSamplerConfig(
-        name=components.edge_sampler.name,
-        params=edge_sampler_params,
-    )
-    args.edge_sampler = build_edge_sampler(edge_sampler_cfg)
-    args.edge_sampler_signature = _edge_sampler_signature(edge_sampler_cfg)
+    args.edge_sampler = instantiate(runner.cfg.edge_sampler)
+    args.edge_sampler_signature = _edge_sampler_signature(runner.cfg.edge_sampler)
+    args.edge_sampler_name = type(args.edge_sampler).__name__
     args.fix_overfit_seed = bool(getattr(runner.cfg.meta, "fix_overfit_seed", False))
-    args.logit_sampling_mode = edge_sampler_cfg.name
-    args.logit_stratified_distance_edges = tuple(
-        edge_sampler_params.get("distance_edges", ())
-    )
-    args.logit_stratified_quotas = tuple(
-        edge_sampler_params.get("quotas", ())
-    )
 
     if args.base_seed is None:
         args.base_seed = int(runner.cfg.train.seed)
@@ -1072,14 +1051,8 @@ def main() -> None:
         args.k_cross = int(runner.cfg.meta.k_cross)
     if args.k_ctx is None:
         args.k_ctx = int(getattr(runner.cfg.meta, "k_ctx", runner.cfg.meta.k_cross))
-    if args.k_near_logit is None:
-        args.k_near_logit = int(edge_sampler_params.get("k_near_logit", getattr(runner.cfg.meta, "k_near_logit", 32)))
-    if args.k_far_logit is None:
-        args.k_far_logit = int(edge_sampler_params.get("k_far_logit", getattr(runner.cfg.meta, "k_far_logit", 32)))
     if args.ctx_radius is None:
         args.ctx_radius = float(getattr(runner.cfg.meta, "ctx_radius", 0.04))
-    args.logit_near_radius = float(edge_sampler_params["logit_near_radius"])
-    args.logit_far_min_radius = float(edge_sampler_params["logit_far_min_radius"])
     if args.d_pos is None:
         args.d_pos = float(runner.cfg.meta.d_pos)
     if args.d_neg is None:
@@ -1098,15 +1071,6 @@ def main() -> None:
         )
     if int(args.k_ctx) <= 0:
         raise ValueError("--k-ctx must be positive.")
-    if (
-        args.logit_sampling_mode == "balanced"
-        and (int(args.k_near_logit) <= 0 or int(args.k_far_logit) <= 0)
-    ):
-        raise ValueError("--k-near-logit and --k-far-logit must be positive.")
-    if args.logit_sampling_mode == "stratified" and sum(args.logit_stratified_quotas) != 128:
-        raise ValueError("--logit-stratified-quotas must sum to 128.")
-    if float(args.logit_far_min_radius) < float(args.logit_near_radius):
-        raise ValueError("--logit-far-min-radius must be >= --logit-near-radius.")
     args.frame = int(np.clip(args.frame, 0, stats["frames"] - 1))
 
     runtime = _build_runtime_frame(
@@ -1127,7 +1091,7 @@ def main() -> None:
         f"  candidate[min/median/max]={stats['candidate_min']}/"
         f"{stats['candidate_median']}/{stats['candidate_max']}\n"
         f"  fix_overfit_seed={str(args.fix_overfit_seed).lower()} "
-        f"logit_sampling_mode={args.logit_sampling_mode} "
+        f"edge_sampler={args.edge_sampler_name} "
         f"num_obj_points={int(args.num_obj_points)} "
         f"num_hand_points={int(stats['hand'])}\n"
         f"  frame={args.frame} epoch={max(0, args.epoch)} "

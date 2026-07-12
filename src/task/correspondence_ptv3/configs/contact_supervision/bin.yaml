@@ -1,0 +1,16 @@
+_target_: src.task.correspondence_ptv3.supervision.bin.BinContactSupervision
+num_contact_bins: 10
+decode_mode: expectation
+contact_bin_weights:
+  - 0.04906267471446666
+  - 0.124615854284691
+  - 0.5289112177088706
+  - 1.0479041499564616
+  - 1.4865461685891466
+  - 1.6614463943665032
+  - 1.722506187101053
+  - 1.5057927629354453
+  - 1.0416008624789648
+  - 0.8316137278643991
+edge_contact_bin_weights: null
+contact_bin_weight_path: null

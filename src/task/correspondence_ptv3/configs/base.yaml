@@ -1,0 +1,142 @@
+defaults:
+  - edge_sampler: balanced
+  - contact_supervision: bin
+  - model: ptv3_concat
+  - _self_
+
+name: correspondence_ptv3
+runner_class: src.task.correspondence_ptv3.runner.CorrespondencePTV3Runner
+
+meta:
+  num_obj_points: 512
+  num_obj_pool: 4096
+  num_hand_points: 1538
+  k_cross: 32
+  k_ctx: 32
+  k_logit_hard_neg: 16
+  ctx_radius: 0.04
+  logit_pos_radius: 0.02
+  logit_neg_min_radius: 0.04
+  logit_neg_radius: 0.06
+  fix_overfit_seed: false
+  point_feat_dim: 11
+  use_cross_attn: false
+  ptv3_repo_path: /home/oyx/test_ws/Ref2Dex/third_party/PointTransformerV3
+  ptv3_grid_size: 0.003
+  ptv3_order: [z, z-trans, hilbert, hilbert-trans]
+  ptv3_stride: [2, 2, 2, 2]
+  ptv3_enc_depths: [2, 2, 2, 6, 2]
+  ptv3_enc_channels: [96, 192, 384, 384, 384]
+  ptv3_enc_num_head: [6, 12, 24, 24, 24]
+  ptv3_enc_patch_size: [1024, 1024, 1024, 1024, 1024]
+  ptv3_dec_depths: [2, 2, 2, 2]
+  ptv3_dec_channels: [96, 192, 384, 384]
+  ptv3_dec_num_head: [6, 12, 24, 24]
+  ptv3_dec_patch_size: [1024, 1024, 1024, 1024]
+  ptv3_mlp_ratio: 4.0
+  ptv3_qkv_bias: true
+  ptv3_attn_drop: 0.0
+  ptv3_proj_drop: 0.0
+  ptv3_drop_path: 0.1
+  ptv3_pre_norm: true
+  ptv3_shuffle_orders: true
+  ptv3_enable_rpe: false
+  ptv3_enable_flash: true
+  ptv3_upcast_attention: false
+  ptv3_upcast_softmax: false
+  d_pos: 0.005
+  d_neg: 0.03
+  gamma: 1.0
+  corr_contact_label_min: 0.1
+  hand_rot_std_deg: 10.0
+  hand_trans_std: 0.01
+  hand_perturb_prob: 1.0
+  augment: true
+  apply_hand_perturb: true
+  val_augment: true
+  val_hand_perturb_prob: 1.0
+  use_cano_head: false
+  use_finger_region_head: false
+  num_fingers: 6
+  num_regions: 6
+  edge_label_mode: soft
+  edge_label_pos_radius: null
+  loss_contact_weight: 1.0
+  loss_cross_edge_far_weight: 0.5
+  loss_obj_contact_weight: 1.0
+  loss_cross_edge_weight: 1.0
+  loss_cano_weight: 0.0
+  loss_cross_edge_rankk_weight: 0.0
+  loss_finger_weight: 0.0
+  loss_region_weight: 0.0
+  rankk_loss_k: 4
+  rankk_label_gap: 0.15
+  rankk_margin: 0.2
+  pr_label_threshold: 0.5
+  rotation_range: 180.0
+  translation_range: 0.1
+  scale_range: [0.9, 1.1]
+  augment_rotation: true
+  augment_translation: false
+  augment_scale: false
+
+data:
+  train_path: ""
+  val_path: ""
+  val_split: 0.1
+  batch_size: 8
+  val_batch_size: 16
+  num_workers: 0
+  shuffle: true
+  drop_last: true
+  pin_memory: true
+  persistent_workers: false
+  prefetch_factor: 2
+  blacklist_path: null
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+
+train:
+  output_dir: outputs/train/correspondence_ptv3
+  seed: 42
+  overfit_mode: false
+  device: auto
+  epochs: 100
+  max_steps: null
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: null
+  warmup_steps: 1000
+  grad_clip_norm: 1.0
+  amp: false
+  compile: false
+  log_every_steps: 50
+  eval_every_steps: null
+  eval_every_epochs: 1
+  save_every_steps: null
+  save_every_epochs: 10
+  max_to_keep: 5
+  resume: null
+  early_stopping_patience: null
+  early_stopping_threshold: 0.0
+  metric_for_best: val_clean/loss
+  lower_is_better: true
+  distributed:
+    enable: false
+    backend: auto
+    timeout_minutes: 30
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  entity: null
+  group: null
+  name: correspondence_ptv3
+  tags: [correspondence, ptv3, static]
+  mode: offline
+  job_type: train
+  log_model: false
