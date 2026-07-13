@@ -68,6 +68,29 @@ def _normals_world_to_obj(normals: np.ndarray, poses: np.ndarray) -> np.ndarray:
     return (result / np.clip(norm, 1e-8, None)).astype(np.float32)
 
 
+def _points_world_to_hand_root(points: np.ndarray, hand_root_poses: np.ndarray) -> np.ndarray:
+    """把 world 坐标变换到 hand-root frame:
+
+        x^{hand_root} = R_root^T @ (x^{world} - t_wrist)
+
+    其中:
+        hand_root_poses = T_world_from_hand_root, shape (T, 4, 4)
+        R_root  = hand_root_poses[:, :3, :3]
+        t_wrist = hand_root_poses[:, :3, 3]
+    """
+    rotation = hand_root_poses[:, :3, :3]
+    translation = hand_root_poses[:, :3, 3]
+    return np.einsum("tji,tpj->tpi", rotation, points - translation[:, None]).astype(np.float32)
+
+
+def _normals_world_to_hand_root(normals: np.ndarray, hand_root_poses: np.ndarray) -> np.ndarray:
+    """法向只做旋转：n^{hand_root} = R_root^T @ n^{world}."""
+    rotation = hand_root_poses[:, :3, :3]
+    result = np.einsum("tji,tpj->tpi", rotation, normals)
+    norm = np.linalg.norm(result, axis=-1, keepdims=True)
+    return (result / np.clip(norm, 1e-8, None)).astype(np.float32)
+
+
 def _compute_candidate_knn(
     obj_points: np.ndarray,
     hand_points: np.ndarray,
@@ -146,29 +169,78 @@ def build_stage3_sequence(
     frame_batch_size: int,
     device: torch.device,
     mirror_left_to_right: bool,
+    coordinate_frame: str = "object",
 ) -> dict[str, np.ndarray]:
+    """Build one Stage 3 sample.
+
+    ``coordinate_frame`` selects the canonical frame the model sees:
+      - ``"object"`` (default): points are transformed by ``obj_root_pose``
+        (object root at origin).
+      - ``"hand_root"``: points are transformed by ``hand_root_pose``
+        (MANO wrist at origin, orientation = MANO global_orient).
+        Requires the Stage 2 payload to contain ``hand_root_pose``; raises
+        ``KeyError`` otherwise.
+
+    Distance / KNN fields (``obj_to_hand_min_dist``, ``obj_candidate_mask_5cm``,
+    ``gt_obj_to_hand_knn_idx``) are frame-invariant and reused as-is.
+    """
+    if coordinate_frame not in {"object", "hand_root"}:
+        raise ValueError(
+            f"coordinate_frame must be 'object' or 'hand_root', got {coordinate_frame!r}"
+        )
     _validate_stage2_geometry(
         payload,
         num_obj_pool=num_obj_pool,
         num_hand_points=num_hand_points,
     )
     poses = _require_array(payload, "obj_root_pose", ndim=3, dtype=np.float32)
-    obj_points = _points_world_to_obj(
-        _require_array(payload, "obj_points_world", ndim=3, dtype=np.float32),
-        poses,
-    )
-    obj_normals = _normals_world_to_obj(
-        _require_array(payload, "obj_normals_world", ndim=3, dtype=np.float32),
-        poses,
-    )
-    hand_points = _points_world_to_obj(
-        _require_array(payload, "hand_points_world", ndim=3, dtype=np.float32),
-        poses,
-    )
-    hand_normals = _normals_world_to_obj(
-        _require_array(payload, "hand_normals_world", ndim=3, dtype=np.float32),
-        poses,
-    )
+    if coordinate_frame == "object":
+        obj_points = _points_world_to_obj(
+            _require_array(payload, "obj_points_world", ndim=3, dtype=np.float32),
+            poses,
+        )
+        obj_normals = _normals_world_to_obj(
+            _require_array(payload, "obj_normals_world", ndim=3, dtype=np.float32),
+            poses,
+        )
+        hand_points = _points_world_to_obj(
+            _require_array(payload, "hand_points_world", ndim=3, dtype=np.float32),
+            poses,
+        )
+        hand_normals = _normals_world_to_obj(
+            _require_array(payload, "hand_normals_world", ndim=3, dtype=np.float32),
+            poses,
+        )
+        frame_pose_field = "T_world_from_obj"
+        frame_pose_value = poses
+    else:  # "hand_root"
+        if "hand_root_pose" not in payload:
+            raise KeyError(
+                "Stage 2 payload missing 'hand_root_pose'; re-run Stage 2 with a "
+                "preprocessor that emits hand_root_pose (e.g. updated process/ARCTIC/raw.py "
+                "or process/GRAB/raw.py)."
+            )
+        hand_root_poses = _require_array(
+            payload, "hand_root_pose", ndim=3, dtype=np.float32
+        )
+        obj_points = _points_world_to_hand_root(
+            _require_array(payload, "obj_points_world", ndim=3, dtype=np.float32),
+            hand_root_poses,
+        )
+        obj_normals = _normals_world_to_hand_root(
+            _require_array(payload, "obj_normals_world", ndim=3, dtype=np.float32),
+            hand_root_poses,
+        )
+        hand_points = _points_world_to_hand_root(
+            _require_array(payload, "hand_points_world", ndim=3, dtype=np.float32),
+            hand_root_poses,
+        )
+        hand_normals = _normals_world_to_hand_root(
+            _require_array(payload, "hand_normals_world", ndim=3, dtype=np.float32),
+            hand_root_poses,
+        )
+        frame_pose_field = "T_world_from_hand_root"
+        frame_pose_value = hand_root_poses
     hand_cano_points = _require_array(payload, "hand_cano_points", ndim=2, dtype=np.float32).copy()
     side = str(payload["side"])
     if mirror_left_to_right and side == "left":
@@ -188,7 +260,7 @@ def build_stage3_sequence(
     )
     source_rel = source_path.resolve().relative_to(stage2_root.resolve()).as_posix()
 
-    return {
+    out: dict[str, np.ndarray] = {
         "schema_name": np.asarray(SCHEMA_NAME),
         "schema_version": np.asarray(SCHEMA_VERSION),
         "source_stage2_file": np.asarray(source_rel),
@@ -213,8 +285,10 @@ def build_stage3_sequence(
         "obj_to_hand_min_dist": min_dist,
         "obj_candidate_mask_5cm": candidate_mask,
         "gt_obj_to_hand_knn_idx": clean_knn_idx,
-        "T_world_from_obj": poses,
+        frame_pose_field: frame_pose_value,
+        "coordinate_frame": np.asarray(coordinate_frame),
     }
+    return out
 
 
 def _resolve_files(stage2_root: Path, seq_id: str | None, side: str | None) -> list[Path]:
@@ -246,7 +320,7 @@ def _write_meta(
         "source_stage2_root": str(Path(args.stage2_root).resolve()),
         "output_root": str(output_root.resolve()),
         "sample_unit": "single_sequence_single_hand",
-        "coordinate_frame": "object",
+        "coordinate_frame": str(args.coordinate_frame),
         "num_obj_pool": int(args.num_obj_pool),
         "num_obj_train": int(args.num_obj_train),
         "num_hand_points": int(args.num_hand_points),
@@ -284,6 +358,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mirror-left-to-right", action="store_true")
     parser.add_argument("--save-compressed", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--coordinate-frame",
+        choices=["object", "hand_root"],
+        default="object",
+        help=(
+            "Frame the Stage 3 points are expressed in. "
+            "'object' (default): transformed by obj_root_pose. "
+            "'hand_root': transformed by hand_root_pose (MANO wrist at origin, "
+            "orientation = MANO global_orient); requires Stage 2 payload to "
+            "contain hand_root_pose."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -318,6 +404,7 @@ def main() -> None:
                 frame_batch_size=args.frame_batch_size,
                 device=device,
                 mirror_left_to_right=args.mirror_left_to_right,
+                coordinate_frame=args.coordinate_frame,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
             if args.save_compressed:

@@ -21,6 +21,13 @@ class Config(TaskConfig):
         num_supervision_edges: int = 128
         point_feat_dim: int = 11
 
+        # Coordinate frame for points read from Stage 3 .npz:
+        #   "object"    - object-root SE(3) frame (legacy, default)
+        #   "hand_root" - MANO wrist at origin, orientation = MANO global_orient
+        # The Stage 3 .npz must be regenerated with the matching
+        # --coordinate-frame flag.
+        coordinate_frame: str = "object"
+
         ptv3_repo_path: str = str(ROOT / "third_party" / "PointTransformerV3")
         ptv3_grid_size: float = 0.003
         ptv3_order: tuple[str, ...] = ("z", "z-trans", "hilbert", "hilbert-trans")
@@ -62,7 +69,6 @@ class Config(TaskConfig):
         val_augment: bool = True
         val_hand_perturb_prob: float = 1.0
 
-        loss_obj_contact_weight: float = 1.0
         loss_cross_edge_weight: float = 1.0
 
     class model(TaskConfig.model):

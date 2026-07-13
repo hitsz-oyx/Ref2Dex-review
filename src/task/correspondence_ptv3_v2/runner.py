@@ -3,14 +3,27 @@ from __future__ import annotations
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
 from src.task.correspondence_ptv3_v2.dataset import make_dataloaders
 from src.task.correspondence_ptv3_v2.losses import (
+    binary_cross_entropy_with_logits_map,
+    binary_entropy_floor_map,
     quality_focal_loss_map,
     reduce_loss_map,
     reduce_loss_map_per_object,
+    target_strength_bin_mask,
+    zero_predictor_bce_map,
+    zero_predictor_mae_map,
+    zero_predictor_qfl_map,
+)
+
+
+_TARGET_STRENGTH_BINS: tuple[tuple[float, float, str], ...] = (
+    (0.0, 0.25, "edge_y_0_025"),
+    (0.25, 0.50, "edge_y_025_050"),
+    (0.50, 0.75, "edge_y_050_075"),
+    (0.75, 1.00, "edge_y_075_100"),
 )
 
 
@@ -61,6 +74,19 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         ):
             if field in metadata:
                 setattr(self.cfg.meta, field, metadata[field])
+        # Validate that Stage 3 .npz was generated with the requested
+        # coordinate frame. Stage 3 writes the chosen frame into its meta.json
+        # under "coordinate_frame"; the model would otherwise silently train
+        # on whatever frame the .npz contains.
+        stage3_frame = metadata.get("coordinate_frame", "object")
+        if stage3_frame != self.cfg.meta.coordinate_frame:
+            raise ValueError(
+                f"Stage 3 data was generated in coordinate_frame={stage3_frame!r} "
+                f"but cfg.meta.coordinate_frame={self.cfg.meta.coordinate_frame!r}. "
+                f"Re-run Stage 3 with --coordinate-frame {self.cfg.meta.coordinate_frame} "
+                f"on the same Stage 2 root, or pass "
+                f"--set meta.coordinate_frame={stage3_frame} to this training run."
+            )
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
@@ -94,25 +120,29 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         supervision_edge_valid_mask = batch["supervision_edge_valid_mask"].bool()
         edge_valid_mask = supervision_edge_valid_mask & obj_valid_mask.unsqueeze(-1)
 
-        obj_target = batch["contact_target"].float()
         edge_target = batch["edge_contact_target"].float()
-        obj_logits = preds["pred_obj_contact_logits"]
         edge_logits = preds["pred_cross_contact_logits"]
+        edge_prob = preds["pred_cross_contact_prob"]
         beta = float(meta.quality_focal_beta)
 
-        obj_qfl_map = quality_focal_loss_map(obj_logits, obj_target, beta=beta)
         edge_qfl_map = quality_focal_loss_map(edge_logits, edge_target, beta=beta)
-        obj_bce_map = F.binary_cross_entropy_with_logits(obj_logits.float(), obj_target, reduction="none")
-        edge_bce_map = F.binary_cross_entropy_with_logits(edge_logits.float(), edge_target, reduction="none")
-        obj_mae_map = torch.abs(preds["pred_obj_contact_prob"] - obj_target)
-        edge_mae_map = torch.abs(preds["pred_cross_contact_prob"] - edge_target)
+        edge_bce_map = binary_cross_entropy_with_logits_map(edge_logits, edge_target)
+        edge_mae_map = torch.abs(edge_prob - edge_target)
 
-        obj_contact_qfl = reduce_loss_map(obj_qfl_map, obj_valid_mask)
         cross_edge_qfl = reduce_loss_map_per_object(edge_qfl_map, edge_valid_mask, obj_valid_mask)
-        obj_contact_bce = reduce_loss_map(obj_bce_map, obj_valid_mask)
         cross_edge_bce = reduce_loss_map_per_object(edge_bce_map, edge_valid_mask, obj_valid_mask)
-        obj_contact_mae = reduce_loss_map(obj_mae_map, obj_valid_mask)
         cross_edge_mae = reduce_loss_map_per_object(edge_mae_map, edge_valid_mask, obj_valid_mask)
+
+        oracle_bce_map = binary_entropy_floor_map(edge_target)
+        cross_edge_oracle_bce = reduce_loss_map_per_object(
+            oracle_bce_map, edge_valid_mask, obj_valid_mask
+        )
+        cross_edge_oracle_bce_global = reduce_loss_map(
+            oracle_bce_map, edge_valid_mask
+        )
+        cross_edge_bce_global = reduce_loss_map(edge_bce_map, edge_valid_mask)
+        cross_edge_excess_bce = (cross_edge_bce - cross_edge_oracle_bce).detach()
+        cross_edge_excess_bce_global = (cross_edge_bce_global - cross_edge_oracle_bce_global).detach()
 
         sampled_nonzero_mask = (edge_target > 0) & edge_valid_mask
         sampled_nonzero_edge_count = sampled_nonzero_mask.sum()
@@ -121,17 +151,14 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         num_valid_obj = obj_valid_mask.sum()
         num_obj_with_nonzero = per_obj_has_nonzero.sum()
 
-        losses = {
-            "obj_contact": float(meta.loss_obj_contact_weight) * obj_contact_qfl,
-            "cross_edge_contact": float(meta.loss_cross_edge_weight) * cross_edge_qfl,
-        }
-        aux_metrics = {
-            "obj_contact_qfl": obj_contact_qfl,
+        aux_metrics: dict[str, float | MetricStat] = {
             "cross_edge_qfl": cross_edge_qfl,
-            "obj_contact_bce": obj_contact_bce,
             "cross_edge_bce": cross_edge_bce,
-            "obj_contact_mae": obj_contact_mae,
             "cross_edge_mae": cross_edge_mae,
+            "cross_edge_oracle_bce": cross_edge_oracle_bce,
+            "cross_edge_oracle_bce_global": cross_edge_oracle_bce_global,
+            "cross_edge_excess_bce": cross_edge_excess_bce,
+            "cross_edge_excess_bce_global": cross_edge_excess_bce_global,
             "num_valid_obj": num_valid_obj.float(),
             "num_valid_edges": valid_edge_count.float(),
             "sampled_nonzero_edge_count": sampled_nonzero_edge_count.float(),
@@ -144,7 +171,109 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 count=float(num_valid_obj.detach().cpu()),
             ),
         }
+
+        aux_metrics.update(self._compute_diagnostic_metrics(
+            edge_target=edge_target,
+            edge_prob=edge_prob,
+            edge_valid_mask=edge_valid_mask,
+            obj_valid_mask=obj_valid_mask,
+            beta=beta,
+        ))
+
+        losses = {
+            "cross_edge_contact": float(meta.loss_cross_edge_weight) * cross_edge_qfl,
+        }
         return losses, aux_metrics
+
+    def _compute_diagnostic_metrics(
+        self,
+        *,
+        edge_target: torch.Tensor,
+        edge_prob: torch.Tensor,
+        edge_valid_mask: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+        beta: float,
+    ) -> dict[str, float | MetricStat]:
+        """Diagnostic metrics for the 144 nonzero / 787456 total imbalance.
+
+        See ``docs/指导.md`` for the design rationale.
+        """
+        metrics: dict[str, float | MetricStat] = {}
+
+        # ---- Nonzero edges ----
+        nonzero_mask = (edge_target > 0) & edge_valid_mask
+        nonzero_count = nonzero_mask.sum()
+        if bool(nonzero_count > 0):
+            metrics["cross_edge_nonzero_mae"] = (
+                (edge_prob - edge_target).abs()[nonzero_mask].sum() / nonzero_count.float()
+            )
+            metrics["cross_edge_nonzero_bce"] = (
+                -(
+                    edge_target[nonzero_mask] * torch.log(edge_prob[nonzero_mask].clamp(min=1e-6))
+                    + (1.0 - edge_target[nonzero_mask])
+                    * torch.log((1.0 - edge_prob[nonzero_mask]).clamp(min=1e-6))
+                ).mean()
+            )
+            metrics["cross_edge_nonzero_pred_mean"] = edge_prob[nonzero_mask].mean()
+            metrics["cross_edge_nonzero_target_mean"] = edge_target[nonzero_mask].mean()
+        else:
+            zero_tensor = edge_target.sum() * 0.0
+            metrics["cross_edge_nonzero_mae"] = zero_tensor
+            metrics["cross_edge_nonzero_bce"] = zero_tensor
+            metrics["cross_edge_nonzero_pred_mean"] = zero_tensor
+            metrics["cross_edge_nonzero_target_mean"] = zero_tensor
+        metrics["cross_edge_nonzero_count"] = MetricStat(
+            total=float(nonzero_count.detach().cpu()),
+            count=float(nonzero_count.detach().cpu()),
+            expose_validity=True,
+        )
+
+        # ---- Target strength bins (count + MAE) ----
+        for lower, upper, name in _TARGET_STRENGTH_BINS:
+            bin_mask = target_strength_bin_mask(
+                edge_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
+            ) & edge_valid_mask
+            bin_count = bin_mask.sum()
+            metrics[f"{name}_count"] = MetricStat(
+                total=float(bin_count.detach().cpu()),
+                count=float(bin_count.detach().cpu()),
+                expose_validity=True,
+            )
+            if bool(bin_count > 0):
+                metrics[f"{name}_mae"] = (
+                    (edge_prob - edge_target).abs()[bin_mask].sum() / bin_count.float()
+                )
+            else:
+                metrics[f"{name}_mae"] = edge_target.sum() * 0.0
+
+        # ---- Zero edge prediction distribution ----
+        zero_edge_mask = (edge_target == 0) & edge_valid_mask
+        zero_edge_count = zero_edge_mask.sum()
+        if bool(zero_edge_count > 0):
+            zero_pred = edge_prob[zero_edge_mask]
+            metrics["cross_edge_zero_pred_mean"] = zero_pred.mean()
+            metrics["cross_edge_zero_pred_p95"] = torch.quantile(zero_pred, 0.95)
+            metrics["cross_edge_zero_pred_p99"] = torch.quantile(zero_pred, 0.99)
+        else:
+            zero_tensor = edge_target.sum() * 0.0
+            metrics["cross_edge_zero_pred_mean"] = zero_tensor
+            metrics["cross_edge_zero_pred_p95"] = zero_tensor
+            metrics["cross_edge_zero_pred_p99"] = zero_tensor
+
+        # ---- Zero predictor baseline ----
+        zero_qfl_map = zero_predictor_qfl_map(edge_target, beta=beta)
+        zero_bce_map = zero_predictor_bce_map(edge_target)
+        zero_mae_map = zero_predictor_mae_map(edge_target)
+        metrics["zero_baseline_qfl"] = reduce_loss_map_per_object(
+            zero_qfl_map, edge_valid_mask, obj_valid_mask
+        )
+        metrics["zero_baseline_bce"] = reduce_loss_map_per_object(
+            zero_bce_map, edge_valid_mask, obj_valid_mask
+        )
+        metrics["zero_baseline_mae"] = reduce_loss_map_per_object(
+            zero_mae_map, edge_valid_mask, obj_valid_mask
+        )
+        return metrics
 
     def inference(self, model: torch.nn.Module, inputs: Any) -> dict[str, torch.Tensor]:
         return model(self.prepare_batch(inputs))

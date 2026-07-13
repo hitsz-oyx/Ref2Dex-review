@@ -103,11 +103,6 @@ class StaticHOCPTv3V2(nn.Module):
         self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
         self.backbone = PTv3DenseBackbone(meta, in_channels=self.point_feat_dim)
         self.token_dim = int(self.backbone.output_dim)
-        self.contact_head = nn.Sequential(
-            nn.Linear(self.token_dim, self.token_dim // 2),
-            nn.GELU(),
-            nn.Linear(self.token_dim // 2, 1),
-        )
         self.edge_shared_backbone = nn.Sequential(
             nn.Linear(self.token_dim * 2, self.token_dim),
             nn.GELU(),
@@ -126,13 +121,10 @@ class StaticHOCPTv3V2(nn.Module):
             supervision_edge_valid_mask,
         )
 
-        pred_obj_contact_logits = self.contact_head(z_obj).squeeze(-1)
         edge_shared = self._compute_shared_edge_features(z_obj=z_obj, z_hand_neighbors=z_hand_neighbors)
         pred_cross_contact_logits = self.cross_edge_head(edge_shared).squeeze(-1)
 
         return {
-            "pred_obj_contact_logits": pred_obj_contact_logits,
-            "pred_obj_contact_prob": torch.sigmoid(pred_obj_contact_logits),
             "pred_cross_contact_logits": pred_cross_contact_logits,
             "pred_cross_contact_prob": torch.sigmoid(pred_cross_contact_logits),
         }

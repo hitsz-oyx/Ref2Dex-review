@@ -607,12 +607,21 @@ class GRABRawAdapter:
         vtemp_path = op.join(self.grab_root, vtemp_relpath)
         mano_for_seq = self._get_mano_for_vtemp(vtemp_path, is_rhand=(side == "right"))
 
-        verts_t, _ = self._mano_forward(mano_for_seq, T, hand_params_sel)
+        verts_t, joints_t = self._mano_forward(mano_for_seq, T, hand_params_sel)
 
         verts = verts_t.detach().cpu().numpy().astype(np.float32)
+        joints = joints_t.detach().cpu().numpy().astype(np.float32)  # (T, 16, 3) — joint 0 = wrist
         faces = self.right_faces if side == "right" else self.left_faces
         face_pts = verts[:, faces].mean(axis=2).astype(np.float32)
         normals = compute_face_normals_batched(verts, faces).astype(np.float32)
+
+        # 手部根节点 SE(3) pose：origin = wrist (joint 0), rotation = global_orient
+        rot_aa = torch.from_numpy(hand_params_sel["global_orient"]).float().to(self.device)
+        R_hand = axis_angle_to_rotmat(rot_aa).detach().cpu().numpy()
+        hand_root_pose = build_SE3(
+            torch.from_numpy(R_hand).float(),
+            torch.from_numpy(joints[:, 0, :]).float(),
+        ).cpu().numpy().astype(np.float32)
 
         hand_to_obj_nn_id, hand_to_obj_dist = nearest_neighbor_batch(
             face_pts,
@@ -627,6 +636,7 @@ class GRABRawAdapter:
             "normals": normals,
             "to_obj_nn_id": hand_to_obj_nn_id,
             "min_dist_to_obj": min_per_frame.astype(np.float32),
+            "root_pose": hand_root_pose,
         }
 
     def process_sequence(self, seq_path: str) -> dict:
@@ -687,6 +697,7 @@ class GRABRawAdapter:
             "right_hand_region_id": self.right_region_id,
             "right_hand_to_obj_nn_id": right_data["to_obj_nn_id"],
             "right_hand_min_dist_to_obj": right_data["min_dist_to_obj"],
+            "right_hand_root_pose": right_data["root_pose"],
             "left_hand_points_world": left_data["points"],
             "left_hand_normals_world": left_data["normals"],
             "left_hand_point_id": self.hand_point_id,
@@ -695,5 +706,6 @@ class GRABRawAdapter:
             "left_hand_region_id": self.left_region_id,
             "left_hand_to_obj_nn_id": left_data["to_obj_nn_id"],
             "left_hand_min_dist_to_obj": left_data["min_dist_to_obj"],
+            "left_hand_root_pose": left_data["root_pose"],
         }
         return output

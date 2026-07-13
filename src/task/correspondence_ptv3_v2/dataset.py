@@ -229,11 +229,6 @@ class CorrStaticDatasetV2(Dataset):
             seed=supervision_seed,
         )
 
-        contact_target = contact_target_from_distance(
-            torch.from_numpy(obj_min_dist),
-            contact_radius=self.contact_radius,
-        ).float()
-
         edge_contact_target = _compute_edge_contact_target(
             geometry.gt_obj_points,
             geometry.gt_hand_points,
@@ -261,7 +256,6 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_idx": torch.from_numpy(selected_idx).long(),
             "selected_obj_point_id": torch.from_numpy(obj_point_id).long(),
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
-            "contact_target": contact_target,
             "edge_contact_target": edge_contact_target.float(),
             "input_obj_to_hand_ctx_idx": torch.from_numpy(input_ctx_idx).long(),
             "input_obj_to_hand_ctx_valid_mask": torch.from_numpy(input_ctx_valid),

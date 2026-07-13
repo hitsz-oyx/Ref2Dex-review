@@ -210,7 +210,19 @@ class BaseRunner:
         last_metrics: dict[str, float] = {}
         final_epoch = self.start_epoch
         last_eval_epoch: int | None = None
-        for epoch in range(self.start_epoch, self.cfg.train.epochs):
+        # When ``max_steps`` is set, it is the authoritative stop condition and
+        # ``epochs`` is treated as a safety cap (or, more commonly, an iteration
+        # counter). Expand the outer loop so the inner ``global_step >=
+        # total_steps`` break is actually reachable when each epoch runs few
+        # steps (e.g. overfit mode with a single-sample loader). See
+        # ``docs/指导.md`` for the design rationale.
+        epoch_upper = self.start_epoch + int(self.cfg.train.epochs)
+        if self.cfg.train.max_steps is not None and self.train_loader is not None:
+            steps_per_epoch = max(1, len(self.train_loader))
+            steps_needed = int(self.cfg.train.max_steps)
+            min_epochs_for_max_steps = (steps_needed // steps_per_epoch) + 2
+            epoch_upper = max(epoch_upper, self.start_epoch + min_epochs_for_max_steps)
+        for epoch in range(self.start_epoch, epoch_upper):
             final_epoch = epoch + 1
             train_metrics = self.train_epoch(epoch)
             last_metrics.update(train_metrics)

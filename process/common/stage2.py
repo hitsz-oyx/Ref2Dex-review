@@ -92,8 +92,13 @@ def pack_stage2_hand(
         hand_to_obj_idx,
     )
 
+    hand_root_pose = None
+    hand_root_pose_key = f"{side}_hand_root_pose"
+    if hand_root_pose_key in source:
+        hand_root_pose = np.asarray(source[hand_root_pose_key], dtype=np.float32)
+
     kept_count = int(keep.sum())
-    return {
+    payload: dict[str, Any] = {
         "schema_name": STAGE2_SCHEMA_NAME,
         "schema_version": STAGE2_SCHEMA_VERSION,
         "source_raw_file": str(source_raw_file),
@@ -127,6 +132,9 @@ def pack_stage2_hand(
             "length_unit": "meter",
         },
     }
+    if hand_root_pose is not None:
+        payload["hand_root_pose"] = hand_root_pose[keep]
+    return payload
 
 
 def save_stage2_payload(payload: dict[str, Any], output_root: Path) -> Path:

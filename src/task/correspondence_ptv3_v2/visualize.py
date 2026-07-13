@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,12 +15,10 @@ from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
 
 
-OBJ_BLUE = np.asarray([0.12, 0.36, 0.98], dtype=np.float64)
-OBJ_WHITE = np.asarray([1.0, 1.0, 1.0], dtype=np.float64)
-OBJ_RED = np.asarray([0.98, 0.16, 0.12], dtype=np.float64)
+os.environ.setdefault("DISPLAY", "localhost:10.0")
+
+
 OBJ_GRAY = np.asarray([0.62, 0.62, 0.66], dtype=np.float64)
-HAND_GT = np.asarray([0.95, 0.58, 0.12], dtype=np.float64)
-HAND_EVAL = np.asarray([0.85, 0.16, 0.85], dtype=np.float64)
 HAND_CROSS_LOW = np.asarray([0.18, 0.18, 0.22], dtype=np.float64)
 HAND_CROSS_HIGH = np.asarray([0.98, 0.16, 0.12], dtype=np.float64)
 MARKER_COLOR = np.asarray([1.0, 0.95, 0.15], dtype=np.float64)
@@ -31,11 +30,10 @@ class ViewerState:
     epoch: int = 0
     selected_rank: int = 0
     show_gt: bool = True
-    show_cross: bool = False
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Visualize correspondence_ptv3_v2 predictions.")
+    parser = argparse.ArgumentParser(description="Visualize correspondence_ptv3_v2 cross-edge predictions.")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--device", default="auto")
@@ -92,20 +90,6 @@ def _select_valid_obj(batch: dict[str, torch.Tensor], rank: int) -> int:
     return int(valid_idx[int(rank) % int(valid_idx.numel())].item())
 
 
-def _prob_to_diverging_colors(prob: np.ndarray) -> np.ndarray:
-    prob = np.clip(prob.astype(np.float64), 0.0, 1.0)
-    colors = np.empty((prob.shape[0], 3), dtype=np.float64)
-    low_mask = prob <= 0.5
-    if np.any(low_mask):
-        alpha = (prob[low_mask] / 0.5)[:, None]
-        colors[low_mask] = OBJ_BLUE[None, :] * (1.0 - alpha) + OBJ_WHITE[None, :] * alpha
-    high_mask = ~low_mask
-    if np.any(high_mask):
-        alpha = ((prob[high_mask] - 0.5) / 0.5)[:, None]
-        colors[high_mask] = OBJ_WHITE[None, :] * (1.0 - alpha) + OBJ_RED[None, :] * alpha
-    return colors
-
-
 def _prob_to_cross_colors(prob: np.ndarray) -> np.ndarray:
     alpha = np.clip(prob.astype(np.float64), 0.0, 1.0)[:, None]
     return HAND_CROSS_LOW[None, :] * (1.0 - alpha) + HAND_CROSS_HIGH[None, :] * alpha
@@ -157,9 +141,7 @@ class InteractiveViewer:
         self.state = state
         self.marker_radius = float(marker_radius)
         self.current_batch: dict[str, torch.Tensor] | None = None
-        self.current_pred: dict[str, torch.Tensor] | None = None
         self.selected_obj_idx = 0
-        self.initial_camera = None
         self.vis = None
         self.obj_pcd = None
         self.hand_pcd = None
@@ -167,41 +149,28 @@ class InteractiveViewer:
 
     def refresh_cache(self) -> None:
         self.current_batch = _sample(self.dataset, self.state.frame_idx, self.state.epoch)
-        self.current_pred = _predict_batch(self.runner, self.current_batch)
         self.selected_obj_idx = _select_valid_obj(self.current_batch, self.state.selected_rank)
 
     def _build_scene_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        assert self.current_batch is not None and self.current_pred is not None
+        assert self.current_batch is not None
         batch = self.current_batch
-        pred = self.current_pred
         num_obj = int(batch["num_obj_points"])
         num_hand = int(batch["num_hand_points"])
         gt_points = batch["gt_points"].numpy()
         noisy_points = batch["points"].numpy()
         obj_valid = batch["runtime_obj_valid_mask"].numpy().astype(bool)
 
-        if self.state.show_cross:
-            obj_points = gt_points[:num_obj]
-            obj_colors = np.broadcast_to(OBJ_GRAY[None, :], (num_obj, 3)).copy()
-            if self.state.show_gt:
-                hand_points = gt_points[num_obj : num_obj + num_hand]
-                hand_prob = _gt_cross_prob(batch, self.selected_obj_idx, float(self.runner.cfg.meta.contact_radius)).numpy()
-            else:
-                hand_points = noisy_points[num_obj : num_obj + num_hand]
-                hand_prob = _dense_cross_prob(self.runner, batch, self.selected_obj_idx).numpy()
-            hand_colors = _prob_to_cross_colors(hand_prob)
+        obj_points = gt_points[:num_obj]
+        obj_colors = np.broadcast_to(OBJ_GRAY[None, :], (num_obj, 3)).copy()
+        if self.state.show_gt:
+            hand_points = gt_points[num_obj : num_obj + num_hand]
+            hand_prob = _gt_cross_prob(
+                batch, self.selected_obj_idx, float(self.runner.cfg.meta.contact_radius)
+            ).numpy()
         else:
-            if self.state.show_gt:
-                obj_points = gt_points[:num_obj]
-                obj_prob = batch["contact_target"].numpy()
-                hand_points = gt_points[num_obj : num_obj + num_hand]
-                hand_colors = np.broadcast_to(HAND_GT[None, :], (num_hand, 3)).copy()
-            else:
-                obj_points = noisy_points[:num_obj]
-                obj_prob = pred["pred_obj_contact_prob"].squeeze(0).numpy()
-                hand_points = noisy_points[num_obj : num_obj + num_hand]
-                hand_colors = np.broadcast_to(HAND_EVAL[None, :], (num_hand, 3)).copy()
-            obj_colors = _prob_to_diverging_colors(obj_prob)
+            hand_points = noisy_points[num_obj : num_obj + num_hand]
+            hand_prob = _dense_cross_prob(self.runner, batch, self.selected_obj_idx).numpy()
+        hand_colors = _prob_to_cross_colors(hand_prob)
 
         obj_points = obj_points.copy()
         obj_points[~obj_valid] = 0.0
@@ -210,7 +179,7 @@ class InteractiveViewer:
         marker_center = obj_points[self.selected_obj_idx]
         return obj_points, obj_colors, hand_points, hand_colors, marker_center
 
-    def _update_geometry(self) -> None:
+    def _update_geometry(self, *, reset_view: bool = False) -> None:
         import open3d as o3d
 
         obj_points, obj_colors, hand_points, hand_colors, marker_center = self._build_scene_arrays()
@@ -229,21 +198,22 @@ class InteractiveViewer:
         self.vis.update_geometry(self.obj_pcd)
         self.vis.update_geometry(self.hand_pcd)
         self.vis.update_geometry(self.marker)
+        if reset_view:
+            self.vis.reset_view_point(True)
         self.vis.poll_events()
         self.vis.update_renderer()
         self._print_status()
 
     def _print_status(self) -> None:
         mode = "GT" if self.state.show_gt else "Eval"
-        view = "cross" if self.state.show_cross else "heatmap"
         print(
             f"frame={self.state.frame_idx} epoch={self.state.epoch} mode={mode} "
-            f"view={view} selected_obj={self.selected_obj_idx}"
+            f"selected_obj={self.selected_obj_idx}"
         )
 
-    def _refresh_scene(self) -> bool:
+    def _refresh_scene(self, *, reset_view: bool = False) -> bool:
         self.refresh_cache()
-        self._update_geometry()
+        self._update_geometry(reset_view=reset_view)
         return False
 
     def _change_frame(self, delta: int):
@@ -271,30 +241,33 @@ class InteractiveViewer:
         self.state.show_gt = not self.state.show_gt
         return self._refresh_scene()
 
-    def _toggle_view(self, _vis):
-        self.state.show_cross = not self.state.show_cross
-        return self._refresh_scene()
-
     def _reset_camera(self, _vis):
-        if self.initial_camera is not None:
-            _vis.get_view_control().convert_from_pinhole_camera_parameters(self.initial_camera, allow_arbitrary=True)
-        return False
+        return self._refresh_scene(reset_view=True)
 
     def run(self) -> None:
         import open3d as o3d
 
         self.refresh_cache()
         vis = o3d.visualization.VisualizerWithKeyCallback()
-        vis.create_window(window_name="correspondence_ptv3_v2")
+        if not vis.create_window(window_name="correspondence_ptv3_v2", width=1280, height=900):
+            raise RuntimeError(
+                "Open3D window creation failed. Check DISPLAY and OpenGL availability; "
+                f"DISPLAY={__import__('os').environ.get('DISPLAY')!r}."
+            )
         self.vis = vis
+        render_option = vis.get_render_option()
+        if render_option is None:
+            raise RuntimeError("Open3D render option is unavailable after window creation.")
+        render_option.point_size = 4.0
+        render_option.line_width = 1.0
+        render_option.background_color = np.asarray([0.035, 0.035, 0.045])
         self.obj_pcd = o3d.geometry.PointCloud()
         self.hand_pcd = o3d.geometry.PointCloud()
         self.marker = o3d.geometry.TriangleMesh()
         vis.add_geometry(self.obj_pcd)
         vis.add_geometry(self.hand_pcd)
         vis.add_geometry(self.marker)
-        self._update_geometry()
-        self.initial_camera = vis.get_view_control().convert_to_pinhole_camera_parameters()
+        self._update_geometry(reset_view=True)
 
         keymap = {
             ord("A"): self._change_frame(-1),
@@ -304,7 +277,6 @@ class InteractiveViewer:
             ord("["): self._change_epoch(-1),
             ord("]"): self._change_epoch(+1),
             ord("G"): self._toggle_gt_eval,
-            ord("C"): self._toggle_view,
             ord(","): self._change_selected(-1),
             ord("."): self._change_selected(+1),
             ord("R"): self._reset_camera,
@@ -312,7 +284,7 @@ class InteractiveViewer:
         for key, callback in keymap.items():
             vis.register_key_callback(key, callback)
 
-        print("A/D or arrows: frame, [/]: epoch, G: GT/Eval, C: heatmap/cross, ,/.: object, R: reset")
+        print("A/D or arrows: frame, [/]: epoch, G: GT/Eval, ,/.: object, R: reset")
         self._print_status()
         vis.run()
         vis.destroy_window()
@@ -326,14 +298,12 @@ def main() -> None:
         device=args.device,
         build_data=False,
     )
+    runner.setup_inference(args.checkpoint)
     _ensure_v2_runner(runner)
     dataset = _load_sequence(Path(args.input), runner)
     state = ViewerState(frame_idx=args.frame, epoch=args.epoch)
     sample = _sample(dataset, state.frame_idx, state.epoch)
     selected_obj = _select_valid_obj(sample, state.selected_rank)
-    gt_obj_heat = sample["contact_target"].cpu()
-    pred = _predict_batch(runner, sample)
-    eval_obj_heat = pred["pred_obj_contact_prob"].squeeze(0).cpu()
     gt_cross = _gt_cross_prob(sample, selected_obj, float(runner.cfg.meta.contact_radius))
     eval_cross = _dense_cross_prob(runner, sample, selected_obj)
     if args.check_only:
@@ -342,8 +312,6 @@ def main() -> None:
                 "frame": state.frame_idx,
                 "epoch": state.epoch,
                 "selected_obj": selected_obj,
-                "gt_obj_heat_shape": tuple(gt_obj_heat.shape),
-                "eval_obj_heat_shape": tuple(eval_obj_heat.shape),
                 "gt_cross_shape": tuple(gt_cross.shape),
                 "eval_cross_shape": tuple(eval_cross.shape),
             }

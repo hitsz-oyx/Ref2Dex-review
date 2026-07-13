@@ -10,7 +10,6 @@ meta:
   num_supervision_edges: 128
   contact_radius: 0.01
   quality_focal_beta: 2.0
-  loss_obj_contact_weight: 1.0
   loss_cross_edge_weight: 1.0
   val_augment: true
   val_hand_perturb_prob: 1.0

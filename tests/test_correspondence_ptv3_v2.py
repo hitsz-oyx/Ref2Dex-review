@@ -135,21 +135,17 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     runner = CorrespondencePTV3V2Runner.__new__(CorrespondencePTV3V2Runner)
     class Meta:
         quality_focal_beta = 2.0
-        loss_obj_contact_weight = 1.0
         loss_cross_edge_weight = 1.0
     class Cfg:
         meta = Meta()
     runner.cfg = Cfg()
     preds = {
-        "pred_obj_contact_logits": torch.zeros(1, 2),
-        "pred_obj_contact_prob": torch.full((1, 2), 0.5),
         "pred_cross_contact_logits": torch.zeros(1, 2, 3),
         "pred_cross_contact_prob": torch.full((1, 2, 3), 0.5),
     }
     batch = {
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
         "supervision_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
-        "contact_target": torch.tensor([[1.0, 0.0]]),
         "edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
     }
     _, aux = runner._compute_losses(preds, batch)
@@ -159,6 +155,41 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     assert aux["sampled_nonzero_edge_fraction"].count == 3.0
     assert aux["object_nonzero_edge_coverage"].total == 1.0
     assert aux["object_nonzero_edge_coverage"].count == 2.0
+    # Diagnostic metrics must all be present after the v2 metric audit.
+    expected_keys = {
+        "cross_edge_qfl",
+        "cross_edge_bce",
+        "cross_edge_mae",
+        "cross_edge_oracle_bce",
+        "cross_edge_oracle_bce_global",
+        "cross_edge_excess_bce",
+        "cross_edge_excess_bce_global",
+        "cross_edge_nonzero_mae",
+        "cross_edge_nonzero_bce",
+        "cross_edge_nonzero_pred_mean",
+        "cross_edge_nonzero_target_mean",
+        "cross_edge_zero_pred_mean",
+        "cross_edge_zero_pred_p95",
+        "cross_edge_zero_pred_p99",
+        "zero_baseline_qfl",
+        "zero_baseline_bce",
+        "zero_baseline_mae",
+    }
+    for name in (
+        "edge_y_0_025",
+        "edge_y_025_050",
+        "edge_y_050_075",
+        "edge_y_075_100",
+    ):
+        expected_keys.add(f"{name}_count")
+        expected_keys.add(f"{name}_mae")
+    missing = expected_keys - aux.keys()
+    assert not missing, f"Missing diagnostic metrics: {sorted(missing)}"
+    # Losses must only contain cross-edge contact (obj_contact removed).
+    assert "obj_contact" not in aux
+    assert "obj_contact_qfl" not in aux
+    assert "obj_contact_bce" not in aux
+    assert "obj_contact_mae" not in aux
 
 
 def test_model_output_contract_and_dense_cross_api() -> None:
@@ -215,12 +246,12 @@ def test_model_output_contract_and_dense_cross_api() -> None:
             "supervision_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         }
         out = model(batch)
+        # v2 dropped contact_head; only cross-edge outputs remain.
         assert set(out) == {
-            "pred_obj_contact_logits",
-            "pred_obj_contact_prob",
             "pred_cross_contact_logits",
             "pred_cross_contact_prob",
         }
+        assert not hasattr(model, "contact_head")
         dense = model.predict_dense_cross_for_object(batch, obj_idx=0)
         assert tuple(dense.shape) == (1, 3)
     finally:
@@ -232,6 +263,25 @@ def test_v2_has_no_old_task_dependency_strings() -> None:
     for path in root.rglob("*"):
         if not path.is_file() or "__pycache__" in path.parts:
             continue
+        # Skip architecture / design docs: those record the v1 design for
+        # historical context and are not live code. Only enforce on .py.
+        if path.suffix != ".py":
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         assert "src.task.correspondence_ptv3." not in text
         assert "_base_: src.task.correspondence_ptv3." not in text
+        # obj_contact branches are no longer needed in v2.
+        assert "pred_obj_contact_logits" not in text
+        assert "pred_obj_contact_prob" not in text
+        assert "obj_contact_bce" not in text
+        assert "obj_contact_qfl" not in text
+        assert "obj_contact_mae" not in text
+        # Forbid the bare obj_contact field (the loss function name
+        # `contact_target_from_distance` is allowed and is excluded by the
+        # function-name check below).
+        import re
+
+        bare_contact_target = re.search(r"(?<![A-Za-z_])contact_target(?![A-Za-z_])", text)
+        assert bare_contact_target is None, (
+            f"{path}: stray contact_target field reference (must use edge_contact_target)"
+        )

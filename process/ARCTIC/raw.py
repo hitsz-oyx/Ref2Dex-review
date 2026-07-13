@@ -705,7 +705,9 @@ class ArcticRawAdapter:
         # ----- MANO Forward（分批避免 OOM）-----
         batch_size = min(T, self.mano_batch_size)
         all_right_verts = []
+        all_right_joints = []
         all_left_verts = []
+        all_left_joints = []
 
         for i in range(0, T, batch_size):
             end = min(i + batch_size, T)
@@ -720,6 +722,8 @@ class ArcticRawAdapter:
                 transl=trans_r[i:end],
             )
             all_right_verts.append(out_r.vertices.detach().cpu().numpy())
+            # joints: (b, 16, 3) — joint 0 = wrist (world space, post forward)
+            all_right_joints.append(out_r.joints.detach().cpu().numpy())
 
             # 左手同理
             shape_l_batch = shape_l.expand(b, -1) if shape_l.ndim == 1 else shape_l[i:end]
@@ -730,10 +734,13 @@ class ArcticRawAdapter:
                 transl=trans_l[i:end],
             )
             all_left_verts.append(out_l.vertices.detach().cpu().numpy())
+            all_left_joints.append(out_l.joints.detach().cpu().numpy())
 
-        # 拼成 (T, 778, 3)
+        # 拼成 (T, 778, 3) / (T, 16, 3)
         right_verts = np.concatenate(all_right_verts, axis=0)     # (T, 778, 3)
+        right_joints = np.concatenate(all_right_joints, axis=0)  # (T, 16, 3)
         left_verts = np.concatenate(all_left_verts, axis=0)       # (T, 778, 3)
+        left_joints = np.concatenate(all_left_joints, axis=0)     # (T, 16, 3)
 
         # ----- MANO 顶点 → face-center 采样（1538 点）-----
         # 每个 face 三个顶点取均值，得到一个"中心点"
@@ -775,6 +782,21 @@ class ArcticRawAdapter:
             torch.from_numpy(obj_trans_m).float().to(R_o.device),
         ).detach().cpu().numpy()
 
+        # ----- 手部根节点 SE(3) pose -----
+        #   origin  = MANO joint 0 (wrist) 的 world 坐标
+        #   rotation = MANO global_orient 的 axis-angle → 旋转矩阵
+        #   T_world_from_hand_root = [R_root, wrist; 0 1]
+        R_hand_r = axis_angle_to_rotmat(rot_r).detach().cpu()
+        right_hand_root_pose = build_SE3(
+            R_hand_r,
+            right_joints[:, 0, :],  # (T, 3) wrist position in world
+        ).numpy().astype(np.float32)
+        R_hand_l = axis_angle_to_rotmat(rot_l).detach().cpu()
+        left_hand_root_pose = build_SE3(
+            R_hand_l,
+            left_joints[:, 0, :],
+        ).numpy().astype(np.float32)
+
         # Stage 2 only needs hand -> object NN for frame filtering and
         # the sampled-normal penetration diagnostic.
         right_hand_to_obj_nn_id, right_hand_to_obj_dist = nearest_neighbor_batch(
@@ -815,6 +837,7 @@ class ArcticRawAdapter:
             "right_hand_region_id": self.right_region_id,
             "right_hand_to_obj_nn_id": right_hand_to_obj_nn_id,
             "right_hand_min_dist_to_obj": right_min_dist,
+            "right_hand_root_pose": right_hand_root_pose,
             "left_hand_points_world": left_face_pts.astype(np.float32),
             "left_hand_normals_world": left_normals.astype(np.float32),
             "left_hand_point_id": self.left_hand_point_id,
@@ -823,6 +846,6 @@ class ArcticRawAdapter:
             "left_hand_region_id": self.left_region_id,
             "left_hand_to_obj_nn_id": left_hand_to_obj_nn_id,
             "left_hand_min_dist_to_obj": left_min_dist,
+            "left_hand_root_pose": left_hand_root_pose,
         }
-
         return output
