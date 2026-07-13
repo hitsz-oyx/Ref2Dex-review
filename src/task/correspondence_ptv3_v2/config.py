@@ -16,17 +16,15 @@ class Config(TaskConfig):
         num_obj_points: int = 512
         num_obj_pool: int = 4096
         num_hand_points: int = 1538
-        k_ctx: int = 32
-        ctx_radius: float = 0.04
         num_supervision_edges: int = 128
         point_feat_dim: int = 11
 
         # Coordinate frame for points read from Stage 3 .npz:
-        #   "object"    - object-root SE(3) frame (legacy, default)
+        #   "object"    - object-root SE(3) frame (legacy)
         #   "hand_root" - MANO wrist at origin, orientation = MANO global_orient
         # The Stage 3 .npz must be regenerated with the matching
         # --coordinate-frame flag.
-        coordinate_frame: str = "object"
+        coordinate_frame: str = "hand_root"
 
         ptv3_repo_path: str = str(ROOT / "third_party" / "PointTransformerV3")
         ptv3_grid_size: float = 0.003
@@ -55,11 +53,15 @@ class Config(TaskConfig):
         contact_radius: float = 0.01
         quality_focal_beta: float = 2.0
 
-        hand_rot_std_deg: float = 10.0
-        hand_trans_std: float = 0.01
-        hand_perturb_prob: float = 1.0
+        # Object pose perturbation (applied to the 512 sampled obj points
+        # with one shared SE(3); see augment_geometry in sampling.py).
+        # Renamed from hand_* — in hand-root frame the natural thing to
+        # perturb is the *object* pose, not the hand geometry.
+        obj_rot_std_deg: float = 10.0
+        obj_trans_std: float = 0.01
+        obj_perturb_prob: float = 1.0
         augment: bool = True
-        apply_hand_perturb: bool = True
+        apply_obj_perturb: bool = True
         augment_rotation: bool = True
         augment_translation: bool = False
         augment_scale: bool = False
@@ -67,9 +69,10 @@ class Config(TaskConfig):
         translation_range: float = 0.1
         scale_range: tuple[float, float] = (0.9, 1.1)
         val_augment: bool = True
-        val_hand_perturb_prob: float = 1.0
+        val_obj_perturb_prob: float = 1.0
 
         loss_cross_edge_weight: float = 1.0
+        loss_hand_contact_weight: float = 1.0
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

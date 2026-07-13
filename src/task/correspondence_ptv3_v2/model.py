@@ -110,6 +110,13 @@ class StaticHOCPTv3V2(nn.Module):
             nn.GELU(),
         )
         self.cross_edge_head = nn.Linear(self.token_dim // 2, 1)
+        # Hand contact head: per-hand-point soft contact quality, supervised by
+        # the frame-invariant min distance to the full 4096 object pool.
+        self.hand_contact_head = nn.Sequential(
+            nn.Linear(self.token_dim, self.token_dim // 2),
+            nn.GELU(),
+            nn.Linear(self.token_dim // 2, 1),
+        )
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
@@ -124,9 +131,13 @@ class StaticHOCPTv3V2(nn.Module):
         edge_shared = self._compute_shared_edge_features(z_obj=z_obj, z_hand_neighbors=z_hand_neighbors)
         pred_cross_contact_logits = self.cross_edge_head(edge_shared).squeeze(-1)
 
+        pred_hand_contact_logits = self.hand_contact_head(z_hand).squeeze(-1)
+
         return {
             "pred_cross_contact_logits": pred_cross_contact_logits,
             "pred_cross_contact_prob": torch.sigmoid(pred_cross_contact_logits),
+            "pred_hand_contact_logits": pred_hand_contact_logits,
+            "pred_hand_contact_prob": torch.sigmoid(pred_hand_contact_logits),
         }
 
     def encode_points(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:

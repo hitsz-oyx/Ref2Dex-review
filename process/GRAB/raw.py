@@ -586,6 +586,8 @@ class GRABRawAdapter:
             "normals": np.zeros((T, self.num_hand_points, 3), dtype=np.float32),
             "to_obj_nn_id": np.full((T, self.num_hand_points), -1, dtype=np.int32),
             "min_dist_to_obj": np.full((T,), np.inf, dtype=np.float32),
+            # Intentionally NO "root_pose": absent-hand path must not emit one,
+            # and stage2 pack_stage2_hand treats hand_root_pose as optional.
         }
 
     def _process_one_hand(self, side: str, seq_data: "GRABSeqData",
@@ -697,7 +699,6 @@ class GRABRawAdapter:
             "right_hand_region_id": self.right_region_id,
             "right_hand_to_obj_nn_id": right_data["to_obj_nn_id"],
             "right_hand_min_dist_to_obj": right_data["min_dist_to_obj"],
-            "right_hand_root_pose": right_data["root_pose"],
             "left_hand_points_world": left_data["points"],
             "left_hand_normals_world": left_data["normals"],
             "left_hand_point_id": self.hand_point_id,
@@ -706,6 +707,9 @@ class GRABRawAdapter:
             "left_hand_region_id": self.left_region_id,
             "left_hand_to_obj_nn_id": left_data["to_obj_nn_id"],
             "left_hand_min_dist_to_obj": left_data["min_dist_to_obj"],
-            "left_hand_root_pose": left_data["root_pose"],
         }
+        if "root_pose" in right_data:
+            output["right_hand_root_pose"] = right_data["root_pose"]
+        if "root_pose" in left_data:
+            output["left_hand_root_pose"] = left_data["root_pose"]
         return output

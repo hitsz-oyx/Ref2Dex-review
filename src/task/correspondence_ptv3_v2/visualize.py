@@ -67,14 +67,13 @@ def _load_sequence(path: Path, runner: CorrespondencePTV3V2Runner) -> CorrStatic
         path,
         num_obj_points=int(meta.num_obj_points),
         num_hand_points=int(meta.num_hand_points),
-        k_ctx=int(meta.k_ctx),
-        ctx_radius=float(meta.ctx_radius),
         num_supervision_edges=int(meta.num_supervision_edges),
         contact_radius=float(meta.contact_radius),
         base_seed=int(runner.cfg.train.seed),
         augment=False,
-        apply_hand_perturb=False,
+        apply_obj_perturb=False,
         eval_sampling_epoch=None,
+        coordinate_frame=str(getattr(meta, "coordinate_frame", "hand_root")),
     )
 
 

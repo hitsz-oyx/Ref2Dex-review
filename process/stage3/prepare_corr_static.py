@@ -99,7 +99,12 @@ def _compute_candidate_knn(
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compute KNN, candidate mask and per-side min distance for one batch.
+
+    Distances are frame-invariant (R^3 rigid SE(3) preserves distances), so the
+    hand-side min distance is identical under object and hand_root frames.
+    """
     num_frames, num_obj, _ = obj_points.shape
     num_hand = hand_points.shape[1]
     if k_cross <= 0 or k_cross > num_hand:
@@ -108,24 +113,30 @@ def _compute_candidate_knn(
     min_dist = np.empty((num_frames, num_obj), dtype=np.float32)
     candidate_mask = np.empty((num_frames, num_obj), dtype=bool)
     knn_idx = np.full((num_frames, num_obj, k_cross), -1, dtype=np.int16)
+    # hand -> obj min distance, computed over the full obj pool so that it
+    # does not depend on the 512 obj-point sampling done inside the dataset.
+    hand_to_obj_min_dist = np.empty((num_frames, num_hand), dtype=np.float32)
 
     batch_size = max(1, int(frame_batch_size))
     for start in range(0, num_frames, batch_size):
         end = min(start + batch_size, num_frames)
         obj = torch.from_numpy(obj_points[start:end]).to(device=device, dtype=torch.float32)
         hand = torch.from_numpy(hand_points[start:end]).to(device=device, dtype=torch.float32)
-        dist = torch.cdist(obj, hand)
+        dist = torch.cdist(obj, hand)  # (b, N_obj, N_hand)
+        # obj -> hand
         knn_dist, idx = torch.topk(dist, k=k_cross, dim=-1, largest=False, sorted=True)
         batch_min = knn_dist[..., 0]
         batch_candidate = batch_min <= float(candidate_threshold)
         idx = torch.where(batch_candidate.unsqueeze(-1), idx, torch.full_like(idx, -1))
-
+        # hand -> obj (full obj pool, frame-invariant)
+        hand_min = dist.min(dim=1).values
         min_dist[start:end] = batch_min.cpu().numpy().astype(np.float32)
         candidate_mask[start:end] = batch_candidate.cpu().numpy()
         knn_idx[start:end] = idx.cpu().numpy().astype(np.int16)
-        del dist, knn_dist, idx, obj, hand
+        hand_to_obj_min_dist[start:end] = hand_min.cpu().numpy().astype(np.float32)
+        del dist, knn_dist, idx, obj, hand, hand_min
 
-    return min_dist, candidate_mask, knn_idx
+    return min_dist, candidate_mask, knn_idx, hand_to_obj_min_dist
 
 
 def _validate_stage2_geometry(
@@ -250,7 +261,7 @@ def build_stage3_sequence(
         hand_normals[..., 0] *= -1
         hand_cano_points[..., 0] *= -1
 
-    min_dist, candidate_mask, clean_knn_idx = _compute_candidate_knn(
+    min_dist, candidate_mask, clean_knn_idx, hand_to_obj_min = _compute_candidate_knn(
         obj_points,
         hand_points,
         k_cross=k_cross,
@@ -283,6 +294,7 @@ def build_stage3_sequence(
         "hand_finger_id": _require_array(payload, "hand_finger_id", ndim=1, dtype=np.int32),
         "hand_region_id": _require_array(payload, "hand_region_id", ndim=1, dtype=np.int32),
         "obj_to_hand_min_dist": min_dist,
+        "hand_to_obj_min_dist": hand_to_obj_min,
         "obj_candidate_mask_5cm": candidate_mask,
         "gt_obj_to_hand_knn_idx": clean_knn_idx,
         frame_pose_field: frame_pose_value,
@@ -361,13 +373,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--coordinate-frame",
         choices=["object", "hand_root"],
-        default="object",
+        default="hand_root",
         help=(
             "Frame the Stage 3 points are expressed in. "
-            "'object' (default): transformed by obj_root_pose. "
-            "'hand_root': transformed by hand_root_pose (MANO wrist at origin, "
-            "orientation = MANO global_orient); requires Stage 2 payload to "
-            "contain hand_root_pose."
+            "'hand_root' (default): transformed by hand_root_pose (MANO wrist "
+            "at origin, orientation = MANO global_orient); requires Stage 2 "
+            "payload to contain hand_root_pose. 'object': transformed by "
+            "obj_root_pose (legacy)."
         ),
     )
     return parser.parse_args()

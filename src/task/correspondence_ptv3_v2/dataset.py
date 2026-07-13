@@ -30,6 +30,7 @@ class CorrStaticDatasetV2(Dataset):
         "hand_normals",
         "obj_to_hand_min_dist",
         "obj_candidate_mask_5cm",
+        "hand_to_obj_min_dist",
     }
 
     def __init__(
@@ -39,24 +40,23 @@ class CorrStaticDatasetV2(Dataset):
         file_list: list[str | Path] | None = None,
         num_obj_points: int = 512,
         num_hand_points: int = 1538,
-        k_ctx: int = 32,
-        ctx_radius: float = 0.04,
         num_supervision_edges: int = 128,
         contact_radius: float = 0.01,
         base_seed: int = 42,
         augment: bool = True,
-        apply_hand_perturb: bool = True,
+        apply_obj_perturb: bool = True,
         augment_rotation: bool = True,
         augment_translation: bool = False,
         augment_scale: bool = False,
         rotation_range: float = 180.0,
         translation_range: float = 0.1,
         scale_range: tuple[float, float] = (0.9, 1.1),
-        hand_rot_std_deg: float = 10.0,
-        hand_trans_std: float = 0.01,
-        hand_perturb_prob: float = 1.0,
+        obj_rot_std_deg: float = 10.0,
+        obj_trans_std: float = 0.01,
+        obj_perturb_prob: float = 1.0,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
+        coordinate_frame: str | None = None,
         **_: Any,
     ) -> None:
         super().__init__()
@@ -64,31 +64,25 @@ class CorrStaticDatasetV2(Dataset):
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
-        self.k_ctx = int(k_ctx)
-        self.ctx_radius = float(ctx_radius)
         self.num_supervision_edges = int(num_supervision_edges)
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
         self.augment = bool(augment)
-        self.apply_hand_perturb = bool(apply_hand_perturb)
+        self.apply_obj_perturb = bool(apply_obj_perturb)
         self.augment_rotation = bool(augment_rotation)
         self.augment_translation = bool(augment_translation)
         self.augment_scale = bool(augment_scale)
         self.rotation_range = float(rotation_range)
         self.translation_range = float(translation_range)
         self.scale_range = (float(scale_range[0]), float(scale_range[1]))
-        self.hand_rot_std_deg = float(hand_rot_std_deg)
-        self.hand_trans_std = float(hand_trans_std)
-        self.hand_perturb_prob = float(hand_perturb_prob)
+        self.obj_rot_std_deg = float(obj_rot_std_deg)
+        self.obj_trans_std = float(obj_trans_std)
+        self.obj_perturb_prob = float(obj_perturb_prob)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
 
-        if self.k_ctx <= 0:
-            raise ValueError("k_ctx must be positive.")
-        if self.ctx_radius <= 0.0:
-            raise ValueError("ctx_radius must be positive.")
         if self.num_supervision_edges <= 0:
             raise ValueError("num_supervision_edges must be positive.")
         if self.contact_radius <= 0.0:
@@ -104,13 +98,40 @@ class CorrStaticDatasetV2(Dataset):
         if not self.file_paths:
             raise ValueError(f"No Stage 3 npz files found in {self.data_path}")
 
-        self._samples: list[tuple[Path, int]] = []
-        self.file_sample_ranges: list[tuple[int, int]] = []
+        # Per-NPZ coordinate_frame is the source of truth (not the root
+        # meta.json, which is only written once at generation time). If the
+        # caller specified an expected frame, every file must agree with it.
+        per_file_frames: set[str] = set()
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
+                if "coordinate_frame" not in data.files:
+                    raise KeyError(
+                        f"{path}: missing Stage 3 field 'coordinate_frame'. "
+                        f"Re-run Stage 3 with the current prepare_corr_static.py."
+                    )
+                per_file_frames.add(str(np.asarray(data["coordinate_frame"]).item()))
+
+        if len(per_file_frames) != 1:
+            raise ValueError(
+                f"Inconsistent Stage 3 coordinate_frame across {self.data_root}: {sorted(per_file_frames)}"
+            )
+        actual_frame = next(iter(per_file_frames))
+        if coordinate_frame is not None and actual_frame != str(coordinate_frame):
+            raise ValueError(
+                f"Stage 3 .npz at {self.data_root} was generated in "
+                f"coordinate_frame={actual_frame!r} but training expects "
+                f"{coordinate_frame!r}. Re-run Stage 3 with "
+                f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
+            )
+        self.coordinate_frame = actual_frame
+
+        self._samples: list[tuple[Path, int]] = []
+        self.file_sample_ranges: list[tuple[int, int]] = []
+        for path in self.file_paths:
+            with np.load(path, allow_pickle=False) as data:
                 num_frames = int(data["raw_frame_id"].shape[0])
             start = len(self._samples)
             self._samples.extend((path, frame_idx) for frame_idx in range(num_frames))
@@ -178,6 +199,13 @@ class CorrStaticDatasetV2(Dataset):
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
+        # hand_to_obj_min_dist is the per-hand-point min distance to the
+        # *full* 4096 object pool (frame-invariant). It is the clean GT
+        # target for the hand contact head; it must NOT be affected by
+        # the 512 obj-point sampling or the obj perturb applied to input.
+        hand_min_dist = np.asarray(
+            data["hand_to_obj_min_dist"][frame_idx], dtype=np.float32
+        ).copy()
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -192,10 +220,10 @@ class CorrStaticDatasetV2(Dataset):
             hand_points=hand_points,
             hand_normals=hand_normals,
             seed=aug_seed,
-            apply_hand_perturb=self.apply_hand_perturb,
-            hand_rot_std_deg=self.hand_rot_std_deg,
-            hand_trans_std=self.hand_trans_std,
-            hand_perturb_prob=self.hand_perturb_prob,
+            apply_obj_perturb=self.apply_obj_perturb,
+            obj_rot_std_deg=self.obj_rot_std_deg,
+            obj_trans_std=self.obj_trans_std,
+            obj_perturb_prob=self.obj_perturb_prob,
             apply_global_aug=self.augment,
             augment_rotation=self.augment_rotation,
             rotation_range_deg=self.rotation_range,
@@ -204,15 +232,14 @@ class CorrStaticDatasetV2(Dataset):
             augment_scale=self.augment_scale,
             scale_range=self.scale_range,
         )
+        # Global scale does not change the unit distance scale target, so
+        # we multiply the (frame-invariant) obj->hand min distance by
+        # the global scale factor the same way as before for parity.
         obj_min_dist *= float(geometry.distance_scale)
+        # hand->obj min distance is fully frame-invariant AND independent
+        # of the 512 obj sampling, so we do NOT rescale it. The hand
+        # contact head needs the clean absolute target, not a rescaled one.
 
-        input_ctx_idx, input_ctx_valid = _compute_runtime_context_neighbors(
-            geometry.input_obj_points,
-            geometry.input_hand_points,
-            obj_valid,
-            k_ctx=self.k_ctx,
-            ctx_radius=self.ctx_radius,
-        )
         supervision_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -236,6 +263,9 @@ class CorrStaticDatasetV2(Dataset):
             supervision_edge_valid,
             contact_radius=self.contact_radius,
         )
+        hand_contact_target = contact_target_from_distance(
+            torch.from_numpy(hand_min_dist), contact_radius=self.contact_radius
+        ).numpy().astype(np.float32)
 
         input_points = np.concatenate([geometry.input_obj_points, geometry.input_hand_points], axis=0)
         input_normals = np.concatenate([geometry.input_obj_normals, geometry.input_hand_normals], axis=0)
@@ -257,43 +287,12 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_point_id": torch.from_numpy(obj_point_id).long(),
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "edge_contact_target": edge_contact_target.float(),
-            "input_obj_to_hand_ctx_idx": torch.from_numpy(input_ctx_idx).long(),
-            "input_obj_to_hand_ctx_valid_mask": torch.from_numpy(input_ctx_valid),
+            "hand_contact_target": torch.from_numpy(hand_contact_target).float(),
             "supervision_edge_idx": torch.from_numpy(supervision_edge_idx).long(),
             "supervision_edge_valid_mask": torch.from_numpy(supervision_edge_valid),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
-
-
-def _compute_runtime_context_neighbors(
-    obj_points: np.ndarray,
-    hand_points: np.ndarray,
-    obj_valid: np.ndarray,
-    *,
-    k_ctx: int,
-    ctx_radius: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    num_obj = obj_points.shape[0]
-    ctx_idx = np.full((num_obj, k_ctx), -1, dtype=np.int64)
-    ctx_valid = np.zeros((num_obj, k_ctx), dtype=bool)
-    valid_obj_idx = np.flatnonzero(obj_valid)
-    if valid_obj_idx.size == 0:
-        return ctx_idx, ctx_valid
-    obj = torch.from_numpy(np.asarray(obj_points[valid_obj_idx], dtype=np.float32))
-    hand = torch.from_numpy(np.asarray(hand_points, dtype=np.float32))
-    distance = torch.cdist(obj, hand).numpy()
-    for row, obj_idx in enumerate(valid_obj_idx.tolist()):
-        dist_row = distance[row]
-        candidates = np.flatnonzero(dist_row <= float(ctx_radius))
-        if candidates.size == 0:
-            continue
-        order = np.argsort(dist_row[candidates], kind="stable")
-        chosen = candidates[order[:k_ctx]]
-        count = int(chosen.size)
-        ctx_idx[obj_idx, :count] = chosen
-        ctx_valid[obj_idx, :count] = True
-    return ctx_idx, ctx_valid
 
 
 def _compute_edge_contact_target(
@@ -390,39 +389,39 @@ def make_dataloaders(
     meta_cfg: Any,
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
-        "k_ctx": int(meta_cfg.k_ctx),
-        "ctx_radius": float(meta_cfg.ctx_radius),
         "num_supervision_edges": int(meta_cfg.num_supervision_edges),
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
         "augment": bool(meta_cfg.augment),
-        "apply_hand_perturb": bool(meta_cfg.apply_hand_perturb),
+        "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
         "augment_rotation": bool(meta_cfg.augment_rotation),
         "augment_translation": bool(meta_cfg.augment_translation),
         "augment_scale": bool(meta_cfg.augment_scale),
         "rotation_range": float(meta_cfg.rotation_range),
         "translation_range": float(meta_cfg.translation_range),
         "scale_range": tuple(meta_cfg.scale_range),
-        "hand_rot_std_deg": float(meta_cfg.hand_rot_std_deg),
-        "hand_trans_std": float(meta_cfg.hand_trans_std),
-        "hand_perturb_prob": float(meta_cfg.hand_perturb_prob),
+        "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
+        "obj_trans_std": float(meta_cfg.obj_trans_std),
+        "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
+        "coordinate_frame": expected_coordinate_frame,
     }
     val_clean_kwargs = {
         **train_kwargs,
         "augment": False,
-        "apply_hand_perturb": False,
-        "hand_perturb_prob": 0.0,
+        "apply_obj_perturb": False,
+        "obj_perturb_prob": 0.0,
         "eval_sampling_epoch": 0,
     }
     val_perturbed_kwargs = {
         **train_kwargs,
         "augment": False,
-        "apply_hand_perturb": bool(getattr(meta_cfg, "val_augment", False)),
-        "hand_perturb_prob": float(getattr(meta_cfg, "val_hand_perturb_prob", 1.0)),
+        "apply_obj_perturb": bool(getattr(meta_cfg, "val_augment", False)),
+        "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
         "eval_sampling_epoch": 0,
     }
     train_loader, val_loader, metadata = make_file_split_dataloaders(
@@ -480,10 +479,9 @@ def make_dataloaders(
                 "num_obj_pool": int(data["obj_points"].shape[1]),
                 "num_obj_points": int(train_kwargs["num_obj_points"]),
                 "num_hand_points": int(data["hand_points"].shape[1]),
-                "k_ctx": int(meta_cfg.k_ctx),
-                "ctx_radius": float(meta_cfg.ctx_radius),
                 "num_supervision_edges": int(meta_cfg.num_supervision_edges),
                 "contact_radius": float(meta_cfg.contact_radius),
+                "coordinate_frame": str(train_loader.dataset.coordinate_frame),
                 "val_loader_names": sorted(val_loaders),
             }
         )

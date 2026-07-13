@@ -136,25 +136,32 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     class Meta:
         quality_focal_beta = 2.0
         loss_cross_edge_weight = 1.0
+        loss_hand_contact_weight = 1.0
     class Cfg:
         meta = Meta()
     runner.cfg = Cfg()
     preds = {
         "pred_cross_contact_logits": torch.zeros(1, 2, 3),
         "pred_cross_contact_prob": torch.full((1, 2, 3), 0.5),
+        "pred_hand_contact_logits": torch.zeros(1, 4),
+        "pred_hand_contact_prob": torch.full((1, 4), 0.5),
     }
     batch = {
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
         "supervision_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
         "edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
+        "hand_contact_target": torch.tensor([[0.0, 0.5, 1.0, 0.0]]),
     }
-    _, aux = runner._compute_losses(preds, batch)
+    losses, aux = runner._compute_losses(preds, batch)
     assert isinstance(aux["sampled_nonzero_edge_fraction"], MetricStat)
     assert isinstance(aux["object_nonzero_edge_coverage"], MetricStat)
     assert aux["sampled_nonzero_edge_fraction"].total == 1.0
     assert aux["sampled_nonzero_edge_fraction"].count == 3.0
     assert aux["object_nonzero_edge_coverage"].total == 1.0
     assert aux["object_nonzero_edge_coverage"].count == 2.0
+    # Loss shape: cross-edge QFL + hand contact QFL.
+    assert set(losses) == {"cross_edge_contact", "hand_contact"}
+    assert isinstance(aux["hand_contact_nonzero_count"], MetricStat)
     # Diagnostic metrics must all be present after the v2 metric audit.
     expected_keys = {
         "cross_edge_qfl",
@@ -174,6 +181,12 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "zero_baseline_qfl",
         "zero_baseline_bce",
         "zero_baseline_mae",
+        "hand_contact_qfl",
+        "hand_contact_bce",
+        "hand_contact_mae",
+        "hand_contact_nonzero_mae",
+        "hand_contact_nonzero_pred_mean",
+        "hand_contact_nonzero_target_mean",
     }
     for name in (
         "edge_y_0_025",
@@ -185,7 +198,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         expected_keys.add(f"{name}_mae")
     missing = expected_keys - aux.keys()
     assert not missing, f"Missing diagnostic metrics: {sorted(missing)}"
-    # Losses must only contain cross-edge contact (obj_contact removed).
+    # Losses must only contain cross-edge + hand contact (obj_contact removed).
     assert "obj_contact" not in aux
     assert "obj_contact_qfl" not in aux
     assert "obj_contact_bce" not in aux
@@ -246,12 +259,14 @@ def test_model_output_contract_and_dense_cross_api() -> None:
             "supervision_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         }
         out = model(batch)
-        # v2 dropped contact_head; only cross-edge outputs remain.
+        # v2 forward contract: cross-edge outputs + hand contact outputs.
         assert set(out) == {
             "pred_cross_contact_logits",
             "pred_cross_contact_prob",
+            "pred_hand_contact_logits",
+            "pred_hand_contact_prob",
         }
-        assert not hasattr(model, "contact_head")
+        assert hasattr(model, "hand_contact_head")
         dense = model.predict_dense_cross_for_object(batch, obj_idx=0)
         assert tuple(dense.shape) == (1, 3)
     finally:

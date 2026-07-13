@@ -37,11 +37,11 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         super().configure_overfit_mode(cfg, explicit_override_keys)
         for key, value in (
             ("meta.augment", False),
-            ("meta.apply_hand_perturb", False),
+            ("meta.apply_obj_perturb", False),
             ("meta.augment_rotation", False),
             ("meta.augment_translation", False),
             ("meta.augment_scale", False),
-            ("meta.hand_perturb_prob", 0.0),
+            ("meta.obj_perturb_prob", 0.0),
             ("meta.val_augment", False),
             ("meta.ptv3_drop_path", 0.0),
             ("meta.ptv3_shuffle_orders", False),
@@ -63,22 +63,15 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
     def configure_data(self, metadata: dict[str, Any], train_dataset: Any | None = None) -> None:
         super().configure_data(metadata, train_dataset)
-        for field in (
-            "num_obj_pool",
-            "num_obj_points",
-            "num_hand_points",
-            "k_ctx",
-            "ctx_radius",
-            "num_supervision_edges",
-            "contact_radius",
-        ):
-            if field in metadata:
-                setattr(self.cfg.meta, field, metadata[field])
-        # Validate that Stage 3 .npz was generated with the requested
-        # coordinate frame. Stage 3 writes the chosen frame into its meta.json
-        # under "coordinate_frame"; the model would otherwise silently train
-        # on whatever frame the .npz contains.
-        stage3_frame = metadata.get("coordinate_frame", "object")
+        # Validate coordinate_frame BEFORE we let metadata overwrite the cfg
+        # value; the data is the source of truth and a mismatch must raise
+        # rather than be silently coerced by the update loop below.
+        if "coordinate_frame" not in metadata:
+            raise ValueError(
+                "Stage 3 metadata is missing 'coordinate_frame'. Re-run Stage 3 "
+                "with the current prepare_corr_static.py."
+            )
+        stage3_frame = metadata["coordinate_frame"]
         if stage3_frame != self.cfg.meta.coordinate_frame:
             raise ValueError(
                 f"Stage 3 data was generated in coordinate_frame={stage3_frame!r} "
@@ -87,6 +80,16 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 f"on the same Stage 2 root, or pass "
                 f"--set meta.coordinate_frame={stage3_frame} to this training run."
             )
+        for field in (
+            "num_obj_pool",
+            "num_obj_points",
+            "num_hand_points",
+            "num_supervision_edges",
+            "contact_radius",
+            "coordinate_frame",
+        ):
+            if field in metadata:
+                setattr(self.cfg.meta, field, metadata[field])
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
@@ -132,6 +135,32 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         cross_edge_qfl = reduce_loss_map_per_object(edge_qfl_map, edge_valid_mask, obj_valid_mask)
         cross_edge_bce = reduce_loss_map_per_object(edge_bce_map, edge_valid_mask, obj_valid_mask)
         cross_edge_mae = reduce_loss_map_per_object(edge_mae_map, edge_valid_mask, obj_valid_mask)
+
+        # Hand contact head: per-hand-point soft contact score supervised by
+        # the frame-invariant min distance to the full 4096 object pool.
+        hand_target = batch["hand_contact_target"].float()
+        hand_logits = preds["pred_hand_contact_logits"]
+        hand_prob = preds["pred_hand_contact_prob"]
+        # Hand points are always fully present (no padding/valid mask needed).
+        hand_qfl_map = quality_focal_loss_map(hand_logits, hand_target, beta=beta)
+        hand_bce_map = binary_cross_entropy_with_logits_map(hand_logits, hand_target)
+        hand_mae_map = torch.abs(hand_prob - hand_target)
+        denom = hand_qfl_map.new_tensor(float(hand_qfl_map.shape[1])).clamp_min(1.0)
+        hand_contact_qfl = hand_qfl_map.sum() / denom
+        hand_contact_bce = hand_bce_map.sum() / denom
+        hand_contact_mae = hand_mae_map.sum() / denom
+
+        hand_nonzero_mask = hand_target > 0
+        hand_nonzero_count = hand_nonzero_mask.sum()
+        if bool(hand_nonzero_count > 0):
+            hand_nonzero_mae = (hand_prob - hand_target).abs()[hand_nonzero_mask].sum() / hand_nonzero_count.float()
+            hand_nonzero_pred_mean = hand_prob[hand_nonzero_mask].mean()
+            hand_nonzero_target_mean = hand_target[hand_nonzero_mask].mean()
+        else:
+            zero_tensor = hand_target.sum() * 0.0
+            hand_nonzero_mae = zero_tensor
+            hand_nonzero_pred_mean = zero_tensor
+            hand_nonzero_target_mean = zero_tensor
 
         oracle_bce_map = binary_entropy_floor_map(edge_target)
         cross_edge_oracle_bce = reduce_loss_map_per_object(
@@ -180,8 +209,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             beta=beta,
         ))
 
+        aux_metrics["hand_contact_qfl"] = hand_contact_qfl
+        aux_metrics["hand_contact_bce"] = hand_contact_bce
+        aux_metrics["hand_contact_mae"] = hand_contact_mae
+        aux_metrics["hand_contact_nonzero_mae"] = hand_nonzero_mae
+        aux_metrics["hand_contact_nonzero_pred_mean"] = hand_nonzero_pred_mean
+        aux_metrics["hand_contact_nonzero_target_mean"] = hand_nonzero_target_mean
+        aux_metrics["hand_contact_nonzero_count"] = MetricStat(
+            total=float(hand_nonzero_count.detach().cpu()),
+            count=float(hand_nonzero_count.detach().cpu()),
+            expose_validity=True,
+        )
+
         losses = {
             "cross_edge_contact": float(meta.loss_cross_edge_weight) * cross_edge_qfl,
+            "hand_contact": float(meta.loss_hand_contact_weight) * hand_contact_qfl,
         }
         return losses, aux_metrics
 

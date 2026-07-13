@@ -109,7 +109,7 @@ class AugmentedGeometry:
     gt_hand_points: np.ndarray
     gt_hand_normals: np.ndarray
     distance_scale: float
-    hand_perturbed: bool
+    obj_perturbed: bool
 
 
 def augment_geometry(
@@ -119,10 +119,10 @@ def augment_geometry(
     hand_points: np.ndarray,
     hand_normals: np.ndarray,
     seed: int,
-    apply_hand_perturb: bool,
-    hand_rot_std_deg: float,
-    hand_trans_std: float,
-    hand_perturb_prob: float,
+    apply_obj_perturb: bool,
+    obj_rot_std_deg: float,
+    obj_trans_std: float,
+    obj_perturb_prob: float,
     apply_global_aug: bool,
     augment_rotation: bool,
     rotation_range_deg: float,
@@ -131,6 +131,9 @@ def augment_geometry(
     augment_scale: bool,
     scale_range: tuple[float, float],
 ) -> AugmentedGeometry:
+    """In hand-root frame we simulate a noisy *object* pose: one shared SE(3)
+    on the 512 sampled object points, clean hand geometry, clean GT for both.
+    """
     rng = np.random.default_rng(seed)
     gt_obj_points = np.asarray(obj_points, dtype=np.float32).copy()
     gt_obj_normals = np.asarray(obj_normals, dtype=np.float32).copy()
@@ -141,22 +144,23 @@ def augment_geometry(
     input_hand_points = gt_hand_points.copy()
     input_hand_normals = gt_hand_normals.copy()
 
-    hand_perturbed = False
+    obj_perturbed = False
     if (
-        apply_hand_perturb
-        and hand_perturb_prob > 0
-        and (hand_rot_std_deg > 0 or hand_trans_std > 0)
-        and rng.random() <= hand_perturb_prob
+        apply_obj_perturb
+        and obj_perturb_prob > 0
+        and (obj_rot_std_deg > 0 or obj_trans_std > 0)
+        and rng.random() <= obj_perturb_prob
     ):
-        angle = np.deg2rad(rng.normal(0.0, hand_rot_std_deg))
+        angle = np.deg2rad(rng.normal(0.0, obj_rot_std_deg))
         rotation = _rotation_matrix(_random_axis(rng), float(angle))
-        translation = rng.normal(0.0, hand_trans_std, size=3)
-        center = input_hand_points.mean(axis=0)
-        input_hand_points = (
-            (input_hand_points - center) @ rotation.T + center + translation
-        ).astype(np.float32)
-        input_hand_normals = (input_hand_normals @ rotation.T).astype(np.float32)
-        hand_perturbed = True
+        translation = rng.normal(0.0, obj_trans_std, size=3)
+        # All 512 sampled obj points share the same SE(3): simulating an
+        # object pose estimation error after clean candidate selection.
+        input_obj_points = (input_obj_points @ rotation.T + translation).astype(np.float32)
+        input_obj_normals = (input_obj_normals @ rotation.T).astype(np.float32)
+        norms = np.linalg.norm(input_obj_normals, axis=-1, keepdims=True)
+        input_obj_normals = (input_obj_normals / np.clip(norms, 1e-8, None)).astype(np.float32)
+        obj_perturbed = True
 
     distance_scale = 1.0
     if apply_global_aug:
@@ -197,5 +201,5 @@ def augment_geometry(
         gt_hand_points=gt_hand_points,
         gt_hand_normals=gt_hand_normals,
         distance_scale=distance_scale,
-        hand_perturbed=hand_perturbed,
+        obj_perturbed=obj_perturbed,
     )

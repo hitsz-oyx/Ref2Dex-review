@@ -316,6 +316,14 @@ def test_stage3_distances_are_frame_invariant() -> None:
     np.testing.assert_allclose(obj_out["obj_to_hand_min_dist"], hand_out["obj_to_hand_min_dist"], atol=1e-5)
     np.testing.assert_array_equal(obj_out["obj_candidate_mask_5cm"], hand_out["obj_candidate_mask_5cm"])
     np.testing.assert_array_equal(obj_out["gt_obj_to_hand_knn_idx"], hand_out["gt_obj_to_hand_knn_idx"])
+    # hand -> obj min distance must also be frame-invariant AND it must be
+    # computed over the *full* obj pool (size 32 here).
+    assert "hand_to_obj_min_dist" in obj_out
+    assert "hand_to_obj_min_dist" in hand_out
+    np.testing.assert_allclose(
+        obj_out["hand_to_obj_min_dist"], hand_out["hand_to_obj_min_dist"], atol=1e-5
+    )
+    assert obj_out["hand_to_obj_min_dist"].shape == (2, 10)
 
 
 def test_stage3_rejects_invalid_coordinate_frame() -> None:
@@ -334,3 +342,176 @@ def test_stage3_rejects_invalid_coordinate_frame() -> None:
             mirror_left_to_right=False,
             coordinate_frame="banana",
         )
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 -> dataset: per-NPZ coordinate_frame is the source of truth
+# ---------------------------------------------------------------------------
+
+
+def _write_stage3_npz(
+    path: Path,
+    *,
+    num_obj: int,
+    num_hand: int,
+    T: int,
+    coordinate_frame: str,
+) -> None:
+    payload = _build_payload_for_stage3(num_obj=num_obj, num_hand=num_hand, T=T)
+    out = stage3_mod.build_stage3_sequence(
+        payload,
+        source_path=Path("/tmp/synthetic.pkl"),
+        stage2_root=Path("/tmp"),
+        num_obj_pool=num_obj,
+        num_hand_points=num_hand,
+        k_cross=4,
+        candidate_threshold=1.0,
+        frame_batch_size=1,
+        device=torch.device("cpu"),
+        mirror_left_to_right=False,
+        coordinate_frame=coordinate_frame,
+    )
+    np.savez(path, **out)
+
+
+def _make_dataset_kwargs() -> dict:
+    return dict(
+        num_obj_points=4,
+        num_hand_points=6,
+        num_supervision_edges=4,
+        contact_radius=0.01,
+        base_seed=0,
+        augment=False,
+        apply_obj_perturb=False,
+        obj_rot_std_deg=0.0,
+        obj_trans_std=0.0,
+        obj_perturb_prob=0.0,
+    )
+
+
+def test_dataset_rejects_coordinate_frame_mismatch(tmp_path: Path) -> None:
+    """The dataset must reject an explicit coordinate_frame that does not
+    match the per-NPZ coordinate_frame (Stage 3 .npz is the source of truth)."""
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz_path = tmp_path / "synth.npz"
+    _write_stage3_npz(npz_path, num_obj=16, num_hand=6, T=2, coordinate_frame="hand_root")
+    with pytest.raises(ValueError, match="coordinate_frame"):
+        CorrStaticDatasetV2(
+            tmp_path,
+            file_list=[npz_path],
+            coordinate_frame="object",
+            **_make_dataset_kwargs(),
+        )
+
+
+def test_dataset_accepts_matching_coordinate_frame(tmp_path: Path) -> None:
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz_path = tmp_path / "synth.npz"
+    _write_stage3_npz(npz_path, num_obj=16, num_hand=6, T=2, coordinate_frame="hand_root")
+    ds = CorrStaticDatasetV2(
+        tmp_path,
+        file_list=[npz_path],
+        coordinate_frame="hand_root",
+        **_make_dataset_kwargs(),
+    )
+    assert ds.coordinate_frame == "hand_root"
+    # Sampled point is consistent: 4 obj + 6 hand, hand contact target present.
+    sample = ds[0]
+    assert "hand_contact_target" in sample
+    assert sample["hand_contact_target"].shape == (6,)
+
+
+def test_dataset_inherits_coordinate_frame_when_unspecified(tmp_path: Path) -> None:
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz_path = tmp_path / "synth.npz"
+    _write_stage3_npz(npz_path, num_obj=16, num_hand=6, T=2, coordinate_frame="hand_root")
+    ds = CorrStaticDatasetV2(tmp_path, file_list=[npz_path], **_make_dataset_kwargs())
+    assert ds.coordinate_frame == "hand_root"
+
+
+def test_dataset_rejects_mixed_coordinate_frames(tmp_path: Path) -> None:
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    p1 = tmp_path / "a.npz"
+    p2 = tmp_path / "b.npz"
+    _write_stage3_npz(p1, num_obj=16, num_hand=6, T=2, coordinate_frame="hand_root")
+    _write_stage3_npz(p2, num_obj=16, num_hand=6, T=2, coordinate_frame="object")
+    with pytest.raises(ValueError, match="coordinate_frame"):
+        CorrStaticDatasetV2(
+            tmp_path,
+            file_list=[p1, p2],
+            **_make_dataset_kwargs(),
+        )
+
+
+def test_runner_configure_data_raises_on_metadata_mismatch() -> None:
+    """The runner must second-assert that metadata.coordinate_frame matches
+    the config, so a future refactor cannot silently bypass the guard."""
+    from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
+
+    runner = CorrespondencePTV3V2Runner.__new__(CorrespondencePTV3V2Runner)
+    runner.cfg = type("Cfg", (), {})()
+    runner.cfg.meta = type("Meta", (), {"coordinate_frame": "hand_root"})()
+    with pytest.raises(ValueError, match="coordinate_frame"):
+        runner.configure_data({"coordinate_frame": "object"})
+    # And missing coordinate_frame in metadata must also be flagged.
+    with pytest.raises(ValueError, match="missing 'coordinate_frame'"):
+        runner.configure_data({})
+
+
+# ---------------------------------------------------------------------------
+# GRAB absent-hand path: no root_pose emitted, no KeyError downstream.
+# ---------------------------------------------------------------------------
+
+
+def test_grab_absent_hand_payload_omits_root_pose() -> None:
+    """The _empty_hand_payload must not include a root_pose key. Stage 2
+    pack_stage2_hand treats hand_root_pose as optional; if absent, no
+    hand_root_pose field is propagated and the npz is regenerated cleanly."""
+    from process.GRAB.raw import GRABRawAdapter
+
+    # Bypass __init__ (which would load MANO) but set the attribute the
+    # _empty_hand_payload helper reads.
+    adapter = GRABRawAdapter.__new__(GRABRawAdapter)
+    adapter.num_hand_points = 1538
+    payload = GRABRawAdapter._empty_hand_payload(adapter, T=2)
+    assert "root_pose" not in payload
+    assert payload["points"].shape == (2, 1538, 3)
+
+
+def test_grab_process_sequence_handles_absent_hand_keys() -> None:
+    """process_sequence() must build output dict even when right/left hand
+    keys are absent on the underlying npz (absent-hand path)."""
+    import importlib
+
+    grab_mod = importlib.import_module("process.GRAB.raw")
+
+    # Build a stub class that mimics GRABRawAdapter but does not require
+    # the heavy MANO init. _empty_hand_payload only reads num_hand_points,
+    # so we set that explicitly.
+    class _StubAdapter:
+        num_hand_points = 1538
+
+        def _process_one_hand(self, side, seq_data, frame_ids, obj_points):
+            # Simulate GRAB scenario where one hand key is missing from
+            # seq_data._raw.files. The output dict is exactly what
+            # _empty_hand_payload returns, and it must NOT include root_pose.
+            return grab_mod.GRABRawAdapter._empty_hand_payload(self, T=len(frame_ids))
+
+    class _FakeSeqData:
+        class _Raw:
+            files: tuple = ()  # no hand keys at all
+
+        _raw = _Raw()
+        obj_name = "synth"
+        n_comps = 24
+        n_frames = 2
+
+    stub = _StubAdapter()
+    right = stub._process_one_hand("right", _FakeSeqData(), np.arange(2), np.zeros((2, 4, 3)))
+    left = stub._process_one_hand("left", _FakeSeqData(), np.arange(2), np.zeros((2, 4, 3)))
+    assert "root_pose" not in right
+    assert "root_pose" not in left
