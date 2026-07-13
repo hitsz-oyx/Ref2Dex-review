@@ -120,33 +120,68 @@ class StaticHOCPTv3V2(nn.Module):
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
-        supervision_edge_idx = batch["supervision_edge_idx"].long()
-        supervision_edge_valid_mask = batch["supervision_edge_valid_mask"].bool()
-        z_hand_neighbors = self._gather_batched_knn_features(
-            z_hand,
-            supervision_edge_idx,
-            supervision_edge_valid_mask,
+        random_logits, random_prob = self._predict_cross_edges(
+            z_obj=z_obj,
+            z_hand=z_hand,
+            edge_idx=batch["random_edge_idx"].long(),
+            edge_valid_mask=batch["random_edge_valid_mask"].bool(),
+        )
+        contact_logits, contact_prob = self._predict_cross_edges(
+            z_obj=z_obj,
+            z_hand=z_hand,
+            edge_idx=batch["contact_edge_idx"].long(),
+            edge_valid_mask=batch["contact_edge_valid_mask"].bool(),
         )
 
-        edge_shared = self._compute_shared_edge_features(z_obj=z_obj, z_hand_neighbors=z_hand_neighbors)
-        pred_cross_contact_logits = self.cross_edge_head(edge_shared).squeeze(-1)
-
+        # Hand contact head is kept for future detached-probe experiments; it
+        # is NOT supervised in the v2.1 ablation (loss_hand_contact_weight=0).
         pred_hand_contact_logits = self.hand_contact_head(z_hand).squeeze(-1)
 
         return {
-            "pred_cross_contact_logits": pred_cross_contact_logits,
-            "pred_cross_contact_prob": torch.sigmoid(pred_cross_contact_logits),
+            "pred_cross_random_logits": random_logits,
+            "pred_cross_random_prob": random_prob,
+            "pred_cross_contact_aux_logits": contact_logits,
+            "pred_cross_contact_aux_prob": contact_prob,
             "pred_hand_contact_logits": pred_hand_contact_logits,
             "pred_hand_contact_prob": torch.sigmoid(pred_hand_contact_logits),
         }
+
+    def _predict_cross_edges(
+        self,
+        *,
+        z_obj: torch.Tensor,
+        z_hand: torch.Tensor,
+        edge_idx: torch.Tensor,
+        edge_valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run the shared edge head on one supervision stream.
+
+        The two streams (random baseline + contact auxiliary) share the
+        ``edge_shared_backbone`` and ``cross_edge_head`` parameters and
+        only differ in which edges are gathered, so the model encodes
+        ``z_obj``/``z_hand`` once and calls this helper twice.
+        """
+        z_hand_neighbors = self._gather_batched_knn_features(
+            z_hand,
+            edge_idx,
+            edge_valid_mask,
+        )
+        edge_shared = self._compute_shared_edge_features(
+            z_obj=z_obj,
+            z_hand_neighbors=z_hand_neighbors,
+        )
+        logits = self.cross_edge_head(edge_shared).squeeze(-1)
+        return logits, torch.sigmoid(logits)
 
     def encode_points(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         points = batch["points"].float()
         normals = batch["normals"].float()
         point_valid_mask = batch["point_valid_mask"].bool()
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
-        if "supervision_edge_idx" not in batch or "supervision_edge_valid_mask" not in batch:
-            raise KeyError("v2 batch must contain supervision_edge_idx and supervision_edge_valid_mask.")
+        if "random_edge_idx" not in batch or "random_edge_valid_mask" not in batch:
+            raise KeyError(
+                "v2 batch must contain random_edge_idx and random_edge_valid_mask."
+            )
 
         expected_total = self.num_obj_points + self.num_hand_points
         obj_points = points[:, : self.num_obj_points]

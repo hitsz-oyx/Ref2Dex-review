@@ -548,22 +548,30 @@ def test_hand_contact_loss_is_batch_size_invariant_via_runner() -> None:
     dist = torch.rand(B, N, dtype=torch.float32) * 0.05
     hand_target = contact_target_from_distance(dist, contact_radius=0.01)
 
-    # Synthesize hand-logits.
-    hand_logits = torch.randn(B, N, dtype=torch.float32) * 2.0
-    hand_prob = torch.sigmoid(hand_logits)
+    # Synthesize cross-edge logits / probs (random + contact auxiliary).
+    random_logits = torch.randn(B, 512, 128, dtype=torch.float32) * 2.0
+    random_prob = torch.sigmoid(random_logits)
+    contact_logits = torch.randn(B, 512, 16, dtype=torch.float32) * 2.0
+    contact_prob = torch.sigmoid(contact_logits)
 
     batch1 = {
         "hand_contact_target": hand_target,
         "runtime_obj_valid_mask": torch.ones(B, 512, dtype=torch.bool),
-        "supervision_edge_valid_mask": torch.ones(B, 512, 128, dtype=torch.bool),
-        "edge_contact_target": torch.zeros(B, 512, 128),  # dummy edge targets
+        "random_edge_idx": torch.zeros(B, 512, 128, dtype=torch.long),
+        "random_edge_valid_mask": torch.ones(B, 512, 128, dtype=torch.bool),
+        "random_edge_contact_target": torch.zeros(B, 512, 128),  # dummy edge targets
+        "contact_edge_idx": torch.zeros(B, 512, 16, dtype=torch.long),
+        "contact_edge_valid_mask": torch.ones(B, 512, 16, dtype=torch.bool),
+        "contact_edge_contact_target": torch.zeros(B, 512, 16),  # dummy edge targets
         "points": torch.zeros(B, 512 + N, 3),
     }
     preds1 = {
-        "pred_hand_contact_logits": hand_logits,
-        "pred_hand_contact_prob": hand_prob,
-        "pred_cross_contact_logits": torch.zeros(B, 512, 128),
-        "pred_cross_contact_prob": torch.zeros(B, 512, 128),
+        "pred_hand_contact_logits": torch.zeros(B, N),
+        "pred_hand_contact_prob": torch.zeros(B, N),
+        "pred_cross_random_logits": random_logits,
+        "pred_cross_random_prob": random_prob,
+        "pred_cross_contact_aux_logits": contact_logits,
+        "pred_cross_contact_aux_prob": contact_prob,
     }
     loss1, _ = runner._compute_losses(preds1, batch1)
 
@@ -578,5 +586,20 @@ def test_hand_contact_loss_is_batch_size_invariant_via_runner() -> None:
     preds4 = {k: _repeat(v) for k, v in preds1.items()}
     loss4, _ = runner._compute_losses(preds4, batch4)
 
-    torch.testing.assert_close(loss1["hand_contact"], loss4["hand_contact"], atol=1e-6, rtol=1e-5)
-    torch.testing.assert_close(loss1["cross_edge_contact"], loss4["cross_edge_contact"], atol=1e-6, rtol=1e-5)
+    # v2.1 contract: losses = {cross_edge_random, cross_edge_contact_aux}.
+    # Hand contact is NOT a loss key in the v2.1 ablation.
+    assert "hand_contact" not in loss1
+    assert "cross_edge_contact" not in loss1
+    assert set(loss1) == {"cross_edge_random", "cross_edge_contact_aux"}
+    torch.testing.assert_close(
+        loss1["cross_edge_random"],
+        loss4["cross_edge_random"],
+        atol=1e-6,
+        rtol=1e-5,
+    )
+    torch.testing.assert_close(
+        loss1["cross_edge_contact_aux"],
+        loss4["cross_edge_contact_aux"],
+        atol=1e-6,
+        rtol=1e-5,
+    )

@@ -53,6 +53,12 @@ class Config(TaskConfig):
         contact_radius: float = 0.01
         quality_focal_beta: float = 2.0
 
+        # Contact-aware auxiliary supervision. Four target-strength bins
+        # (weak / medium / strong / very_strong) share this quota. The
+        # sampler does NOT refill from other bins: an object with 100 weak
+        # candidates and 0 strong candidates will keep 16 weak + 0 strong.
+        contact_supervision_quotas: tuple[int, int, int, int] = (16, 16, 16, 16)
+
         # Object pose perturbation (applied to the 512 sampled obj points
         # with one shared SE(3); see perturb_object_geometry in sampling.py).
         # In hand-root frame the canonical nuisance variable is the object
@@ -64,7 +70,11 @@ class Config(TaskConfig):
         val_obj_perturb_prob: float = 1.0
 
         loss_cross_edge_weight: float = 1.0
-        loss_hand_contact_weight: float = 1.0
+        # v2.1 ablation: L = L_random + lambda_c * L_contact_aux.
+        loss_contact_aux_weight: float = 1.0
+        # Hand head is not supervised in the v2.1 ablation; it is kept in the
+        # architecture so a future detached probe can reuse z_hand.
+        loss_hand_contact_weight: float = 0.0
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"
@@ -76,3 +86,8 @@ class Config(TaskConfig):
 
     class train(TaskConfig.train):
         output_dir = "outputs/train/correspondence_ptv3_v2"
+        # v2.1 ablation: select checkpoints on the unbiased random-edge QFL
+        # (the contact auxiliary stream is biased by construction and must
+        # NOT be the model-selection metric).
+        metric_for_best = "val_clean/cross_edge_random_qfl"
+        lower_is_better = True

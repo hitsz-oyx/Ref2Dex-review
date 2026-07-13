@@ -14,6 +14,7 @@ from src.base.distributed import make_default_eval_sampler, shard_sampler_for_di
 from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.sampling import (
     perturb_object_geometry,
+    sample_contact_supervision_edges,
     sample_object_indices,
     sample_random_supervision_edges,
     stable_frame_seed,
@@ -41,6 +42,7 @@ class CorrStaticDatasetV2(Dataset):
         num_obj_points: int = 512,
         num_hand_points: int = 1538,
         num_supervision_edges: int = 128,
+        contact_supervision_quotas: tuple[int, int, int, int] = (16, 16, 16, 16),
         contact_radius: float = 0.01,
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
@@ -58,6 +60,12 @@ class CorrStaticDatasetV2(Dataset):
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
         self.num_supervision_edges = int(num_supervision_edges)
+        if len(tuple(contact_supervision_quotas)) != 4:
+            raise ValueError(
+                f"contact_supervision_quotas must have 4 entries (weak/medium/strong/very_strong), "
+                f"got {tuple(contact_supervision_quotas)}."
+            )
+        self.contact_supervision_quotas = tuple(int(q) for q in contact_supervision_quotas)
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
         self.apply_obj_perturb = bool(apply_obj_perturb)
@@ -223,7 +231,7 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="supervision-edges",
         )
-        supervision_edge_idx, supervision_edge_valid = sample_random_supervision_edges(
+        random_edge_idx, random_edge_valid = sample_random_supervision_edges(
             num_obj_points=self.num_obj_points,
             num_hand_points=self.num_hand_points,
             obj_valid_mask=obj_valid,
@@ -231,13 +239,50 @@ class CorrStaticDatasetV2(Dataset):
             seed=supervision_seed,
         )
 
-        edge_contact_target = _compute_edge_contact_target(
+        # Independent contact-positive auxiliary stream. The namespace is
+        # distinct from ``supervision-edges`` so the random128 baseline
+        # sampling is unchanged when this stream is added.
+        contact_seed = stable_frame_seed(
+            base_seed=self.base_seed,
+            seq_id=seq_id,
+            side=side,
+            raw_frame_id=raw_frame_id,
+            epoch=epoch,
+            namespace="contact-supervision-edges",
+        )
+        contact_edge_idx, contact_edge_valid = sample_contact_supervision_edges(
+            gt_obj_points=geometry.gt_obj_points,
+            gt_hand_points=geometry.gt_hand_points,
+            obj_valid_mask=obj_valid,
+            contact_radius=self.contact_radius,
+            quotas=self.contact_supervision_quotas,
+            seed=contact_seed,
+        )
+
+        random_edge_contact_target = _compute_edge_contact_target(
             geometry.gt_obj_points,
             geometry.gt_hand_points,
-            supervision_edge_idx,
-            supervision_edge_valid,
+            random_edge_idx,
+            random_edge_valid,
             contact_radius=self.contact_radius,
         )
+        contact_edge_contact_target = _compute_edge_contact_target(
+            geometry.gt_obj_points,
+            geometry.gt_hand_points,
+            contact_edge_idx,
+            contact_edge_valid,
+            contact_radius=self.contact_radius,
+        )
+        # Hard guarantee: every contact auxiliary edge has y > 0.
+        valid_contact_targets = contact_edge_contact_target[
+            torch.from_numpy(contact_edge_valid)
+        ]
+        if bool(valid_contact_targets.numel() > 0):
+            assert bool(torch.all(valid_contact_targets > 0)), (
+                "sample_contact_supervision_edges produced a valid edge with y=0; "
+                "this means the sampler is leaking negative edges into the "
+                "auxiliary stream. See docs/指导.md for the contract."
+            )
         hand_contact_target = contact_target_from_distance(
             torch.from_numpy(hand_min_dist), contact_radius=self.contact_radius
         ).numpy().astype(np.float32)
@@ -261,10 +306,13 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_idx": torch.from_numpy(selected_idx).long(),
             "selected_obj_point_id": torch.from_numpy(obj_point_id).long(),
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
-            "edge_contact_target": edge_contact_target.float(),
+            "random_edge_contact_target": random_edge_contact_target.float(),
+            "contact_edge_contact_target": contact_edge_contact_target.float(),
             "hand_contact_target": torch.from_numpy(hand_contact_target).float(),
-            "supervision_edge_idx": torch.from_numpy(supervision_edge_idx).long(),
-            "supervision_edge_valid_mask": torch.from_numpy(supervision_edge_valid),
+            "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
+            "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
+            "contact_edge_idx": torch.from_numpy(contact_edge_idx).long(),
+            "contact_edge_valid_mask": torch.from_numpy(contact_edge_valid),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
@@ -273,20 +321,20 @@ class CorrStaticDatasetV2(Dataset):
 def _compute_edge_contact_target(
     gt_obj_points: np.ndarray,
     gt_hand_points: np.ndarray,
-    supervision_edge_idx: np.ndarray,
-    supervision_edge_valid: np.ndarray,
+    edge_idx: np.ndarray,
+    edge_valid: np.ndarray,
     *,
     contact_radius: float,
 ) -> torch.Tensor:
     obj_points = torch.from_numpy(np.asarray(gt_obj_points, dtype=np.float32))
     hand_points = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
-    edge_idx = torch.from_numpy(np.asarray(supervision_edge_idx, dtype=np.int64))
-    edge_valid = torch.from_numpy(np.asarray(supervision_edge_valid, dtype=bool))
-    safe_idx = edge_idx.clamp(min=0)
+    edge_idx_t = torch.from_numpy(np.asarray(edge_idx, dtype=np.int64))
+    edge_valid_t = torch.from_numpy(np.asarray(edge_valid, dtype=bool))
+    safe_idx = edge_idx_t.clamp(min=0)
     neighbor_hand = hand_points[safe_idx]
     distance = torch.norm(neighbor_hand - obj_points.unsqueeze(1), dim=-1)
     target = contact_target_from_distance(distance, contact_radius=contact_radius)
-    return target * edge_valid.float()
+    return target * edge_valid_t.float()
 
 
 def _load_blacklist(path: str | None) -> set[str]:
@@ -369,6 +417,7 @@ def make_dataloaders(
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
         "num_supervision_edges": int(meta_cfg.num_supervision_edges),
+        "contact_supervision_quotas": tuple(getattr(meta_cfg, "contact_supervision_quotas", (16, 16, 16, 16))),
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),

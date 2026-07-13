@@ -6,6 +6,7 @@ meta:
   num_obj_points: 512
   num_hand_points: 1538
   num_supervision_edges: 128
+  contact_supervision_quotas: [16, 16, 16, 16]
   contact_radius: 0.01
   quality_focal_beta: 2.0
   # Coordinate frame the Stage 3 .npz was generated in.
@@ -18,7 +19,8 @@ meta:
   # No global scene augmentation — in hand-root frame the T_hand^{-1}
   # canonicalization already eliminates scene-level SE(3) degrees of freedom.
   loss_cross_edge_weight: 1.0
-  loss_hand_contact_weight: 1.0
+  loss_contact_aux_weight: 1.0
+  loss_hand_contact_weight: 0.0
 
 data:
   batch_size: 8
@@ -42,7 +44,7 @@ train:
   log_every_steps: 1
   save_every_epochs: 5
   eval_every_epochs: 1
-  metric_for_best: val_clean/loss
+  metric_for_best: val_clean/cross_edge_random_qfl
   lower_is_better: true
   distributed:
     enable: false

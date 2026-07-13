@@ -6,6 +6,7 @@ meta:
   num_obj_points: 512
   num_hand_points: 1538
   num_supervision_edges: 128
+  contact_supervision_quotas: [16, 16, 16, 16]
   contact_radius: 0.01
   quality_focal_beta: 2.0
   coordinate_frame: hand_root
@@ -13,7 +14,8 @@ meta:
   obj_trans_std: 0.01
   obj_perturb_prob: 1.0
   loss_cross_edge_weight: 1.0
-  loss_hand_contact_weight: 1.0
+  loss_contact_aux_weight: 1.0
+  loss_hand_contact_weight: 0.0
   val_obj_perturb_prob: 1.0
 
 data:
@@ -38,7 +40,7 @@ train:
   log_every_steps: 20
   save_every_epochs: 5
   eval_every_epochs: 1
-  metric_for_best: val_clean/loss
+  metric_for_best: val_clean/cross_edge_random_qfl
   lower_is_better: true
   distributed:
     enable: true

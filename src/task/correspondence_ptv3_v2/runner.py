@@ -115,115 +115,126 @@ class CorrespondencePTV3V2Runner(BaseRunner):
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         meta = self.cfg.meta
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
-        supervision_edge_valid_mask = batch["supervision_edge_valid_mask"].bool()
-        edge_valid_mask = supervision_edge_valid_mask & obj_valid_mask.unsqueeze(-1)
-
-        edge_target = batch["edge_contact_target"].float()
-        edge_logits = preds["pred_cross_contact_logits"]
-        edge_prob = preds["pred_cross_contact_prob"]
         beta = float(meta.quality_focal_beta)
 
-        edge_qfl_map = quality_focal_loss_map(edge_logits, edge_target, beta=beta)
-        edge_bce_map = binary_cross_entropy_with_logits_map(edge_logits, edge_target)
-        edge_mae_map = torch.abs(edge_prob - edge_target)
+        # ---- Random-edge stream (L_r) ----
+        random_edge_valid_mask = batch["random_edge_valid_mask"].bool() & obj_valid_mask.unsqueeze(-1)
+        random_target = batch["random_edge_contact_target"].float()
+        random_logits = preds["pred_cross_random_logits"]
+        random_prob = preds["pred_cross_random_prob"]
 
-        cross_edge_qfl = reduce_loss_map_per_object(edge_qfl_map, edge_valid_mask, obj_valid_mask)
-        cross_edge_bce = reduce_loss_map_per_object(edge_bce_map, edge_valid_mask, obj_valid_mask)
-        cross_edge_mae = reduce_loss_map_per_object(edge_mae_map, edge_valid_mask, obj_valid_mask)
+        random_qfl_map = quality_focal_loss_map(random_logits, random_target, beta=beta)
+        random_bce_map = binary_cross_entropy_with_logits_map(random_logits, random_target)
+        random_mae_map = torch.abs(random_prob - random_target)
 
-        # Hand contact head: per-hand-point soft contact score supervised by
-        # the frame-invariant min distance to the full 4096 object pool.
-        # All 1538 hand points are valid (no padding/valid mask), so the
-        # loss is averaged over B*1538 (= numel) for batch-size invariance:
-        # duplicating a sample along the batch dim must not change the loss.
+        cross_edge_random_qfl = reduce_loss_map_per_object(
+            random_qfl_map, random_edge_valid_mask, obj_valid_mask
+        )
+        cross_edge_random_bce = reduce_loss_map_per_object(
+            random_bce_map, random_edge_valid_mask, obj_valid_mask
+        )
+        cross_edge_random_mae = reduce_loss_map_per_object(
+            random_mae_map, random_edge_valid_mask, obj_valid_mask
+        )
+
+        # ---- Contact-aware auxiliary stream (L_c) ----
+        contact_edge_valid_mask = batch["contact_edge_valid_mask"].bool() & obj_valid_mask.unsqueeze(-1)
+        contact_edge_target = batch["contact_edge_contact_target"].float()
+        contact_logits = preds["pred_cross_contact_aux_logits"]
+        contact_prob = preds["pred_cross_contact_aux_prob"]
+
+        contact_qfl_map = quality_focal_loss_map(contact_logits, contact_edge_target, beta=beta)
+        contact_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
+        contact_mae_map = torch.abs(contact_prob - contact_edge_target)
+
+        cross_edge_contact_aux_qfl = reduce_loss_map_per_object(
+            contact_qfl_map, contact_edge_valid_mask, obj_valid_mask
+        )
+        cross_edge_contact_aux_bce = reduce_loss_map_per_object(
+            contact_bce_map, contact_edge_valid_mask, obj_valid_mask
+        )
+        cross_edge_contact_aux_mae = reduce_loss_map_per_object(
+            contact_mae_map, contact_edge_valid_mask, obj_valid_mask
+        )
+
+        # ---- Hand contact head is unsupervisable in v2.1 ----
+        # ``loss_hand_contact_weight`` is forced to 0 by the config and the
+        # hand head is intentionally not in the loss dict. We DO log the
+        # hand-contact GT distribution as a data observation (the
+        # prediction side is meaningless because the head is untrained).
         hand_target = batch["hand_contact_target"].float()
-        hand_logits = preds["pred_hand_contact_logits"]
-        hand_prob = preds["pred_hand_contact_prob"]
-        hand_qfl_map = quality_focal_loss_map(hand_logits, hand_target, beta=beta)
-        hand_bce_map = binary_cross_entropy_with_logits_map(hand_logits, hand_target)
-        hand_mae_map = torch.abs(hand_prob - hand_target)
-        hand_contact_qfl = hand_qfl_map.mean()
-        hand_contact_bce = hand_bce_map.mean()
-        hand_contact_mae = hand_mae_map.mean()
 
-        hand_nonzero_mask = hand_target > 0
-        hand_nonzero_count = hand_nonzero_mask.sum()
-        if bool(hand_nonzero_count > 0):
-            hand_nonzero_mae = (hand_prob - hand_target).abs()[hand_nonzero_mask].sum() / hand_nonzero_count.float()
-            hand_nonzero_pred_mean = hand_prob[hand_nonzero_mask].mean()
-            hand_nonzero_target_mean = hand_target[hand_nonzero_mask].mean()
-        else:
-            zero_tensor = hand_target.sum() * 0.0
-            hand_nonzero_mae = zero_tensor
-            hand_nonzero_pred_mean = zero_tensor
-            hand_nonzero_target_mean = zero_tensor
-
-        oracle_bce_map = binary_entropy_floor_map(edge_target)
-        cross_edge_oracle_bce = reduce_loss_map_per_object(
-            oracle_bce_map, edge_valid_mask, obj_valid_mask
+        # ---- Random-stream diagnostic (must NOT be polluted by aux edges) ----
+        random_oracle_bce_map = binary_entropy_floor_map(random_target)
+        cross_edge_random_oracle_bce = reduce_loss_map_per_object(
+            random_oracle_bce_map, random_edge_valid_mask, obj_valid_mask
         )
-        cross_edge_oracle_bce_global = reduce_loss_map(
-            oracle_bce_map, edge_valid_mask
+        cross_edge_random_oracle_bce_global = reduce_loss_map(
+            random_oracle_bce_map, random_edge_valid_mask
         )
-        cross_edge_bce_global = reduce_loss_map(edge_bce_map, edge_valid_mask)
-        cross_edge_excess_bce = (cross_edge_bce - cross_edge_oracle_bce).detach()
-        cross_edge_excess_bce_global = (cross_edge_bce_global - cross_edge_oracle_bce_global).detach()
+        cross_edge_random_bce_global = reduce_loss_map(
+            random_bce_map, random_edge_valid_mask
+        )
+        cross_edge_random_excess_bce = (cross_edge_random_bce - cross_edge_random_oracle_bce).detach()
+        cross_edge_random_excess_bce_global = (
+            cross_edge_random_bce_global - cross_edge_random_oracle_bce_global
+        ).detach()
 
-        sampled_nonzero_mask = (edge_target > 0) & edge_valid_mask
-        sampled_nonzero_edge_count = sampled_nonzero_mask.sum()
-        valid_edge_count = edge_valid_mask.sum()
-        per_obj_has_nonzero = sampled_nonzero_mask.any(dim=-1) & obj_valid_mask
-        num_valid_obj = obj_valid_mask.sum()
-        num_obj_with_nonzero = per_obj_has_nonzero.sum()
+        random_sampled_nonzero_mask = (random_target > 0) & random_edge_valid_mask
+        random_sampled_nonzero_edge_count = random_sampled_nonzero_mask.sum()
+        random_valid_edge_count = random_edge_valid_mask.sum()
+        random_per_obj_has_nonzero = random_sampled_nonzero_mask.any(dim=-1) & obj_valid_mask
+        random_num_valid_obj = obj_valid_mask.sum()
+        random_num_obj_with_nonzero = random_per_obj_has_nonzero.sum()
 
         aux_metrics: dict[str, float | MetricStat] = {
-            "cross_edge_qfl": cross_edge_qfl,
-            "cross_edge_bce": cross_edge_bce,
-            "cross_edge_mae": cross_edge_mae,
-            "cross_edge_oracle_bce": cross_edge_oracle_bce,
-            "cross_edge_oracle_bce_global": cross_edge_oracle_bce_global,
-            "cross_edge_excess_bce": cross_edge_excess_bce,
-            "cross_edge_excess_bce_global": cross_edge_excess_bce_global,
-            "num_valid_obj": num_valid_obj.float(),
-            "num_valid_edges": valid_edge_count.float(),
-            "sampled_nonzero_edge_count": sampled_nonzero_edge_count.float(),
-            "sampled_nonzero_edge_fraction": MetricStat(
-                total=float(sampled_nonzero_edge_count.detach().cpu()),
-                count=float(valid_edge_count.detach().cpu()),
+            # Loss-aligned random stream metrics (names match the loss key).
+            "cross_edge_random_qfl": cross_edge_random_qfl,
+            "cross_edge_random_bce": cross_edge_random_bce,
+            "cross_edge_random_mae": cross_edge_random_mae,
+            "cross_edge_random_oracle_bce": cross_edge_random_oracle_bce,
+            "cross_edge_random_oracle_bce_global": cross_edge_random_oracle_bce_global,
+            "cross_edge_random_excess_bce": cross_edge_random_excess_bce,
+            "cross_edge_random_excess_bce_global": cross_edge_random_excess_bce_global,
+            "random_num_valid_obj": random_num_valid_obj.float(),
+            "random_num_valid_edges": random_valid_edge_count.float(),
+            "random_sampled_nonzero_edge_count": random_sampled_nonzero_edge_count.float(),
+            "random_sampled_nonzero_edge_fraction": MetricStat(
+                total=float(random_sampled_nonzero_edge_count.detach().cpu()),
+                count=float(random_valid_edge_count.detach().cpu()),
             ),
-            "object_nonzero_edge_coverage": MetricStat(
-                total=float(num_obj_with_nonzero.detach().cpu()),
-                count=float(num_valid_obj.detach().cpu()),
+            "random_object_nonzero_edge_coverage": MetricStat(
+                total=float(random_num_obj_with_nonzero.detach().cpu()),
+                count=float(random_num_valid_obj.detach().cpu()),
             ),
+            # Contact auxiliary stream metrics (separate diagnostic).
+            "contact_aux_qfl": cross_edge_contact_aux_qfl,
+            "contact_aux_bce": cross_edge_contact_aux_bce,
+            "contact_aux_mae": cross_edge_contact_aux_mae,
         }
 
-        aux_metrics.update(self._compute_diagnostic_metrics(
-            edge_target=edge_target,
-            edge_prob=edge_prob,
-            edge_valid_mask=edge_valid_mask,
+        aux_metrics.update(self._compute_random_diagnostic_metrics(
+            edge_target=random_target,
+            edge_prob=random_prob,
+            edge_valid_mask=random_edge_valid_mask,
             obj_valid_mask=obj_valid_mask,
             beta=beta,
         ))
-
-        aux_metrics["hand_contact_qfl"] = hand_contact_qfl
-        aux_metrics["hand_contact_bce"] = hand_contact_bce
-        aux_metrics["hand_contact_mae"] = hand_contact_mae
-        aux_metrics["hand_contact_nonzero_mae"] = hand_nonzero_mae
-        aux_metrics["hand_contact_nonzero_pred_mean"] = hand_nonzero_pred_mean
-        aux_metrics["hand_contact_nonzero_target_mean"] = hand_nonzero_target_mean
-        aux_metrics["hand_contact_nonzero_count"] = MetricStat(
-            total=float(hand_nonzero_count.detach().cpu()),
-            count=float(1),
-            expose_validity=True,
-        )
+        aux_metrics.update(self._compute_contact_aux_diagnostic_metrics(
+            edge_target=contact_edge_target,
+            edge_prob=contact_prob,
+            edge_valid_mask=contact_edge_valid_mask,
+            obj_valid_mask=obj_valid_mask,
+        ))
+        aux_metrics.update(self._compute_hand_contact_gt_metrics(hand_target=hand_target))
 
         losses = {
-            "cross_edge_contact": float(meta.loss_cross_edge_weight) * cross_edge_qfl,
-            "hand_contact": float(meta.loss_hand_contact_weight) * hand_contact_qfl,
+            "cross_edge_random": float(meta.loss_cross_edge_weight) * cross_edge_random_qfl,
+            "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_qfl,
         }
         return losses, aux_metrics
 
-    def _compute_diagnostic_metrics(
+    def _compute_random_diagnostic_metrics(
         self,
         *,
         edge_target: torch.Tensor,
@@ -232,9 +243,11 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         obj_valid_mask: torch.Tensor,
         beta: float,
     ) -> dict[str, float | MetricStat]:
-        """Diagnostic metrics for the 144 nonzero / 787456 total imbalance.
+        """Diagnostic metrics for the random128 stream.
 
-        See ``docs/指导.md`` for the design rationale.
+        These are the metrics that must remain comparable to the
+        ``random128 baseline`` runs, so they MUST NOT mix in any
+        contact-aux edges.
         """
         metrics: dict[str, float | MetricStat] = {}
 
@@ -242,25 +255,25 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         nonzero_mask = (edge_target > 0) & edge_valid_mask
         nonzero_count = nonzero_mask.sum()
         if bool(nonzero_count > 0):
-            metrics["cross_edge_nonzero_mae"] = (
+            metrics["cross_edge_random_nonzero_mae"] = (
                 (edge_prob - edge_target).abs()[nonzero_mask].sum() / nonzero_count.float()
             )
-            metrics["cross_edge_nonzero_bce"] = (
+            metrics["cross_edge_random_nonzero_bce"] = (
                 -(
                     edge_target[nonzero_mask] * torch.log(edge_prob[nonzero_mask].clamp(min=1e-6))
                     + (1.0 - edge_target[nonzero_mask])
                     * torch.log((1.0 - edge_prob[nonzero_mask]).clamp(min=1e-6))
                 ).mean()
             )
-            metrics["cross_edge_nonzero_pred_mean"] = edge_prob[nonzero_mask].mean()
-            metrics["cross_edge_nonzero_target_mean"] = edge_target[nonzero_mask].mean()
+            metrics["cross_edge_random_nonzero_pred_mean"] = edge_prob[nonzero_mask].mean()
+            metrics["cross_edge_random_nonzero_target_mean"] = edge_target[nonzero_mask].mean()
         else:
             zero_tensor = edge_target.sum() * 0.0
-            metrics["cross_edge_nonzero_mae"] = zero_tensor
-            metrics["cross_edge_nonzero_bce"] = zero_tensor
-            metrics["cross_edge_nonzero_pred_mean"] = zero_tensor
-            metrics["cross_edge_nonzero_target_mean"] = zero_tensor
-        metrics["cross_edge_nonzero_count"] = MetricStat(
+            metrics["cross_edge_random_nonzero_mae"] = zero_tensor
+            metrics["cross_edge_random_nonzero_bce"] = zero_tensor
+            metrics["cross_edge_random_nonzero_pred_mean"] = zero_tensor
+            metrics["cross_edge_random_nonzero_target_mean"] = zero_tensor
+        metrics["cross_edge_random_nonzero_count"] = MetricStat(
             total=float(nonzero_count.detach().cpu()),
             count=float(1),
             expose_validity=True,
@@ -272,31 +285,31 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 edge_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
             ) & edge_valid_mask
             bin_count = bin_mask.sum()
-            metrics[f"{name}_count"] = MetricStat(
+            metrics[f"random_{name}_count"] = MetricStat(
                 total=float(bin_count.detach().cpu()),
                 count=float(1),
                 expose_validity=True,
             )
             if bool(bin_count > 0):
-                metrics[f"{name}_mae"] = (
+                metrics[f"random_{name}_mae"] = (
                     (edge_prob - edge_target).abs()[bin_mask].sum() / bin_count.float()
                 )
             else:
-                metrics[f"{name}_mae"] = edge_target.sum() * 0.0
+                metrics[f"random_{name}_mae"] = edge_target.sum() * 0.0
 
         # ---- Zero edge prediction distribution ----
         zero_edge_mask = (edge_target == 0) & edge_valid_mask
         zero_edge_count = zero_edge_mask.sum()
         if bool(zero_edge_count > 0):
             zero_pred = edge_prob[zero_edge_mask].float()
-            metrics["cross_edge_zero_pred_mean"] = zero_pred.mean()
-            metrics["cross_edge_zero_pred_p95"] = torch.quantile(zero_pred, 0.95)
-            metrics["cross_edge_zero_pred_p99"] = torch.quantile(zero_pred, 0.99)
+            metrics["cross_edge_random_zero_pred_mean"] = zero_pred.mean()
+            metrics["cross_edge_random_zero_pred_p95"] = torch.quantile(zero_pred, 0.95)
+            metrics["cross_edge_random_zero_pred_p99"] = torch.quantile(zero_pred, 0.99)
         else:
             zero_tensor = edge_target.sum() * 0.0
-            metrics["cross_edge_zero_pred_mean"] = zero_tensor
-            metrics["cross_edge_zero_pred_p95"] = zero_tensor
-            metrics["cross_edge_zero_pred_p99"] = zero_tensor
+            metrics["cross_edge_random_zero_pred_mean"] = zero_tensor
+            metrics["cross_edge_random_zero_pred_p95"] = zero_tensor
+            metrics["cross_edge_random_zero_pred_p99"] = zero_tensor
 
         # ---- Zero predictor baseline ----
         zero_qfl_map = zero_predictor_qfl_map(edge_target, beta=beta)
@@ -311,6 +324,108 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         metrics["zero_baseline_mae"] = reduce_loss_map_per_object(
             zero_mae_map, edge_valid_mask, obj_valid_mask
         )
+        return metrics
+
+    def _compute_contact_aux_diagnostic_metrics(
+        self,
+        *,
+        edge_target: torch.Tensor,
+        edge_prob: torch.Tensor,
+        edge_valid_mask: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> dict[str, float | MetricStat]:
+        """Diagnostic metrics for the contact auxiliary stream only.
+
+        These must NEVER be mixed with the random stream metrics: the
+        contact stream is biased by construction (only y > 0 edges), so
+        diagnostic quantities like nonzero_fraction, target_mean, and
+        nonzero_pred_mean would shift on their own.
+        """
+        metrics: dict[str, float | MetricStat] = {}
+
+        # Per-stream means and MAE
+        if bool(edge_valid_mask.sum() > 0):
+            metrics["contact_aux_pred_mean"] = edge_prob[edge_valid_mask].mean()
+            metrics["contact_aux_target_mean"] = edge_target[edge_valid_mask].mean()
+            metrics["contact_aux_nonzero_mae"] = (
+                (edge_prob - edge_target).abs()[edge_valid_mask].sum()
+                / edge_valid_mask.sum().float()
+            )
+        else:
+            zero_tensor = edge_target.sum() * 0.0
+            metrics["contact_aux_pred_mean"] = zero_tensor
+            metrics["contact_aux_target_mean"] = zero_tensor
+            metrics["contact_aux_nonzero_mae"] = zero_tensor
+
+        metrics["contact_aux_valid_edge_count"] = MetricStat(
+            total=float(edge_valid_mask.sum().detach().cpu()),
+            count=float(1),
+            expose_validity=True,
+        )
+        per_obj_has_edge = edge_valid_mask.any(dim=-1) & obj_valid_mask
+        num_valid_obj = obj_valid_mask.sum()
+        num_obj_with_edge = per_obj_has_edge.sum()
+        metrics["contact_aux_object_coverage"] = MetricStat(
+            total=float(num_obj_with_edge.detach().cpu()),
+            count=float(num_valid_obj.detach().cpu()),
+        )
+
+        # Per-bin count and MAE (matches the sampler order weak/medium/strong/very_strong).
+        for lower, upper, name in _TARGET_STRENGTH_BINS:
+            bin_mask = target_strength_bin_mask(
+                edge_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
+            ) & edge_valid_mask
+            bin_count = bin_mask.sum()
+            metrics[f"contact_aux_{name}_count"] = MetricStat(
+                total=float(bin_count.detach().cpu()),
+                count=float(1),
+                expose_validity=True,
+            )
+            if bool(bin_count > 0):
+                metrics[f"contact_aux_{name}_mae"] = (
+                    (edge_prob - edge_target).abs()[bin_mask].sum() / bin_count.float()
+                )
+            else:
+                metrics[f"contact_aux_{name}_mae"] = edge_target.sum() * 0.0
+        return metrics
+
+    def _compute_hand_contact_gt_metrics(
+        self,
+        *,
+        hand_target: torch.Tensor,
+    ) -> dict[str, float | MetricStat]:
+        """GT-only hand contact observation.
+
+        The hand head is NOT supervised in v2.1, so any prediction-side
+        metric (MAE, QFL, prob mean) would be meaningless. We only log
+        the GT distribution to detect train/val domain shift and to keep
+        the option open for a future detached probe on z_hand.
+        """
+        metrics: dict[str, float | MetricStat] = {}
+        nonzero_mask = hand_target > 0
+        nonzero_count = nonzero_mask.sum()
+        total = float(hand_target.numel())
+        if bool(nonzero_count > 0):
+            metrics["hand_contact_target_nonzero_fraction"] = float(nonzero_count) / max(total, 1.0)
+            metrics["hand_contact_target_nonzero_mean"] = hand_target[nonzero_mask].mean()
+        else:
+            zero_tensor = hand_target.sum() * 0.0
+            metrics["hand_contact_target_nonzero_fraction"] = zero_tensor
+            metrics["hand_contact_target_nonzero_mean"] = zero_tensor
+        metrics["hand_contact_target_mean"] = hand_target.mean()
+        metrics["hand_contact_target_count"] = MetricStat(
+            total=total,
+            count=float(1),
+            expose_validity=True,
+        )
+        for lower, upper, name in _TARGET_STRENGTH_BINS:
+            bin_mask = target_strength_bin_mask(
+                hand_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
+            )
+            bin_count = bin_mask.sum()
+            metrics[f"hand_target_{name}_fraction"] = (
+                float(bin_count) / max(total, 1.0)
+            )
         return metrics
 
     def inference(self, model: torch.nn.Module, inputs: Any) -> dict[str, torch.Tensor]:

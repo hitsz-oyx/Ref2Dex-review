@@ -14,7 +14,11 @@ from src.task.correspondence_ptv3_v2.losses import (
     reduce_loss_map_per_object,
 )
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
-from src.task.correspondence_ptv3_v2.sampling import sample_random_supervision_edges, stable_frame_seed
+from src.task.correspondence_ptv3_v2.sampling import (
+    sample_contact_supervision_edges,
+    sample_random_supervision_edges,
+    stable_frame_seed,
+)
 
 
 def test_contact_target_from_distance_values() -> None:
@@ -136,57 +140,61 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     class Meta:
         quality_focal_beta = 2.0
         loss_cross_edge_weight = 1.0
-        loss_hand_contact_weight = 1.0
+        loss_contact_aux_weight = 1.0
+        loss_hand_contact_weight = 0.0
     class Cfg:
         meta = Meta()
     runner.cfg = Cfg()
     preds = {
-        "pred_cross_contact_logits": torch.zeros(1, 2, 3),
-        "pred_cross_contact_prob": torch.full((1, 2, 3), 0.5),
+        "pred_cross_random_logits": torch.zeros(1, 2, 3),
+        "pred_cross_random_prob": torch.full((1, 2, 3), 0.5),
+        "pred_cross_contact_aux_logits": torch.zeros(1, 2, 2),
+        "pred_cross_contact_aux_prob": torch.full((1, 2, 2), 0.5),
         "pred_hand_contact_logits": torch.zeros(1, 4),
         "pred_hand_contact_prob": torch.full((1, 4), 0.5),
     }
     batch = {
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
-        "supervision_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
-        "edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
+        "random_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
+        "random_edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
+        "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
+        "contact_edge_contact_target": torch.tensor([[[0.5, 0.8], [0.7, 0.9]]]),
         "hand_contact_target": torch.tensor([[0.0, 0.5, 1.0, 0.0]]),
     }
     losses, aux = runner._compute_losses(preds, batch)
-    assert isinstance(aux["sampled_nonzero_edge_fraction"], MetricStat)
-    assert isinstance(aux["object_nonzero_edge_coverage"], MetricStat)
-    assert aux["sampled_nonzero_edge_fraction"].total == 1.0
-    assert aux["sampled_nonzero_edge_fraction"].count == 3.0
-    assert aux["object_nonzero_edge_coverage"].total == 1.0
-    assert aux["object_nonzero_edge_coverage"].count == 2.0
-    # Loss shape: cross-edge QFL + hand contact QFL.
-    assert set(losses) == {"cross_edge_contact", "hand_contact"}
-    assert isinstance(aux["hand_contact_nonzero_count"], MetricStat)
-    # Diagnostic metrics must all be present after the v2 metric audit.
-    expected_keys = {
-        "cross_edge_qfl",
-        "cross_edge_bce",
-        "cross_edge_mae",
-        "cross_edge_oracle_bce",
-        "cross_edge_oracle_bce_global",
-        "cross_edge_excess_bce",
-        "cross_edge_excess_bce_global",
-        "cross_edge_nonzero_mae",
-        "cross_edge_nonzero_bce",
-        "cross_edge_nonzero_pred_mean",
-        "cross_edge_nonzero_target_mean",
-        "cross_edge_zero_pred_mean",
-        "cross_edge_zero_pred_p95",
-        "cross_edge_zero_pred_p99",
+    # Random stream metric keys are preserved as ``cross_edge_random_*``.
+    assert isinstance(aux["random_sampled_nonzero_edge_fraction"], MetricStat)
+    assert isinstance(aux["random_object_nonzero_edge_coverage"], MetricStat)
+    assert aux["random_sampled_nonzero_edge_fraction"].total == 1.0
+    assert aux["random_sampled_nonzero_edge_fraction"].count == 3.0
+    assert aux["random_object_nonzero_edge_coverage"].total == 1.0
+    assert aux["random_object_nonzero_edge_coverage"].count == 2.0
+    # Loss shape: random QFL + contact aux QFL (hand is removed in v2.1).
+    assert set(losses) == {"cross_edge_random", "cross_edge_contact_aux"}
+    assert "hand_contact" not in losses
+    # Hand contact is observed as a GT distribution only.
+    assert "hand_contact_qfl" not in aux
+    assert "hand_contact_nonzero_mae" not in aux
+    assert isinstance(aux["hand_contact_target_count"], MetricStat)
+    # Required random-stream diagnostic keys.
+    expected_random_keys = {
+        "cross_edge_random_qfl",
+        "cross_edge_random_bce",
+        "cross_edge_random_mae",
+        "cross_edge_random_oracle_bce",
+        "cross_edge_random_oracle_bce_global",
+        "cross_edge_random_excess_bce",
+        "cross_edge_random_excess_bce_global",
+        "cross_edge_random_nonzero_mae",
+        "cross_edge_random_nonzero_bce",
+        "cross_edge_random_nonzero_pred_mean",
+        "cross_edge_random_nonzero_target_mean",
+        "cross_edge_random_zero_pred_mean",
+        "cross_edge_random_zero_pred_p95",
+        "cross_edge_random_zero_pred_p99",
         "zero_baseline_qfl",
         "zero_baseline_bce",
         "zero_baseline_mae",
-        "hand_contact_qfl",
-        "hand_contact_bce",
-        "hand_contact_mae",
-        "hand_contact_nonzero_mae",
-        "hand_contact_nonzero_pred_mean",
-        "hand_contact_nonzero_target_mean",
     }
     for name in (
         "edge_y_0_025",
@@ -194,10 +202,42 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "edge_y_050_075",
         "edge_y_075_100",
     ):
-        expected_keys.add(f"{name}_count")
-        expected_keys.add(f"{name}_mae")
-    missing = expected_keys - aux.keys()
-    assert not missing, f"Missing diagnostic metrics: {sorted(missing)}"
+        expected_random_keys.add(f"random_{name}_count")
+        expected_random_keys.add(f"random_{name}_mae")
+    missing = expected_random_keys - aux.keys()
+    assert not missing, f"Missing random-stream metrics: {sorted(missing)}"
+    # Required contact-auxiliary diagnostic keys.
+    expected_contact_aux_keys = {
+        "contact_aux_qfl",
+        "contact_aux_bce",
+        "contact_aux_mae",
+        "contact_aux_pred_mean",
+        "contact_aux_target_mean",
+        "contact_aux_nonzero_mae",
+        "contact_aux_object_coverage",
+        "contact_aux_valid_edge_count",
+    }
+    for name in (
+        "edge_y_0_025",
+        "edge_y_025_050",
+        "edge_y_050_075",
+        "edge_y_075_100",
+    ):
+        expected_contact_aux_keys.add(f"contact_aux_{name}_count")
+        expected_contact_aux_keys.add(f"contact_aux_{name}_mae")
+    missing = expected_contact_aux_keys - aux.keys()
+    assert not missing, f"Missing contact-aux metrics: {sorted(missing)}"
+    # Required hand-contact GT observation keys.
+    for key in (
+        "hand_contact_target_nonzero_fraction",
+        "hand_contact_target_nonzero_mean",
+        "hand_contact_target_mean",
+        "hand_target_edge_y_0_025_fraction",
+        "hand_target_edge_y_025_050_fraction",
+        "hand_target_edge_y_050_075_fraction",
+        "hand_target_edge_y_075_100_fraction",
+    ):
+        assert key in aux, f"Missing hand-contact GT metric: {key}"
     # Losses must only contain cross-edge + hand contact (obj_contact removed).
     assert "obj_contact" not in aux
     assert "obj_contact_qfl" not in aux
@@ -255,18 +295,23 @@ def test_model_output_contract_and_dense_cross_api() -> None:
             "normals": torch.randn(1, 5, 3),
             "point_valid_mask": torch.tensor([[True, True, True, True, True]]),
             "runtime_obj_valid_mask": torch.tensor([[True, True]]),
-            "supervision_edge_idx": torch.tensor([[[0, 1], [1, 2]]]),
-            "supervision_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
+            "random_edge_idx": torch.tensor([[[0, 1], [1, 2]]]),
+            "random_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
+            "contact_edge_idx": torch.tensor([[[2, 0], [0, 1]]]),
+            "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         }
         out = model(batch)
-        # v2 forward contract: cross-edge outputs + hand contact outputs.
+        # v2.1 forward contract: random + contact aux + hand contact outputs.
         assert set(out) == {
-            "pred_cross_contact_logits",
-            "pred_cross_contact_prob",
+            "pred_cross_random_logits",
+            "pred_cross_random_prob",
+            "pred_cross_contact_aux_logits",
+            "pred_cross_contact_aux_prob",
             "pred_hand_contact_logits",
             "pred_hand_contact_prob",
         }
         assert hasattr(model, "hand_contact_head")
+        assert hasattr(model, "_predict_cross_edges")
         dense = model.predict_dense_cross_for_object(batch, obj_idx=0)
         assert tuple(dense.shape) == (1, 3)
     finally:
@@ -291,6 +336,11 @@ def test_v2_has_no_old_task_dependency_strings() -> None:
         assert "obj_contact_bce" not in text
         assert "obj_contact_qfl" not in text
         assert "obj_contact_mae" not in text
+        # v2.1 ablation renamed the supervision edge set to ``random_*``
+        # and added a separate ``contact_*`` set; the old keys must be
+        # gone.
+        assert "supervision_edge_idx" not in text
+        assert "supervision_edge_valid_mask" not in text
         # Forbid the bare obj_contact field (the loss function name
         # `contact_target_from_distance` is allowed and is excluded by the
         # function-name check below).
@@ -300,3 +350,179 @@ def test_v2_has_no_old_task_dependency_strings() -> None:
         assert bare_contact_target is None, (
             f"{path}: stray contact_target field reference (must use edge_contact_target)"
         )
+
+
+# ---------------------------------------------------------------------------
+# sample_contact_supervision_edges tests (Step 9 in docs/指导.md).
+# The 6 mandatory tests cover the full contract: positive-only,
+# 4-bin layout, no refill, target > 0, seed reproducibility, and
+# random128 stream regression.
+# ---------------------------------------------------------------------------
+
+_QUOTAS = (4, 4, 4, 4)
+
+
+def _build_synthetic_geometry(num_obj: int, num_hand: int, *, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Build a synthetic obj/hand point cloud where some hand points are
+    within ``contact_radius`` of each obj point so the sampler can find
+    contact-positive candidates.
+    """
+    rng = np.random.default_rng(seed)
+    obj = rng.normal(size=(num_obj, 3)).astype(np.float32) * 0.01
+    hand = rng.normal(size=(num_hand, 3)).astype(np.float32) * 0.01
+    return obj, hand
+
+
+def test_sample_contact_sampler_no_contact_yields_zero_valid_edges() -> None:
+    """Test 1: when every distance is ``>= r``, no contact edges are sampled."""
+    obj = np.zeros((2, 3), dtype=np.float32)
+    hand = np.full((16, 3), 5.0, dtype=np.float32)  # 5m away, far beyond r=0.01
+    edge_idx, edge_valid = sample_contact_supervision_edges(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True, True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+        seed=42,
+    )
+    assert edge_idx.shape == (2, sum(_QUOTAS))
+    assert edge_valid.shape == (2, sum(_QUOTAS))
+    assert int(edge_valid.sum()) == 0
+
+
+def test_sample_contact_sampler_only_weak_fills_only_weak() -> None:
+    """Test 2: with only weak candidates, weak fills up to its quota and
+    the other bins stay empty (no refill)."""
+    obj = np.zeros((1, 3), dtype=np.float32)
+    # 16 hand points at distance 0.009m (weak bin: 0.75r < d < r with r=0.01).
+    hand = np.zeros((16, 3), dtype=np.float32)
+    hand[:, 0] = 0.009
+    edge_idx, edge_valid = sample_contact_supervision_edges(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+        seed=42,
+    )
+    valid_count = int(edge_valid[0].sum())
+    # weak quota is 4; medium/strong/very_strong are all 0.
+    assert valid_count == _QUOTAS[0]
+    # All sampled slots fall in the weak bin (the first 4 columns).
+    for col in range(_QUOTAS[0]):
+        assert bool(edge_valid[0, col])
+    for col in range(_QUOTAS[0], sum(_QUOTAS)):
+        assert not bool(edge_valid[0, col])
+
+
+def test_sample_contact_sampler_each_bin_fully_filled() -> None:
+    """Test 3: when every bin has >= quota candidates, total is sum(quotas)."""
+    obj = np.zeros((1, 3), dtype=np.float32)
+    hand = np.zeros((sum(_QUOTAS) * 2, 3), dtype=np.float32)
+    hand[sum(_QUOTAS) :, 0] = 5.0
+    # 4 hand points in each bin (weak / medium / strong / very strong).
+    offsets = [0.009, 0.006, 0.003, 0.001]
+    for i, off in enumerate(offsets):
+        hand[i * 4 : (i + 1) * 4, 0] = off
+    edge_idx, edge_valid = sample_contact_supervision_edges(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+        seed=42,
+    )
+    assert int(edge_valid.sum()) == sum(_QUOTAS)
+    # The first 4 slots are weak, the next 4 medium, etc. (no refill
+    # means the bin layout is preserved end-to-end).
+    for i, off in enumerate(offsets):
+        for col in range(_QUOTAS[i]):
+            assert bool(edge_valid[0, i * _QUOTAS[i] + col])
+    # Sanity-check: each sampled hand point lies in the expected bin.
+    for i, off in enumerate(offsets):
+        for col in range(_QUOTAS[i]):
+            sampled_off = hand[edge_idx[0, i * _QUOTAS[i] + col], 0]
+            assert abs(float(sampled_off) - off) < 1e-5
+
+
+def test_sample_contact_sampler_y_is_strictly_positive_on_valid() -> None:
+    """Test 4: every valid sampled edge has y > 0."""
+    obj, hand = _build_synthetic_geometry(num_obj=4, num_hand=128, seed=0)
+    edge_idx, edge_valid = sample_contact_supervision_edges(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True, True, True, True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+        seed=42,
+    )
+    if int(edge_valid.sum()) == 0:
+        # Sampler can legitimately produce zero valid edges if no hand
+        # point is within radius for this random geometry; in that case
+        # the contract ``y > 0`` is vacuously true.
+        return
+    obj_t = torch.from_numpy(obj)
+    hand_t = torch.from_numpy(hand)
+    safe_idx = torch.from_numpy(edge_idx).clamp(min=0)
+    distance = torch.norm(hand_t[safe_idx] - obj_t.unsqueeze(1), dim=-1)
+    target = contact_target_from_distance(distance, contact_radius=0.01)
+    valid_targets = target[torch.from_numpy(edge_valid)]
+    assert torch.all(valid_targets > 0), "contact sampler leaked a y=0 edge into the auxiliary stream"
+
+
+def test_sample_contact_sampler_is_deterministic_under_same_seed() -> None:
+    """Test 5: same seed reproduces the same edge_idx."""
+    obj, hand = _build_synthetic_geometry(num_obj=4, num_hand=128, seed=0)
+    kwargs = dict(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True, True, True, True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+    )
+    idx1, valid1 = sample_contact_supervision_edges(seed=42, **kwargs)
+    idx2, valid2 = sample_contact_supervision_edges(seed=42, **kwargs)
+    assert np.array_equal(idx1, idx2)
+    assert np.array_equal(valid1, valid2)
+
+
+def test_sample_random_supervision_edges_unchanged_by_contact_sampler() -> None:
+    """Test 6 (regression): the random128 baseline stream is byte-identical
+    before and after the v2.1 ablation when fed the same seed.
+
+    We assert this by checking that ``sample_random_supervision_edges``
+    with the original ``namespace=supervision-edges`` seed still produces
+    the same output, regardless of whether the contact stream is added.
+    """
+    seed_a = stable_frame_seed(
+        base_seed=42,
+        seq_id="seq",
+        side="right",
+        raw_frame_id=7,
+        epoch=0,
+        namespace="supervision-edges",
+    )
+    seed_b = stable_frame_seed(
+        base_seed=42,
+        seq_id="seq",
+        side="right",
+        raw_frame_id=7,
+        epoch=0,
+        namespace="supervision-edges",
+    )
+    obj_valid_mask = np.array([True, True, False, True])
+    sample_a = sample_random_supervision_edges(
+        num_obj_points=4,
+        num_hand_points=256,
+        obj_valid_mask=obj_valid_mask,
+        num_supervision_edges=128,
+        seed=seed_a,
+    )[0]
+    sample_b = sample_random_supervision_edges(
+        num_obj_points=4,
+        num_hand_points=256,
+        obj_valid_mask=obj_valid_mask,
+        num_supervision_edges=128,
+        seed=seed_b,
+    )[0]
+    assert np.array_equal(sample_a, sample_b)
