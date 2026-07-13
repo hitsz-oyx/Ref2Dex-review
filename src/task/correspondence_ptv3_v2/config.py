@@ -72,9 +72,6 @@ class Config(TaskConfig):
         loss_cross_edge_weight: float = 1.0
         # v2.1 ablation: L = L_random + lambda_c * L_contact_aux.
         loss_contact_aux_weight: float = 1.0
-        # Hand head is not supervised in the v2.1 ablation; it is kept in the
-        # architecture so a future detached probe can reuse z_hand.
-        loss_hand_contact_weight: float = 0.0
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

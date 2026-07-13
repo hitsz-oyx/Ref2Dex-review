@@ -157,11 +157,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_mae_map, contact_edge_valid_mask, obj_valid_mask
         )
 
-        # ---- Hand contact head is unsupervisable in v2.1 ----
-        # ``loss_hand_contact_weight`` is forced to 0 by the config and the
-        # hand head is intentionally not in the loss dict. We DO log the
-        # hand-contact GT distribution as a data observation (the
-        # prediction side is meaningless because the head is untrained).
+        # ---- Hand contact is GT-only in v2.1 ----
+        # We intentionally do not build or supervise a hand prediction head
+        # in this ablation. Only the GT distribution is logged.
         hand_target = batch["hand_contact_target"].float()
 
         # ---- Random-stream diagnostic (must NOT be polluted by aux edges) ----
@@ -281,9 +279,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         # ---- Target strength bins (count + MAE) ----
         for lower, upper, name in _TARGET_STRENGTH_BINS:
-            bin_mask = target_strength_bin_mask(
-                edge_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
-            ) & edge_valid_mask
+            bin_mask = target_strength_bin_mask(edge_target, lower=lower, upper=upper) & edge_valid_mask
             bin_count = bin_mask.sum()
             metrics[f"random_{name}_count"] = MetricStat(
                 total=float(bin_count.detach().cpu()),
@@ -372,9 +368,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         # Per-bin count and MAE (matches the sampler order weak/medium/strong/very_strong).
         for lower, upper, name in _TARGET_STRENGTH_BINS:
-            bin_mask = target_strength_bin_mask(
-                edge_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
-            ) & edge_valid_mask
+            bin_mask = target_strength_bin_mask(edge_target, lower=lower, upper=upper) & edge_valid_mask
             bin_count = bin_mask.sum()
             metrics[f"contact_aux_{name}_count"] = MetricStat(
                 total=float(bin_count.detach().cpu()),
@@ -419,9 +413,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             expose_validity=True,
         )
         for lower, upper, name in _TARGET_STRENGTH_BINS:
-            bin_mask = target_strength_bin_mask(
-                hand_target, lower=lower, upper=upper, upper_inclusive=(upper < 1.0)
-            )
+            bin_mask = target_strength_bin_mask(hand_target, lower=lower, upper=upper)
             bin_count = bin_mask.sum()
             metrics[f"hand_target_{name}_fraction"] = (
                 float(bin_count) / max(total, 1.0)

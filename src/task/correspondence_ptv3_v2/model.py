@@ -110,13 +110,6 @@ class StaticHOCPTv3V2(nn.Module):
             nn.GELU(),
         )
         self.cross_edge_head = nn.Linear(self.token_dim // 2, 1)
-        # Hand contact head: per-hand-point soft contact quality, supervised by
-        # the frame-invariant min distance to the full 4096 object pool.
-        self.hand_contact_head = nn.Sequential(
-            nn.Linear(self.token_dim, self.token_dim // 2),
-            nn.GELU(),
-            nn.Linear(self.token_dim // 2, 1),
-        )
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
@@ -133,17 +126,11 @@ class StaticHOCPTv3V2(nn.Module):
             edge_valid_mask=batch["contact_edge_valid_mask"].bool(),
         )
 
-        # Hand contact head is kept for future detached-probe experiments; it
-        # is NOT supervised in the v2.1 ablation (loss_hand_contact_weight=0).
-        pred_hand_contact_logits = self.hand_contact_head(z_hand).squeeze(-1)
-
         return {
             "pred_cross_random_logits": random_logits,
             "pred_cross_random_prob": random_prob,
             "pred_cross_contact_aux_logits": contact_logits,
             "pred_cross_contact_aux_prob": contact_prob,
-            "pred_hand_contact_logits": pred_hand_contact_logits,
-            "pred_hand_contact_prob": torch.sigmoid(pred_hand_contact_logits),
         }
 
     def _predict_cross_edges(

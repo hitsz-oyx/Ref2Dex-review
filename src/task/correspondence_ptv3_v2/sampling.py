@@ -88,7 +88,7 @@ def sample_contact_supervision_edges(
     For every valid object point, distance ``d`` to each hand point defines
     a soft target ``y = max(1 - d/r, 0)``. Hand candidates are bucketed by
     target strength into four bins (weak / medium / strong / very strong,
-    in that order so the bin layout matches the diagnostic bins) and each
+    in that order so the slot layout matches the diagnostic bins) and each
     bin is filled up to its quota *without* refilling from other bins.
 
     Args:
@@ -148,22 +148,24 @@ def sample_contact_supervision_edges(
 
     for obj_idx in np.flatnonzero(obj_valid_mask).tolist():
         dist_row = distance[obj_idx]
-        very_strong = np.flatnonzero(dist_row <= 0.25 * r)
-        strong = np.flatnonzero((dist_row > 0.25 * r) & (dist_row <= 0.50 * r))
-        medium = np.flatnonzero((dist_row > 0.50 * r) & (dist_row <= 0.75 * r))
-        weak = np.flatnonzero((dist_row > 0.75 * r) & (dist_row < r))
+        target_row = np.clip(1.0 - dist_row / r, 0.0, 1.0)
+        weak = np.flatnonzero((target_row > 0.0) & (target_row <= 0.25))
+        medium = np.flatnonzero((target_row > 0.25) & (target_row <= 0.50))
+        strong = np.flatnonzero((target_row > 0.50) & (target_row <= 0.75))
+        very_strong = np.flatnonzero((target_row > 0.75) & (target_row <= 1.0))
         candidate_bins = (weak, medium, strong, very_strong)
 
         write_col = 0
         for candidates, quota in zip(candidate_bins, quotas_t):
+            slot_end = write_col + quota
             if quota <= 0 or candidates.size == 0:
+                write_col = slot_end
                 continue
             take_count = min(quota, int(candidates.size))
             chosen = rng.choice(candidates, size=take_count, replace=False)
-            slot = write_col + take_count
-            edge_idx[obj_idx, write_col:slot] = chosen
-            edge_valid[obj_idx, write_col:slot] = True
-            write_col = slot
+            edge_idx[obj_idx, write_col : write_col + take_count] = chosen
+            edge_valid[obj_idx, write_col : write_col + take_count] = True
+            write_col = slot_end
     return edge_idx, edge_valid
 
 

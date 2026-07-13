@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -141,7 +142,6 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         quality_focal_beta = 2.0
         loss_cross_edge_weight = 1.0
         loss_contact_aux_weight = 1.0
-        loss_hand_contact_weight = 0.0
     class Cfg:
         meta = Meta()
     runner.cfg = Cfg()
@@ -150,8 +150,6 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "pred_cross_random_prob": torch.full((1, 2, 3), 0.5),
         "pred_cross_contact_aux_logits": torch.zeros(1, 2, 2),
         "pred_cross_contact_aux_prob": torch.full((1, 2, 2), 0.5),
-        "pred_hand_contact_logits": torch.zeros(1, 4),
-        "pred_hand_contact_prob": torch.full((1, 4), 0.5),
     }
     batch = {
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
@@ -301,16 +299,13 @@ def test_model_output_contract_and_dense_cross_api() -> None:
             "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         }
         out = model(batch)
-        # v2.1 forward contract: random + contact aux + hand contact outputs.
+        # v2.1 forward contract: only the two cross-edge streams are predicted.
         assert set(out) == {
             "pred_cross_random_logits",
             "pred_cross_random_prob",
             "pred_cross_contact_aux_logits",
             "pred_cross_contact_aux_prob",
-            "pred_hand_contact_logits",
-            "pred_hand_contact_prob",
         }
-        assert hasattr(model, "hand_contact_head")
         assert hasattr(model, "_predict_cross_edges")
         dense = model.predict_dense_cross_for_object(batch, obj_idx=0)
         assert tuple(dense.shape) == (1, 3)
@@ -487,22 +482,14 @@ def test_sample_contact_sampler_is_deterministic_under_same_seed() -> None:
 
 
 def test_sample_random_supervision_edges_unchanged_by_contact_sampler() -> None:
-    """Test 6 (regression): the random128 baseline stream is byte-identical
-    before and after the v2.1 ablation when fed the same seed.
+    """Test 6 (regression): the random128 baseline stream remains byte-identical.
 
-    We assert this by checking that ``sample_random_supervision_edges``
-    with the original ``namespace=supervision-edges`` seed still produces
-    the same output, regardless of whether the contact stream is added.
+    The digest was recorded from the post-v2.1 implementation while the
+    random stream still used the original ``namespace=supervision-edges``.
+    Any future change to the random128 baseline sampling must update this
+    test intentionally.
     """
-    seed_a = stable_frame_seed(
-        base_seed=42,
-        seq_id="seq",
-        side="right",
-        raw_frame_id=7,
-        epoch=0,
-        namespace="supervision-edges",
-    )
-    seed_b = stable_frame_seed(
+    seed = stable_frame_seed(
         base_seed=42,
         seq_id="seq",
         side="right",
@@ -511,18 +498,12 @@ def test_sample_random_supervision_edges_unchanged_by_contact_sampler() -> None:
         namespace="supervision-edges",
     )
     obj_valid_mask = np.array([True, True, False, True])
-    sample_a = sample_random_supervision_edges(
+    edge_idx, edge_valid = sample_random_supervision_edges(
         num_obj_points=4,
         num_hand_points=256,
         obj_valid_mask=obj_valid_mask,
         num_supervision_edges=128,
-        seed=seed_a,
-    )[0]
-    sample_b = sample_random_supervision_edges(
-        num_obj_points=4,
-        num_hand_points=256,
-        obj_valid_mask=obj_valid_mask,
-        num_supervision_edges=128,
-        seed=seed_b,
-    )[0]
-    assert np.array_equal(sample_a, sample_b)
+        seed=seed,
+    )
+    digest = hashlib.sha256(edge_idx.tobytes() + edge_valid.tobytes()).hexdigest()
+    assert digest == "6e7d75a6f902ffc261c714b18f82f46ca0459e9a9ce77a414aa5aac5b9aaf382"

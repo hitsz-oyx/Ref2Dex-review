@@ -518,18 +518,14 @@ def test_grab_process_sequence_handles_absent_hand_keys() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Hand contact loss must be batch-size invariant: duplicating a sample along
-# the batch dim must NOT change the mean loss. This catches the
-# ``sum() / num_hand_points`` bug (where the loss was effectively multiplied
-# by batch size).
+# v2.1 removes the hand prediction path entirely. Repeating a sample along
+# the batch dim must still leave the two active cross-edge losses invariant.
 # ---------------------------------------------------------------------------
 
 
-def test_hand_contact_loss_is_batch_size_invariant_via_runner() -> None:
-    """Repeating the same sample along the batch dim must produce the
-    SAME hand_contact loss when routed through ``runner._compute_losses()``.
-    This is a true regression test: the previous ``sum() / num_hand_points``
-    bug accidentally passed for B=1 but gave inflated losses for B>1.
+def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
+    """Repeating the same sample along the batch dim must preserve the
+    active v2.1 loss keys when routed through ``runner._compute_losses()``.
     """
     from src.task.correspondence_ptv3_v2.config import Config
     from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
@@ -566,8 +562,6 @@ def test_hand_contact_loss_is_batch_size_invariant_via_runner() -> None:
         "points": torch.zeros(B, 512 + N, 3),
     }
     preds1 = {
-        "pred_hand_contact_logits": torch.zeros(B, N),
-        "pred_hand_contact_prob": torch.zeros(B, N),
         "pred_cross_random_logits": random_logits,
         "pred_cross_random_prob": random_prob,
         "pred_cross_contact_aux_logits": contact_logits,
