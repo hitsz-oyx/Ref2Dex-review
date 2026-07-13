@@ -99,7 +99,7 @@ def _random_axis(rng: np.random.Generator) -> np.ndarray:
 
 
 @dataclass(frozen=True)
-class AugmentedGeometry:
+class PerturbedGeometry:
     input_obj_points: np.ndarray
     input_obj_normals: np.ndarray
     input_hand_points: np.ndarray
@@ -111,7 +111,7 @@ class AugmentedGeometry:
     obj_perturbed: bool
 
 
-def augment_geometry(
+def perturb_object_geometry(
     *,
     obj_points: np.ndarray,
     obj_normals: np.ndarray,
@@ -122,14 +122,14 @@ def augment_geometry(
     obj_rot_std_deg: float,
     obj_trans_std: float,
     obj_perturb_prob: float,
-    apply_global_aug: bool,
-    augment_rotation: bool,
-    rotation_range_deg: float,
-    augment_translation: bool,
-    translation_range: float,
-) -> AugmentedGeometry:
-    """In hand-root frame we simulate a noisy *object* pose: one shared SE(3)
+) -> PerturbedGeometry:
+    """Simulate a noisy *object* pose in hand-root frame: one shared SE(3)
     on the 512 sampled object points, clean hand geometry, clean GT for both.
+
+    No global scene-level augmentation is applied — in hand-root frame the
+    ``T_hand^{-1}`` canonicalization already eliminates scene-level SE(3)
+    degrees of freedom, so global augmentation would only re-introduce a
+    nuisance the data preprocessing has already removed.
     """
     rng = np.random.default_rng(seed)
     gt_obj_points = np.asarray(obj_points, dtype=np.float32).copy()
@@ -151,41 +151,13 @@ def augment_geometry(
         angle = np.deg2rad(rng.normal(0.0, obj_rot_std_deg))
         rotation = _rotation_matrix(_random_axis(rng), float(angle))
         translation = rng.normal(0.0, obj_trans_std, size=3)
-        # All 512 sampled obj points share the same SE(3): simulating an
-        # object pose estimation error after clean candidate selection.
         input_obj_points = (input_obj_points @ rotation.T + translation).astype(np.float32)
         input_obj_normals = (input_obj_normals @ rotation.T).astype(np.float32)
         norms = np.linalg.norm(input_obj_normals, axis=-1, keepdims=True)
         input_obj_normals = (input_obj_normals / np.clip(norms, 1e-8, None)).astype(np.float32)
         obj_perturbed = True
 
-    if apply_global_aug:
-        rotation = np.eye(3, dtype=np.float64)
-        translation = np.zeros(3, dtype=np.float64)
-        if augment_rotation and rotation_range_deg > 0:
-            angle = np.deg2rad(rng.uniform(-rotation_range_deg, rotation_range_deg))
-            rotation = _rotation_matrix(_random_axis(rng), float(angle))
-        if augment_translation and translation_range > 0:
-            translation = rng.uniform(-translation_range, translation_range, size=3)
-
-        def transform_points(points: np.ndarray) -> np.ndarray:
-            return (points @ rotation.T + translation).astype(np.float32)
-
-        def transform_normals(normals: np.ndarray) -> np.ndarray:
-            transformed = normals @ rotation.T
-            norm = np.linalg.norm(transformed, axis=-1, keepdims=True)
-            return (transformed / np.clip(norm, 1e-8, None)).astype(np.float32)
-
-        input_obj_points = transform_points(input_obj_points)
-        input_hand_points = transform_points(input_hand_points)
-        gt_obj_points = transform_points(gt_obj_points)
-        gt_hand_points = transform_points(gt_hand_points)
-        input_obj_normals = transform_normals(input_obj_normals)
-        input_hand_normals = transform_normals(input_hand_normals)
-        gt_obj_normals = transform_normals(gt_obj_normals)
-        gt_hand_normals = transform_normals(gt_hand_normals)
-
-    return AugmentedGeometry(
+    return PerturbedGeometry(
         input_obj_points=input_obj_points,
         input_obj_normals=input_obj_normals,
         input_hand_points=input_hand_points,

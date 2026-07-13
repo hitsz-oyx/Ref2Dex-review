@@ -13,7 +13,7 @@ from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
 from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.sampling import (
-    augment_geometry,
+    perturb_object_geometry,
     sample_object_indices,
     sample_random_supervision_edges,
     stable_frame_seed,
@@ -43,12 +43,7 @@ class CorrStaticDatasetV2(Dataset):
         num_supervision_edges: int = 128,
         contact_radius: float = 0.01,
         base_seed: int = 42,
-        augment: bool = True,
         apply_obj_perturb: bool = True,
-        augment_rotation: bool = True,
-        augment_translation: bool = False,
-        rotation_range: float = 180.0,
-        translation_range: float = 0.1,
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
@@ -65,12 +60,7 @@ class CorrStaticDatasetV2(Dataset):
         self.num_supervision_edges = int(num_supervision_edges)
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
-        self.augment = bool(augment)
         self.apply_obj_perturb = bool(apply_obj_perturb)
-        self.augment_rotation = bool(augment_rotation)
-        self.augment_translation = bool(augment_translation)
-        self.rotation_range = float(rotation_range)
-        self.translation_range = float(translation_range)
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
@@ -210,7 +200,7 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="augmentation",
         )
-        geometry = augment_geometry(
+        geometry = perturb_object_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
             hand_points=hand_points,
@@ -220,11 +210,6 @@ class CorrStaticDatasetV2(Dataset):
             obj_rot_std_deg=self.obj_rot_std_deg,
             obj_trans_std=self.obj_trans_std,
             obj_perturb_prob=self.obj_perturb_prob,
-            apply_global_aug=self.augment,
-            augment_rotation=self.augment_rotation,
-            rotation_range_deg=self.rotation_range,
-            augment_translation=self.augment_translation,
-            translation_range=self.translation_range,
         )
         # hand_to_obj_min_dist is fully frame-invariant AND independent of
         # the 512 obj sampling, so it is the clean absolute contact
@@ -386,12 +371,7 @@ def make_dataloaders(
         "num_supervision_edges": int(meta_cfg.num_supervision_edges),
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
-        "augment": bool(meta_cfg.augment),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
-        "augment_rotation": bool(meta_cfg.augment_rotation),
-        "augment_translation": bool(meta_cfg.augment_translation),
-        "rotation_range": float(meta_cfg.rotation_range),
-        "translation_range": float(meta_cfg.translation_range),
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
@@ -400,15 +380,13 @@ def make_dataloaders(
     }
     val_clean_kwargs = {
         **train_kwargs,
-        "augment": False,
         "apply_obj_perturb": False,
         "obj_perturb_prob": 0.0,
         "eval_sampling_epoch": 0,
     }
     val_perturbed_kwargs = {
         **train_kwargs,
-        "augment": False,
-        "apply_obj_perturb": bool(getattr(meta_cfg, "val_augment", False)),
+        "apply_obj_perturb": True,
         "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
         "eval_sampling_epoch": 0,
     }
@@ -443,7 +421,8 @@ def make_dataloaders(
     if val_loader is not None:
         val_loader.dataset.set_epoch(0)
         val_loaders["val_clean/"] = val_loader
-        if bool(getattr(meta_cfg, "val_augment", False)):
+        # Perturbed val loader — only if val_obj_perturb_prob > 0.
+        if float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)) > 0:
             val_perturbed_dataset = CorrStaticDatasetV2(
                 val_loader.dataset.data_root,
                 file_list=val_loader.dataset.file_paths,

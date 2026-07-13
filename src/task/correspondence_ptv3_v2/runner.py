@@ -36,12 +36,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
     ) -> None:
         super().configure_overfit_mode(cfg, explicit_override_keys)
         for key, value in (
-            ("meta.augment", False),
             ("meta.apply_obj_perturb", False),
-            ("meta.augment_rotation", False),
-            ("meta.augment_translation", False),
             ("meta.obj_perturb_prob", 0.0),
-            ("meta.val_augment", False),
             ("meta.ptv3_drop_path", 0.0),
             ("meta.ptv3_shuffle_orders", False),
         ):
@@ -217,7 +213,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         aux_metrics["hand_contact_nonzero_target_mean"] = hand_nonzero_target_mean
         aux_metrics["hand_contact_nonzero_count"] = MetricStat(
             total=float(hand_nonzero_count.detach().cpu()),
-            count=float(hand_nonzero_count.detach().cpu()),
+            count=float(1),
             expose_validity=True,
         )
 
@@ -266,7 +262,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             metrics["cross_edge_nonzero_target_mean"] = zero_tensor
         metrics["cross_edge_nonzero_count"] = MetricStat(
             total=float(nonzero_count.detach().cpu()),
-            count=float(nonzero_count.detach().cpu()),
+            count=float(1),
             expose_validity=True,
         )
 
@@ -278,7 +274,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             bin_count = bin_mask.sum()
             metrics[f"{name}_count"] = MetricStat(
                 total=float(bin_count.detach().cpu()),
-                count=float(bin_count.detach().cpu()),
+                count=float(1),
                 expose_validity=True,
             )
             if bool(bin_count > 0):

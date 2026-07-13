@@ -54,19 +54,13 @@ class Config(TaskConfig):
         quality_focal_beta: float = 2.0
 
         # Object pose perturbation (applied to the 512 sampled obj points
-        # with one shared SE(3); see augment_geometry in sampling.py).
-        # Renamed from hand_* — in hand-root frame the natural thing to
-        # perturb is the *object* pose, not the hand geometry.
+        # with one shared SE(3); see perturb_object_geometry in sampling.py).
+        # In hand-root frame the canonical nuisance variable is the object
+        # pose estimation error, not a global scene transform.
         obj_rot_std_deg: float = 10.0
         obj_trans_std: float = 0.01
         obj_perturb_prob: float = 1.0
-        augment: bool = True
         apply_obj_perturb: bool = True
-        augment_rotation: bool = True
-        augment_translation: bool = False
-        rotation_range: float = 180.0
-        translation_range: float = 0.1
-        val_augment: bool = True
         val_obj_perturb_prob: float = 1.0
 
         loss_cross_edge_weight: float = 1.0

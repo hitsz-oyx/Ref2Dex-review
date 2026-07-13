@@ -525,45 +525,58 @@ def test_grab_process_sequence_handles_absent_hand_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hand_contact_loss_is_batch_size_invariant() -> None:
+def test_hand_contact_loss_is_batch_size_invariant_via_runner() -> None:
     """Repeating the same sample along the batch dim must produce the
-    SAME hand_contact loss (within float tolerance)."""
-    from src.task.correspondence_ptv3_v2.losses import (
-        binary_cross_entropy_with_logits_map,
-        contact_target_from_distance,
-        quality_focal_loss_map,
-    )
+    SAME hand_contact loss when routed through ``runner._compute_losses()``.
+    This is a true regression test: the previous ``sum() / num_hand_points``
+    bug accidentally passed for B=1 but gave inflated losses for B>1.
+    """
+    from src.task.correspondence_ptv3_v2.config import Config
+    from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
+    from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 
     torch.manual_seed(0)
     B, N = 1, 1538
-    beta = 2.0
+    cfg = Config()
 
-    # Synthesize a (hand -> obj) distance field and convert to soft target.
-    dist = torch.rand(B, N, dtype=torch.float32) * 0.05  # [0, 5cm]
-    target = contact_target_from_distance(dist, contact_radius=0.01)
+    # Build a bare runner that avoids the full __init__ (data discovery, dirs).
+    runner = object.__new__(CorrespondencePTV3V2Runner)
+    runner.cfg = cfg
+    runner.mode = "eval"  # skip data setup in overfit_mode
 
-    # Synthesize predictions with a non-trivial loss surface.
-    logits = torch.randn(B, N, dtype=torch.float32) * 2.0
-    prob = torch.sigmoid(logits)
+    # Synthesize a hand-target tensor (B, N) from random distances.
+    dist = torch.rand(B, N, dtype=torch.float32) * 0.05
+    hand_target = contact_target_from_distance(dist, contact_radius=0.01)
 
-    qfl_map = quality_focal_loss_map(logits, target, beta=beta)
-    bce_map = binary_cross_entropy_with_logits_map(logits, target)
-    mae_map = torch.abs(prob - target)
+    # Synthesize hand-logits.
+    hand_logits = torch.randn(B, N, dtype=torch.float32) * 2.0
+    hand_prob = torch.sigmoid(hand_logits)
 
-    single_qfl = qfl_map.mean()
-    single_bce = bce_map.mean()
-    single_mae = mae_map.mean()
+    batch1 = {
+        "hand_contact_target": hand_target,
+        "runtime_obj_valid_mask": torch.ones(B, 512, dtype=torch.bool),
+        "supervision_edge_valid_mask": torch.ones(B, 512, 128, dtype=torch.bool),
+        "edge_contact_target": torch.zeros(B, 512, 128),  # dummy edge targets
+        "points": torch.zeros(B, 512 + N, 3),
+    }
+    preds1 = {
+        "pred_hand_contact_logits": hand_logits,
+        "pred_hand_contact_prob": hand_prob,
+        "pred_cross_contact_logits": torch.zeros(B, 512, 128),
+        "pred_cross_contact_prob": torch.zeros(B, 512, 128),
+    }
+    loss1, _ = runner._compute_losses(preds1, batch1)
 
-    # Duplicate sample to B=4
-    qfl_b4 = qfl_map.repeat(4, 1)
-    bce_b4 = bce_map.repeat(4, 1)
-    mae_b4 = mae_map.repeat(4, 1)
-    assert torch.allclose(qfl_b4.mean(), single_qfl, atol=1e-6)
-    assert torch.allclose(bce_b4.mean(), single_bce, atol=1e-6)
-    assert torch.allclose(mae_b4.mean(), single_mae, atol=1e-6)
+    # Duplicate along batch dim to B=4.
+    B4 = 4
+    def _repeat(t: torch.Tensor) -> torch.Tensor:
+        if t.dim() == 0:
+            return t
+        return t.repeat(B4, *([1] * (t.dim() - 1)))
 
-    # Also: the loss must NOT scale with N. With identical predictions and
-    # targets on a (4, N) tensor, the mean must equal the (1, N) mean.
-    # This is the property that catches ``sum() / N`` (which actually was
-    # correct in shape but happened to equal ``mean()`` for B=1, the only
-    # shape covered by the existing test).
+    batch4 = {k: _repeat(v) for k, v in batch1.items()}
+    preds4 = {k: _repeat(v) for k, v in preds1.items()}
+    loss4, _ = runner._compute_losses(preds4, batch4)
+
+    torch.testing.assert_close(loss1["hand_contact"], loss4["hand_contact"], atol=1e-6, rtol=1e-5)
+    torch.testing.assert_close(loss1["cross_edge_contact"], loss4["cross_edge_contact"], atol=1e-6, rtol=1e-5)

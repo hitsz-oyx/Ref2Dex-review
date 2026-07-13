@@ -14,11 +14,9 @@ meta:
   obj_rot_std_deg: 10.0
   obj_trans_std: 0.01
   obj_perturb_prob: 1.0
-  augment_rotation: true
-  augment_translation: false
-  rotation_range: 180.0
-  val_augment: true
   val_obj_perturb_prob: 1.0
+  # No global scene augmentation — in hand-root frame the T_hand^{-1}
+  # canonicalization already eliminates scene-level SE(3) degrees of freedom.
   loss_cross_edge_weight: 1.0
   loss_hand_contact_weight: 1.0
 
