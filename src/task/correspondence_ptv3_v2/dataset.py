@@ -47,10 +47,8 @@ class CorrStaticDatasetV2(Dataset):
         apply_obj_perturb: bool = True,
         augment_rotation: bool = True,
         augment_translation: bool = False,
-        augment_scale: bool = False,
         rotation_range: float = 180.0,
         translation_range: float = 0.1,
-        scale_range: tuple[float, float] = (0.9, 1.1),
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
@@ -71,10 +69,8 @@ class CorrStaticDatasetV2(Dataset):
         self.apply_obj_perturb = bool(apply_obj_perturb)
         self.augment_rotation = bool(augment_rotation)
         self.augment_translation = bool(augment_translation)
-        self.augment_scale = bool(augment_scale)
         self.rotation_range = float(rotation_range)
         self.translation_range = float(translation_range)
-        self.scale_range = (float(scale_range[0]), float(scale_range[1]))
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
@@ -229,16 +225,10 @@ class CorrStaticDatasetV2(Dataset):
             rotation_range_deg=self.rotation_range,
             augment_translation=self.augment_translation,
             translation_range=self.translation_range,
-            augment_scale=self.augment_scale,
-            scale_range=self.scale_range,
         )
-        # Global scale does not change the unit distance scale target, so
-        # we multiply the (frame-invariant) obj->hand min distance by
-        # the global scale factor the same way as before for parity.
-        obj_min_dist *= float(geometry.distance_scale)
-        # hand->obj min distance is fully frame-invariant AND independent
-        # of the 512 obj sampling, so we do NOT rescale it. The hand
-        # contact head needs the clean absolute target, not a rescaled one.
+        # hand_to_obj_min_dist is fully frame-invariant AND independent of
+        # the 512 obj sampling, so it is the clean absolute contact
+        # target for the hand contact head.
 
         supervision_seed = stable_frame_seed(
             base_seed=self.base_seed,
@@ -400,10 +390,8 @@ def make_dataloaders(
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
         "augment_rotation": bool(meta_cfg.augment_rotation),
         "augment_translation": bool(meta_cfg.augment_translation),
-        "augment_scale": bool(meta_cfg.augment_scale),
         "rotation_range": float(meta_cfg.rotation_range),
         "translation_range": float(meta_cfg.translation_range),
-        "scale_range": tuple(meta_cfg.scale_range),
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),

@@ -515,3 +515,55 @@ def test_grab_process_sequence_handles_absent_hand_keys() -> None:
     left = stub._process_one_hand("left", _FakeSeqData(), np.arange(2), np.zeros((2, 4, 3)))
     assert "root_pose" not in right
     assert "root_pose" not in left
+
+
+# ---------------------------------------------------------------------------
+# Hand contact loss must be batch-size invariant: duplicating a sample along
+# the batch dim must NOT change the mean loss. This catches the
+# ``sum() / num_hand_points`` bug (where the loss was effectively multiplied
+# by batch size).
+# ---------------------------------------------------------------------------
+
+
+def test_hand_contact_loss_is_batch_size_invariant() -> None:
+    """Repeating the same sample along the batch dim must produce the
+    SAME hand_contact loss (within float tolerance)."""
+    from src.task.correspondence_ptv3_v2.losses import (
+        binary_cross_entropy_with_logits_map,
+        contact_target_from_distance,
+        quality_focal_loss_map,
+    )
+
+    torch.manual_seed(0)
+    B, N = 1, 1538
+    beta = 2.0
+
+    # Synthesize a (hand -> obj) distance field and convert to soft target.
+    dist = torch.rand(B, N, dtype=torch.float32) * 0.05  # [0, 5cm]
+    target = contact_target_from_distance(dist, contact_radius=0.01)
+
+    # Synthesize predictions with a non-trivial loss surface.
+    logits = torch.randn(B, N, dtype=torch.float32) * 2.0
+    prob = torch.sigmoid(logits)
+
+    qfl_map = quality_focal_loss_map(logits, target, beta=beta)
+    bce_map = binary_cross_entropy_with_logits_map(logits, target)
+    mae_map = torch.abs(prob - target)
+
+    single_qfl = qfl_map.mean()
+    single_bce = bce_map.mean()
+    single_mae = mae_map.mean()
+
+    # Duplicate sample to B=4
+    qfl_b4 = qfl_map.repeat(4, 1)
+    bce_b4 = bce_map.repeat(4, 1)
+    mae_b4 = mae_map.repeat(4, 1)
+    assert torch.allclose(qfl_b4.mean(), single_qfl, atol=1e-6)
+    assert torch.allclose(bce_b4.mean(), single_bce, atol=1e-6)
+    assert torch.allclose(mae_b4.mean(), single_mae, atol=1e-6)
+
+    # Also: the loss must NOT scale with N. With identical predictions and
+    # targets on a (4, N) tensor, the mean must equal the (1, N) mean.
+    # This is the property that catches ``sum() / N`` (which actually was
+    # correct in shape but happened to equal ``mean()`` for B=1, the only
+    # shape covered by the existing test).

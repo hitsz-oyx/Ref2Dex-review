@@ -40,7 +40,6 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             ("meta.apply_obj_perturb", False),
             ("meta.augment_rotation", False),
             ("meta.augment_translation", False),
-            ("meta.augment_scale", False),
             ("meta.obj_perturb_prob", 0.0),
             ("meta.val_augment", False),
             ("meta.ptv3_drop_path", 0.0),
@@ -138,17 +137,18 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         # Hand contact head: per-hand-point soft contact score supervised by
         # the frame-invariant min distance to the full 4096 object pool.
+        # All 1538 hand points are valid (no padding/valid mask), so the
+        # loss is averaged over B*1538 (= numel) for batch-size invariance:
+        # duplicating a sample along the batch dim must not change the loss.
         hand_target = batch["hand_contact_target"].float()
         hand_logits = preds["pred_hand_contact_logits"]
         hand_prob = preds["pred_hand_contact_prob"]
-        # Hand points are always fully present (no padding/valid mask needed).
         hand_qfl_map = quality_focal_loss_map(hand_logits, hand_target, beta=beta)
         hand_bce_map = binary_cross_entropy_with_logits_map(hand_logits, hand_target)
         hand_mae_map = torch.abs(hand_prob - hand_target)
-        denom = hand_qfl_map.new_tensor(float(hand_qfl_map.shape[1])).clamp_min(1.0)
-        hand_contact_qfl = hand_qfl_map.sum() / denom
-        hand_contact_bce = hand_bce_map.sum() / denom
-        hand_contact_mae = hand_mae_map.sum() / denom
+        hand_contact_qfl = hand_qfl_map.mean()
+        hand_contact_bce = hand_bce_map.mean()
+        hand_contact_mae = hand_mae_map.mean()
 
         hand_nonzero_mask = hand_target > 0
         hand_nonzero_count = hand_nonzero_mask.sum()
@@ -292,7 +292,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         zero_edge_mask = (edge_target == 0) & edge_valid_mask
         zero_edge_count = zero_edge_mask.sum()
         if bool(zero_edge_count > 0):
-            zero_pred = edge_prob[zero_edge_mask]
+            zero_pred = edge_prob[zero_edge_mask].float()
             metrics["cross_edge_zero_pred_mean"] = zero_pred.mean()
             metrics["cross_edge_zero_pred_p95"] = torch.quantile(zero_pred, 0.95)
             metrics["cross_edge_zero_pred_p99"] = torch.quantile(zero_pred, 0.99)

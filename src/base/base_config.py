@@ -94,7 +94,7 @@ class TaskConfig(BaseConfig):
         compile = False
 
         # ========== 日志和评估 ==========
-        log_every_steps = 50
+        log_every_steps = 1
         eval_every_steps = None
         eval_every_epochs = 1
 

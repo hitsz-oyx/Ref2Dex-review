@@ -108,7 +108,6 @@ class AugmentedGeometry:
     gt_obj_normals: np.ndarray
     gt_hand_points: np.ndarray
     gt_hand_normals: np.ndarray
-    distance_scale: float
     obj_perturbed: bool
 
 
@@ -128,8 +127,6 @@ def augment_geometry(
     rotation_range_deg: float,
     augment_translation: bool,
     translation_range: float,
-    augment_scale: bool,
-    scale_range: tuple[float, float],
 ) -> AugmentedGeometry:
     """In hand-root frame we simulate a noisy *object* pose: one shared SE(3)
     on the 512 sampled object points, clean hand geometry, clean GT for both.
@@ -162,7 +159,6 @@ def augment_geometry(
         input_obj_normals = (input_obj_normals / np.clip(norms, 1e-8, None)).astype(np.float32)
         obj_perturbed = True
 
-    distance_scale = 1.0
     if apply_global_aug:
         rotation = np.eye(3, dtype=np.float64)
         translation = np.zeros(3, dtype=np.float64)
@@ -171,11 +167,9 @@ def augment_geometry(
             rotation = _rotation_matrix(_random_axis(rng), float(angle))
         if augment_translation and translation_range > 0:
             translation = rng.uniform(-translation_range, translation_range, size=3)
-        if augment_scale:
-            distance_scale = float(rng.uniform(float(scale_range[0]), float(scale_range[1])))
 
         def transform_points(points: np.ndarray) -> np.ndarray:
-            return ((points @ rotation.T) * distance_scale + translation).astype(np.float32)
+            return (points @ rotation.T + translation).astype(np.float32)
 
         def transform_normals(normals: np.ndarray) -> np.ndarray:
             transformed = normals @ rotation.T
@@ -200,6 +194,5 @@ def augment_geometry(
         gt_obj_normals=gt_obj_normals,
         gt_hand_points=gt_hand_points,
         gt_hand_normals=gt_hand_normals,
-        distance_scale=distance_scale,
         obj_perturbed=obj_perturbed,
     )

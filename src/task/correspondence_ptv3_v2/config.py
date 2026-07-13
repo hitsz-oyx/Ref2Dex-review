@@ -64,10 +64,8 @@ class Config(TaskConfig):
         apply_obj_perturb: bool = True
         augment_rotation: bool = True
         augment_translation: bool = False
-        augment_scale: bool = False
         rotation_range: float = 180.0
         translation_range: float = 0.1
-        scale_range: tuple[float, float] = (0.9, 1.1)
         val_augment: bool = True
         val_obj_perturb_prob: float = 1.0
 

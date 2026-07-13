@@ -180,17 +180,17 @@ def build_stage3_sequence(
     frame_batch_size: int,
     device: torch.device,
     mirror_left_to_right: bool,
-    coordinate_frame: str = "object",
+    coordinate_frame: str = "hand_root",
 ) -> dict[str, np.ndarray]:
     """Build one Stage 3 sample.
 
     ``coordinate_frame`` selects the canonical frame the model sees:
-      - ``"object"`` (default): points are transformed by ``obj_root_pose``
-        (object root at origin).
-      - ``"hand_root"``: points are transformed by ``hand_root_pose``
-        (MANO wrist at origin, orientation = MANO global_orient).
-        Requires the Stage 2 payload to contain ``hand_root_pose``; raises
-        ``KeyError`` otherwise.
+      - ``"object"``: points are transformed by ``obj_root_pose`` (object
+        root at origin). Used for legacy Stage 3 data.
+      - ``"hand_root"`` (default): points are transformed by
+        ``hand_root_pose`` (MANO wrist at origin, orientation = MANO
+        ``global_orient``). Requires the Stage 2 payload to contain
+        ``hand_root_pose``; raises ``KeyError`` otherwise.
 
     Distance / KNN fields (``obj_to_hand_min_dist``, ``obj_candidate_mask_5cm``,
     ``gt_obj_to_hand_knn_idx``) are frame-invariant and reused as-is.
