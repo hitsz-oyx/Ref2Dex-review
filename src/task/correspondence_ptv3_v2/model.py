@@ -8,7 +8,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from src.utils.correspondence import gather_knn_features
+from src.utils.correspondence import gather_batched_knn_features
 
 
 def _load_ptv3_model_class(repo_path: str | Path):
@@ -113,18 +113,27 @@ class StaticHOCPTv3V2(nn.Module):
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
-        random_logits, random_prob = self._predict_cross_edges(
+        random_edge_idx = batch["random_edge_idx"].long()
+        random_edge_valid_mask = batch["random_edge_valid_mask"].bool()
+        contact_edge_idx = batch["contact_edge_idx"].long()
+        contact_edge_valid_mask = batch["contact_edge_valid_mask"].bool()
+
+        combined_edge_idx = torch.cat([random_edge_idx, contact_edge_idx], dim=-1)
+        combined_edge_valid_mask = torch.cat(
+            [random_edge_valid_mask, contact_edge_valid_mask],
+            dim=-1,
+        )
+        combined_logits, combined_prob = self._predict_cross_edges(
             z_obj=z_obj,
             z_hand=z_hand,
-            edge_idx=batch["random_edge_idx"].long(),
-            edge_valid_mask=batch["random_edge_valid_mask"].bool(),
+            edge_idx=combined_edge_idx,
+            edge_valid_mask=combined_edge_valid_mask,
         )
-        contact_logits, contact_prob = self._predict_cross_edges(
-            z_obj=z_obj,
-            z_hand=z_hand,
-            edge_idx=batch["contact_edge_idx"].long(),
-            edge_valid_mask=batch["contact_edge_valid_mask"].bool(),
-        )
+        random_width = random_edge_idx.shape[-1]
+        random_logits = combined_logits[..., :random_width]
+        random_prob = combined_prob[..., :random_width]
+        contact_logits = combined_logits[..., random_width:]
+        contact_prob = combined_prob[..., random_width:]
 
         return {
             "pred_cross_random_logits": random_logits,
@@ -218,19 +227,12 @@ class StaticHOCPTv3V2(nn.Module):
         hand_normals: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        obj_extra = self._compute_opposite_cloud_features(
-            query_points=obj_points,
-            query_normals=obj_normals,
-            opposite_points=hand_points,
-            opposite_valid_mask=None,
-            query_valid_mask=obj_valid_mask,
-        )
-        hand_extra = self._compute_opposite_cloud_features(
-            query_points=hand_points,
-            query_normals=hand_normals,
-            opposite_points=obj_points,
-            opposite_valid_mask=obj_valid_mask,
-            query_valid_mask=None,
+        obj_extra, hand_extra = self._compute_bidirectional_opposite_cloud_features(
+            obj_points=obj_points,
+            obj_normals=obj_normals,
+            hand_points=hand_points,
+            hand_normals=hand_normals,
+            obj_valid_mask=obj_valid_mask,
         )
         obj_type = obj_points.new_zeros(obj_points.shape[0], obj_points.shape[1], 2)
         obj_type[..., 0] = 1.0
@@ -242,22 +244,59 @@ class StaticHOCPTv3V2(nn.Module):
         return obj_feat, hand_feat
 
     @staticmethod
-    def _compute_opposite_cloud_features(
+    def _compute_bidirectional_opposite_cloud_features(
+        *,
+        obj_points: torch.Tensor,
+        obj_normals: torch.Tensor,
+        hand_points: torch.Tensor,
+        hand_normals: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        hand_valid_mask = torch.ones(
+            hand_points.shape[:2],
+            device=hand_points.device,
+            dtype=torch.bool,
+        )
+        distance = torch.cdist(obj_points, hand_points)
+        obj_extra = StaticHOCPTv3V2._compute_directional_cloud_features(
+            query_points=obj_points,
+            query_normals=obj_normals,
+            opposite_points=hand_points,
+            query_to_opposite_distance=distance,
+            opposite_valid_mask=hand_valid_mask,
+            query_valid_mask=obj_valid_mask,
+        )
+        hand_extra = StaticHOCPTv3V2._compute_directional_cloud_features(
+            query_points=hand_points,
+            query_normals=hand_normals,
+            opposite_points=obj_points,
+            query_to_opposite_distance=distance.transpose(1, 2),
+            opposite_valid_mask=obj_valid_mask,
+            query_valid_mask=None,
+        )
+        return obj_extra, hand_extra
+
+    @staticmethod
+    def _compute_directional_cloud_features(
         *,
         query_points: torch.Tensor,
         query_normals: torch.Tensor,
         opposite_points: torch.Tensor,
-        opposite_valid_mask: torch.Tensor | None,
+        query_to_opposite_distance: torch.Tensor,
+        opposite_valid_mask: torch.Tensor,
         query_valid_mask: torch.Tensor | None,
     ) -> torch.Tensor:
-        batch_size, num_query, _ = query_points.shape
-        num_opp = opposite_points.shape[1]
-        distance = torch.cdist(query_points, opposite_points)
-        if opposite_valid_mask is None:
-            opposite_valid_mask = torch.ones(batch_size, num_opp, device=query_points.device, dtype=torch.bool)
-        masked_distance = distance.masked_fill(~opposite_valid_mask.unsqueeze(1), float("inf"))
+        batch_size = query_points.shape[0]
+        masked_distance = query_to_opposite_distance.masked_fill(
+            ~opposite_valid_mask.unsqueeze(1),
+            float("inf"),
+        )
         any_opp_valid = opposite_valid_mask.any(dim=-1)
-        safe_masked_distance = torch.where(any_opp_valid.view(batch_size, 1, 1), masked_distance, torch.zeros_like(masked_distance))
+        safe_masked_distance = torch.where(
+            any_opp_valid.view(batch_size, 1, 1),
+            masked_distance,
+            torch.zeros_like(masked_distance),
+        )
         nn_idx = torch.argmin(safe_masked_distance, dim=-1)
         batch_idx = torch.arange(batch_size, device=query_points.device).view(-1, 1)
         nn_points = opposite_points[batch_idx, nn_idx]
@@ -283,16 +322,7 @@ class StaticHOCPTv3V2(nn.Module):
         knn_idx: torch.Tensor,
         knn_valid_mask: torch.Tensor,
     ) -> torch.Tensor:
-        gathered: list[torch.Tensor] = []
-        for batch_idx in range(features.shape[0]):
-            gathered.append(
-                gather_knn_features(
-                    features[batch_idx],
-                    knn_idx[batch_idx],
-                    knn_valid_mask[batch_idx],
-                )
-            )
-        return torch.stack(gathered, dim=0)
+        return gather_batched_knn_features(features, knn_idx, knn_valid_mask)
 
     def _compute_shared_edge_features(
         self,

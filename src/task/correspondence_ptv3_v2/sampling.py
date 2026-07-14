@@ -9,6 +9,20 @@ import torch
 _CONTACT_POSITIVE_EPS = 1e-4
 
 
+def _sample_without_replacement_torch(
+    candidates: torch.Tensor,
+    *,
+    count: int,
+    generator: torch.Generator,
+) -> torch.Tensor:
+    """Sample up to ``count`` entries from a 1D candidate tensor."""
+    if count <= 0 or candidates.numel() == 0:
+        return candidates[:0]
+    take_count = min(int(count), int(candidates.numel()))
+    order = torch.randperm(int(candidates.numel()), generator=generator, device=candidates.device)
+    return candidates[order[:take_count]]
+
+
 def stable_frame_seed(
     *,
     base_seed: int,
@@ -64,16 +78,21 @@ def sample_random_supervision_edges(
         raise ValueError(
             "num_supervision_edges must be <= num_hand_points for no-replacement sampling."
         )
-    obj_valid_mask = np.asarray(obj_valid_mask, dtype=bool)
-    edge_idx = np.full((num_obj_points, num_supervision_edges), -1, dtype=np.int64)
-    edge_valid = np.zeros((num_obj_points, num_supervision_edges), dtype=bool)
-    rng = np.random.default_rng(seed)
-    all_hand_idx = np.arange(num_hand_points, dtype=np.int64)
-    for obj_idx in np.flatnonzero(obj_valid_mask).tolist():
-        chosen = rng.choice(all_hand_idx, size=num_supervision_edges, replace=False)
-        edge_idx[obj_idx] = chosen
-        edge_valid[obj_idx] = True
-    return edge_idx, edge_valid
+    obj_valid_mask_t = torch.as_tensor(obj_valid_mask, dtype=torch.bool)
+    edge_idx = torch.full((num_obj_points, num_supervision_edges), -1, dtype=torch.long)
+    edge_valid = torch.zeros((num_obj_points, num_supervision_edges), dtype=torch.bool)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    all_hand_idx = torch.arange(num_hand_points, dtype=torch.long)
+    for obj_idx in torch.nonzero(obj_valid_mask_t, as_tuple=False).squeeze(-1).tolist():
+        chosen = _sample_without_replacement_torch(
+            all_hand_idx,
+            count=num_supervision_edges,
+            generator=generator,
+        )
+        edge_idx[obj_idx, : chosen.numel()] = chosen
+        edge_valid[obj_idx, : chosen.numel()] = True
+    return edge_idx.numpy(), edge_valid.numpy()
 
 
 def sample_contact_supervision_edges(
@@ -145,9 +164,9 @@ def sample_contact_supervision_edges(
     if total_quota <= 0:
         raise ValueError("Sum of quotas must be positive.")
 
-    obj_pts = np.asarray(gt_obj_points, dtype=np.float32)
-    hand_pts = np.asarray(gt_hand_points, dtype=np.float32)
-    obj_valid_mask = np.asarray(obj_valid_mask, dtype=bool)
+    obj_pts = torch.as_tensor(gt_obj_points, dtype=torch.float32)
+    hand_pts = torch.as_tensor(gt_hand_points, dtype=torch.float32)
+    obj_valid_mask_t = torch.as_tensor(obj_valid_mask, dtype=torch.bool)
     num_obj = int(obj_pts.shape[0])
     num_hand = int(hand_pts.shape[0])
     if num_obj <= 0 or num_hand <= 0:
@@ -156,53 +175,71 @@ def sample_contact_supervision_edges(
             np.zeros((num_obj, total_quota), dtype=bool),
         )
 
-    obj_t = torch.from_numpy(obj_pts)
-    hand_t = torch.from_numpy(hand_pts)
-    edge_idx = np.full((num_obj, total_quota), -1, dtype=np.int64)
-    edge_valid = np.zeros((num_obj, total_quota), dtype=bool)
-    rng = np.random.default_rng(seed)
+    edge_idx = torch.full((num_obj, total_quota), -1, dtype=torch.long)
+    edge_valid = torch.zeros((num_obj, total_quota), dtype=torch.bool)
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
 
     # Compute the full clean GT distance matrix once; with N_obj=512 and
     # N_hand=1538 this is ~7.87e5 pairs/frame, which is cheap. Use float64
     # here so sampler binning matches the downstream target recomputation as
     # closely as possible near the ``d ~= r`` boundary.
-    distance = torch.cdist(obj_t.double(), hand_t.double()).cpu().numpy()
+    distance = torch.cdist(obj_pts.double(), hand_pts.double())
     r = float(contact_radius)
 
-    for obj_idx in np.flatnonzero(obj_valid_mask).tolist():
+    for obj_idx in torch.nonzero(obj_valid_mask_t, as_tuple=False).squeeze(-1).tolist():
         dist_row = distance[obj_idx]
-        target_row = np.clip(1.0 - dist_row / r, 0.0, 1.0)
+        target_row = (1.0 - dist_row / r).clamp(0.0, 1.0)
         # Keep a tiny positive margin so an edge that is numerically
         # borderline at sampling time does not later collapse to y=0 when the
         # dataset recomputes the target in float32 from gathered coordinates.
-        weak = np.flatnonzero(
-            (target_row > _CONTACT_POSITIVE_EPS) & (target_row <= 0.25)
-        )
-        medium = np.flatnonzero((target_row > 0.25) & (target_row <= 0.50))
-        strong = np.flatnonzero((target_row > 0.50) & (target_row <= 0.75))
-        very_strong = np.flatnonzero((target_row > 0.75) & (target_row <= 1.0))
+        weak = torch.nonzero(
+            (target_row > _CONTACT_POSITIVE_EPS) & (target_row <= 0.25),
+            as_tuple=False,
+        ).squeeze(-1)
+        medium = torch.nonzero(
+            (target_row > 0.25) & (target_row <= 0.50),
+            as_tuple=False,
+        ).squeeze(-1)
+        strong = torch.nonzero(
+            (target_row > 0.50) & (target_row <= 0.75),
+            as_tuple=False,
+        ).squeeze(-1)
+        very_strong = torch.nonzero(
+            (target_row > 0.75) & (target_row <= 1.0),
+            as_tuple=False,
+        ).squeeze(-1)
         candidate_bins = (weak, medium, strong, very_strong)
-        hard_negative = np.flatnonzero((dist_row >= neg_min) & (dist_row < neg_max) & (target_row <= 0.0))
+        hard_negative = torch.nonzero(
+            (dist_row >= neg_min) & (dist_row < neg_max) & (target_row <= 0.0),
+            as_tuple=False,
+        ).squeeze(-1)
 
         write_col = 0
         for candidates, quota in zip(candidate_bins, quotas_t):
             slot_end = write_col + quota
-            if quota <= 0 or candidates.size == 0:
+            if quota <= 0 or candidates.numel() == 0:
                 write_col = slot_end
                 continue
-            take_count = min(quota, int(candidates.size))
-            chosen = rng.choice(candidates, size=take_count, replace=False)
-            edge_idx[obj_idx, write_col : write_col + take_count] = chosen
-            edge_valid[obj_idx, write_col : write_col + take_count] = True
+            chosen = _sample_without_replacement_torch(
+                candidates,
+                count=quota,
+                generator=generator,
+            )
+            edge_idx[obj_idx, write_col : write_col + chosen.numel()] = chosen
+            edge_valid[obj_idx, write_col : write_col + chosen.numel()] = True
             write_col = slot_end
         neg_slot_end = write_col + hard_negative_quota
-        if hard_negative_quota > 0 and hard_negative.size > 0:
-            take_count = min(hard_negative_quota, int(hard_negative.size))
-            chosen = rng.choice(hard_negative, size=take_count, replace=False)
-            edge_idx[obj_idx, write_col : write_col + take_count] = chosen
-            edge_valid[obj_idx, write_col : write_col + take_count] = True
+        if hard_negative_quota > 0 and hard_negative.numel() > 0:
+            chosen = _sample_without_replacement_torch(
+                hard_negative,
+                count=hard_negative_quota,
+                generator=generator,
+            )
+            edge_idx[obj_idx, write_col : write_col + chosen.numel()] = chosen
+            edge_valid[obj_idx, write_col : write_col + chosen.numel()] = True
         write_col = neg_slot_end
-    return edge_idx, edge_valid
+    return edge_idx.numpy(), edge_valid.numpy()
 
 
 def _rotation_matrix(axis: np.ndarray, angle: float) -> np.ndarray:

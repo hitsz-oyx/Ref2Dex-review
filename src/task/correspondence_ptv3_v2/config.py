@@ -89,6 +89,7 @@ class Config(TaskConfig):
 
     class train(TaskConfig.train):
         output_dir = "outputs/train/correspondence_ptv3_v2"
+        amp = False
         # v2.1 ablation: select checkpoints on the unbiased random-edge QFL
         # (the contact auxiliary stream is biased by construction and must
         # NOT be the model-selection metric).

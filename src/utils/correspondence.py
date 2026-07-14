@@ -253,3 +253,40 @@ def gather_knn_features(
     gathered = gathered * mask
 
     return gathered
+
+
+def gather_batched_knn_features(
+    features: torch.Tensor,
+    knn_idx: torch.Tensor,
+    knn_valid_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Gather batched KNN features without a Python loop over the batch axis.
+
+    Args:
+        features: [B, N, C] source features.
+        knn_idx: [B, M, K] neighbor indices (may contain -1 for padding).
+        knn_valid_mask: [B, M, K] bool mask for valid neighbors.
+
+    Returns:
+        gathered: [B, M, K, C] gathered features, zero for invalid neighbors.
+    """
+    if features.dim() != 3:
+        raise ValueError(f"features must be [B, N, C], got shape {tuple(features.shape)}")
+    if knn_idx.dim() != 3 or knn_valid_mask.dim() != 3:
+        raise ValueError(
+            "knn_idx and knn_valid_mask must be [B, M, K], got "
+            f"{tuple(knn_idx.shape)} and {tuple(knn_valid_mask.shape)}"
+        )
+
+    batch_size, num_points, feat_dim = features.shape
+    if knn_idx.shape[0] != batch_size or knn_valid_mask.shape[0] != batch_size:
+        raise ValueError("Batch dimension mismatch between features and KNN tensors.")
+
+    safe_idx = knn_idx.long().clamp(min=0)
+    flat_features = features.reshape(batch_size * num_points, feat_dim)
+    batch_offsets = (
+        torch.arange(batch_size, device=features.device, dtype=torch.long).view(batch_size, 1, 1) * num_points
+    )
+    flat_idx = safe_idx + batch_offsets
+    gathered = flat_features[flat_idx]
+    return gathered * knn_valid_mask.unsqueeze(-1).float()

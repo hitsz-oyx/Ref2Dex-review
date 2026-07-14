@@ -270,23 +270,27 @@ class CorrStaticDatasetV2(Dataset):
             seed=contact_seed,
         )
 
+        gt_obj_points_t = torch.from_numpy(np.asarray(geometry.gt_obj_points, dtype=np.float32))
+        gt_hand_points_t = torch.from_numpy(np.asarray(geometry.gt_hand_points, dtype=np.float32))
+
         random_edge_contact_target = _compute_edge_contact_target(
-            geometry.gt_obj_points,
-            geometry.gt_hand_points,
+            gt_obj_points_t,
+            gt_hand_points_t,
             random_edge_idx,
             random_edge_valid,
             contact_radius=self.contact_radius,
         )
         contact_edge_contact_target = _compute_edge_contact_target(
-            geometry.gt_obj_points,
-            geometry.gt_hand_points,
+            gt_obj_points_t,
+            gt_hand_points_t,
             contact_edge_idx,
             contact_edge_valid,
             contact_radius=self.contact_radius,
         )
         hand_contact_target = contact_target_from_distance(
-            torch.from_numpy(hand_min_dist), contact_radius=self.contact_radius
-        ).numpy().astype(np.float32)
+            hand_min_dist,
+            contact_radius=self.contact_radius,
+        ).float()
 
         input_points = np.concatenate([geometry.input_obj_points, geometry.input_hand_points], axis=0)
         input_normals = np.concatenate([geometry.input_obj_normals, geometry.input_hand_normals], axis=0)
@@ -309,7 +313,7 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "random_edge_contact_target": random_edge_contact_target.float(),
             "contact_edge_contact_target": contact_edge_contact_target.float(),
-            "hand_contact_target": torch.from_numpy(hand_contact_target).float(),
+            "hand_contact_target": hand_contact_target,
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
             "contact_edge_idx": torch.from_numpy(contact_edge_idx).long(),
@@ -320,20 +324,18 @@ class CorrStaticDatasetV2(Dataset):
 
 
 def _compute_edge_contact_target(
-    gt_obj_points: np.ndarray,
-    gt_hand_points: np.ndarray,
+    gt_obj_points: torch.Tensor,
+    gt_hand_points: torch.Tensor,
     edge_idx: np.ndarray,
     edge_valid: np.ndarray,
     *,
     contact_radius: float,
 ) -> torch.Tensor:
-    obj_points = torch.from_numpy(np.asarray(gt_obj_points, dtype=np.float32))
-    hand_points = torch.from_numpy(np.asarray(gt_hand_points, dtype=np.float32))
     edge_idx_t = torch.from_numpy(np.asarray(edge_idx, dtype=np.int64))
     edge_valid_t = torch.from_numpy(np.asarray(edge_valid, dtype=bool))
     safe_idx = edge_idx_t.clamp(min=0)
-    neighbor_hand = hand_points[safe_idx]
-    distance = torch.norm(neighbor_hand - obj_points.unsqueeze(1), dim=-1)
+    neighbor_hand = gt_hand_points[safe_idx]
+    distance = torch.norm(neighbor_hand - gt_obj_points.unsqueeze(1), dim=-1)
     target = contact_target_from_distance(distance, contact_radius=contact_radius)
     return target * edge_valid_t.float()
 
@@ -342,16 +344,16 @@ def _resolve_hand_to_obj_min_dist(
     data: dict[str, np.ndarray],
     *,
     frame_idx: int,
-) -> np.ndarray:
+) -> torch.Tensor:
     cached = data.get("hand_to_obj_min_dist")
     if cached is not None:
-        return np.asarray(cached[frame_idx], dtype=np.float32).copy()
+        return torch.from_numpy(np.asarray(cached[frame_idx], dtype=np.float32).copy())
 
     obj_points = torch.from_numpy(np.asarray(data["obj_points"][frame_idx], dtype=np.float32))
     hand_points = torch.from_numpy(np.asarray(data["hand_points"][frame_idx], dtype=np.float32))
     if obj_points.numel() == 0 or hand_points.numel() == 0:
-        return np.zeros((int(hand_points.shape[0]),), dtype=np.float32)
-    return torch.cdist(hand_points, obj_points).amin(dim=1).numpy().astype(np.float32)
+        return torch.zeros((int(hand_points.shape[0]),), dtype=torch.float32)
+    return torch.cdist(hand_points, obj_points).amin(dim=1).float()
 
 
 def _load_blacklist(path: str | None) -> set[str]:
