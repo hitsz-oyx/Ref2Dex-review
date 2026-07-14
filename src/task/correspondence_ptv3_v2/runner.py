@@ -143,15 +143,20 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         contact_logits = preds["pred_cross_contact_aux_logits"]
         contact_prob = preds["pred_cross_contact_aux_prob"]
 
+        contact_binary_target = (contact_edge_target > 0).float()
         contact_qfl_map = quality_focal_loss_map(contact_logits, contact_edge_target, beta=beta)
-        contact_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
+        contact_soft_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
+        contact_binary_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_binary_target)
         contact_mae_map = torch.abs(contact_prob - contact_edge_target)
 
         cross_edge_contact_aux_qfl = reduce_loss_map_per_object(
             contact_qfl_map, contact_edge_valid_mask, obj_valid_mask
         )
+        cross_edge_contact_aux_soft_bce = reduce_loss_map_per_object(
+            contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
+        )
         cross_edge_contact_aux_bce = reduce_loss_map_per_object(
-            contact_bce_map, contact_edge_valid_mask, obj_valid_mask
+            contact_binary_bce_map, contact_edge_valid_mask, obj_valid_mask
         )
         cross_edge_contact_aux_mae = reduce_loss_map_per_object(
             contact_mae_map, contact_edge_valid_mask, obj_valid_mask
@@ -208,6 +213,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             # Contact auxiliary stream metrics (separate diagnostic).
             "contact_aux_qfl": cross_edge_contact_aux_qfl,
             "contact_aux_bce": cross_edge_contact_aux_bce,
+            "contact_aux_soft_bce": cross_edge_contact_aux_soft_bce,
             "contact_aux_mae": cross_edge_contact_aux_mae,
         }
 
@@ -228,7 +234,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         losses = {
             "cross_edge_random": float(meta.loss_cross_edge_weight) * cross_edge_random_qfl,
-            "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_qfl,
+            "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_bce,
         }
         return losses, aux_metrics
 

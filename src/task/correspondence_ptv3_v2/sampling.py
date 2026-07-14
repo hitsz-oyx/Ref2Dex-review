@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+_CONTACT_POSITIVE_EPS = 1e-4
+
 
 def stable_frame_seed(
     *,
@@ -81,15 +83,19 @@ def sample_contact_supervision_edges(
     obj_valid_mask: np.ndarray,
     contact_radius: float,
     quotas: tuple[int, int, int, int],
+    hard_negative_quota: int,
+    hard_negative_distance_range: tuple[float, float],
     seed: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Sample contact-positive edges for the auxiliary supervision stream.
+    """Sample auxiliary edges with stratified positives plus hard negatives.
 
     For every valid object point, distance ``d`` to each hand point defines
     a soft target ``y = max(1 - d/r, 0)``. Hand candidates are bucketed by
     target strength into four bins (weak / medium / strong / very strong,
     in that order so the slot layout matches the diagnostic bins) and each
-    bin is filled up to its quota *without* refilling from other bins.
+    bin is filled up to its quota *without* refilling from other bins. A
+    final block of hard negatives samples ``y=0`` pairs from a narrow
+    distance band just outside ``contact_radius``.
 
     Args:
         gt_obj_points: ``[N_obj, 3]`` clean GT object points (the *same*
@@ -100,16 +106,22 @@ def sample_contact_supervision_edges(
         contact_radius: radius ``r`` used by the contact target definition.
         quotas: per-bin maximum sample count, ordered
             ``(weak, medium, strong, very_strong)``. The total maximum
-            is therefore ``sum(quotas)`` edges per object.
+            positive count is ``sum(quotas)`` edges per object.
+        hard_negative_quota: maximum number of near-contact negatives
+            sampled per object.
+        hard_negative_distance_range: closed-open interval
+            ``[d_min, d_max)`` used to define hard negatives.
         seed: PRNG seed; together with the surrounding frame signature it
             makes the auxiliary supervision stream deterministic and
             independent of the random128 baseline stream.
 
     Returns:
-        edge_idx: ``[N_obj, sum(quotas)]`` int64 hand point indices.
+        edge_idx: ``[N_obj, sum(quotas) + hard_negative_quota]`` int64 hand
+            point indices.
             Unfilled slots are -1.
-        edge_valid: ``[N_obj, sum(quotas)]`` bool mask. Only valid edges
-            have ``y > 0`` by construction.
+        edge_valid: ``[N_obj, sum(quotas) + hard_negative_quota]`` bool
+            mask. Valid edges can be either ``y > 0`` positives or sampled
+            hard negatives with ``y = 0``.
     """
     if contact_radius <= 0.0:
         raise ValueError("contact_radius must be positive.")
@@ -120,7 +132,16 @@ def sample_contact_supervision_edges(
     quotas_t = tuple(int(q) for q in quotas)
     if any(q < 0 for q in quotas_t):
         raise ValueError(f"quotas must be non-negative, got {quotas_t}.")
-    total_quota = sum(quotas_t)
+    hard_negative_quota = int(hard_negative_quota)
+    if hard_negative_quota < 0:
+        raise ValueError(f"hard_negative_quota must be non-negative, got {hard_negative_quota}.")
+    neg_min, neg_max = (float(hard_negative_distance_range[0]), float(hard_negative_distance_range[1]))
+    if not (contact_radius <= neg_min < neg_max):
+        raise ValueError(
+            "hard_negative_distance_range must satisfy "
+            "contact_radius <= min < max."
+        )
+    total_quota = sum(quotas_t) + hard_negative_quota
     if total_quota <= 0:
         raise ValueError("Sum of quotas must be positive.")
 
@@ -142,18 +163,26 @@ def sample_contact_supervision_edges(
     rng = np.random.default_rng(seed)
 
     # Compute the full clean GT distance matrix once; with N_obj=512 and
-    # N_hand=1538 this is ~7.87e5 pairs/frame, which is cheap.
-    distance = torch.cdist(obj_t, hand_t).numpy()
+    # N_hand=1538 this is ~7.87e5 pairs/frame, which is cheap. Use float64
+    # here so sampler binning matches the downstream target recomputation as
+    # closely as possible near the ``d ~= r`` boundary.
+    distance = torch.cdist(obj_t.double(), hand_t.double()).cpu().numpy()
     r = float(contact_radius)
 
     for obj_idx in np.flatnonzero(obj_valid_mask).tolist():
         dist_row = distance[obj_idx]
         target_row = np.clip(1.0 - dist_row / r, 0.0, 1.0)
-        weak = np.flatnonzero((target_row > 0.0) & (target_row <= 0.25))
+        # Keep a tiny positive margin so an edge that is numerically
+        # borderline at sampling time does not later collapse to y=0 when the
+        # dataset recomputes the target in float32 from gathered coordinates.
+        weak = np.flatnonzero(
+            (target_row > _CONTACT_POSITIVE_EPS) & (target_row <= 0.25)
+        )
         medium = np.flatnonzero((target_row > 0.25) & (target_row <= 0.50))
         strong = np.flatnonzero((target_row > 0.50) & (target_row <= 0.75))
         very_strong = np.flatnonzero((target_row > 0.75) & (target_row <= 1.0))
         candidate_bins = (weak, medium, strong, very_strong)
+        hard_negative = np.flatnonzero((dist_row >= neg_min) & (dist_row < neg_max) & (target_row <= 0.0))
 
         write_col = 0
         for candidates, quota in zip(candidate_bins, quotas_t):
@@ -166,6 +195,13 @@ def sample_contact_supervision_edges(
             edge_idx[obj_idx, write_col : write_col + take_count] = chosen
             edge_valid[obj_idx, write_col : write_col + take_count] = True
             write_col = slot_end
+        neg_slot_end = write_col + hard_negative_quota
+        if hard_negative_quota > 0 and hard_negative.size > 0:
+            take_count = min(hard_negative_quota, int(hard_negative.size))
+            chosen = rng.choice(hard_negative, size=take_count, replace=False)
+            edge_idx[obj_idx, write_col : write_col + take_count] = chosen
+            edge_valid[obj_idx, write_col : write_col + take_count] = True
+        write_col = neg_slot_end
     return edge_idx, edge_valid
 
 

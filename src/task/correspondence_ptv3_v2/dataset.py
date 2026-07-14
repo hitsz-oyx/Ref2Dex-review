@@ -31,7 +31,6 @@ class CorrStaticDatasetV2(Dataset):
         "hand_normals",
         "obj_to_hand_min_dist",
         "obj_candidate_mask_5cm",
-        "hand_to_obj_min_dist",
     }
 
     def __init__(
@@ -43,6 +42,8 @@ class CorrStaticDatasetV2(Dataset):
         num_hand_points: int = 1538,
         num_supervision_edges: int = 128,
         contact_supervision_quotas: tuple[int, int, int, int] = (16, 16, 16, 16),
+        contact_supervision_hard_negative_quota: int = 16,
+        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.01, 0.015),
         contact_radius: float = 0.01,
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
@@ -66,6 +67,10 @@ class CorrStaticDatasetV2(Dataset):
                 f"got {tuple(contact_supervision_quotas)}."
             )
         self.contact_supervision_quotas = tuple(int(q) for q in contact_supervision_quotas)
+        self.contact_supervision_hard_negative_quota = int(contact_supervision_hard_negative_quota)
+        self.contact_supervision_hard_negative_distance_range = tuple(
+            float(x) for x in contact_supervision_hard_negative_distance_range
+        )
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
         self.apply_obj_perturb = bool(apply_obj_perturb)
@@ -76,6 +81,7 @@ class CorrStaticDatasetV2(Dataset):
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
+        self.root_coordinate_frame = _load_root_coordinate_frame(self.data_root)
 
         if self.num_supervision_edges <= 0:
             raise ValueError("num_supervision_edges must be positive.")
@@ -101,12 +107,17 @@ class CorrStaticDatasetV2(Dataset):
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
-                if "coordinate_frame" not in data.files:
+                frame = _resolve_coordinate_frame_from_npz(
+                    data,
+                    fallback=self.root_coordinate_frame,
+                )
+                if frame is None:
                     raise KeyError(
-                        f"{path}: missing Stage 3 field 'coordinate_frame'. "
-                        f"Re-run Stage 3 with the current prepare_corr_static.py."
+                        f"{path}: missing Stage 3 field 'coordinate_frame' and root meta.json "
+                        "does not provide it. Re-run Stage 3 with the current "
+                        "prepare_corr_static.py."
                     )
-                per_file_frames.add(str(np.asarray(data["coordinate_frame"]).item()))
+                per_file_frames.add(frame)
 
         if len(per_file_frames) != 1:
             raise ValueError(
@@ -193,13 +204,11 @@ class CorrStaticDatasetV2(Dataset):
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
-        # hand_to_obj_min_dist is the per-hand-point min distance to the
-        # *full* 4096 object pool (frame-invariant). It is the clean GT
-        # target for the hand contact head; it must NOT be affected by
-        # the 512 obj-point sampling or the obj perturb applied to input.
-        hand_min_dist = np.asarray(
-            data["hand_to_obj_min_dist"][frame_idx], dtype=np.float32
-        ).copy()
+        # hand_to_obj_min_dist is only used for GT-only diagnostics in v2.1.
+        # Older Stage 3 dumps may not contain it; in that case backfill from
+        # the full clean object pool so legacy object-frame datasets remain
+        # trainable without regeneration.
+        hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -239,7 +248,7 @@ class CorrStaticDatasetV2(Dataset):
             seed=supervision_seed,
         )
 
-        # Independent contact-positive auxiliary stream. The namespace is
+        # Independent contact-aware auxiliary stream. The namespace is
         # distinct from ``supervision-edges`` so the random128 baseline
         # sampling is unchanged when this stream is added.
         contact_seed = stable_frame_seed(
@@ -256,6 +265,8 @@ class CorrStaticDatasetV2(Dataset):
             obj_valid_mask=obj_valid,
             contact_radius=self.contact_radius,
             quotas=self.contact_supervision_quotas,
+            hard_negative_quota=self.contact_supervision_hard_negative_quota,
+            hard_negative_distance_range=self.contact_supervision_hard_negative_distance_range,
             seed=contact_seed,
         )
 
@@ -273,16 +284,6 @@ class CorrStaticDatasetV2(Dataset):
             contact_edge_valid,
             contact_radius=self.contact_radius,
         )
-        # Hard guarantee: every contact auxiliary edge has y > 0.
-        valid_contact_targets = contact_edge_contact_target[
-            torch.from_numpy(contact_edge_valid)
-        ]
-        if bool(valid_contact_targets.numel() > 0):
-            assert bool(torch.all(valid_contact_targets > 0)), (
-                "sample_contact_supervision_edges produced a valid edge with y=0; "
-                "this means the sampler is leaking negative edges into the "
-                "auxiliary stream. See docs/指导.md for the contract."
-            )
         hand_contact_target = contact_target_from_distance(
             torch.from_numpy(hand_min_dist), contact_radius=self.contact_radius
         ).numpy().astype(np.float32)
@@ -337,6 +338,22 @@ def _compute_edge_contact_target(
     return target * edge_valid_t.float()
 
 
+def _resolve_hand_to_obj_min_dist(
+    data: dict[str, np.ndarray],
+    *,
+    frame_idx: int,
+) -> np.ndarray:
+    cached = data.get("hand_to_obj_min_dist")
+    if cached is not None:
+        return np.asarray(cached[frame_idx], dtype=np.float32).copy()
+
+    obj_points = torch.from_numpy(np.asarray(data["obj_points"][frame_idx], dtype=np.float32))
+    hand_points = torch.from_numpy(np.asarray(data["hand_points"][frame_idx], dtype=np.float32))
+    if obj_points.numel() == 0 or hand_points.numel() == 0:
+        return np.zeros((int(hand_points.shape[0]),), dtype=np.float32)
+    return torch.cdist(hand_points, obj_points).amin(dim=1).numpy().astype(np.float32)
+
+
 def _load_blacklist(path: str | None) -> set[str]:
     if not path:
         return set()
@@ -355,6 +372,27 @@ def _load_blacklist(path: str | None) -> set[str]:
         for line in blacklist_path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
+
+
+def _load_root_coordinate_frame(root: Path) -> str | None:
+    meta_path = root / "meta.json"
+    if not meta_path.exists():
+        return None
+    import json
+
+    payload = json.loads(meta_path.read_text(encoding="utf-8"))
+    frame = payload.get("coordinate_frame")
+    return None if frame in {None, ""} else str(frame)
+
+
+def _resolve_coordinate_frame_from_npz(
+    data: Any,
+    *,
+    fallback: str | None,
+) -> str | None:
+    if "coordinate_frame" in data.files:
+        return str(np.asarray(data["coordinate_frame"]).item())
+    return fallback
 
 
 def _is_blacklisted(path: Path, root: Path, blacklist: set[str]) -> bool:
@@ -418,6 +456,12 @@ def make_dataloaders(
         "num_hand_points": int(meta_cfg.num_hand_points),
         "num_supervision_edges": int(meta_cfg.num_supervision_edges),
         "contact_supervision_quotas": tuple(getattr(meta_cfg, "contact_supervision_quotas", (16, 16, 16, 16))),
+        "contact_supervision_hard_negative_quota": int(
+            getattr(meta_cfg, "contact_supervision_hard_negative_quota", 16)
+        ),
+        "contact_supervision_hard_negative_distance_range": tuple(
+            getattr(meta_cfg, "contact_supervision_hard_negative_distance_range", (0.01, 0.015))
+        ),
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),

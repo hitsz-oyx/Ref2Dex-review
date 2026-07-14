@@ -7,6 +7,8 @@ meta:
   num_hand_points: 1538
   num_supervision_edges: 128
   contact_supervision_quotas: [16, 16, 16, 16]
+  contact_supervision_hard_negative_quota: 16
+  contact_supervision_hard_negative_distance_range: [0.01, 0.015]
   contact_radius: 0.01
   quality_focal_beta: 2.0
   coordinate_frame: hand_root
@@ -14,7 +16,7 @@ meta:
   obj_trans_std: 0.01
   obj_perturb_prob: 1.0
   loss_cross_edge_weight: 1.0
-  loss_contact_aux_weight: 1.0
+  loss_contact_aux_weight: 0.05
   val_obj_perturb_prob: 1.0
 
 data:
@@ -52,4 +54,4 @@ wandb:
   enable: true
   project: ref2dex
   mode: online
-  tags: [correspondence, ptv3, v2, soft-contact, qfl, multigpu, gb256, contact-aux]
+  tags: [correspondence, ptv3, v2, soft-contact, multigpu, gb256, contact-aux, aux-bce, hard-neg, lambda005]

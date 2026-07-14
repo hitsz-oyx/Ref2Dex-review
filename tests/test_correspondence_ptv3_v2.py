@@ -156,7 +156,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "random_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
         "random_edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
         "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
-        "contact_edge_contact_target": torch.tensor([[[0.5, 0.8], [0.7, 0.9]]]),
+        "contact_edge_contact_target": torch.tensor([[[0.5, 0.0], [0.7, 0.9]]]),
         "hand_contact_target": torch.tensor([[0.0, 0.5, 1.0, 0.0]]),
     }
     losses, aux = runner._compute_losses(preds, batch)
@@ -167,8 +167,12 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     assert aux["random_sampled_nonzero_edge_fraction"].count == 3.0
     assert aux["random_object_nonzero_edge_coverage"].total == 1.0
     assert aux["random_object_nonzero_edge_coverage"].count == 2.0
-    # Loss shape: random QFL + contact aux QFL (hand is removed in v2.1).
+    # Loss shape: random QFL + contact aux BCE (hand is removed in v2.1).
     assert set(losses) == {"cross_edge_random", "cross_edge_contact_aux"}
+    expected_contact_bce = F.binary_cross_entropy_with_logits(
+        torch.zeros(4), torch.tensor([1.0, 0.0, 1.0, 1.0]), reduction="mean"
+    )
+    assert torch.allclose(losses["cross_edge_contact_aux"], expected_contact_bce)
     assert "hand_contact" not in losses
     # Hand contact is observed as a GT distribution only.
     assert "hand_contact_qfl" not in aux
@@ -208,6 +212,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     expected_contact_aux_keys = {
         "contact_aux_qfl",
         "contact_aux_bce",
+        "contact_aux_soft_bce",
         "contact_aux_mae",
         "contact_aux_pred_mean",
         "contact_aux_target_mean",
@@ -349,18 +354,20 @@ def test_v2_has_no_old_task_dependency_strings() -> None:
 
 # ---------------------------------------------------------------------------
 # sample_contact_supervision_edges tests (Step 9 in docs/指导.md).
-# The 6 mandatory tests cover the full contract: positive-only,
-# 4-bin layout, no refill, target > 0, seed reproducibility, and
+# The 6 mandatory tests cover the full contract: sparse/no-contact behavior,
+# 4-bin positive layout, hard-negative tail slots, seed reproducibility, and
 # random128 stream regression.
 # ---------------------------------------------------------------------------
 
 _QUOTAS = (4, 4, 4, 4)
+_HARD_NEGATIVE_QUOTA = 2
+_HARD_NEGATIVE_RANGE = (0.01, 0.015)
 
 
 def _build_synthetic_geometry(num_obj: int, num_hand: int, *, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """Build a synthetic obj/hand point cloud where some hand points are
     within ``contact_radius`` of each obj point so the sampler can find
-    contact-positive candidates.
+    contact-aware candidates.
     """
     rng = np.random.default_rng(seed)
     obj = rng.normal(size=(num_obj, 3)).astype(np.float32) * 0.01
@@ -378,10 +385,12 @@ def test_sample_contact_sampler_no_contact_yields_zero_valid_edges() -> None:
         obj_valid_mask=np.array([True, True]),
         contact_radius=0.01,
         quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
         seed=42,
     )
-    assert edge_idx.shape == (2, sum(_QUOTAS))
-    assert edge_valid.shape == (2, sum(_QUOTAS))
+    assert edge_idx.shape == (2, sum(_QUOTAS) + _HARD_NEGATIVE_QUOTA)
+    assert edge_valid.shape == (2, sum(_QUOTAS) + _HARD_NEGATIVE_QUOTA)
     assert int(edge_valid.sum()) == 0
 
 
@@ -398,6 +407,8 @@ def test_sample_contact_sampler_only_weak_fills_only_weak() -> None:
         obj_valid_mask=np.array([True]),
         contact_radius=0.01,
         quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
         seed=42,
     )
     valid_count = int(edge_valid[0].sum())
@@ -406,7 +417,7 @@ def test_sample_contact_sampler_only_weak_fills_only_weak() -> None:
     # All sampled slots fall in the weak bin (the first 4 columns).
     for col in range(_QUOTAS[0]):
         assert bool(edge_valid[0, col])
-    for col in range(_QUOTAS[0], sum(_QUOTAS)):
+    for col in range(_QUOTAS[0], sum(_QUOTAS) + _HARD_NEGATIVE_QUOTA):
         assert not bool(edge_valid[0, col])
 
 
@@ -425,6 +436,8 @@ def test_sample_contact_sampler_each_bin_fully_filled() -> None:
         obj_valid_mask=np.array([True]),
         contact_radius=0.01,
         quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
         seed=42,
     )
     assert int(edge_valid.sum()) == sum(_QUOTAS)
@@ -440,29 +453,52 @@ def test_sample_contact_sampler_each_bin_fully_filled() -> None:
             assert abs(float(sampled_off) - off) < 1e-5
 
 
-def test_sample_contact_sampler_y_is_strictly_positive_on_valid() -> None:
-    """Test 4: every valid sampled edge has y > 0."""
-    obj, hand = _build_synthetic_geometry(num_obj=4, num_hand=128, seed=0)
+def test_sample_contact_sampler_adds_hard_negatives_in_tail_slots() -> None:
+    """Test 4: hard negatives occupy the tail slots and keep y == 0."""
+    obj = np.zeros((1, 3), dtype=np.float32)
+    hand = np.zeros((24, 3), dtype=np.float32)
+    hand[18:, :] = 5.0
+    hand[0:4, 0] = 0.009
+    hand[4:8, 0] = 0.006
+    hand[8:12, 0] = 0.003
+    hand[12:16, 0] = 0.001
+    hand[16:18, 0] = 0.012
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
-        obj_valid_mask=np.array([True, True, True, True]),
+        obj_valid_mask=np.array([True]),
         contact_radius=0.01,
         quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
         seed=42,
     )
-    if int(edge_valid.sum()) == 0:
-        # Sampler can legitimately produce zero valid edges if no hand
-        # point is within radius for this random geometry; in that case
-        # the contract ``y > 0`` is vacuously true.
-        return
     obj_t = torch.from_numpy(obj)
     hand_t = torch.from_numpy(hand)
     safe_idx = torch.from_numpy(edge_idx).clamp(min=0)
     distance = torch.norm(hand_t[safe_idx] - obj_t.unsqueeze(1), dim=-1)
     target = contact_target_from_distance(distance, contact_radius=0.01)
-    valid_targets = target[torch.from_numpy(edge_valid)]
-    assert torch.all(valid_targets > 0), "contact sampler leaked a y=0 edge into the auxiliary stream"
+    neg_slice = slice(sum(_QUOTAS), sum(_QUOTAS) + _HARD_NEGATIVE_QUOTA)
+    assert torch.all(torch.from_numpy(edge_valid)[0, neg_slice])
+    assert torch.all(target[0, neg_slice] == 0)
+
+
+def test_sample_contact_sampler_excludes_near_zero_boundary_edges() -> None:
+    """Borderline ``d ~= r`` edges must not be marked valid."""
+    obj = np.zeros((1, 3), dtype=np.float32)
+    hand = np.full((8, 3), 5.0, dtype=np.float32)
+    hand[0, 0] = 0.01 - 5e-7  # positive but too close to the y=0 boundary
+    edge_idx, edge_valid = sample_contact_supervision_edges(
+        gt_obj_points=obj,
+        gt_hand_points=hand,
+        obj_valid_mask=np.array([True]),
+        contact_radius=0.01,
+        quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
+        seed=42,
+    )
+    assert int(edge_valid.sum()) == 0
 
 
 def test_sample_contact_sampler_is_deterministic_under_same_seed() -> None:
@@ -474,6 +510,8 @@ def test_sample_contact_sampler_is_deterministic_under_same_seed() -> None:
         obj_valid_mask=np.array([True, True, True, True]),
         contact_radius=0.01,
         quotas=_QUOTAS,
+        hard_negative_quota=_HARD_NEGATIVE_QUOTA,
+        hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
     )
     idx1, valid1 = sample_contact_supervision_edges(seed=42, **kwargs)
     idx2, valid2 = sample_contact_supervision_edges(seed=42, **kwargs)

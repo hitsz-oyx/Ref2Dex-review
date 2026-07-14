@@ -58,6 +58,11 @@ class Config(TaskConfig):
         # sampler does NOT refill from other bins: an object with 100 weak
         # candidates and 0 strong candidates will keep 16 weak + 0 strong.
         contact_supervision_quotas: tuple[int, int, int, int] = (16, 16, 16, 16)
+        # Mix in a small set of "near but not touching" negatives so the
+        # auxiliary stream learns a contact-vs-near-contact boundary instead
+        # of treating every local neighborhood as positive.
+        contact_supervision_hard_negative_quota: int = 16
+        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.01, 0.015)
 
         # Object pose perturbation (applied to the 512 sampled obj points
         # with one shared SE(3); see perturb_object_geometry in sampling.py).
@@ -70,8 +75,9 @@ class Config(TaskConfig):
         val_obj_perturb_prob: float = 1.0
 
         loss_cross_edge_weight: float = 1.0
-        # v2.1 ablation: L = L_random + lambda_c * L_contact_aux.
-        loss_contact_aux_weight: float = 1.0
+        # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
+        # it cannot dominate the random128 objective.
+        loss_contact_aux_weight: float = 0.05
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"
