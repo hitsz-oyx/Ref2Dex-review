@@ -7,6 +7,7 @@ import torch
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
 from src.task.correspondence_ptv3_v2.dataset import make_dataloaders
 from src.task.correspondence_ptv3_v2.losses import (
+    contact_target_from_distance,
     binary_cross_entropy_with_logits_map,
     binary_entropy_floor_map,
     quality_focal_loss_map,
@@ -17,6 +18,7 @@ from src.task.correspondence_ptv3_v2.losses import (
     zero_predictor_mae_map,
     zero_predictor_qfl_map,
 )
+from src.utils.correspondence import gather_batched_knn_features
 
 
 _TARGET_STRENGTH_BINS: tuple[tuple[float, float, str], ...] = (
@@ -28,6 +30,9 @@ _TARGET_STRENGTH_BINS: tuple[tuple[float, float, str], ...] = (
 
 
 class CorrespondencePTV3V2Runner(BaseRunner):
+    _CONTACT_POSITIVE_EPS = 1e-4
+    _CONTACT_SAMPLE_CHUNK = 64
+
     @classmethod
     def configure_overfit_mode(
         cls,
@@ -99,10 +104,32 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             sampler.set_epoch(epoch)
         return super().train_epoch(epoch)
 
+    def prepare_batch(self, batch: Any) -> Any:
+        if not isinstance(batch, dict):
+            return super().prepare_batch(batch)
+
+        contact_seed = batch.pop("contact_seed", None)
+        batch = super().prepare_batch(batch)
+        if contact_seed is None:
+            return batch
+
+        if torch.is_tensor(contact_seed):
+            contact_seed_list = [int(value) for value in contact_seed.reshape(-1).tolist()]
+        else:
+            contact_seed_list = [int(contact_seed)]
+        with torch.no_grad():
+            self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
+        return batch
+
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
-        del mode
         preds = model(batch)
-        losses, aux_metrics = self._compute_losses(preds, batch)
+        diagnostic_every = max(int(getattr(self.cfg.train, "diagnostic_every_steps", 20)), 1)
+        compute_diagnostics = mode == "eval" or ((self.global_step + 1) % diagnostic_every == 0)
+        losses, aux_metrics = self._compute_losses(
+            preds,
+            batch,
+            compute_diagnostics=compute_diagnostics,
+        )
         total_loss = sum(losses.values())
         metrics: dict[str, float | MetricStat] = {**losses, **aux_metrics}
         metrics["loss"] = total_loss
@@ -112,6 +139,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         self,
         preds: dict[str, torch.Tensor],
         batch: dict[str, torch.Tensor],
+        *,
+        compute_diagnostics: bool,
     ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
         meta = self.cfg.meta
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
@@ -160,81 +189,223 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_mae_map, contact_edge_valid_mask, obj_valid_mask
         )
 
-        # ---- Hand contact is GT-only in v2.1 ----
-        # We intentionally do not build or supervise a hand prediction head
-        # in this ablation. Only the GT distribution is logged.
-        hand_target = batch["hand_contact_target"].float()
-
-        # ---- Random-stream diagnostic (must NOT be polluted by aux edges) ----
-        random_oracle_bce_map = binary_entropy_floor_map(random_target)
-        cross_edge_random_oracle_bce = reduce_loss_map_per_object(
-            random_oracle_bce_map, random_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_random_oracle_bce_global = reduce_loss_map(
-            random_oracle_bce_map, random_edge_valid_mask
-        )
-        cross_edge_random_bce_global = reduce_loss_map(
-            random_bce_map, random_edge_valid_mask
-        )
-        cross_edge_random_excess_bce = (cross_edge_random_bce - cross_edge_random_oracle_bce).detach()
-        cross_edge_random_excess_bce_global = (
-            cross_edge_random_bce_global - cross_edge_random_oracle_bce_global
-        ).detach()
-
-        random_sampled_nonzero_mask = (random_target > 0) & random_edge_valid_mask
-        random_sampled_nonzero_edge_count = random_sampled_nonzero_mask.sum()
-        random_valid_edge_count = random_edge_valid_mask.sum()
-        random_per_obj_has_nonzero = random_sampled_nonzero_mask.any(dim=-1) & obj_valid_mask
-        random_num_valid_obj = obj_valid_mask.sum()
-        random_num_obj_with_nonzero = random_per_obj_has_nonzero.sum()
-
         aux_metrics: dict[str, float | MetricStat] = {
-            # Loss-aligned random stream metrics (names match the loss key).
             "cross_edge_random_qfl": cross_edge_random_qfl,
             "cross_edge_random_bce": cross_edge_random_bce,
             "cross_edge_random_mae": cross_edge_random_mae,
-            "cross_edge_random_oracle_bce": cross_edge_random_oracle_bce,
-            "cross_edge_random_oracle_bce_global": cross_edge_random_oracle_bce_global,
-            "cross_edge_random_excess_bce": cross_edge_random_excess_bce,
-            "cross_edge_random_excess_bce_global": cross_edge_random_excess_bce_global,
-            "random_num_valid_obj": random_num_valid_obj.float(),
-            "random_num_valid_edges": random_valid_edge_count.float(),
-            "random_sampled_nonzero_edge_count": random_sampled_nonzero_edge_count.float(),
-            "random_sampled_nonzero_edge_fraction": MetricStat(
-                total=float(random_sampled_nonzero_edge_count.detach().cpu()),
-                count=float(random_valid_edge_count.detach().cpu()),
-            ),
-            "random_object_nonzero_edge_coverage": MetricStat(
-                total=float(random_num_obj_with_nonzero.detach().cpu()),
-                count=float(random_num_valid_obj.detach().cpu()),
-            ),
-            # Contact auxiliary stream metrics (separate diagnostic).
             "contact_aux_qfl": cross_edge_contact_aux_qfl,
             "contact_aux_bce": cross_edge_contact_aux_bce,
             "contact_aux_soft_bce": cross_edge_contact_aux_soft_bce,
             "contact_aux_mae": cross_edge_contact_aux_mae,
         }
-
-        aux_metrics.update(self._compute_random_diagnostic_metrics(
-            edge_target=random_target,
-            edge_prob=random_prob,
-            edge_valid_mask=random_edge_valid_mask,
-            obj_valid_mask=obj_valid_mask,
-            beta=beta,
-        ))
-        aux_metrics.update(self._compute_contact_aux_diagnostic_metrics(
-            edge_target=contact_edge_target,
-            edge_prob=contact_prob,
-            edge_valid_mask=contact_edge_valid_mask,
-            obj_valid_mask=obj_valid_mask,
-        ))
-        aux_metrics.update(self._compute_hand_contact_gt_metrics(hand_target=hand_target))
+        if compute_diagnostics:
+            hand_target = batch["hand_contact_target"].float()
+            random_oracle_bce_map = binary_entropy_floor_map(random_target)
+            cross_edge_random_oracle_bce = reduce_loss_map_per_object(
+                random_oracle_bce_map, random_edge_valid_mask, obj_valid_mask
+            )
+            cross_edge_random_oracle_bce_global = reduce_loss_map(
+                random_oracle_bce_map, random_edge_valid_mask
+            )
+            cross_edge_random_bce_global = reduce_loss_map(
+                random_bce_map, random_edge_valid_mask
+            )
+            cross_edge_random_excess_bce = (cross_edge_random_bce - cross_edge_random_oracle_bce).detach()
+            cross_edge_random_excess_bce_global = (
+                cross_edge_random_bce_global - cross_edge_random_oracle_bce_global
+            ).detach()
+            random_sampled_nonzero_mask = (random_target > 0) & random_edge_valid_mask
+            random_sampled_nonzero_edge_count = random_sampled_nonzero_mask.sum()
+            random_valid_edge_count = random_edge_valid_mask.sum()
+            random_per_obj_has_nonzero = random_sampled_nonzero_mask.any(dim=-1) & obj_valid_mask
+            random_num_valid_obj = obj_valid_mask.sum()
+            random_num_obj_with_nonzero = random_per_obj_has_nonzero.sum()
+            aux_metrics.update({
+                "cross_edge_random_oracle_bce": cross_edge_random_oracle_bce,
+                "cross_edge_random_oracle_bce_global": cross_edge_random_oracle_bce_global,
+                "cross_edge_random_excess_bce": cross_edge_random_excess_bce,
+                "cross_edge_random_excess_bce_global": cross_edge_random_excess_bce_global,
+                "random_num_valid_obj": random_num_valid_obj.float(),
+                "random_num_valid_edges": random_valid_edge_count.float(),
+                "random_sampled_nonzero_edge_count": random_sampled_nonzero_edge_count.float(),
+                "random_sampled_nonzero_edge_fraction": MetricStat(
+                    total=float(random_sampled_nonzero_edge_count.detach().cpu()),
+                    count=float(random_valid_edge_count.detach().cpu()),
+                ),
+                "random_object_nonzero_edge_coverage": MetricStat(
+                    total=float(random_num_obj_with_nonzero.detach().cpu()),
+                    count=float(random_num_valid_obj.detach().cpu()),
+                ),
+            })
+            aux_metrics.update(self._compute_random_diagnostic_metrics(
+                edge_target=random_target,
+                edge_prob=random_prob,
+                edge_valid_mask=random_edge_valid_mask,
+                obj_valid_mask=obj_valid_mask,
+                beta=beta,
+            ))
+            aux_metrics.update(self._compute_contact_aux_diagnostic_metrics(
+                edge_target=contact_edge_target,
+                edge_prob=contact_prob,
+                edge_valid_mask=contact_edge_valid_mask,
+                obj_valid_mask=obj_valid_mask,
+            ))
+            aux_metrics.update(self._compute_hand_contact_gt_metrics(hand_target=hand_target))
 
         losses = {
             "cross_edge_random": float(meta.loss_cross_edge_weight) * cross_edge_random_qfl,
             "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_qfl,
         }
         return losses, aux_metrics
+
+    def _build_supervision_gpu(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        contact_seed_list: list[int],
+    ) -> None:
+        num_obj = int(self.cfg.meta.num_obj_points)
+        num_hand = int(self.cfg.meta.num_hand_points)
+        gt_points = batch["gt_points"].float()
+        gt_obj = gt_points[:, :num_obj]
+        gt_hand = gt_points[:, num_obj : num_obj + num_hand]
+        obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
+        random_edge_idx = batch["random_edge_idx"].long()
+        random_edge_valid_mask = batch["random_edge_valid_mask"].bool()
+
+        batch["random_edge_contact_target"] = self._build_random_edge_target(
+            gt_obj=gt_obj,
+            gt_hand=gt_hand,
+            random_edge_idx=random_edge_idx,
+            random_edge_valid_mask=random_edge_valid_mask,
+        )
+        contact_edge_idx, contact_edge_valid_mask, contact_edge_target = self._build_contact_supervision_edges(
+            gt_obj=gt_obj,
+            gt_hand=gt_hand,
+            obj_valid_mask=obj_valid_mask,
+            contact_seed_list=contact_seed_list,
+        )
+        batch["contact_edge_idx"] = contact_edge_idx
+        batch["contact_edge_valid_mask"] = contact_edge_valid_mask
+        batch["contact_edge_contact_target"] = contact_edge_target
+        batch["hand_contact_target"] = contact_target_from_distance(
+            batch["hand_min_dist"].float(),
+            contact_radius=float(self.cfg.meta.contact_radius),
+        ).float()
+
+    def _build_random_edge_target(
+        self,
+        *,
+        gt_obj: torch.Tensor,
+        gt_hand: torch.Tensor,
+        random_edge_idx: torch.Tensor,
+        random_edge_valid_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        neighbor_hand = gather_batched_knn_features(
+            gt_hand,
+            random_edge_idx,
+            random_edge_valid_mask,
+        )
+        distance = torch.norm(neighbor_hand - gt_obj.unsqueeze(2), dim=-1)
+        target = contact_target_from_distance(
+            distance,
+            contact_radius=float(self.cfg.meta.contact_radius),
+        )
+        return target * random_edge_valid_mask.float()
+
+    def _build_contact_supervision_edges(
+        self,
+        *,
+        gt_obj: torch.Tensor,
+        gt_hand: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+        contact_seed_list: list[int],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size, num_obj, _ = gt_obj.shape
+        num_hand = gt_hand.shape[1]
+        quotas = tuple(int(value) for value in getattr(self.cfg.meta, "contact_supervision_quotas", (16, 16, 16, 16)))
+        hard_negative_quota = int(getattr(self.cfg.meta, "contact_supervision_hard_negative_quota", 16))
+        neg_min, neg_max = tuple(
+            float(value)
+            for value in getattr(self.cfg.meta, "contact_supervision_hard_negative_distance_range", (0.02, 0.03))
+        )
+        total_quota = sum(quotas) + hard_negative_quota
+        edge_idx = torch.full((batch_size, num_obj, total_quota), -1, device=gt_obj.device, dtype=torch.long)
+        edge_valid = torch.zeros((batch_size, num_obj, total_quota), device=gt_obj.device, dtype=torch.bool)
+        edge_target = torch.zeros((batch_size, num_obj, total_quota), device=gt_obj.device, dtype=torch.float32)
+        seed_tensor = torch.as_tensor(contact_seed_list, device=gt_obj.device, dtype=torch.long)
+        contact_radius = float(self.cfg.meta.contact_radius)
+
+        for start in range(0, num_obj, self._CONTACT_SAMPLE_CHUNK):
+            end = min(start + self._CONTACT_SAMPLE_CHUNK, num_obj)
+            dist = torch.cdist(gt_obj[:, start:end], gt_hand)
+            target = contact_target_from_distance(dist, contact_radius=contact_radius)
+            row_valid = obj_valid_mask[:, start:end].unsqueeze(-1)
+            score = self._deterministic_contact_scores(
+                seed_tensor=seed_tensor,
+                obj_start=start,
+                obj_count=end - start,
+                num_hand=num_hand,
+                device=gt_obj.device,
+            )
+            masks = (
+                row_valid & (target > self._CONTACT_POSITIVE_EPS) & (target <= 0.25),
+                row_valid & (target > 0.25) & (target <= 0.50),
+                row_valid & (target > 0.50) & (target <= 0.75),
+                row_valid & (target > 0.75),
+                row_valid & (dist >= neg_min) & (dist < neg_max) & (target <= 0.0),
+            )
+            widths = (*quotas, hard_negative_quota)
+            write_col = 0
+            for mask, width in zip(masks, widths):
+                sampled_idx, sampled_valid, sampled_target = self._sample_contact_edges_from_mask(
+                    mask=mask,
+                    score=score,
+                    target=target,
+                    quota=width,
+                )
+                next_col = write_col + width
+                edge_idx[:, start:end, write_col:next_col] = sampled_idx
+                edge_valid[:, start:end, write_col:next_col] = sampled_valid
+                edge_target[:, start:end, write_col:next_col] = sampled_target
+                write_col = next_col
+        return edge_idx, edge_valid, edge_target
+
+    @staticmethod
+    def _sample_contact_edges_from_mask(
+        *,
+        mask: torch.Tensor,
+        score: torch.Tensor,
+        target: torch.Tensor,
+        quota: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size, num_obj_chunk, _ = mask.shape
+        if quota <= 0:
+            empty_idx = torch.empty((batch_size, num_obj_chunk, 0), device=mask.device, dtype=torch.long)
+            empty_valid = torch.empty((batch_size, num_obj_chunk, 0), device=mask.device, dtype=torch.bool)
+            empty_target = torch.empty((batch_size, num_obj_chunk, 0), device=mask.device, dtype=target.dtype)
+            return empty_idx, empty_valid, empty_target
+        masked_score = score.masked_fill(~mask, float("inf"))
+        values, idx = torch.topk(masked_score, k=quota, dim=-1, largest=False)
+        valid = torch.isfinite(values)
+        sampled_target = torch.gather(target, dim=-1, index=idx) * valid.float()
+        return idx.masked_fill(~valid, -1), valid, sampled_target
+
+    @staticmethod
+    def _deterministic_contact_scores(
+        *,
+        seed_tensor: torch.Tensor,
+        obj_start: int,
+        obj_count: int,
+        num_hand: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        obj_idx = torch.arange(obj_start, obj_start + obj_count, device=device, dtype=torch.long).view(1, obj_count, 1)
+        hand_idx = torch.arange(num_hand, device=device, dtype=torch.long).view(1, 1, num_hand)
+        seed = seed_tensor.view(-1, 1, 1)
+        hashed = seed ^ (obj_idx * 1000003) ^ (hand_idx * 9176)
+        hashed = (hashed * 1103515245 + 12345) & 0x7FFFFFFF
+        return hashed.to(torch.float32) / 2147483648.0
 
     def _compute_random_diagnostic_metrics(
         self,

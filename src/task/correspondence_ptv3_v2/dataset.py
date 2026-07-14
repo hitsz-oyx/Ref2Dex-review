@@ -11,10 +11,8 @@ from torch.utils.data import DataLoader, Dataset, Sampler
 from src.base import make_file_split_dataloaders
 from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
-from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.sampling import (
     perturb_object_geometry,
-    sample_contact_supervision_edges,
     sample_object_indices,
     sample_random_supervision_edges,
     stable_frame_seed,
@@ -204,10 +202,6 @@ class CorrStaticDatasetV2(Dataset):
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
-        # hand_to_obj_min_dist is only used for GT-only diagnostics in v2.1.
-        # Older Stage 3 dumps may not contain it; in that case backfill from
-        # the full clean object pool so legacy object-frame datasets remain
-        # trainable without regeneration.
         hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
@@ -248,9 +242,6 @@ class CorrStaticDatasetV2(Dataset):
             seed=supervision_seed,
         )
 
-        # Independent contact-aware auxiliary stream. The namespace is
-        # distinct from ``supervision-edges`` so the random128 baseline
-        # sampling is unchanged when this stream is added.
         contact_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -259,38 +250,7 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="contact-supervision-edges",
         )
-        contact_edge_idx, contact_edge_valid = sample_contact_supervision_edges(
-            gt_obj_points=geometry.gt_obj_points,
-            gt_hand_points=geometry.gt_hand_points,
-            obj_valid_mask=obj_valid,
-            contact_radius=self.contact_radius,
-            quotas=self.contact_supervision_quotas,
-            hard_negative_quota=self.contact_supervision_hard_negative_quota,
-            hard_negative_distance_range=self.contact_supervision_hard_negative_distance_range,
-            seed=contact_seed,
-        )
-
-        gt_obj_points_t = torch.from_numpy(np.asarray(geometry.gt_obj_points, dtype=np.float32))
-        gt_hand_points_t = torch.from_numpy(np.asarray(geometry.gt_hand_points, dtype=np.float32))
-
-        random_edge_contact_target = _compute_edge_contact_target(
-            gt_obj_points_t,
-            gt_hand_points_t,
-            random_edge_idx,
-            random_edge_valid,
-            contact_radius=self.contact_radius,
-        )
-        contact_edge_contact_target = _compute_edge_contact_target(
-            gt_obj_points_t,
-            gt_hand_points_t,
-            contact_edge_idx,
-            contact_edge_valid,
-            contact_radius=self.contact_radius,
-        )
-        hand_contact_target = contact_target_from_distance(
-            hand_min_dist,
-            contact_radius=self.contact_radius,
-        ).float()
+        contact_seed = int(contact_seed & ((1 << 63) - 1))
 
         input_points = np.concatenate([geometry.input_obj_points, geometry.input_hand_points], axis=0)
         input_normals = np.concatenate([geometry.input_obj_normals, geometry.input_hand_normals], axis=0)
@@ -311,33 +271,13 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_idx": torch.from_numpy(selected_idx).long(),
             "selected_obj_point_id": torch.from_numpy(obj_point_id).long(),
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
-            "random_edge_contact_target": random_edge_contact_target.float(),
-            "contact_edge_contact_target": contact_edge_contact_target.float(),
-            "hand_contact_target": hand_contact_target,
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
-            "contact_edge_idx": torch.from_numpy(contact_edge_idx).long(),
-            "contact_edge_valid_mask": torch.from_numpy(contact_edge_valid),
+            "hand_min_dist": hand_min_dist.float(),
+            "contact_seed": torch.tensor(contact_seed, dtype=torch.long),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
-
-
-def _compute_edge_contact_target(
-    gt_obj_points: torch.Tensor,
-    gt_hand_points: torch.Tensor,
-    edge_idx: np.ndarray,
-    edge_valid: np.ndarray,
-    *,
-    contact_radius: float,
-) -> torch.Tensor:
-    edge_idx_t = torch.from_numpy(np.asarray(edge_idx, dtype=np.int64))
-    edge_valid_t = torch.from_numpy(np.asarray(edge_valid, dtype=bool))
-    safe_idx = edge_idx_t.clamp(min=0)
-    neighbor_hand = gt_hand_points[safe_idx]
-    distance = torch.norm(neighbor_hand - gt_obj_points.unsqueeze(1), dim=-1)
-    target = contact_target_from_distance(distance, contact_radius=contact_radius)
-    return target * edge_valid_t.float()
 
 
 def _resolve_hand_to_obj_min_dist(
@@ -346,14 +286,12 @@ def _resolve_hand_to_obj_min_dist(
     frame_idx: int,
 ) -> torch.Tensor:
     cached = data.get("hand_to_obj_min_dist")
-    if cached is not None:
-        return torch.from_numpy(np.asarray(cached[frame_idx], dtype=np.float32).copy())
-
-    obj_points = torch.from_numpy(np.asarray(data["obj_points"][frame_idx], dtype=np.float32))
-    hand_points = torch.from_numpy(np.asarray(data["hand_points"][frame_idx], dtype=np.float32))
-    if obj_points.numel() == 0 or hand_points.numel() == 0:
-        return torch.zeros((int(hand_points.shape[0]),), dtype=torch.float32)
-    return torch.cdist(hand_points, obj_points).amin(dim=1).float()
+    if cached is None:
+        raise KeyError(
+            "Missing Stage 3 field 'hand_to_obj_min_dist'. Regenerate Stage 3 with the current "
+            "prepare_corr_static.py before training v2."
+        )
+    return torch.from_numpy(np.asarray(cached[frame_idx], dtype=np.float32).copy())
 
 
 def _load_blacklist(path: str | None) -> set[str]:
