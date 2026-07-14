@@ -7,9 +7,10 @@
 
 固定设计：
 
-- continuous 0-1 cm linear contact target
+- continuous 0-2 cm linear contact target
 - uniform random 128 supervision edges per object
-- Quality Focal Loss
+- 额外 contact-aux 监督：4 个 target-strength bin + 2-3 cm hard negatives
+- random128 主损失使用 Quality Focal Loss
 - scalar sigmoid outputs
 - PTv3 unified point backbone
 
@@ -38,8 +39,14 @@ PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.eval \
 
 ```bash
 PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.visualize \
-  --checkpoint <checkpoint> \
+  --checkpoint outputs/train/<run>/checkpoints/best.pt \
   --input <stage3_npz>
+```
+
+如需临时放大 GT 着色范围，可额外传：
+
+```bash
+  --vis-contact-radius 0.02
 ```
 
 交互键位：
@@ -47,6 +54,5 @@ PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.visualize \
 - `A / D` 或左右键：切 frame
 - `[` / `]`：切 sampling epoch
 - `G`：GT / Eval
-- `C`：heatmap / cross
 - `,` / `.`：切 selected object point
 - `R`：reset camera
