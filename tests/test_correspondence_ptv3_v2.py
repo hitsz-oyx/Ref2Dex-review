@@ -23,8 +23,8 @@ from src.task.correspondence_ptv3_v2.sampling import (
 
 
 def test_contact_target_from_distance_values() -> None:
-    distance = torch.tensor([0.0, 0.0025, 0.005, 0.0075, 0.01, 0.02], dtype=torch.float32)
-    target = contact_target_from_distance(distance, contact_radius=0.01)
+    distance = torch.tensor([0.0, 0.005, 0.01, 0.015, 0.02, 0.04], dtype=torch.float32)
+    target = contact_target_from_distance(distance, contact_radius=0.02)
     expected = torch.tensor([1.0, 0.75, 0.5, 0.25, 0.0, 0.0], dtype=torch.float32)
     assert torch.allclose(target, expected)
     assert torch.all(target >= 0.0)
@@ -364,7 +364,7 @@ def test_v2_has_no_old_task_dependency_strings() -> None:
 
 _QUOTAS = (4, 4, 4, 4)
 _HARD_NEGATIVE_QUOTA = 2
-_HARD_NEGATIVE_RANGE = (0.01, 0.015)
+_HARD_NEGATIVE_RANGE = (0.02, 0.03)
 
 
 def _build_synthetic_geometry(num_obj: int, num_hand: int, *, seed: int) -> tuple[np.ndarray, np.ndarray]:
@@ -381,12 +381,12 @@ def _build_synthetic_geometry(num_obj: int, num_hand: int, *, seed: int) -> tupl
 def test_sample_contact_sampler_outside_auxiliary_range_yields_zero_valid_edges() -> None:
     """Test 1: when there are neither positives nor near hard negatives, nothing is sampled."""
     obj = np.zeros((2, 3), dtype=np.float32)
-    hand = np.full((16, 3), 5.0, dtype=np.float32)  # 5m away, far beyond r=0.01
+    hand = np.full((16, 3), 5.0, dtype=np.float32)  # 5m away, far beyond r=0.02
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True, True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
@@ -401,14 +401,14 @@ def test_sample_contact_sampler_only_weak_fills_only_weak() -> None:
     """Test 2: with only weak candidates, weak fills up to its quota and
     the other bins stay empty (no refill)."""
     obj = np.zeros((1, 3), dtype=np.float32)
-    # 16 hand points at distance 0.009m (weak bin: 0.75r < d < r with r=0.01).
+    # 16 hand points at distance 0.018m (weak bin: 0.75r < d < r with r=0.02).
     hand = np.zeros((16, 3), dtype=np.float32)
-    hand[:, 0] = 0.009
+    hand[:, 0] = 0.018
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
@@ -430,14 +430,14 @@ def test_sample_contact_sampler_each_bin_fully_filled() -> None:
     hand = np.zeros((sum(_QUOTAS) * 2, 3), dtype=np.float32)
     hand[sum(_QUOTAS) :, 0] = 5.0
     # 4 hand points in each bin (weak / medium / strong / very strong).
-    offsets = [0.009, 0.006, 0.003, 0.001]
+    offsets = [0.018, 0.012, 0.006, 0.002]
     for i, off in enumerate(offsets):
         hand[i * 4 : (i + 1) * 4, 0] = off
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
@@ -461,16 +461,16 @@ def test_sample_contact_sampler_adds_hard_negatives_in_tail_slots() -> None:
     obj = np.zeros((1, 3), dtype=np.float32)
     hand = np.zeros((24, 3), dtype=np.float32)
     hand[18:, :] = 5.0
-    hand[0:4, 0] = 0.009
-    hand[4:8, 0] = 0.006
-    hand[8:12, 0] = 0.003
-    hand[12:16, 0] = 0.001
-    hand[16:18, 0] = 0.012
+    hand[0:4, 0] = 0.018
+    hand[4:8, 0] = 0.012
+    hand[8:12, 0] = 0.006
+    hand[12:16, 0] = 0.002
+    hand[16:18, 0] = 0.024
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
@@ -480,7 +480,7 @@ def test_sample_contact_sampler_adds_hard_negatives_in_tail_slots() -> None:
     hand_t = torch.from_numpy(hand)
     safe_idx = torch.from_numpy(edge_idx).clamp(min=0)
     distance = torch.norm(hand_t[safe_idx] - obj_t.unsqueeze(1), dim=-1)
-    target = contact_target_from_distance(distance, contact_radius=0.01)
+    target = contact_target_from_distance(distance, contact_radius=0.02)
     neg_slice = slice(sum(_QUOTAS), sum(_QUOTAS) + _HARD_NEGATIVE_QUOTA)
     assert torch.all(torch.from_numpy(edge_valid)[0, neg_slice])
     assert torch.all(target[0, neg_slice] == 0)
@@ -490,12 +490,12 @@ def test_sample_contact_sampler_excludes_near_zero_boundary_edges() -> None:
     """Borderline ``d ~= r`` edges must not be marked valid."""
     obj = np.zeros((1, 3), dtype=np.float32)
     hand = np.full((8, 3), 5.0, dtype=np.float32)
-    hand[0, 0] = 0.01 - 5e-7  # positive but too close to the y=0 boundary
+    hand[0, 0] = 0.02 - 5e-7  # positive but too close to the y=0 boundary
     edge_idx, edge_valid = sample_contact_supervision_edges(
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,
@@ -511,7 +511,7 @@ def test_sample_contact_sampler_is_deterministic_under_same_seed() -> None:
         gt_obj_points=obj,
         gt_hand_points=hand,
         obj_valid_mask=np.array([True, True, True, True]),
-        contact_radius=0.01,
+        contact_radius=0.02,
         quotas=_QUOTAS,
         hard_negative_quota=_HARD_NEGATIVE_QUOTA,
         hard_negative_distance_range=_HARD_NEGATIVE_RANGE,

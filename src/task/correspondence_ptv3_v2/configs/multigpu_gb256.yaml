@@ -8,8 +8,8 @@ meta:
   num_supervision_edges: 128
   contact_supervision_quotas: [16, 16, 16, 16]
   contact_supervision_hard_negative_quota: 16
-  contact_supervision_hard_negative_distance_range: [0.01, 0.015]
-  contact_radius: 0.01
+  contact_supervision_hard_negative_distance_range: [0.02, 0.03]
+  contact_radius: 0.02
   quality_focal_beta: 2.0
   coordinate_frame: hand_root
   obj_rot_std_deg: 10.0

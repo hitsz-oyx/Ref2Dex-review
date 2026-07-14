@@ -379,7 +379,7 @@ def _make_dataset_kwargs() -> dict:
         num_obj_points=4,
         num_hand_points=6,
         num_supervision_edges=4,
-        contact_radius=0.01,
+        contact_radius=0.02,
         base_seed=0,
         augment=False,
         apply_obj_perturb=False,
@@ -542,7 +542,7 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
 
     # Synthesize a hand-target tensor (B, N) from random distances.
     dist = torch.rand(B, N, dtype=torch.float32) * 0.05
-    hand_target = contact_target_from_distance(dist, contact_radius=0.01)
+    hand_target = contact_target_from_distance(dist, contact_radius=0.02)
 
     # Synthesize cross-edge logits / probs (random + contact auxiliary).
     random_logits = torch.randn(B, 512, 128, dtype=torch.float32) * 2.0

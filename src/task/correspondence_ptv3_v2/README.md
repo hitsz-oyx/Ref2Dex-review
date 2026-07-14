@@ -31,7 +31,7 @@ PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.train \
 
 ```bash
 PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.eval \
-  --checkpoint outputs/train/<run>/checkpoints/latest.pt
+  --checkpoint outputs/train/<run>/checkpoints/best.pt
 ```
 
 可视化：

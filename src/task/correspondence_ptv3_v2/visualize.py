@@ -40,6 +40,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame", type=int, default=0)
     parser.add_argument("--epoch", type=int, default=0)
     parser.add_argument("--marker-radius", type=float, default=0.003)
+    parser.add_argument(
+        "--vis-contact-radius",
+        type=float,
+        default=None,
+        help="Override GT visualization radius in meters. Defaults to the checkpoint contact_radius.",
+    )
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args()
 
@@ -134,11 +140,13 @@ class InteractiveViewer:
         dataset: CorrStaticDatasetV2,
         state: ViewerState,
         marker_radius: float,
+        vis_contact_radius: float,
     ) -> None:
         self.runner = runner
         self.dataset = dataset
         self.state = state
         self.marker_radius = float(marker_radius)
+        self.vis_contact_radius = float(vis_contact_radius)
         self.current_batch: dict[str, torch.Tensor] | None = None
         self.selected_obj_idx = 0
         self.vis = None
@@ -164,7 +172,7 @@ class InteractiveViewer:
         if self.state.show_gt:
             hand_points = gt_points[num_obj : num_obj + num_hand]
             hand_prob = _gt_cross_prob(
-                batch, self.selected_obj_idx, float(self.runner.cfg.meta.contact_radius)
+                batch, self.selected_obj_idx, self.vis_contact_radius
             ).numpy()
         else:
             hand_points = noisy_points[num_obj : num_obj + num_hand]
@@ -303,7 +311,12 @@ def main() -> None:
     state = ViewerState(frame_idx=args.frame, epoch=args.epoch)
     sample = _sample(dataset, state.frame_idx, state.epoch)
     selected_obj = _select_valid_obj(sample, state.selected_rank)
-    gt_cross = _gt_cross_prob(sample, selected_obj, float(runner.cfg.meta.contact_radius))
+    vis_contact_radius = float(
+        args.vis_contact_radius
+        if args.vis_contact_radius is not None
+        else runner.cfg.meta.contact_radius
+    )
+    gt_cross = _gt_cross_prob(sample, selected_obj, vis_contact_radius)
     eval_cross = _dense_cross_prob(runner, sample, selected_obj)
     if args.check_only:
         print(
@@ -311,6 +324,7 @@ def main() -> None:
                 "frame": state.frame_idx,
                 "epoch": state.epoch,
                 "selected_obj": selected_obj,
+                "vis_contact_radius": vis_contact_radius,
                 "gt_cross_shape": tuple(gt_cross.shape),
                 "eval_cross_shape": tuple(eval_cross.shape),
             }
@@ -322,6 +336,7 @@ def main() -> None:
             dataset=dataset,
             state=state,
             marker_radius=args.marker_radius,
+            vis_contact_radius=vis_contact_radius,
         )
         viewer.run()
     except ImportError as exc:

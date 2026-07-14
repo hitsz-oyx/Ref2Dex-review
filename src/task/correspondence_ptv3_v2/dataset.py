@@ -43,8 +43,8 @@ class CorrStaticDatasetV2(Dataset):
         num_supervision_edges: int = 128,
         contact_supervision_quotas: tuple[int, int, int, int] = (16, 16, 16, 16),
         contact_supervision_hard_negative_quota: int = 16,
-        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.01, 0.015),
-        contact_radius: float = 0.01,
+        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.02, 0.03),
+        contact_radius: float = 0.02,
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
         obj_rot_std_deg: float = 10.0,
@@ -460,7 +460,7 @@ def make_dataloaders(
             getattr(meta_cfg, "contact_supervision_hard_negative_quota", 16)
         ),
         "contact_supervision_hard_negative_distance_range": tuple(
-            getattr(meta_cfg, "contact_supervision_hard_negative_distance_range", (0.01, 0.015))
+            getattr(meta_cfg, "contact_supervision_hard_negative_distance_range", (0.02, 0.03))
         ),
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),

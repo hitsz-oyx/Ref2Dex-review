@@ -50,7 +50,7 @@ class Config(TaskConfig):
         ptv3_upcast_attention: bool = False
         ptv3_upcast_softmax: bool = False
 
-        contact_radius: float = 0.01
+        contact_radius: float = 0.02
         quality_focal_beta: float = 2.0
 
         # Contact-aware auxiliary supervision. Four target-strength bins
@@ -62,7 +62,7 @@ class Config(TaskConfig):
         # auxiliary stream learns a contact-vs-near-contact boundary instead
         # of treating every local neighborhood as positive.
         contact_supervision_hard_negative_quota: int = 16
-        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.01, 0.015)
+        contact_supervision_hard_negative_distance_range: tuple[float, float] = (0.02, 0.03)
 
         # Object pose perturbation (applied to the 512 sampled obj points
         # with one shared SE(3); see perturb_object_geometry in sampling.py).
