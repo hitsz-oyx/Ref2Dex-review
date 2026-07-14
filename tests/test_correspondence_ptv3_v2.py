@@ -167,12 +167,12 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     assert aux["random_sampled_nonzero_edge_fraction"].count == 3.0
     assert aux["random_object_nonzero_edge_coverage"].total == 1.0
     assert aux["random_object_nonzero_edge_coverage"].count == 2.0
-    # Loss shape: random QFL + contact aux BCE (hand is removed in v2.1).
+    # Loss shape: random QFL + contact aux QFL (hand is removed in v2.1).
     assert set(losses) == {"cross_edge_random", "cross_edge_contact_aux"}
-    expected_contact_bce = F.binary_cross_entropy_with_logits(
-        torch.zeros(4), torch.tensor([1.0, 0.0, 1.0, 1.0]), reduction="mean"
+    expected_contact_qfl = quality_focal_loss_map(
+        torch.zeros(4), torch.tensor([0.5, 0.0, 0.7, 0.9]), beta=2.0
     )
-    assert torch.allclose(losses["cross_edge_contact_aux"], expected_contact_bce)
+    assert torch.allclose(losses["cross_edge_contact_aux"], expected_contact_qfl.mean())
     assert "hand_contact" not in losses
     # Hand contact is observed as a GT distribution only.
     assert "hand_contact_qfl" not in aux
@@ -214,6 +214,9 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "contact_aux_bce",
         "contact_aux_soft_bce",
         "contact_aux_mae",
+        "contact_aux_hard_neg_count",
+        "contact_aux_hard_neg_pred_mean",
+        "contact_aux_hard_neg_pred_p95",
         "contact_aux_pred_mean",
         "contact_aux_target_mean",
         "contact_aux_nonzero_mae",
@@ -375,8 +378,8 @@ def _build_synthetic_geometry(num_obj: int, num_hand: int, *, seed: int) -> tupl
     return obj, hand
 
 
-def test_sample_contact_sampler_no_contact_yields_zero_valid_edges() -> None:
-    """Test 1: when every distance is ``>= r``, no contact edges are sampled."""
+def test_sample_contact_sampler_outside_auxiliary_range_yields_zero_valid_edges() -> None:
+    """Test 1: when there are neither positives nor near hard negatives, nothing is sampled."""
     obj = np.zeros((2, 3), dtype=np.float32)
     hand = np.full((16, 3), 5.0, dtype=np.float32)  # 5m away, far beyond r=0.01
     edge_idx, edge_valid = sample_contact_supervision_edges(

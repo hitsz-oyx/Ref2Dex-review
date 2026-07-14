@@ -143,10 +143,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         contact_logits = preds["pred_cross_contact_aux_logits"]
         contact_prob = preds["pred_cross_contact_aux_prob"]
 
-        contact_binary_target = (contact_edge_target > 0).float()
         contact_qfl_map = quality_focal_loss_map(contact_logits, contact_edge_target, beta=beta)
         contact_soft_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
-        contact_binary_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_binary_target)
         contact_mae_map = torch.abs(contact_prob - contact_edge_target)
 
         cross_edge_contact_aux_qfl = reduce_loss_map_per_object(
@@ -156,7 +154,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
         )
         cross_edge_contact_aux_bce = reduce_loss_map_per_object(
-            contact_binary_bce_map, contact_edge_valid_mask, obj_valid_mask
+            contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
         )
         cross_edge_contact_aux_mae = reduce_loss_map_per_object(
             contact_mae_map, contact_edge_valid_mask, obj_valid_mask
@@ -234,7 +232,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         losses = {
             "cross_edge_random": float(meta.loss_cross_edge_weight) * cross_edge_random_qfl,
-            "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_bce,
+            "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_qfl,
         }
         return losses, aux_metrics
 
@@ -339,9 +337,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         """Diagnostic metrics for the contact auxiliary stream only.
 
         These must NEVER be mixed with the random stream metrics: the
-        contact stream is biased by construction (only y > 0 edges), so
-        diagnostic quantities like nonzero_fraction, target_mean, and
-        nonzero_pred_mean would shift on their own.
+        contact stream is biased by construction (stratified positives
+        plus a narrow hard-negative band), so diagnostic quantities must
+        be interpreted on that auxiliary distribution only.
         """
         metrics: dict[str, float | MetricStat] = {}
 
@@ -364,6 +362,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             count=float(1),
             expose_validity=True,
         )
+        hard_negative_mask = (edge_target <= 0) & edge_valid_mask
+        hard_negative_count = hard_negative_mask.sum()
+        metrics["contact_aux_hard_neg_count"] = MetricStat(
+            total=float(hard_negative_count.detach().cpu()),
+            count=float(1),
+            expose_validity=True,
+        )
+        if bool(hard_negative_count > 0):
+            hard_negative_pred = edge_prob[hard_negative_mask].float()
+            metrics["contact_aux_hard_neg_pred_mean"] = hard_negative_pred.mean()
+            metrics["contact_aux_hard_neg_pred_p95"] = torch.quantile(hard_negative_pred, 0.95)
+        else:
+            zero_tensor = edge_target.sum() * 0.0
+            metrics["contact_aux_hard_neg_pred_mean"] = zero_tensor
+            metrics["contact_aux_hard_neg_pred_p95"] = zero_tensor
         per_obj_has_edge = edge_valid_mask.any(dim=-1) & obj_valid_mask
         num_valid_obj = obj_valid_mask.sum()
         num_obj_with_edge = per_obj_has_edge.sum()
