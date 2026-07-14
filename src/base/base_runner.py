@@ -327,15 +327,18 @@ class BaseRunner:
             self.scheduler.step()
 
         metrics = dict(output.metrics)
-        metrics.setdefault("loss", float(loss.detach().cpu()))
+        if "loss" not in metrics:
+            metrics["loss"] = loss.detach()
         metrics["lr"] = self.optimizer.param_groups[0]["lr"]
-        grad_norm_value = float(grad_norm.detach().cpu() if torch.is_tensor(grad_norm) else grad_norm)
-        metrics["grad_norm"] = grad_norm_value
-        if grad_clip_norm is not None:
-            grad_clip_norm = float(grad_clip_norm)
-            metrics["grad_clip_threshold"] = grad_clip_norm
-            metrics["grad_clip_ratio"] = grad_norm_value / max(grad_clip_norm, 1e-12)
-            metrics["grad_clipped"] = float(grad_norm_value > grad_clip_norm)
+        should_log_grad_metrics = ((self.global_step + 1) % self.cfg.train.log_every_steps == 0)
+        if should_log_grad_metrics:
+            grad_norm_value = float(grad_norm.detach().cpu() if torch.is_tensor(grad_norm) else grad_norm)
+            metrics["grad_norm"] = grad_norm_value
+            if grad_clip_norm is not None:
+                grad_clip_norm = float(grad_clip_norm)
+                metrics["grad_clip_threshold"] = grad_clip_norm
+                metrics["grad_clip_ratio"] = grad_norm_value / max(grad_clip_norm, 1e-12)
+                metrics["grad_clipped"] = float(grad_norm_value > grad_clip_norm)
         return metrics
 
     def _autocast_dtype(self) -> torch.dtype:

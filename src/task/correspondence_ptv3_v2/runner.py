@@ -153,17 +153,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         random_prob = preds["pred_cross_random_prob"]
 
         random_qfl_map = quality_focal_loss_map(random_logits, random_target, beta=beta)
-        random_bce_map = binary_cross_entropy_with_logits_map(random_logits, random_target)
-        random_mae_map = torch.abs(random_prob - random_target)
-
         cross_edge_random_qfl = reduce_loss_map_per_object(
             random_qfl_map, random_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_random_bce = reduce_loss_map_per_object(
-            random_bce_map, random_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_random_mae = reduce_loss_map_per_object(
-            random_mae_map, random_edge_valid_mask, obj_valid_mask
         )
 
         # ---- Contact-aware auxiliary stream (L_c) ----
@@ -173,33 +164,35 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         contact_prob = preds["pred_cross_contact_aux_prob"]
 
         contact_qfl_map = quality_focal_loss_map(contact_logits, contact_edge_target, beta=beta)
-        contact_soft_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
-        contact_mae_map = torch.abs(contact_prob - contact_edge_target)
-
         cross_edge_contact_aux_qfl = reduce_loss_map_per_object(
             contact_qfl_map, contact_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_contact_aux_soft_bce = reduce_loss_map_per_object(
-            contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_contact_aux_bce = reduce_loss_map_per_object(
-            contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
-        )
-        cross_edge_contact_aux_mae = reduce_loss_map_per_object(
-            contact_mae_map, contact_edge_valid_mask, obj_valid_mask
         )
 
         aux_metrics: dict[str, float | MetricStat] = {
             "cross_edge_random_qfl": cross_edge_random_qfl,
-            "cross_edge_random_bce": cross_edge_random_bce,
-            "cross_edge_random_mae": cross_edge_random_mae,
             "contact_aux_qfl": cross_edge_contact_aux_qfl,
-            "contact_aux_bce": cross_edge_contact_aux_bce,
-            "contact_aux_soft_bce": cross_edge_contact_aux_soft_bce,
-            "contact_aux_mae": cross_edge_contact_aux_mae,
         }
         if compute_diagnostics:
             hand_target = batch["hand_contact_target"].float()
+            random_bce_map = binary_cross_entropy_with_logits_map(random_logits, random_target)
+            random_mae_map = torch.abs(random_prob - random_target)
+            cross_edge_random_bce = reduce_loss_map_per_object(
+                random_bce_map, random_edge_valid_mask, obj_valid_mask
+            )
+            cross_edge_random_mae = reduce_loss_map_per_object(
+                random_mae_map, random_edge_valid_mask, obj_valid_mask
+            )
+            contact_soft_bce_map = binary_cross_entropy_with_logits_map(contact_logits, contact_edge_target)
+            contact_mae_map = torch.abs(contact_prob - contact_edge_target)
+            cross_edge_contact_aux_soft_bce = reduce_loss_map_per_object(
+                contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
+            )
+            cross_edge_contact_aux_bce = reduce_loss_map_per_object(
+                contact_soft_bce_map, contact_edge_valid_mask, obj_valid_mask
+            )
+            cross_edge_contact_aux_mae = reduce_loss_map_per_object(
+                contact_mae_map, contact_edge_valid_mask, obj_valid_mask
+            )
             random_oracle_bce_map = binary_entropy_floor_map(random_target)
             cross_edge_random_oracle_bce = reduce_loss_map_per_object(
                 random_oracle_bce_map, random_edge_valid_mask, obj_valid_mask
@@ -221,6 +214,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             random_num_valid_obj = obj_valid_mask.sum()
             random_num_obj_with_nonzero = random_per_obj_has_nonzero.sum()
             aux_metrics.update({
+                "cross_edge_random_bce": cross_edge_random_bce,
+                "cross_edge_random_mae": cross_edge_random_mae,
                 "cross_edge_random_oracle_bce": cross_edge_random_oracle_bce,
                 "cross_edge_random_oracle_bce_global": cross_edge_random_oracle_bce_global,
                 "cross_edge_random_excess_bce": cross_edge_random_excess_bce,
@@ -228,6 +223,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 "random_num_valid_obj": random_num_valid_obj.float(),
                 "random_num_valid_edges": random_valid_edge_count.float(),
                 "random_sampled_nonzero_edge_count": random_sampled_nonzero_edge_count.float(),
+                "contact_aux_bce": cross_edge_contact_aux_bce,
+                "contact_aux_soft_bce": cross_edge_contact_aux_soft_bce,
+                "contact_aux_mae": cross_edge_contact_aux_mae,
                 "random_sampled_nonzero_edge_fraction": MetricStat(
                     total=float(random_sampled_nonzero_edge_count.detach().cpu()),
                     count=float(random_valid_edge_count.detach().cpu()),

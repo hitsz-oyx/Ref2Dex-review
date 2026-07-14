@@ -417,10 +417,12 @@ def test_dataset_accepts_matching_coordinate_frame(tmp_path: Path) -> None:
         **_make_dataset_kwargs(),
     )
     assert ds.coordinate_frame == "hand_root"
-    # Sampled point is consistent: 4 obj + 6 hand, hand contact target present.
+    # Sampled point is consistent: 4 obj + 6 hand, and supervision seeds/distances
+    # are deferred to the GPU builder.
     sample = ds[0]
-    assert "hand_contact_target" in sample
-    assert sample["hand_contact_target"].shape == (6,)
+    assert "hand_min_dist" in sample
+    assert sample["hand_min_dist"].shape == (6,)
+    assert "contact_seed" in sample
 
 
 def test_dataset_inherits_coordinate_frame_when_unspecified(tmp_path: Path) -> None:
@@ -567,7 +569,7 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
         "pred_cross_contact_aux_logits": contact_logits,
         "pred_cross_contact_aux_prob": contact_prob,
     }
-    loss1, _ = runner._compute_losses(preds1, batch1)
+    loss1, _ = runner._compute_losses(preds1, batch1, compute_diagnostics=True)
 
     # Duplicate along batch dim to B=4.
     B4 = 4
@@ -578,7 +580,7 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
 
     batch4 = {k: _repeat(v) for k, v in batch1.items()}
     preds4 = {k: _repeat(v) for k, v in preds1.items()}
-    loss4, _ = runner._compute_losses(preds4, batch4)
+    loss4, _ = runner._compute_losses(preds4, batch4, compute_diagnostics=True)
 
     # v2.1 contract: losses = {cross_edge_random, cross_edge_contact_aux}.
     # Hand contact is NOT a loss key in the v2.1 ablation.

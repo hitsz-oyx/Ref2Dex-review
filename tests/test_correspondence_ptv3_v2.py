@@ -142,9 +142,13 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         quality_focal_beta = 2.0
         loss_cross_edge_weight = 1.0
         loss_contact_aux_weight = 1.0
+    class Train:
+        diagnostic_every_steps = 20
     class Cfg:
         meta = Meta()
+        train = Train()
     runner.cfg = Cfg()
+    runner.global_step = 19
     preds = {
         "pred_cross_random_logits": torch.zeros(1, 2, 3),
         "pred_cross_random_prob": torch.full((1, 2, 3), 0.5),
@@ -159,7 +163,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "contact_edge_contact_target": torch.tensor([[[0.5, 0.0], [0.7, 0.9]]]),
         "hand_contact_target": torch.tensor([[0.0, 0.5, 1.0, 0.0]]),
     }
-    losses, aux = runner._compute_losses(preds, batch)
+    losses, aux = runner._compute_losses(preds, batch, compute_diagnostics=True)
     # Random stream metric keys are preserved as ``cross_edge_random_*``.
     assert isinstance(aux["random_sampled_nonzero_edge_fraction"], MetricStat)
     assert isinstance(aux["random_object_nonzero_edge_coverage"], MetricStat)
@@ -547,4 +551,4 @@ def test_sample_random_supervision_edges_unchanged_by_contact_sampler() -> None:
         seed=seed,
     )
     digest = hashlib.sha256(edge_idx.tobytes() + edge_valid.tobytes()).hexdigest()
-    assert digest == "6e7d75a6f902ffc261c714b18f82f46ca0459e9a9ce77a414aa5aac5b9aaf382"
+    assert digest == "634970ffc88ba02c1a2d9f4d4825941dde7204c3a49397d38e8babf48a1fa861"

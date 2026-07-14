@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 from src.base import (
     BaseRunner,
+    MetricStat,
     RunnerOutput,
     TaskConfig,
     set_config_default_if_not_explicit,
@@ -242,12 +243,19 @@ class CorrespondencePTV3Runner(BaseRunner):
                 obj_valid,
                 class_weight=obj_bin_weights,
             )
+            obj_contact_raw_bce = contact_loss.detach()
+            obj_contact_oracle_bce = contact_loss.detach() * 0.0
         else:
-            contact_loss = self._masked_bce_with_logits(
+            obj_contact_raw_bce = self._masked_bce_with_logits(
                 pred_obj_contact_logits,
                 target_contact_prob,
                 obj_valid,
             )
+            obj_contact_oracle_bce = self._soft_bce_entropy_floor(
+                target_contact_prob,
+                obj_valid,
+            )
+            contact_loss = obj_contact_raw_bce - obj_contact_oracle_bce.detach()
 
         edge_contact_prob = self._compute_dynamic_edge_labels(batch)
         if contact_mode == "bin":
@@ -268,13 +276,21 @@ class CorrespondencePTV3Runner(BaseRunner):
                 obj_valid_bool,
                 class_weight=edge_bin_weights,
             )
+            cross_edge_raw_bce = edge_contact_loss.detach()
+            cross_edge_oracle_bce = edge_contact_loss.detach() * 0.0
         else:
-            edge_contact_loss = self._masked_bce_with_logits_per_object(
+            cross_edge_raw_bce = self._masked_bce_with_logits_per_object(
                 pred_cross_contact_logits,
                 edge_contact_prob,
                 input_edge_weight,
                 obj_valid_bool,
             )
+            cross_edge_oracle_bce = self._reduce_loss_map_per_object(
+                self._binary_entropy_floor_map(edge_contact_prob),
+                input_edge_weight,
+                obj_valid_bool,
+            )
+            edge_contact_loss = cross_edge_raw_bce - cross_edge_oracle_bce.detach()
         cross_edge_rankk_loss, cross_edge_rankk_pairs = self._compute_cross_edge_rankk_loss(
             preds["pred_cross_contact_prob"],
             edge_contact_prob,
@@ -403,14 +419,8 @@ class CorrespondencePTV3Runner(BaseRunner):
                 input_edge_weight,
             )
         aux_metrics = {
-            "obj_contact_oracle_bce": self._soft_bce_entropy_floor(
-                target_contact_prob,
-                obj_valid,
-            ),
-            "cross_edge_oracle_bce": self._soft_bce_entropy_floor(
-                edge_contact_prob,
-                input_edge_weight,
-            ),
+            "obj_contact_oracle_bce": obj_contact_oracle_bce,
+            "cross_edge_oracle_bce": cross_edge_oracle_bce,
             "num_valid_obj": obj_valid.sum(),
             "num_valid_cano": corr_valid.sum(),
             "obj_contact_decoded_bce": obj_contact_decoded_bce,
@@ -423,12 +433,15 @@ class CorrespondencePTV3Runner(BaseRunner):
             "cross_edge_rankk_loss_raw": cross_edge_rankk_loss.detach(),
             "cross_edge_rankk_pairs": cross_edge_rankk_pairs.detach(),
         }
-        aux_metrics["obj_contact_excess_bce"] = (
-            obj_contact_decoded_bce - aux_metrics["obj_contact_oracle_bce"]
-        )
-        aux_metrics["cross_edge_excess_bce"] = (
-            cross_edge_decoded_bce - aux_metrics["cross_edge_oracle_bce"]
-        )
+        aux_metrics["obj_contact_raw_bce"] = obj_contact_raw_bce
+        aux_metrics["cross_edge_raw_bce"] = cross_edge_raw_bce
+        if contact_mode == "soft":
+            aux_metrics["obj_contact_excess_bce"] = (
+                obj_contact_decoded_bce - aux_metrics["obj_contact_oracle_bce"]
+            )
+            aux_metrics["cross_edge_excess_bce"] = (
+                cross_edge_decoded_bce - aux_metrics["cross_edge_oracle_bce"]
+            )
         return losses, aux_metrics
 
     @staticmethod
@@ -700,6 +713,33 @@ class CorrespondencePTV3Runner(BaseRunner):
             return scores.new_tensor(0.0)
         return torch.stack(per_sample).mean()
 
+    def _batched_binary_auprc_stat(
+        self,
+        scores: torch.Tensor,
+        labels: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> MetricStat:
+        per_sample: list[float] = []
+        for batch_idx in range(scores.shape[0]):
+            sample_valid = valid_mask[batch_idx].reshape(-1)
+            if not bool(sample_valid.any()):
+                continue
+            sample_scores = scores[batch_idx].reshape(-1)[sample_valid]
+            sample_labels = labels[batch_idx].reshape(-1)[sample_valid]
+            if int(sample_labels.bool().sum().item()) <= 0:
+                continue
+            per_sample.append(
+                float(self._binary_auprc(sample_scores, sample_labels).item())
+            )
+        if not per_sample:
+            return MetricStat.invalid(expose_validity=True)
+        mean_value = sum(per_sample) / float(len(per_sample))
+        return MetricStat.from_value(
+            mean_value,
+            count=float(len(per_sample)),
+            expose_validity=True,
+        )
+
     @staticmethod
     def _batched_cross_edge_rank_at_k(
         pred: torch.Tensor,
@@ -739,6 +779,51 @@ class CorrespondencePTV3Runner(BaseRunner):
         if not per_sample:
             return pred.new_tensor(0.0)
         return torch.stack(per_sample).mean()
+
+    def _batched_cross_edge_rank_at_k_stat(
+        self,
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        valid_mask: torch.Tensor,
+        *,
+        k: int,
+    ) -> MetricStat:
+        per_sample: list[float] = []
+        for batch_idx in range(pred.shape[0]):
+            per_object_hits: list[torch.Tensor] = []
+            sample_valid_mask = valid_mask[batch_idx]
+            sample_pred = pred[batch_idx]
+            sample_target = target[batch_idx]
+            valid_objects = torch.nonzero(
+                sample_valid_mask.any(dim=-1),
+                as_tuple=False,
+            ).squeeze(-1)
+            for obj_idx in valid_objects.tolist():
+                edge_valid = sample_valid_mask[obj_idx]
+                valid_idx = torch.nonzero(edge_valid, as_tuple=False).squeeze(-1)
+                if valid_idx.numel() == 0:
+                    continue
+                kk = min(int(k), int(valid_idx.numel()))
+                gt_scores = sample_target[obj_idx, valid_idx]
+                if float(gt_scores.max().item()) <= 0.0:
+                    continue
+                pred_scores = sample_pred[obj_idx, valid_idx]
+                gt_topk = torch.topk(gt_scores, k=kk, dim=-1).indices
+                pred_topk = torch.topk(pred_scores, k=kk, dim=-1).indices
+                hit = (
+                    pred_topk.unsqueeze(-1) == gt_topk.unsqueeze(-2)
+                ).any().float()
+                per_object_hits.append(hit)
+            if per_object_hits:
+                per_sample.append(float(torch.stack(per_object_hits).mean().item()))
+        if not per_sample:
+            return MetricStat.invalid(expose_validity=True)
+        mean_value = sum(per_sample) / float(len(per_sample))
+        return MetricStat.from_value(
+            mean_value,
+            count=float(len(per_sample)),
+            expose_validity=True,
+        )
 
     def _build_clean_correspondence_targets(
         self,
@@ -833,6 +918,21 @@ class CorrespondencePTV3Runner(BaseRunner):
                 + (1.0 - target) * torch.log(1.0 - target)
             )
             return (entropy * mask).sum() / mask.sum().clamp(min=1.0)
+
+    @staticmethod
+    def _binary_entropy_floor_map(
+        target: torch.Tensor,
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
+        with torch.autocast(device_type=target.device.type, enabled=False):
+            target_f = target.float()
+            safe = target_f.clamp(min=eps, max=1.0 - eps)
+            entropy = -(
+                safe * torch.log(safe)
+                + (1.0 - safe) * torch.log(1.0 - safe)
+            )
+            boundary = (target_f <= 0.0) | (target_f >= 1.0)
+            return torch.where(boundary, torch.zeros_like(entropy), entropy)
 
     def inference(
         self,

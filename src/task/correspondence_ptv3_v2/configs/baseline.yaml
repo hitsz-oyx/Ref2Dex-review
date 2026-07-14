@@ -42,7 +42,7 @@ train:
   epochs: 100
   amp: false
   grad_clip_norm: 1.0
-  log_every_steps: 1
+  log_every_steps: 20
   save_every_epochs: 5
   eval_every_epochs: 1
   metric_for_best: val_clean/cross_edge_random_qfl
