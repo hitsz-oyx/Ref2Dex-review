@@ -301,7 +301,11 @@ class BaseRunner:
         self.optimizer.zero_grad(set_to_none=True)
 
         autocast_ctx = (
-            torch.autocast(device_type=self.device.type, enabled=True)
+            torch.autocast(
+                device_type=self.device.type,
+                dtype=self._autocast_dtype(),
+                enabled=True,
+            )
             if self.cfg.train.amp and self.device.type == "cuda"
             else nullcontext()
         )
@@ -333,6 +337,21 @@ class BaseRunner:
             metrics["grad_clip_ratio"] = grad_norm_value / max(grad_clip_norm, 1e-12)
             metrics["grad_clipped"] = float(grad_norm_value > grad_clip_norm)
         return metrics
+
+    def _autocast_dtype(self) -> torch.dtype:
+        amp_dtype = str(getattr(self.cfg.train, "amp_dtype", "float16")).lower()
+        if amp_dtype in {"bf16", "bfloat16"}:
+            return torch.bfloat16
+        if amp_dtype in {"fp16", "float16", "half"}:
+            return torch.float16
+        raise ValueError(f"Unsupported train.amp_dtype={amp_dtype!r}. Use 'float16' or 'bfloat16'.")
+
+    def _use_grad_scaler(self) -> bool:
+        return (
+            bool(self.cfg.train.amp)
+            and self.device.type == "cuda"
+            and self._autocast_dtype() == torch.float16
+        )
 
     def evaluate(self, prefix: str = "val/") -> dict[str, float]:
         self._require_eval_ready()
@@ -519,7 +538,7 @@ class BaseRunner:
         )
         self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler(self.total_steps)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.cfg.train.amp and self.device.type == "cuda")
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self._use_grad_scaler())
         self.checkpoints = CheckpointManager(self.output_dir, max_to_keep=self.cfg.train.max_to_keep)
         self.jsonl = JsonlLogger(self.output_dir / "metrics.jsonl") if self.is_primary else None
         self.wandb_run = self._build_wandb_run()

@@ -91,6 +91,7 @@ class TaskConfig(BaseConfig):
         # ========== 梯度裁剪和混合精度 ==========
         grad_clip_norm = 1.0
         amp = False
+        amp_dtype = "float16"
         compile = False
 
         # ========== 日志和评估 ==========
