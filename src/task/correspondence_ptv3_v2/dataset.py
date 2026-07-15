@@ -27,6 +27,10 @@ class CorrStaticDatasetV2(Dataset):
         "obj_point_id",
         "hand_points",
         "hand_normals",
+        "hand_cano_points",
+        "hand_finger_id",
+        "hand_region_id",
+        "hand_to_obj_min_dist",
         "obj_to_hand_min_dist",
         "obj_candidate_mask_5cm",
     }
@@ -100,11 +104,58 @@ class CorrStaticDatasetV2(Dataset):
         # meta.json, which is only written once at generation time). If the
         # caller specified an expected frame, every file must agree with it.
         per_file_frames: set[str] = set()
+        num_fingers = 0
+        num_regions = 0
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
+                hand_shape = tuple(data["hand_points"].shape)
+                if len(hand_shape) != 3 or hand_shape[-1] != 3:
+                    raise ValueError(
+                        f"{path}: hand_points must have shape [frames, hand_points, 3], "
+                        f"got {hand_shape}."
+                    )
+                frames, file_num_hand_points, _ = hand_shape
+                if file_num_hand_points != self.num_hand_points:
+                    raise ValueError(
+                        f"{path}: hand_points has {file_num_hand_points} points but "
+                        f"num_hand_points={self.num_hand_points}."
+                    )
+                expected_cano_shape = (file_num_hand_points, 3)
+                if tuple(data["hand_cano_points"].shape) != expected_cano_shape:
+                    raise ValueError(
+                        f"{path}: hand_cano_points must have shape {expected_cano_shape}, "
+                        f"got {tuple(data['hand_cano_points'].shape)}."
+                    )
+                if not np.isfinite(np.asarray(data["hand_cano_points"])).all():
+                    raise ValueError(f"{path}: hand_cano_points contains non-finite values.")
+                expected_semantic_shape = (file_num_hand_points,)
+                for key in ("hand_finger_id", "hand_region_id"):
+                    if tuple(data[key].shape) != expected_semantic_shape:
+                        raise ValueError(
+                            f"{path}: {key} must have shape {expected_semantic_shape}, "
+                            f"got {tuple(data[key].shape)}."
+                        )
+                expected_min_dist_shape = (frames, file_num_hand_points)
+                if tuple(data["hand_to_obj_min_dist"].shape) != expected_min_dist_shape:
+                    raise ValueError(
+                        f"{path}: hand_to_obj_min_dist must have shape {expected_min_dist_shape}, "
+                        f"got {tuple(data['hand_to_obj_min_dist'].shape)}."
+                    )
+                if not np.isfinite(np.asarray(data["hand_to_obj_min_dist"])).all():
+                    raise ValueError(f"{path}: hand_to_obj_min_dist contains non-finite values.")
+                finger_id = np.asarray(data["hand_finger_id"], dtype=np.int64)
+                region_id = np.asarray(data["hand_region_id"], dtype=np.int64)
+                if (finger_id < -1).any() or (region_id < -1).any():
+                    raise ValueError(
+                        f"{path}: semantic ids must be non-negative or -1 for unknown."
+                    )
+                if finger_id.size:
+                    num_fingers = max(num_fingers, int(finger_id.max()) + 1)
+                if region_id.size:
+                    num_regions = max(num_regions, int(region_id.max()) + 1)
                 frame = _resolve_coordinate_frame_from_npz(
                     data,
                     fallback=self.root_coordinate_frame,
@@ -130,6 +181,8 @@ class CorrStaticDatasetV2(Dataset):
                 f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
             )
         self.coordinate_frame = actual_frame
+        self.num_fingers = num_fingers
+        self.num_regions = num_regions
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
@@ -202,6 +255,11 @@ class CorrStaticDatasetV2(Dataset):
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
+        # These are immutable hand-only metadata.  In particular they are
+        # read before object perturbation and never depend on object points.
+        hand_cano_points = np.asarray(data["hand_cano_points"], dtype=np.float32).copy()
+        hand_finger_id = np.asarray(data["hand_finger_id"], dtype=np.int64).copy()
+        hand_region_id = np.asarray(data["hand_region_id"], dtype=np.int64).copy()
         hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
@@ -273,6 +331,9 @@ class CorrStaticDatasetV2(Dataset):
             "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
+            "hand_cano_points": torch.from_numpy(hand_cano_points).float(),
+            "hand_finger_id": torch.from_numpy(hand_finger_id).long(),
+            "hand_region_id": torch.from_numpy(hand_region_id).long(),
             "hand_min_dist": hand_min_dist.float(),
             "contact_seed": torch.tensor(contact_seed, dtype=torch.long),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
@@ -473,12 +534,19 @@ def make_dataloaders(
             val_loaders["val_perturbed/"] = val_perturbed_loader
 
     first_path = train_loader.dataset.file_paths[0]
+    semantic_num_fingers = int(train_loader.dataset.num_fingers)
+    semantic_num_regions = int(train_loader.dataset.num_regions)
+    if val_loader is not None:
+        semantic_num_fingers = max(semantic_num_fingers, int(val_loader.dataset.num_fingers))
+        semantic_num_regions = max(semantic_num_regions, int(val_loader.dataset.num_regions))
     with np.load(first_path, allow_pickle=False) as data:
         metadata.update(
             {
                 "num_obj_pool": int(data["obj_points"].shape[1]),
                 "num_obj_points": int(train_kwargs["num_obj_points"]),
                 "num_hand_points": int(data["hand_points"].shape[1]),
+                "num_fingers": semantic_num_fingers,
+                "num_regions": semantic_num_regions,
                 "num_supervision_edges": int(meta_cfg.num_supervision_edges),
                 "contact_radius": float(meta_cfg.contact_radius),
                 "coordinate_frame": str(train_loader.dataset.coordinate_frame),

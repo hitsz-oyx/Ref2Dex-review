@@ -87,6 +87,13 @@ class TaskConfig(BaseConfig):
         scheduler = "cosine"
         warmup_ratio = None
         warmup_steps = 0
+        # ``cosine_restart`` starts a new cosine phase when resuming from a
+        # checkpoint that used another scheduler.  ``max_steps`` remains the
+        # absolute global stop step; this field is the length of just the new
+        # phase.  A checkpoint written by the same phase restores its progress
+        # instead of restarting it again.
+        finetune_steps = None
+        min_lr = None
 
         # ========== 梯度裁剪和混合精度 ==========
         grad_clip_norm = 1.0

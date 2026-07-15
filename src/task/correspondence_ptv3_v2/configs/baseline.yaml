@@ -6,6 +6,13 @@ meta:
   num_obj_points: 512
   num_hand_points: 1538
   num_supervision_edges: 128
+  # A: original cross-edge baseline.  ``hand_heatmap.yaml`` and
+  # ``hand_context.yaml`` are the B/C ablations built from this file.
+  point_feat_dim: 11
+  hand_context_dim: 0
+  hand_semantic_dim: 8
+  num_fingers: 6
+  num_regions: 3
   contact_supervision_quotas: [16, 16, 16, 16]
   contact_supervision_hard_negative_quota: 16
   contact_supervision_hard_negative_distance_range: [0.02, 0.03]
@@ -22,6 +29,7 @@ meta:
   # canonicalization already eliminates scene-level SE(3) degrees of freedom.
   loss_cross_edge_weight: 1.0
   loss_contact_aux_weight: 0.05
+  loss_hand_contact_weight: 0.0
 
 data:
   batch_size: 8
@@ -58,4 +66,4 @@ wandb:
   enable: true
   project: ref2dex
   mode: online
-  tags: [correspondence, ptv3, v2, soft-contact, random128, contact-aux, aux-bce, hard-neg, lambda005]
+  tags: [correspondence, ptv3, v2, soft-contact, random128, contact-aux, baseline]

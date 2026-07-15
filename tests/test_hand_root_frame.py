@@ -422,6 +422,9 @@ def test_dataset_accepts_matching_coordinate_frame(tmp_path: Path) -> None:
     sample = ds[0]
     assert "hand_min_dist" in sample
     assert sample["hand_min_dist"].shape == (6,)
+    assert sample["hand_cano_points"].shape == (6, 3)
+    assert sample["hand_finger_id"].shape == (6,)
+    assert sample["hand_region_id"].shape == (6,)
     assert "contact_seed" in sample
 
 
@@ -525,9 +528,9 @@ def test_grab_process_sequence_handles_absent_hand_keys() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
+def test_v2_hand_context_losses_are_batch_size_invariant_via_runner() -> None:
     """Repeating the same sample along the batch dim must preserve the
-    active v2.1 loss keys when routed through ``runner._compute_losses()``.
+    active v2 loss keys when routed through ``runner._compute_losses()``.
     """
     from src.task.correspondence_ptv3_v2.config import Config
     from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
@@ -551,6 +554,8 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
     random_prob = torch.sigmoid(random_logits)
     contact_logits = torch.randn(B, 512, 16, dtype=torch.float32) * 2.0
     contact_prob = torch.sigmoid(contact_logits)
+    hand_logits = torch.randn(B, N, dtype=torch.float32) * 2.0
+    hand_prob = torch.sigmoid(hand_logits)
 
     batch1 = {
         "hand_contact_target": hand_target,
@@ -568,6 +573,8 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
         "pred_cross_random_prob": random_prob,
         "pred_cross_contact_aux_logits": contact_logits,
         "pred_cross_contact_aux_prob": contact_prob,
+        "pred_hand_contact_logits": hand_logits,
+        "pred_hand_contact_prob": hand_prob,
     }
     loss1, _ = runner._compute_losses(preds1, batch1, compute_diagnostics=True)
 
@@ -582,20 +589,8 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
     preds4 = {k: _repeat(v) for k, v in preds1.items()}
     loss4, _ = runner._compute_losses(preds4, batch4, compute_diagnostics=True)
 
-    # v2.1 contract: losses = {cross_edge_random, cross_edge_contact_aux}.
-    # Hand contact is NOT a loss key in the v2.1 ablation.
-    assert "hand_contact" not in loss1
+    assert "hand_contact" in loss1
     assert "cross_edge_contact" not in loss1
-    assert set(loss1) == {"cross_edge_random", "cross_edge_contact_aux"}
-    torch.testing.assert_close(
-        loss1["cross_edge_random"],
-        loss4["cross_edge_random"],
-        atol=1e-6,
-        rtol=1e-5,
-    )
-    torch.testing.assert_close(
-        loss1["cross_edge_contact_aux"],
-        loss4["cross_edge_contact_aux"],
-        atol=1e-6,
-        rtol=1e-5,
-    )
+    assert set(loss1) == {"cross_edge_random", "cross_edge_contact_aux", "hand_contact"}
+    for key in loss1:
+        torch.testing.assert_close(loss1[key], loss4[key], atol=1e-6, rtol=1e-5)

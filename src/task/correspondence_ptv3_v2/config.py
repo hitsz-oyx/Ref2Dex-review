@@ -17,7 +17,19 @@ class Config(TaskConfig):
         num_obj_pool: int = 4096
         num_hand_points: int = 1538
         num_supervision_edges: int = 128
+        # ``point_feat_dim`` deliberately remains the original local
+        # hand/object feature width.  The hand-only context is configured
+        # separately and concatenated immediately before the joint PTv3.
         point_feat_dim: int = 11
+        # The current data pilot selects B (heatmap only) as the default.
+        # C remains available explicitly through configs/hand_context.yaml.
+        hand_context_dim: int = 0
+        hand_semantic_dim: int = 8
+        # These are inferred from Stage 3 at data-configuration time.  The
+        # defaults keep direct model construction well-defined for tools and
+        # unit tests before a dataset has been attached.
+        num_fingers: int = 6
+        num_regions: int = 3
 
         # Coordinate frame for points read from Stage 3 .npz:
         #   "object"    - object-root SE(3) frame (legacy)
@@ -78,6 +90,10 @@ class Config(TaskConfig):
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
         # it cannot dominate the random128 objective.
         loss_contact_aux_weight: float = 0.05
+        # The dense hand heatmap has many more terms than the sampled edge
+        # streams.  Start it as a weak multi-task signal and tune from the
+        # gradient share / validation ablation rather than its raw scalar.
+        loss_hand_contact_weight: float = 0.005
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

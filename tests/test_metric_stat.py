@@ -28,6 +28,14 @@ class MetricStatTests(unittest.TestCase):
         averager.update({"value": 4.0}, n=1)
         self.assertEqual(averager.compute()["value"], 8.0 / 3.0)
 
+    def test_tensor_metrics_are_detached_and_converted_only_when_computed(self) -> None:
+        averager = MetricAverager()
+        value = torch.tensor(2.0, requires_grad=True)
+        averager.update({"value": value}, n=2)
+        self.assertTrue(torch.is_tensor(averager.meters["value"].total))
+        self.assertFalse(averager.meters["value"].total.requires_grad)
+        self.assertEqual(averager.compute()["value"], 2.0)
+
     def test_mixed_validity_and_real_zero(self) -> None:
         averager = MetricAverager()
         averager.update({"ap": MetricStat(0.9, 1, expose_validity=True)})

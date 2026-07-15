@@ -1,0 +1,13 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_hand_context
+
+meta:
+  # C: hand-only global pose context, broadcast to hand tokens before the
+  # one and only joint PTv3 pass. Object context channels stay exactly zero.
+  hand_context_dim: 32
+  hand_semantic_dim: 8
+  loss_hand_contact_weight: 0.005
+
+wandb:
+  tags: [correspondence, ptv3, v2, random128, contact-aux, hand-heatmap, hand-context, lambda005]

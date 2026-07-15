@@ -92,6 +92,132 @@ class PTv3DenseBackbone(nn.Module):
         return dense_out
 
 
+class HandGlobalEncoder(nn.Module):
+    """Encode whole-hand state without accessing object geometry.
+
+    The local feature first binds pose, surface normal, canonical anatomy and
+    discrete semantic identity per hand point.  Mean/max pooling then makes a
+    compact pose context which is broadcast only to hand tokens before the
+    single joint PTv3 pass.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_fingers: int,
+        num_regions: int,
+        context_dim: int = 32,
+        semantic_dim: int = 8,
+    ) -> None:
+        super().__init__()
+        if context_dim <= 0:
+            raise ValueError(f"context_dim must be positive, got {context_dim}.")
+        if semantic_dim <= 0:
+            raise ValueError(f"semantic_dim must be positive, got {semantic_dim}.")
+        if num_fingers < 0 or num_regions < 0:
+            raise ValueError("num_fingers and num_regions must be non-negative.")
+
+        self.num_fingers = int(num_fingers)
+        self.num_regions = int(num_regions)
+        self.semantic_dim = int(semantic_dim)
+        # Index 0 is reserved for an unknown (-1) dataset id.  This keeps
+        # legacy samples explicit rather than accidentally mapping unknown
+        # anatomy onto a real finger/region class.
+        self.finger_embed = nn.Embedding(self.num_fingers + 1, semantic_dim, padding_idx=0)
+        self.region_embed = nn.Embedding(self.num_regions + 1, semantic_dim, padding_idx=0)
+
+        input_dim = 3 + 3 + 3 + 3 + semantic_dim + semantic_dim
+        self.local_mlp = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.GELU(),
+            nn.Linear(64, 64),
+            nn.GELU(),
+        )
+        self.global_mlp = nn.Sequential(
+            nn.Linear(128, 64),
+            nn.GELU(),
+            nn.Linear(64, context_dim),
+        )
+        self.context_norm = nn.LayerNorm(context_dim)
+
+    @staticmethod
+    def _validate_point_tensor(name: str, tensor: torch.Tensor) -> None:
+        if tensor.ndim != 3 or tensor.shape[-1] != 3:
+            raise ValueError(f"{name} must have shape [batch, hand_points, 3], got {tuple(tensor.shape)}.")
+
+    @staticmethod
+    def _semantic_embedding(
+        semantic_id: torch.Tensor,
+        embedding: nn.Embedding,
+        num_classes: int,
+        *,
+        name: str,
+    ) -> torch.Tensor:
+        if semantic_id.ndim != 2:
+            raise ValueError(f"{name} must have shape [batch, hand_points], got {tuple(semantic_id.shape)}.")
+        # -1 represents unknown.  Dataset validation prevents malformed Stage
+        # 3 inputs; this clamp additionally makes the model safe for analysis
+        # tools that intentionally use unknown ids.
+        valid = (semantic_id >= 0) & (semantic_id < num_classes)
+        shifted = torch.where(valid, semantic_id + 1, torch.zeros_like(semantic_id))
+        return embedding(shifted.long())
+
+    def forward(
+        self,
+        *,
+        hand_points: torch.Tensor,
+        hand_normals: torch.Tensor,
+        hand_cano_points: torch.Tensor,
+        hand_finger_id: torch.Tensor,
+        hand_region_id: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._validate_point_tensor("hand_points", hand_points)
+        self._validate_point_tensor("hand_normals", hand_normals)
+        self._validate_point_tensor("hand_cano_points", hand_cano_points)
+        if hand_normals.shape != hand_points.shape or hand_cano_points.shape != hand_points.shape:
+            raise ValueError(
+                "hand_points, hand_normals and hand_cano_points must have identical shapes, "
+                f"got {tuple(hand_points.shape)}, {tuple(hand_normals.shape)}, "
+                f"and {tuple(hand_cano_points.shape)}."
+            )
+        expected_semantic_shape = hand_points.shape[:2]
+        if hand_finger_id.shape != expected_semantic_shape or hand_region_id.shape != expected_semantic_shape:
+            raise ValueError(
+                "hand_finger_id and hand_region_id must match hand_points[:2], got "
+                f"{tuple(hand_finger_id.shape)} and {tuple(hand_region_id.shape)} vs "
+                f"{tuple(expected_semantic_shape)}."
+            )
+
+        finger_feat = self._semantic_embedding(
+            hand_finger_id,
+            self.finger_embed,
+            self.num_fingers,
+            name="hand_finger_id",
+        )
+        region_feat = self._semantic_embedding(
+            hand_region_id,
+            self.region_embed,
+            self.num_regions,
+            name="hand_region_id",
+        )
+        hand_delta = hand_points - hand_cano_points
+        point_input = torch.cat(
+            [
+                hand_points,
+                hand_normals,
+                hand_cano_points,
+                hand_delta,
+                finger_feat,
+                region_feat,
+            ],
+            dim=-1,
+        )
+        local_feat = self.local_mlp(point_input)
+        global_feat = torch.cat([local_feat.mean(dim=1), local_feat.max(dim=1).values], dim=-1)
+        context = self.context_norm(self.global_mlp(global_feat))
+        return local_feat, context
+
+
 class StaticHOCPTv3V2(nn.Module):
     def __init__(self, cfg: Any, *, condition_shape=None, target_shape=None) -> None:
         del condition_shape, target_shape
@@ -100,8 +226,22 @@ class StaticHOCPTv3V2(nn.Module):
         meta = cfg.meta
         self.num_obj_points = int(meta.num_obj_points)
         self.num_hand_points = int(meta.num_hand_points)
-        self.point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
-        self.backbone = PTv3DenseBackbone(meta, in_channels=self.point_feat_dim)
+        self.base_point_feat_dim = int(getattr(meta, "point_feat_dim", 11))
+        # Retain this attribute for callers that inspect the original feature
+        # layout; the PTv3 input width includes hand_context_dim below.
+        self.point_feat_dim = self.base_point_feat_dim
+        self.hand_context_dim = int(getattr(meta, "hand_context_dim", 32))
+        if self.hand_context_dim < 0:
+            raise ValueError(f"hand_context_dim must be non-negative, got {self.hand_context_dim}.")
+        # Build the shared PTv3 and prediction heads first.  This prevents
+        # the optional context encoder from perturbing their RNG sequence in
+        # A/B/C ablations any more than the wider PTv3 input itself requires.
+        self.hand_global_encoder: HandGlobalEncoder | None = None
+        self.use_hand_contact_head = float(getattr(meta, "loss_hand_contact_weight", 0.005)) > 0.0
+        self.backbone = PTv3DenseBackbone(
+            meta,
+            in_channels=self.base_point_feat_dim + self.hand_context_dim,
+        )
         self.token_dim = int(self.backbone.output_dim)
         self.edge_shared_backbone = nn.Sequential(
             nn.Linear(self.token_dim * 2, self.token_dim),
@@ -110,6 +250,19 @@ class StaticHOCPTv3V2(nn.Module):
             nn.GELU(),
         )
         self.cross_edge_head = nn.Linear(self.token_dim // 2, 1)
+        if self.use_hand_contact_head:
+            self.hand_contact_head = nn.Sequential(
+                nn.Linear(self.token_dim, self.token_dim // 2),
+                nn.GELU(),
+                nn.Linear(self.token_dim // 2, 1),
+            )
+        if self.hand_context_dim > 0:
+            self.hand_global_encoder = HandGlobalEncoder(
+                num_fingers=int(getattr(meta, "num_fingers", 6)),
+                num_regions=int(getattr(meta, "num_regions", 3)),
+                context_dim=self.hand_context_dim,
+                semantic_dim=int(getattr(meta, "hand_semantic_dim", 8)),
+            )
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
@@ -135,12 +288,17 @@ class StaticHOCPTv3V2(nn.Module):
         contact_logits = combined_logits[..., random_width:]
         contact_prob = combined_prob[..., random_width:]
 
-        return {
+        predictions = {
             "pred_cross_random_logits": random_logits,
             "pred_cross_random_prob": random_prob,
             "pred_cross_contact_aux_logits": contact_logits,
             "pred_cross_contact_aux_prob": contact_prob,
         }
+        if self.use_hand_contact_head:
+            hand_contact_logits = self.hand_contact_head(z_hand).squeeze(-1)
+            predictions["pred_hand_contact_logits"] = hand_contact_logits
+            predictions["pred_hand_contact_prob"] = torch.sigmoid(hand_contact_logits)
+        return predictions
 
     def _predict_cross_edges(
         self,
@@ -184,6 +342,23 @@ class StaticHOCPTv3V2(nn.Module):
         obj_normals = normals[:, : self.num_obj_points]
         hand_points = points[:, self.num_obj_points : expected_total]
         hand_normals = normals[:, self.num_obj_points : expected_total]
+        if self.hand_global_encoder is not None:
+            hand_cano_points = batch["hand_cano_points"].float()
+            hand_finger_id = batch["hand_finger_id"].long()
+            hand_region_id = batch["hand_region_id"].long()
+
+            # This encoder intentionally receives no object points, normals,
+            # object mask, or object-conditioned nearest-neighbour feature.
+            # It is therefore a true P(hand pose) context before joint fusion.
+            _, hand_context = self.hand_global_encoder(
+                hand_points=hand_points,
+                hand_normals=hand_normals,
+                hand_cano_points=hand_cano_points,
+                hand_finger_id=hand_finger_id,
+                hand_region_id=hand_region_id,
+            )
+        else:
+            hand_context = hand_points.new_zeros(hand_points.shape[0], 0)
 
         obj_feat, hand_feat = self._build_point_features(
             obj_points=obj_points,
@@ -192,6 +367,19 @@ class StaticHOCPTv3V2(nn.Module):
             hand_normals=hand_normals,
             obj_valid_mask=obj_valid_mask,
         )
+        batch_size = hand_feat.shape[0]
+        obj_context_feat = obj_feat.new_zeros(
+            batch_size,
+            self.num_obj_points,
+            self.hand_context_dim,
+        )
+        hand_context_feat = hand_context.unsqueeze(1).expand(
+            -1,
+            self.num_hand_points,
+            -1,
+        )
+        obj_feat = torch.cat([obj_feat, obj_context_feat], dim=-1)
+        hand_feat = torch.cat([hand_feat, hand_context_feat], dim=-1)
         coord = torch.cat([obj_points, hand_points], dim=1)
         feat = torch.cat([obj_feat, hand_feat], dim=1)
         tokens = self.backbone(feat, coord, point_valid_mask)

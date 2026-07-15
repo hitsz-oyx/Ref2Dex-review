@@ -43,7 +43,7 @@ from .utils import (
 @dataclass
 class RunnerOutput:
     loss: torch.Tensor
-    metrics: dict[str, float | MetricStat] = field(default_factory=dict)
+    metrics: dict[str, float | torch.Tensor | MetricStat] = field(default_factory=dict)
     batch_size: int | None = None
 
 
@@ -169,7 +169,7 @@ class BaseRunner:
         self.val_loaders: dict[str, Any] = {}
         self.model: torch.nn.Module | None = None
         self.optimizer: torch.optim.Optimizer | None = None
-        self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
+        self.scheduler: Any | None = None
         self.scaler: torch.cuda.amp.GradScaler | None = None
         self.checkpoints: CheckpointManager | None = None
         self.jsonl: JsonlLogger | None = None
@@ -377,7 +377,8 @@ class BaseRunner:
             with self.eval_context():
                 output = self.step(self.model, batch, mode="eval")
             metrics = dict(output.metrics)
-            metrics.setdefault("loss", float(output.loss.detach().cpu()))
+            if "loss" not in metrics:
+                metrics["loss"] = output.loss.detach()
             averager.update(metrics, n=output.batch_size or self.batch_size(batch))
         if was_training:
             self.train_mode()
@@ -529,6 +530,13 @@ class BaseRunner:
                 "warmup_ratio": float(self.resolved_warmup_ratio),
             }
         )
+        if self._uses_cosine_restart():
+            self.metadata.update(
+                {
+                    "finetune_steps": int(self._resolve_finetune_steps()),
+                    "min_lr": float(self._resolve_min_lr()),
+                }
+            )
         self._write_metadata()
         self.model = self.build_model(self.cfg.model).to(self.device)
         if self.cfg.train.compile:
@@ -564,15 +572,46 @@ class BaseRunner:
         unwrap_model(self.model).load_state_dict(checkpoint["model"])
         if load_optimizer and self.optimizer is not None and checkpoint.get("optimizer") is not None:
             self.optimizer.load_state_dict(checkpoint["optimizer"])
-        if load_optimizer and self.scheduler is not None and checkpoint.get("scheduler") is not None:
+        self.global_step = int(checkpoint.get("step", 0))
+        self.start_epoch = int(checkpoint.get("epoch", 0))
+        if load_optimizer and isinstance(self.scheduler, CosineRestartScheduler):
+            scheduler_state = checkpoint.get("scheduler")
+            if self.scheduler.is_compatible_state_dict(scheduler_state):
+                self.scheduler.load_state_dict(scheduler_state)
+                if self.is_primary:
+                    print(
+                        "Resumed cosine_restart phase "
+                        f"at global_step={self.global_step} "
+                        f"phase_step={self.scheduler.completed_steps}/{self.scheduler.total_steps}."
+                    )
+            else:
+                expected_stop_step = self.global_step + self.scheduler.total_steps
+                if self.total_steps != expected_stop_step:
+                    raise ValueError(
+                        "For a new cosine_restart phase, train.max_steps is an absolute stop step and "
+                        f"must equal checkpoint_step + train.finetune_steps ({self.global_step} + "
+                        f"{self.scheduler.total_steps} = {expected_stop_step}), got {self.total_steps}."
+                    )
+                # Preserve the Adam moments from the checkpoint, but make
+                # the configured fine-tune LR the first LR of this new phase.
+                # In particular, do not import a LambdaLR state from a long-
+                # horizon pre-training run.
+                self.scheduler.restart()
+                if self.is_primary:
+                    print(
+                        "Started cosine_restart phase "
+                        f"at global_step={self.global_step} "
+                        f"phase_steps={self.scheduler.total_steps} "
+                        f"base_lr={self.scheduler.base_lrs[0]:.8g} "
+                        f"min_lr={self.scheduler.min_lrs[0]:.8g}."
+                    )
+        elif load_optimizer and self.scheduler is not None and checkpoint.get("scheduler") is not None:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
         if load_optimizer and self.scaler is not None and checkpoint.get("scaler") is not None:
             self.scaler.load_state_dict(checkpoint["scaler"])
         state = checkpoint.get("runner_state")
         if state is not None:
             self.load_state_dict(state)
-        self.global_step = int(checkpoint.get("step", 0))
-        self.start_epoch = int(checkpoint.get("epoch", 0))
         self.best_metric = checkpoint.get("best_metric")
         if state is None:
             self.epochs_without_improvement = 0
@@ -598,6 +637,12 @@ class BaseRunner:
         if name is None or str(name).lower() in {"none", "null"}:
             return None
         name = str(name).lower()
+        if name == "cosine_restart":
+            return CosineRestartScheduler(
+                self.optimizer,
+                total_steps=self._resolve_finetune_steps(),
+                min_lr=self._resolve_min_lr(),
+            )
         warmup = self._resolve_warmup_steps(total_steps)
         if name == "cosine":
             return torch.optim.lr_scheduler.LambdaLR(
@@ -611,7 +656,32 @@ class BaseRunner:
             )
         if name == "step":
             return torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=max(1, total_steps // 3), gamma=0.1)
-        raise ValueError(f"Unknown scheduler '{self.cfg.train.scheduler}'. Use cosine, linear, step, or null.")
+        raise ValueError(
+            f"Unknown scheduler '{self.cfg.train.scheduler}'. "
+            "Use cosine, cosine_restart, linear, step, or null."
+        )
+
+    def _uses_cosine_restart(self) -> bool:
+        return str(getattr(self.cfg.train, "scheduler", "")).lower() == "cosine_restart"
+
+    def _resolve_finetune_steps(self) -> int:
+        value = getattr(self.cfg.train, "finetune_steps", None)
+        if value is None:
+            raise ValueError("train.finetune_steps is required when train.scheduler='cosine_restart'.")
+        value = int(value)
+        if value <= 0:
+            raise ValueError(f"train.finetune_steps must be positive, got {value}.")
+        return value
+
+    def _resolve_min_lr(self) -> float:
+        value = getattr(self.cfg.train, "min_lr", None)
+        if value is None:
+            raise ValueError("train.min_lr is required when train.scheduler='cosine_restart'.")
+        value = float(value)
+        base_lr = float(self.cfg.train.lr)
+        if not 0.0 <= value <= base_lr:
+            raise ValueError(f"train.min_lr must be in [0, train.lr]={base_lr:g}, got {value:g}.")
+        return value
 
     def _resolve_total_steps(self) -> int:
         if self.cfg.train.max_steps is not None:
@@ -619,6 +689,15 @@ class BaseRunner:
         return max(1, self.cfg.train.epochs * len(self.train_loader))
 
     def _resolve_warmup_steps(self, total_steps: int) -> int:
+        if self._uses_cosine_restart():
+            warmup_ratio = getattr(self.cfg.train, "warmup_ratio", None)
+            warmup_steps = int(getattr(self.cfg.train, "warmup_steps", 0))
+            if warmup_steps != 0 or (warmup_ratio is not None and float(warmup_ratio) != 0.0):
+                raise ValueError(
+                    "train.scheduler='cosine_restart' has no warmup; "
+                    "set train.warmup_steps=0 and train.warmup_ratio=0.0."
+                )
+            return 0
         ratio = getattr(self.cfg.train, "warmup_ratio", None)
         if ratio is not None:
             ratio = float(ratio)
@@ -745,7 +824,7 @@ class BaseRunner:
 
     def _reduce_step_metrics(
         self,
-        metrics: dict[str, float | MetricStat],
+        metrics: dict[str, float | torch.Tensor | MetricStat],
     ) -> dict[str, float]:
         totals: dict[str, float] = {}
         counts: dict[str, float] = {}
@@ -800,7 +879,11 @@ class BaseRunner:
             f"val_batch={val_batch} num_workers={int(self.cfg.data.num_workers)} "
             f"amp={bool(self.cfg.train.amp)} total_steps={int(self.total_steps)} "
             f"warmup_steps={int(self.resolved_warmup_steps)} "
-            f"warmup_ratio={self.resolved_warmup_ratio:.6f} output_dir={self.output_dir}"
+            f"warmup_ratio={self.resolved_warmup_ratio:.6f} "
+            f"scheduler={self.cfg.train.scheduler} "
+            f"finetune_steps={getattr(self.cfg.train, 'finetune_steps', None)} "
+            f"min_lr={getattr(self.cfg.train, 'min_lr', None)} "
+            f"output_dir={self.output_dir}"
         )
 
     def _resolve_run_identity(self) -> tuple[str, Path]:
@@ -979,3 +1062,82 @@ def linear_schedule(step: int, total_steps: int, warmup_steps: int = 0) -> float
         return float(step + 1) / float(warmup_steps)
     progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
     return max(0.0, 1.0 - progress)
+
+
+class CosineRestartScheduler:
+    """Checkpointable cosine fine-tuning phase independent of global step.
+
+    ``BaseRunner.global_step`` remains an absolute run counter.  This small
+    scheduler owns a separate ``completed_steps`` counter so a checkpoint from
+    a long pre-training schedule can start a short fine-tune cosine at its
+    configured base LR.  Its state is saved in normal checkpoints; a later
+    resume from that same phase therefore continues the decay rather than
+    starting it over.
+    """
+
+    STATE_TYPE = "cosine_restart"
+    STATE_VERSION = 1
+
+    def __init__(self, optimizer: torch.optim.Optimizer, *, total_steps: int, min_lr: float) -> None:
+        if total_steps <= 0:
+            raise ValueError(f"total_steps must be positive, got {total_steps}.")
+        self.optimizer = optimizer
+        self.total_steps = int(total_steps)
+        self.base_lrs = [float(group["lr"]) for group in optimizer.param_groups]
+        self.min_lrs = [float(min_lr) for _ in optimizer.param_groups]
+        if any(min_lr > base_lr for base_lr in self.base_lrs):
+            raise ValueError(f"min_lr={min_lr:g} exceeds an optimizer base LR {self.base_lrs}.")
+        self.completed_steps = 0
+        self.restart()
+
+    def restart(self) -> None:
+        self.completed_steps = 0
+        self._apply_lr()
+
+    @property
+    def progress(self) -> float:
+        return min(1.0, max(0.0, float(self.completed_steps) / float(self.total_steps)))
+
+    def _apply_lr(self) -> None:
+        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * self.progress))
+        for group, base_lr, min_lr in zip(self.optimizer.param_groups, self.base_lrs, self.min_lrs):
+            group["lr"] = min_lr + (base_lr - min_lr) * cosine_factor
+
+    def step(self) -> None:
+        self.completed_steps = min(self.total_steps, self.completed_steps + 1)
+        self._apply_lr()
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "scheduler_type": self.STATE_TYPE,
+            "scheduler_version": self.STATE_VERSION,
+            "total_steps": self.total_steps,
+            "completed_steps": self.completed_steps,
+            "base_lrs": list(self.base_lrs),
+            "min_lrs": list(self.min_lrs),
+        }
+
+    def is_compatible_state_dict(self, state_dict: Any) -> bool:
+        if not isinstance(state_dict, dict) or state_dict.get("scheduler_type") != self.STATE_TYPE:
+            return False
+        if int(state_dict.get("scheduler_version", -1)) != self.STATE_VERSION:
+            return False
+        if int(state_dict.get("total_steps", -1)) != self.total_steps:
+            return False
+        state_base_lrs = [float(value) for value in state_dict.get("base_lrs", [])]
+        state_min_lrs = [float(value) for value in state_dict.get("min_lrs", [])]
+        if len(state_base_lrs) != len(self.base_lrs) or len(state_min_lrs) != len(self.min_lrs):
+            return False
+        return all(
+            math.isclose(old, new, rel_tol=1e-12, abs_tol=1e-15)
+            for old, new in zip(state_base_lrs, self.base_lrs)
+        ) and all(
+            math.isclose(old, new, rel_tol=1e-12, abs_tol=1e-15)
+            for old, new in zip(state_min_lrs, self.min_lrs)
+        )
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        if not self.is_compatible_state_dict(state_dict):
+            raise ValueError("Incompatible cosine_restart scheduler state.")
+        self.completed_steps = min(self.total_steps, max(0, int(state_dict["completed_steps"])))
+        self._apply_lr()
