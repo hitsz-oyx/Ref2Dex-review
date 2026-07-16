@@ -81,6 +81,9 @@ class Config(TaskConfig):
         # Dense hand heatmap supervision has many more terms than the sampled
         # edge streams, so it remains a deliberately weak multi-task signal.
         loss_hand_contact_weight: float = 0.005
+        # Perturbed-validation-only recovery metrics ignore tiny changes in
+        # the pseudo contact target caused by interpolation/numerical noise.
+        pseudo_recovery_change_threshold: float = 0.05
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

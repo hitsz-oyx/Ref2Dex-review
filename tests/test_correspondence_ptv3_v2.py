@@ -143,6 +143,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         loss_cross_edge_weight = 1.0
         loss_contact_aux_weight = 1.0
         loss_hand_contact_weight = 0.005
+        pseudo_recovery_change_threshold = 0.05
     class Train:
         diagnostic_every_steps = 20
     class Cfg:
@@ -162,11 +163,17 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
         "random_edge_valid_mask": torch.tensor([[[True, True, False], [True, False, False]]]),
         "random_edge_contact_target": torch.tensor([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]]),
+        "random_edge_pseudo_target": torch.tensor([[[0.0, 1.0, 0.0], [0.0, 0.0, 0.0]]]),
         "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         "contact_edge_contact_target": torch.tensor([[[0.5, 0.0], [0.7, 0.9]]]),
         "hand_contact_target": torch.tensor([[0.0, 0.5, 1.0, 0.0]]),
     }
-    losses, aux = runner._compute_losses(preds, batch, compute_diagnostics=True)
+    losses, aux = runner._compute_losses(
+        preds,
+        batch,
+        compute_diagnostics=True,
+        record_pseudo_recovery=True,
+    )
     # Random stream metric keys are preserved as ``cross_edge_random_*``.
     assert isinstance(aux["random_sampled_nonzero_edge_fraction"], MetricStat)
     assert isinstance(aux["random_object_nonzero_edge_coverage"], MetricStat)
@@ -256,13 +263,42 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "hand_contact_pred_mean",
         "hand_contact_nonzero_mae",
         "hand_contact_nonzero_pred_mean",
+        "pseudo_recovery_brier",
+        "pseudo_recovery_projection",
+        "pseudo_fake_contact_recovery_brier",
+        "pseudo_fake_contact_recovery_projection",
+        "pseudo_changed_edge_fraction",
     ):
         assert key in aux, f"Missing hand-contact GT metric: {key}"
+    assert isinstance(aux["pseudo_missed_contact_recovery_brier"], MetricStat)
+    assert aux["pseudo_missed_contact_recovery_brier"].count > 0.0
     # Losses must only contain cross-edge + hand contact (obj_contact removed).
     assert "obj_contact" not in aux
     assert "obj_contact_qfl" not in aux
     assert "obj_contact_bce" not in aux
     assert "obj_contact_mae" not in aux
+
+
+def test_pseudo_recovery_metrics_match_document_definition() -> None:
+    terms = CorrespondencePTV3V2Runner._compute_pseudo_recovery_terms(
+        pred_prob=torch.tensor([0.5]),
+        clean_target=torch.tensor([0.2]),
+        pseudo_target=torch.tensor([0.8]),
+        valid_mask=torch.tensor([True]),
+        change_threshold=0.05,
+    )
+    metrics = CorrespondencePTV3V2Runner._pseudo_recovery_metrics(terms)
+    # E_pseudo = 0.36; E_model = 0.09; correction projection = 0.18.
+    torch.testing.assert_close(
+        torch.tensor(metrics["pseudo_recovery_brier"].total / metrics["pseudo_recovery_brier"].count),
+        torch.tensor(0.75),
+    )
+    torch.testing.assert_close(
+        torch.tensor(metrics["pseudo_recovery_projection"].total / metrics["pseudo_recovery_projection"].count),
+        torch.tensor(0.5),
+    )
+    assert metrics["pseudo_fake_contact_recovery_brier"].count > 0.0
+    assert metrics["pseudo_missed_contact_recovery_brier"].count == 0.0
 
 
 def test_model_output_contract_and_dense_cross_api() -> None:

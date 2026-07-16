@@ -125,10 +125,17 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         preds = model(batch)
         diagnostic_every = max(int(getattr(self.cfg.train, "diagnostic_every_steps", 20)), 1)
         compute_diagnostics = mode == "eval" or ((self.global_step + 1) % diagnostic_every == 0)
+        # The pseudo target is a nuisance baseline made from the perturbed
+        # input geometry. It is deliberately built only for validation, so it
+        # cannot become an implicit training signal or add train-step cost.
+        if mode == "eval":
+            with torch.no_grad():
+                self._build_random_edge_pseudo_target(batch)
         losses, aux_metrics = self._compute_losses(
             preds,
             batch,
             compute_diagnostics=compute_diagnostics,
+            record_pseudo_recovery=mode == "eval",
         )
         total_loss = sum(losses.values())
         metrics: dict[str, float | torch.Tensor | MetricStat] = {**losses, **aux_metrics}
@@ -141,6 +148,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         batch: dict[str, torch.Tensor],
         *,
         compute_diagnostics: bool,
+        record_pseudo_recovery: bool = False,
     ) -> tuple[dict[str, torch.Tensor], dict[str, float | torch.Tensor | MetricStat]]:
         meta = self.cfg.meta
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
@@ -156,6 +164,15 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         cross_edge_random_qfl = reduce_loss_map_per_object(
             random_qfl_map, random_edge_valid_mask, obj_valid_mask
         )
+        recovery_terms: dict[str, torch.Tensor] | None = None
+        if record_pseudo_recovery:
+            recovery_terms = self._compute_pseudo_recovery_terms(
+                pred_prob=random_prob,
+                clean_target=random_target,
+                pseudo_target=batch["random_edge_pseudo_target"].float(),
+                valid_mask=random_edge_valid_mask,
+                change_threshold=float(getattr(meta, "pseudo_recovery_change_threshold", 0.05)),
+            )
 
         # ---- Contact-aware auxiliary stream (L_c) ----
         contact_edge_valid_mask = batch["contact_edge_valid_mask"].bool() & obj_valid_mask.unsqueeze(-1)
@@ -193,6 +210,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         }
         if hand_contact_bce is not None:
             aux_metrics["hand_contact_bce"] = hand_contact_bce
+        if recovery_terms is not None:
+            aux_metrics.update(self._pseudo_recovery_metrics(recovery_terms))
         if compute_diagnostics:
             random_bce_map = binary_cross_entropy_with_logits_map(random_logits, random_target)
             random_mae_map = torch.abs(random_prob - random_target)
@@ -320,6 +339,20 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_radius=float(self.cfg.meta.contact_radius),
         ).float()
 
+    def _build_random_edge_pseudo_target(self, batch: dict[str, torch.Tensor]) -> None:
+        """Build the perturbed-geometry baseline used only by eval metrics."""
+        num_obj = int(self.cfg.meta.num_obj_points)
+        num_hand = int(self.cfg.meta.num_hand_points)
+        input_points = batch["points"].float()
+        input_obj = input_points[:, :num_obj]
+        input_hand = input_points[:, num_obj : num_obj + num_hand]
+        batch["random_edge_pseudo_target"] = self._build_random_edge_target(
+            gt_obj=input_obj,
+            gt_hand=input_hand,
+            random_edge_idx=batch["random_edge_idx"].long(),
+            random_edge_valid_mask=batch["random_edge_valid_mask"].bool(),
+        )
+
     def _build_random_edge_target(
         self,
         *,
@@ -339,6 +372,107 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_radius=float(self.cfg.meta.contact_radius),
         )
         return target * random_edge_valid_mask.float()
+
+    @staticmethod
+    def _compute_pseudo_recovery_terms(
+        *,
+        pred_prob: torch.Tensor,
+        clean_target: torch.Tensor,
+        pseudo_target: torch.Tensor,
+        valid_mask: torch.Tensor,
+        change_threshold: float,
+    ) -> dict[str, torch.Tensor]:
+        """Return globally reducible recovery statistics from ``docs/指导.md``.
+
+        ``pseudo_target`` comes from directly trusting the perturbed input
+        geometry, whereas ``clean_target`` comes from clean GT geometry.
+        These are evaluation statistics, never a loss.
+        """
+        if change_threshold < 0.0:
+            raise ValueError(f"pseudo_recovery_change_threshold must be non-negative, got {change_threshold}.")
+        if pred_prob.shape != clean_target.shape or pseudo_target.shape != clean_target.shape:
+            raise ValueError(
+                "pred_prob, clean_target and pseudo_target must have identical shapes, got "
+                f"{tuple(pred_prob.shape)}, {tuple(clean_target.shape)}, and {tuple(pseudo_target.shape)}."
+            )
+        if valid_mask.shape != clean_target.shape:
+            raise ValueError(
+                "valid_mask must match the target shape, got "
+                f"{tuple(valid_mask.shape)} and {tuple(clean_target.shape)}."
+            )
+
+        p = pred_prob.float()
+        y = clean_target.float()
+        y_pseudo = pseudo_target.float()
+        valid = valid_mask.bool()
+        direction = y - y_pseudo
+        correction = p - y_pseudo
+
+        def sums(mask: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+            mask_f = mask.float()
+            pseudo_error = (direction.square() * mask_f).sum()
+            model_error = ((p - y).square() * mask_f).sum()
+            projection = (correction * direction * mask_f).sum()
+            return pseudo_error, model_error, projection, mask_f.sum()
+
+        changed_terms = sums(valid & (direction.abs() > change_threshold))
+        fake_terms = sums(valid & (-direction > change_threshold))
+        missed_terms = sums(valid & (direction > change_threshold))
+        return {
+            "changed_pseudo_error": changed_terms[0],
+            "changed_model_error": changed_terms[1],
+            "changed_projection": changed_terms[2],
+            "changed_count": changed_terms[3],
+            "fake_pseudo_error": fake_terms[0],
+            "fake_model_error": fake_terms[1],
+            "fake_projection": fake_terms[2],
+            "fake_count": fake_terms[3],
+            "missed_pseudo_error": missed_terms[0],
+            "missed_model_error": missed_terms[1],
+            "missed_projection": missed_terms[2],
+            "missed_count": missed_terms[3],
+            "valid_count": valid.float().sum(),
+        }
+
+    @staticmethod
+    def _pseudo_recovery_metrics(terms: dict[str, torch.Tensor]) -> dict[str, MetricStat]:
+        """Convert recovery sufficient statistics into global validation ratios."""
+        def stat(numerator: torch.Tensor, denominator: torch.Tensor) -> MetricStat:
+            denominator_value = float(denominator.detach().cpu())
+            if denominator_value <= 0.0:
+                return MetricStat.invalid(expose_validity=True)
+            return MetricStat(
+                total=float(numerator.detach().cpu()),
+                count=denominator_value,
+                expose_validity=True,
+            )
+
+        return {
+            # Weighting batch ratios by E_pseudo recovers the exact global
+            # ratio, rather than an unstable mean of per-batch ratios.
+            "pseudo_recovery_brier": stat(
+                terms["changed_pseudo_error"] - terms["changed_model_error"],
+                terms["changed_pseudo_error"],
+            ),
+            "pseudo_recovery_projection": stat(
+                terms["changed_projection"], terms["changed_pseudo_error"]
+            ),
+            "pseudo_fake_contact_recovery_brier": stat(
+                terms["fake_pseudo_error"] - terms["fake_model_error"],
+                terms["fake_pseudo_error"],
+            ),
+            "pseudo_fake_contact_recovery_projection": stat(
+                terms["fake_projection"], terms["fake_pseudo_error"]
+            ),
+            "pseudo_missed_contact_recovery_brier": stat(
+                terms["missed_pseudo_error"] - terms["missed_model_error"],
+                terms["missed_pseudo_error"],
+            ),
+            "pseudo_missed_contact_recovery_projection": stat(
+                terms["missed_projection"], terms["missed_pseudo_error"]
+            ),
+            "pseudo_changed_edge_fraction": stat(terms["changed_count"], terms["valid_count"]),
+        }
 
     def _build_contact_supervision_edges(
         self,
