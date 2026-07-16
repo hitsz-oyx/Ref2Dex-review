@@ -131,7 +131,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             compute_diagnostics=compute_diagnostics,
         )
         total_loss = sum(losses.values())
-        metrics: dict[str, float | MetricStat] = {**losses, **aux_metrics}
+        metrics: dict[str, float | torch.Tensor | MetricStat] = {**losses, **aux_metrics}
         metrics["loss"] = total_loss
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(batch["points"].shape[0]))
 
@@ -141,7 +141,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         batch: dict[str, torch.Tensor],
         *,
         compute_diagnostics: bool,
-    ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    ) -> tuple[dict[str, torch.Tensor], dict[str, float | torch.Tensor | MetricStat]]:
         meta = self.cfg.meta
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
         beta = float(meta.quality_focal_beta)
@@ -168,12 +168,32 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_qfl_map, contact_edge_valid_mask, obj_valid_mask
         )
 
-        aux_metrics: dict[str, float | MetricStat] = {
+        # ---- Dense hand-contact heatmap (L_h) ----
+        hand_contact_weight = float(getattr(meta, "loss_hand_contact_weight", 0.005))
+        hand_target: torch.Tensor | None = None
+        hand_prob: torch.Tensor | None = None
+        hand_contact_bce: torch.Tensor | None = None
+        if hand_contact_weight > 0.0:
+            hand_target = batch["hand_contact_target"].float()
+            hand_logits = preds["pred_hand_contact_logits"]
+            hand_prob = preds["pred_hand_contact_prob"]
+            if hand_logits.shape != hand_target.shape:
+                raise ValueError(
+                    "pred_hand_contact_logits and hand_contact_target must have the same "
+                    f"shape, got {tuple(hand_logits.shape)} and {tuple(hand_target.shape)}."
+                )
+            hand_contact_bce = reduce_loss_map(
+                binary_cross_entropy_with_logits_map(hand_logits, hand_target),
+                torch.ones_like(hand_target, dtype=torch.bool),
+            )
+
+        aux_metrics: dict[str, float | torch.Tensor | MetricStat] = {
             "cross_edge_random_qfl": cross_edge_random_qfl,
             "contact_aux_qfl": cross_edge_contact_aux_qfl,
         }
+        if hand_contact_bce is not None:
+            aux_metrics["hand_contact_bce"] = hand_contact_bce
         if compute_diagnostics:
-            hand_target = batch["hand_contact_target"].float()
             random_bce_map = binary_cross_entropy_with_logits_map(random_logits, random_target)
             random_mae_map = torch.abs(random_prob - random_target)
             cross_edge_random_bce = reduce_loss_map_per_object(
@@ -248,12 +268,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 edge_valid_mask=contact_edge_valid_mask,
                 obj_valid_mask=obj_valid_mask,
             ))
-            aux_metrics.update(self._compute_hand_contact_gt_metrics(hand_target=hand_target))
+            if hand_target is not None and hand_prob is not None:
+                aux_metrics.update(self._compute_hand_contact_gt_metrics(hand_target=hand_target))
+                aux_metrics.update(
+                    self._compute_hand_contact_diagnostic_metrics(
+                        hand_target=hand_target,
+                        hand_prob=hand_prob,
+                    )
+                )
 
         losses = {
             "cross_edge_random": float(meta.loss_cross_edge_weight) * cross_edge_random_qfl,
             "cross_edge_contact_aux": float(meta.loss_contact_aux_weight) * cross_edge_contact_aux_qfl,
         }
+        if hand_contact_bce is not None:
+            losses["hand_contact"] = hand_contact_weight * hand_contact_bce
         return losses, aux_metrics
 
     def _build_supervision_gpu(
@@ -607,6 +636,32 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 float(bin_count) / max(total, 1.0)
             )
         return metrics
+
+    @staticmethod
+    def _compute_hand_contact_diagnostic_metrics(
+        *,
+        hand_target: torch.Tensor,
+        hand_prob: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Prediction-side diagnostics for the object-conditioned hand heatmap."""
+        if hand_prob.shape != hand_target.shape:
+            raise ValueError(
+                "pred_hand_contact_prob and hand_contact_target must have the same "
+                f"shape, got {tuple(hand_prob.shape)} and {tuple(hand_target.shape)}."
+            )
+        nonzero_mask = hand_target > 0
+        if bool(nonzero_mask.any()):
+            nonzero_mae = (hand_prob - hand_target).abs()[nonzero_mask].mean()
+            nonzero_pred_mean = hand_prob[nonzero_mask].mean()
+        else:
+            nonzero_mae = hand_target.sum() * 0.0
+            nonzero_pred_mean = hand_target.sum() * 0.0
+        return {
+            "hand_contact_mae": (hand_prob - hand_target).abs().mean(),
+            "hand_contact_pred_mean": hand_prob.mean(),
+            "hand_contact_nonzero_mae": nonzero_mae,
+            "hand_contact_nonzero_pred_mean": nonzero_pred_mean,
+        }
 
     def inference(self, model: torch.nn.Module, inputs: Any) -> dict[str, torch.Tensor]:
         return model(self.prepare_batch(inputs))

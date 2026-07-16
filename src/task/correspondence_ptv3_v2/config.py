@@ -78,6 +78,9 @@ class Config(TaskConfig):
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
         # it cannot dominate the random128 objective.
         loss_contact_aux_weight: float = 0.05
+        # Dense hand heatmap supervision has many more terms than the sampled
+        # edge streams, so it remains a deliberately weak multi-task signal.
+        loss_hand_contact_weight: float = 0.005
 
     class model(TaskConfig.model):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"

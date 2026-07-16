@@ -1,0 +1,11 @@
+_base_: src/task/correspondence_ptv3_v2/configs/baseline.yaml
+
+name: correspondence_ptv3_v2_hand_heatmap
+
+meta:
+  # B: object-conditioned dense hand heatmap.  PTv3 keeps the original 11-D
+  # local hand-object input; no pooled whole-hand context is used.
+  loss_hand_contact_weight: 0.005
+
+wandb:
+  tags: [correspondence, ptv3, v2, random128, contact-aux, hand-heatmap, lambda005]

@@ -110,6 +110,13 @@ class StaticHOCPTv3V2(nn.Module):
             nn.GELU(),
         )
         self.cross_edge_head = nn.Linear(self.token_dim // 2, 1)
+        self.use_hand_contact_head = float(getattr(meta, "loss_hand_contact_weight", 0.005)) > 0.0
+        if self.use_hand_contact_head:
+            self.hand_contact_head = nn.Sequential(
+                nn.Linear(self.token_dim, self.token_dim // 2),
+                nn.GELU(),
+                nn.Linear(self.token_dim // 2, 1),
+            )
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         z_obj, z_hand = self.encode_points(batch)
@@ -135,12 +142,17 @@ class StaticHOCPTv3V2(nn.Module):
         contact_logits = combined_logits[..., random_width:]
         contact_prob = combined_prob[..., random_width:]
 
-        return {
+        predictions = {
             "pred_cross_random_logits": random_logits,
             "pred_cross_random_prob": random_prob,
             "pred_cross_contact_aux_logits": contact_logits,
             "pred_cross_contact_aux_prob": contact_prob,
         }
+        if self.use_hand_contact_head:
+            hand_contact_logits = self.hand_contact_head(z_hand).squeeze(-1)
+            predictions["pred_hand_contact_logits"] = hand_contact_logits
+            predictions["pred_hand_contact_prob"] = torch.sigmoid(hand_contact_logits)
+        return predictions
 
     def _predict_cross_edges(
         self,

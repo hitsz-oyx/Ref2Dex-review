@@ -142,6 +142,7 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         quality_focal_beta = 2.0
         loss_cross_edge_weight = 1.0
         loss_contact_aux_weight = 1.0
+        loss_hand_contact_weight = 0.005
     class Train:
         diagnostic_every_steps = 20
     class Cfg:
@@ -154,6 +155,8 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "pred_cross_random_prob": torch.full((1, 2, 3), 0.5),
         "pred_cross_contact_aux_logits": torch.zeros(1, 2, 2),
         "pred_cross_contact_aux_prob": torch.full((1, 2, 2), 0.5),
+        "pred_hand_contact_logits": torch.zeros(1, 4),
+        "pred_hand_contact_prob": torch.full((1, 4), 0.5),
     }
     batch = {
         "runtime_obj_valid_mask": torch.tensor([[True, True]]),
@@ -171,16 +174,18 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
     assert aux["random_sampled_nonzero_edge_fraction"].count == 3.0
     assert aux["random_object_nonzero_edge_coverage"].total == 1.0
     assert aux["random_object_nonzero_edge_coverage"].count == 2.0
-    # Loss shape: random QFL + contact aux QFL (hand is removed in v2.1).
-    assert set(losses) == {"cross_edge_random", "cross_edge_contact_aux"}
+    # Loss shape: random QFL + contact aux QFL + weak dense hand BCE.
+    assert set(losses) == {"cross_edge_random", "cross_edge_contact_aux", "hand_contact"}
     expected_contact_qfl = quality_focal_loss_map(
         torch.zeros(4), torch.tensor([0.5, 0.0, 0.7, 0.9]), beta=2.0
     )
     assert torch.allclose(losses["cross_edge_contact_aux"], expected_contact_qfl.mean())
-    assert "hand_contact" not in losses
-    # Hand contact is observed as a GT distribution only.
-    assert "hand_contact_qfl" not in aux
-    assert "hand_contact_nonzero_mae" not in aux
+    expected_hand_bce = F.binary_cross_entropy_with_logits(
+        torch.zeros(4), torch.tensor([0.0, 0.5, 1.0, 0.0])
+    )
+    assert torch.allclose(losses["hand_contact"], 0.005 * expected_hand_bce)
+    assert torch.allclose(aux["hand_contact_bce"], expected_hand_bce)
+    assert "hand_contact_nonzero_mae" in aux
     assert isinstance(aux["hand_contact_target_count"], MetricStat)
     # Required random-stream diagnostic keys.
     expected_random_keys = {
@@ -246,6 +251,11 @@ def test_runner_coverage_metrics_use_metric_stat() -> None:
         "hand_target_edge_y_025_050_fraction",
         "hand_target_edge_y_050_075_fraction",
         "hand_target_edge_y_075_100_fraction",
+        "hand_contact_bce",
+        "hand_contact_mae",
+        "hand_contact_pred_mean",
+        "hand_contact_nonzero_mae",
+        "hand_contact_nonzero_pred_mean",
     ):
         assert key in aux, f"Missing hand-contact GT metric: {key}"
     # Losses must only contain cross-edge + hand contact (obj_contact removed).
@@ -270,6 +280,7 @@ def test_model_output_contract_and_dense_cross_api() -> None:
         num_obj_points = 2
         num_hand_points = 3
         point_feat_dim = 11
+        loss_hand_contact_weight = 0.005
         ptv3_repo_path = ""
         ptv3_grid_size = 0.003
         ptv3_order = ("z",)
@@ -311,16 +322,51 @@ def test_model_output_contract_and_dense_cross_api() -> None:
             "contact_edge_valid_mask": torch.tensor([[[True, True], [True, True]]]),
         }
         out = model(batch)
-        # v2.1 forward contract: only the two cross-edge streams are predicted.
+        # B shares its joint PTv3 tokens between cross-edge and heatmap heads.
         assert set(out) == {
             "pred_cross_random_logits",
             "pred_cross_random_prob",
             "pred_cross_contact_aux_logits",
             "pred_cross_contact_aux_prob",
+            "pred_hand_contact_logits",
+            "pred_hand_contact_prob",
         }
+        assert tuple(out["pred_hand_contact_logits"].shape) == (1, 3)
         assert hasattr(model, "_predict_cross_edges")
         dense = model.predict_dense_cross_for_object(batch, obj_idx=0)
         assert tuple(dense.shape) == (1, 3)
+    finally:
+        model_module.PTv3DenseBackbone = original_backbone
+
+
+def test_baseline_without_hand_heatmap_keeps_11d_ptv3_and_no_unused_head() -> None:
+    original_backbone = model_module.PTv3DenseBackbone
+
+    class FakeBackbone(torch.nn.Module):
+        def __init__(self, meta, in_channels):
+            super().__init__()
+            del meta
+            self.output_dim = 8
+            self.in_channels = in_channels
+
+        def forward(self, feat, coord, valid_mask):
+            del coord, valid_mask
+            return feat[..., :8]
+
+    class Meta:
+        num_obj_points = 2
+        num_hand_points = 3
+        point_feat_dim = 11
+        loss_hand_contact_weight = 0.0
+
+    class Cfg:
+        meta = Meta()
+
+    model_module.PTv3DenseBackbone = FakeBackbone
+    try:
+        model = model_module.StaticHOCPTv3V2(Cfg())
+        assert model.backbone.in_channels == 11
+        assert not model.use_hand_contact_head
     finally:
         model_module.PTv3DenseBackbone = original_backbone
 
