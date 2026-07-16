@@ -1,0 +1,10 @@
+_base_: tests/hand_prior_test/configs/hand_edge_residual_warmstart_probe.yaml
+
+name: correspondence_ptv3_v2_hand_edge_residual_zero_warmstart_probe
+
+meta:
+  edge_global_context_mode: zero
+
+wandb:
+  enable: false
+  tags: [correspondence, ptv3, v2, full-data, warmstart, edge-residual, zero-global, probe]

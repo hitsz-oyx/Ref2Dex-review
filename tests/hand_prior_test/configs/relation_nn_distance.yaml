@@ -1,0 +1,10 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_relation_nn_distance
+
+meta:
+  point_feat_dim: 9
+  opposite_cloud_feature_mode: nn_distance
+
+wandb:
+  tags: [correspondence, ptv3, v2, relation-ablation, relation-nn-distance]

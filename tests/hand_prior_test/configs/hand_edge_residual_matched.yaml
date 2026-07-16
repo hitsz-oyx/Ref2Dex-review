@@ -1,0 +1,13 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_hand_edge_residual_matched
+
+meta:
+  hand_context_dim: 32
+  hand_context_fusion: edge_residual
+  edge_global_context_mode: matched
+  hand_semantic_dim: 8
+  loss_hand_contact_weight: 0.005
+
+wandb:
+  tags: [correspondence, ptv3, v2, hand-context, edge-residual, matched, zero-init]

@@ -1,0 +1,10 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_relation_none
+
+meta:
+  point_feat_dim: 8
+  opposite_cloud_feature_mode: none
+
+wandb:
+  tags: [correspondence, ptv3, v2, relation-ablation, relation-none]

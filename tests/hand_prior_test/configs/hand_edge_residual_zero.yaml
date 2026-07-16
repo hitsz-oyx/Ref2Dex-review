@@ -1,0 +1,9 @@
+_base_: tests/hand_prior_test/configs/hand_edge_residual_matched.yaml
+
+name: correspondence_ptv3_v2_hand_edge_residual_zero
+
+meta:
+  edge_global_context_mode: zero
+
+wandb:
+  tags: [correspondence, ptv3, v2, hand-context, edge-residual, zero-global, capacity-control]

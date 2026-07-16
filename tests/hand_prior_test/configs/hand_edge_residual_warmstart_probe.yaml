@@ -1,0 +1,29 @@
+_base_: tests/hand_prior_test/configs/hand_edge_residual_matched.yaml
+
+name: correspondence_ptv3_v2_hand_edge_residual_warmstart_probe
+
+train:
+  warmstart_model: outputs/train/correspondence_ptv3_v2_ablation_edge_residual_baseline_600_20260716_rerun/checkpoints/epoch_000002.pt
+  warmstart_freeze_base_steps: 1000
+  lr: 3.0e-5
+  weight_decay: 1.0e-4
+  scheduler: cosine_restart
+  finetune_steps: 5000
+  min_lr: 3.0e-6
+  warmup_ratio: 0.0
+  warmup_steps: 0
+  max_steps: 5000
+  epochs: 8
+  amp: true
+  amp_dtype: bfloat16
+  log_every_steps: 250
+  eval_every_steps: 1000
+  eval_every_epochs: 9999
+  save_every_steps: null
+  save_every_epochs: 1
+  max_to_keep: 2
+  save_best_every_steps: false
+
+wandb:
+  enable: false
+  tags: [correspondence, ptv3, v2, full-data, warmstart, edge-residual, probe]
