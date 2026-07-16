@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,13 @@ class ViewerState:
     show_gt: bool = True
 
 
+@dataclass
+class PerturbationState:
+    enabled: bool = False
+    translation: np.ndarray = field(default_factory=lambda: np.zeros((3,), dtype=np.float32))
+    rotation_deg_xyz: np.ndarray = field(default_factory=lambda: np.zeros((3,), dtype=np.float32))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize correspondence_ptv3_v2 cross-edge predictions.")
     parser.add_argument("--checkpoint", required=True)
@@ -40,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame", type=int, default=0)
     parser.add_argument("--epoch", type=int, default=0)
     parser.add_argument("--marker-radius", type=float, default=0.003)
+    parser.add_argument("--perturb-translation-step", type=float, default=0.005)
+    parser.add_argument("--perturb-rotation-step-deg", type=float, default=5.0)
     parser.add_argument(
         "--vis-contact-radius",
         type=float,
@@ -65,6 +74,13 @@ def _prepare_single_batch(batch: dict[str, torch.Tensor]) -> dict[str, torch.Ten
         else:
             prepared[key] = value.unsqueeze(0)
     return prepared
+
+
+def _clone_tensor_batch(batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    cloned: dict[str, torch.Tensor] = {}
+    for key, value in batch.items():
+        cloned[key] = value.clone() if torch.is_tensor(value) else value
+    return cloned
 
 
 def _load_sequence(path: Path, runner: CorrespondencePTV3V2Runner) -> CorrStaticDatasetV2:
@@ -132,6 +148,51 @@ def _dense_cross_prob(
         return model.predict_dense_cross_for_object(prepared, obj_idx).squeeze(0).detach().cpu()
 
 
+def _axis_rotation_matrix(axis: int, angle_rad: float) -> torch.Tensor:
+    c = float(np.cos(angle_rad))
+    s = float(np.sin(angle_rad))
+    if axis == 0:
+        matrix = ((1.0, 0.0, 0.0), (0.0, c, -s), (0.0, s, c))
+    elif axis == 1:
+        matrix = ((c, 0.0, s), (0.0, 1.0, 0.0), (-s, 0.0, c))
+    elif axis == 2:
+        matrix = ((c, -s, 0.0), (s, c, 0.0), (0.0, 0.0, 1.0))
+    else:
+        raise ValueError(f"axis must be 0/1/2, got {axis}.")
+    return torch.tensor(matrix, dtype=torch.float32)
+
+
+def _compose_rotation_deg_xyz(rotation_deg_xyz: np.ndarray) -> torch.Tensor:
+    rotation = torch.eye(3, dtype=torch.float32)
+    for axis, angle_deg in enumerate(np.asarray(rotation_deg_xyz, dtype=np.float32)):
+        angle_rad = float(np.deg2rad(float(angle_deg)))
+        rotation = _axis_rotation_matrix(axis, angle_rad) @ rotation
+    return rotation
+
+
+def _apply_object_perturbation(
+    batch: dict[str, torch.Tensor],
+    perturbation: PerturbationState,
+) -> dict[str, torch.Tensor]:
+    if not perturbation.enabled:
+        return batch
+
+    translation = torch.from_numpy(np.asarray(perturbation.translation, dtype=np.float32))
+    rotation = _compose_rotation_deg_xyz(perturbation.rotation_deg_xyz)
+    num_obj = int(batch["num_obj_points"])
+    out = _clone_tensor_batch(batch)
+    for point_key, normal_key in (("points", "normals"), ("gt_points", "gt_normals")):
+        points = out[point_key].float().clone()
+        normals = out[normal_key].float().clone()
+        points[:num_obj] = points[:num_obj] @ rotation.T + translation
+        normals[:num_obj] = normals[:num_obj] @ rotation.T
+        norms = torch.linalg.norm(normals[:num_obj], dim=-1, keepdim=True).clamp_min(1e-8)
+        normals[:num_obj] = normals[:num_obj] / norms
+        out[point_key] = points
+        out[normal_key] = normals
+    return out
+
+
 class InteractiveViewer:
     def __init__(
         self,
@@ -141,12 +202,19 @@ class InteractiveViewer:
         state: ViewerState,
         marker_radius: float,
         vis_contact_radius: float,
+        perturb_translation_step: float,
+        perturb_rotation_step_deg: float,
     ) -> None:
         self.runner = runner
         self.dataset = dataset
         self.state = state
         self.marker_radius = float(marker_radius)
         self.vis_contact_radius = float(vis_contact_radius)
+        self.perturb_translation_step = float(perturb_translation_step)
+        self.perturb_rotation_step_deg = float(perturb_rotation_step_deg)
+        self.perturbation = PerturbationState()
+        self.show_reference_gt = False
+        self.base_batch: dict[str, torch.Tensor] | None = None
         self.current_batch: dict[str, torch.Tensor] | None = None
         self.selected_obj_idx = 0
         self.vis = None
@@ -155,11 +223,13 @@ class InteractiveViewer:
         self.marker = None
 
     def refresh_cache(self) -> None:
-        self.current_batch = _sample(self.dataset, self.state.frame_idx, self.state.epoch)
+        self.base_batch = _sample(self.dataset, self.state.frame_idx, self.state.epoch)
+        self.current_batch = _apply_object_perturbation(self.base_batch, self.perturbation)
         self.selected_obj_idx = _select_valid_obj(self.current_batch, self.state.selected_rank)
 
     def _build_scene_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         assert self.current_batch is not None
+        assert self.base_batch is not None
         batch = self.current_batch
         num_obj = int(batch["num_obj_points"])
         num_hand = int(batch["num_hand_points"])
@@ -171,8 +241,9 @@ class InteractiveViewer:
         obj_colors = np.broadcast_to(OBJ_GRAY[None, :], (num_obj, 3)).copy()
         if self.state.show_gt:
             hand_points = gt_points[num_obj : num_obj + num_hand]
+            gt_color_batch = self.base_batch if (self.perturbation.enabled and self.show_reference_gt) else batch
             hand_prob = _gt_cross_prob(
-                batch, self.selected_obj_idx, self.vis_contact_radius
+                gt_color_batch, self.selected_obj_idx, self.vis_contact_radius
             ).numpy()
         else:
             hand_points = noisy_points[num_obj : num_obj + num_hand]
@@ -213,9 +284,23 @@ class InteractiveViewer:
 
     def _print_status(self) -> None:
         mode = "GT" if self.state.show_gt else "Eval"
+        perturb_mode = "Perturb" if self.perturbation.enabled else "Base"
+        if not self.state.show_gt:
+            gt_color_mode = "N/A"
+        else:
+            gt_color_mode = (
+                "RefGT"
+                if (self.perturbation.enabled and self.show_reference_gt)
+                else "CurrentGT"
+            )
+        translation = np.asarray(self.perturbation.translation, dtype=np.float32)
+        rotation = np.asarray(self.perturbation.rotation_deg_xyz, dtype=np.float32)
         print(
             f"frame={self.state.frame_idx} epoch={self.state.epoch} mode={mode} "
-            f"selected_obj={self.selected_obj_idx}"
+            f"selected_obj={self.selected_obj_idx} scene={perturb_mode} "
+            f"gt_color={gt_color_mode} "
+            f"t(mm)=({translation[0] * 1e3:+.1f},{translation[1] * 1e3:+.1f},{translation[2] * 1e3:+.1f}) "
+            f"r(deg)=({rotation[0]:+.1f},{rotation[1]:+.1f},{rotation[2]:+.1f})"
         )
 
     def _refresh_scene(self, *, reset_view: bool = False) -> bool:
@@ -250,6 +335,46 @@ class InteractiveViewer:
 
     def _reset_camera(self, _vis):
         return self._refresh_scene(reset_view=True)
+
+    def _toggle_perturbation(self, _vis):
+        self.perturbation.enabled = not self.perturbation.enabled
+        if not self.perturbation.enabled:
+            self.show_reference_gt = False
+        return self._refresh_scene()
+
+    def _reset_perturbation(self, _vis):
+        self.perturbation.translation[:] = 0.0
+        self.perturbation.rotation_deg_xyz[:] = 0.0
+        self.perturbation.enabled = False
+        self.show_reference_gt = False
+        return self._refresh_scene()
+
+    def _toggle_reference_gt(self, _vis):
+        if not self.perturbation.enabled:
+            print("Reference GT is only available in perturbation mode. Press P to enable it.")
+            return False
+        self.show_reference_gt = not self.show_reference_gt
+        return self._refresh_scene()
+
+    def _translate_perturbation(self, axis: int, delta: float):
+        def callback(_vis):
+            if not self.perturbation.enabled:
+                print("Perturbation mode is off. Press P to enable it.")
+                return False
+            self.perturbation.translation[axis] += float(delta)
+            return self._refresh_scene()
+
+        return callback
+
+    def _rotate_perturbation(self, axis: int, delta_deg: float):
+        def callback(_vis):
+            if not self.perturbation.enabled:
+                print("Perturbation mode is off. Press P to enable it.")
+                return False
+            self.perturbation.rotation_deg_xyz[axis] += float(delta_deg)
+            return self._refresh_scene()
+
+        return callback
 
     def run(self) -> None:
         import open3d as o3d
@@ -286,12 +411,32 @@ class InteractiveViewer:
             ord("G"): self._toggle_gt_eval,
             ord(","): self._change_selected(-1),
             ord("."): self._change_selected(+1),
+            ord("P"): self._toggle_perturbation,
+            ord("F"): self._toggle_reference_gt,
+            ord("0"): self._reset_perturbation,
+            ord("J"): self._translate_perturbation(0, -self.perturb_translation_step),
+            ord("L"): self._translate_perturbation(0, +self.perturb_translation_step),
+            ord("I"): self._translate_perturbation(1, +self.perturb_translation_step),
+            ord("K"): self._translate_perturbation(1, -self.perturb_translation_step),
+            ord("U"): self._translate_perturbation(2, +self.perturb_translation_step),
+            ord("O"): self._translate_perturbation(2, -self.perturb_translation_step),
+            ord("Z"): self._rotate_perturbation(0, -self.perturb_rotation_step_deg),
+            ord("X"): self._rotate_perturbation(0, +self.perturb_rotation_step_deg),
+            ord("C"): self._rotate_perturbation(1, -self.perturb_rotation_step_deg),
+            ord("V"): self._rotate_perturbation(1, +self.perturb_rotation_step_deg),
+            ord("B"): self._rotate_perturbation(2, -self.perturb_rotation_step_deg),
+            ord("N"): self._rotate_perturbation(2, +self.perturb_rotation_step_deg),
             ord("R"): self._reset_camera,
         }
         for key, callback in keymap.items():
             vis.register_key_callback(key, callback)
 
-        print("A/D or arrows: frame, [/]: epoch, G: GT/Eval, ,/.: object, R: reset")
+        print(
+            "A/D or arrows: frame, [/]: epoch, G: GT/Eval, ,/.: object, "
+            "P: perturb on/off, F: ref GT colors, 0: clear perturb, "
+            "J/L: tx, I/K: ty, U/O: tz, "
+            "Z/X: rx, C/V: ry, B/N: rz, R: reset camera"
+        )
         self._print_status()
         vis.run()
         vis.destroy_window()
@@ -337,6 +482,8 @@ def main() -> None:
             state=state,
             marker_radius=args.marker_radius,
             vis_contact_radius=vis_contact_radius,
+            perturb_translation_step=args.perturb_translation_step,
+            perturb_rotation_step_deg=args.perturb_rotation_step_deg,
         )
         viewer.run()
     except ImportError as exc:
