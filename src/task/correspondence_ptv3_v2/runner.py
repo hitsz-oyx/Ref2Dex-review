@@ -126,16 +126,18 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         diagnostic_every = max(int(getattr(self.cfg.train, "diagnostic_every_steps", 20)), 1)
         compute_diagnostics = mode == "eval" or ((self.global_step + 1) % diagnostic_every == 0)
         # The pseudo target is a nuisance baseline made from the perturbed
-        # input geometry. It is deliberately built only for validation, so it
-        # cannot become an implicit training signal or add train-step cost.
-        if mode == "eval":
+        # input geometry. It is built only for diagnostics: every validation
+        # batch and the sparse training diagnostic steps. It never becomes a
+        # loss or an implicit training signal.
+        record_pseudo_recovery = compute_diagnostics
+        if record_pseudo_recovery:
             with torch.no_grad():
                 self._build_random_edge_pseudo_target(batch)
         losses, aux_metrics = self._compute_losses(
             preds,
             batch,
             compute_diagnostics=compute_diagnostics,
-            record_pseudo_recovery=mode == "eval",
+            record_pseudo_recovery=record_pseudo_recovery,
         )
         total_loss = sum(losses.values())
         metrics: dict[str, float | torch.Tensor | MetricStat] = {**losses, **aux_metrics}
