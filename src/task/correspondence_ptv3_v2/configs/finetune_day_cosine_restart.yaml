@@ -1,0 +1,67 @@
+_base_: src.task.correspondence_ptv3_v2.config:Config
+
+# ``max_steps`` is an absolute stop step. Resume at step 47670 and run exactly
+# 107000 new optimizer updates, ending at 154670.
+name: correspondence_ptv3_v2_finetune_day_cosine_restart
+
+meta:
+  point_feat_dim: 11
+  loss_hand_contact_weight: 0.0
+  loss_cross_edge_weight: 1.0
+  loss_contact_aux_weight: 0.05
+  contact_supervision_quotas: [16, 16, 16, 16]
+  contact_supervision_hard_negative_quota: 16
+  contact_supervision_hard_negative_distance_range: [0.02, 0.03]
+  contact_radius: 0.02
+  quality_focal_beta: 2.0
+  coordinate_frame: hand_root
+  obj_rot_std_deg: 10.0
+  obj_trans_std: 0.01
+  obj_perturb_prob: 1.0
+  val_obj_perturb_prob: 1.0
+
+data:
+  train_path: processed_data/generated/stage3/grab_initonly_4096_ds4
+  batch_size: 64
+  val_batch_size: 32
+  num_workers: 4
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+train:
+  resume: outputs/train/correspondence_ptv3_v2_lr5e-5_resume2ep_20260715_080418/checkpoints/epoch_000021.pt
+  output_dir: outputs/train/correspondence_ptv3_v2_finetune_day_cosine_restart
+  max_steps: 154670
+  epochs: 250
+  lr: 5.0e-5
+  scheduler: cosine_restart
+  finetune_steps: 107000
+  min_lr: 5.0e-6
+  warmup_ratio: 0.0
+  warmup_steps: 0
+  eval_every_epochs: 1
+  save_every_epochs: 1
+  max_to_keep: 8
+  optimizer: adamw
+  weight_decay: 1.0e-4
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 20
+  diagnostic_every_steps: 20
+  metric_for_best: val_clean/cross_edge_random_qfl
+  lower_is_better: true
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  name: correspondence_ptv3_v2_finetune_day_cosine_restart
+  tags: [correspondence, ptv3, v2, finetune, cosine-restart, lr5e-5, one-day]

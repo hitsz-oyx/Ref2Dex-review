@@ -87,6 +87,10 @@ class TaskConfig(BaseConfig):
         scheduler = "cosine"
         warmup_ratio = None
         warmup_steps = 0
+        # ``cosine_restart`` starts a fresh fine-tuning cosine phase after a
+        # checkpoint from another scheduler. ``max_steps`` stays absolute.
+        finetune_steps = None
+        min_lr = None
 
         # ========== 梯度裁剪和混合精度 ==========
         grad_clip_norm = 1.0
