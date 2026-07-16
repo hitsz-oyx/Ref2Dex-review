@@ -1,0 +1,7 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+name: correspondence_ptv3_v2_hand_context_late_gated
+meta:
+  hand_context_dim: 32
+  hand_context_fusion: late_gated
+  hand_semantic_dim: 8
+  loss_hand_contact_weight: 0.005
