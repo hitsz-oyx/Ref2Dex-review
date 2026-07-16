@@ -1,0 +1,58 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+# Fresh, full-GRAB reference run.  With the same full data and two 4090s as
+# run 20260715_120032, len(train_loader)=2270 and this is 113,500 updates.
+# Do not set max_steps: ``epochs: 50`` remains correct if data size changes.
+name: correspondence_ptv3_v2_full_grab_50ep_hand_heatmap
+
+data:
+  train_path: processed_data/generated/stage3/grab_initonly_4096_ds4
+  batch_size: 64
+  val_batch_size: 32
+  num_workers: 4
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+train:
+  optimizer: adamw
+  # Keep the rate used by the validated B smoke experiments.  The previous
+  # 250-epoch cosine schedule barely decayed during its first 20 epochs;
+  # this schedule is instead resolved against the intended 50-epoch budget.
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  # One epoch of warm-up for the 50-epoch schedule (about 2,270 updates on
+  # the current two-GPU full-GRAB setup), not 3% of a 250-epoch horizon.
+  warmup_ratio: 0.02
+  warmup_steps: 0
+  epochs: 50
+  amp: false
+  grad_clip_norm: 1.0
+  # Keep recovery metrics and detailed diagnostics aligned, while avoiding
+  # very large local/W&B logs on a day-scale run.
+  log_every_steps: 100
+  diagnostic_every_steps: 100
+  eval_every_epochs: 1
+  # A checkpoint is about 1.1 GB.  Keep the latest four periodic candidates
+  # plus best/latest pointers instead of filling the disk with 50 snapshots.
+  save_every_epochs: 5
+  max_to_keep: 4
+  # This remains a checkpoint pointer for automation only.  Final selection
+  # must compare the full clean/perturbed, nonzero/strong, zero-tail, and
+  # pseudo-recovery metric panel in W&B.
+  metric_for_best: val_clean/cross_edge_random_qfl
+  lower_is_better: true
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, v2, full-grab, 50ep, hand-heatmap, lambda005, recovery-metrics]

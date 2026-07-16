@@ -22,8 +22,10 @@ meta:
   # canonicalization already eliminates scene-level SE(3) degrees of freedom.
   loss_cross_edge_weight: 1.0
   loss_contact_aux_weight: 0.05
-  # A: no dense hand-contact loss.  B enables it in hand_heatmap.yaml.
-  loss_hand_contact_weight: 0.0
+  # B: a weak object-conditioned dense hand-contact signal.  This is the
+  # validated production default; it remains much smaller than the sampled
+  # random-edge objective despite the dense number of hand-point terms.
+  loss_hand_contact_weight: 0.005
 
 data:
   batch_size: 8
