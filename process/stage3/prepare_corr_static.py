@@ -15,10 +15,10 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STAGE2_ROOT = ROOT / "processed_data" / "generated" / "stage2" / "grab_initonly_4096"
 DEFAULT_OUTPUT_ROOT = (
-    ROOT / "processed_data" / "generated" / "stage3" / "grab_initonly_4096"
+    ROOT / "processed_data" / "generated" / "stage3" / "grab_initonly_4096_v2"
 )
-SCHEMA_NAME = "train_corr_static"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_NAME = "train_corr_static_v2"
+SCHEMA_VERSION = "2.0.0"
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -91,30 +91,24 @@ def _normals_world_to_hand_root(normals: np.ndarray, hand_root_poses: np.ndarray
     return (result / np.clip(norm, 1e-8, None)).astype(np.float32)
 
 
-def _compute_candidate_knn(
+def _compute_contact_statistics(
     obj_points: np.ndarray,
     hand_points: np.ndarray,
     *,
-    k_cross: int,
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute KNN, candidate mask and per-side min distance for one batch.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute the only clean distance statistics consumed by v2.
 
-    Distances are frame-invariant (R^3 rigid SE(3) preserves distances), so the
-    hand-side min distance is identical under object and hand_root frames.
+    obj_candidate_mask_5cm selects the runtime object-point pool.
+    hand_to_obj_min_dist provides the dense hand-contact target and must use
+    the complete object pool, not the runtime 512-point sample. Both values
+    are invariant under the Stage 3 rigid frame transform.
     """
     num_frames, num_obj, _ = obj_points.shape
     num_hand = hand_points.shape[1]
-    if k_cross <= 0 or k_cross > num_hand:
-        raise ValueError(f"k_cross must be in [1, {num_hand}], got {k_cross}")
-
-    min_dist = np.empty((num_frames, num_obj), dtype=np.float32)
     candidate_mask = np.empty((num_frames, num_obj), dtype=bool)
-    knn_idx = np.full((num_frames, num_obj, k_cross), -1, dtype=np.int16)
-    # hand -> obj min distance, computed over the full obj pool so that it
-    # does not depend on the 512 obj-point sampling done inside the dataset.
     hand_to_obj_min_dist = np.empty((num_frames, num_hand), dtype=np.float32)
 
     batch_size = max(1, int(frame_batch_size))
@@ -123,20 +117,13 @@ def _compute_candidate_knn(
         obj = torch.from_numpy(obj_points[start:end]).to(device=device, dtype=torch.float32)
         hand = torch.from_numpy(hand_points[start:end]).to(device=device, dtype=torch.float32)
         dist = torch.cdist(obj, hand)  # (b, N_obj, N_hand)
-        # obj -> hand
-        knn_dist, idx = torch.topk(dist, k=k_cross, dim=-1, largest=False, sorted=True)
-        batch_min = knn_dist[..., 0]
-        batch_candidate = batch_min <= float(candidate_threshold)
-        idx = torch.where(batch_candidate.unsqueeze(-1), idx, torch.full_like(idx, -1))
-        # hand -> obj (full obj pool, frame-invariant)
-        hand_min = dist.min(dim=1).values
-        min_dist[start:end] = batch_min.cpu().numpy().astype(np.float32)
+        batch_candidate = dist.amin(dim=-1) <= float(candidate_threshold)
+        hand_min = dist.amin(dim=1)
         candidate_mask[start:end] = batch_candidate.cpu().numpy()
-        knn_idx[start:end] = idx.cpu().numpy().astype(np.int16)
         hand_to_obj_min_dist[start:end] = hand_min.cpu().numpy().astype(np.float32)
-        del dist, knn_dist, idx, obj, hand, hand_min
+        del dist, obj, hand, hand_min
 
-    return min_dist, candidate_mask, knn_idx, hand_to_obj_min_dist
+    return candidate_mask, hand_to_obj_min_dist
 
 
 def _validate_stage2_geometry(
@@ -150,14 +137,8 @@ def _validate_stage2_geometry(
     expected = {
         "obj_points_world": (num_frames, num_obj_pool, 3),
         "obj_normals_world": (num_frames, num_obj_pool, 3),
-        "obj_root_pose": (num_frames, 4, 4),
         "hand_points_world": (num_frames, num_hand_points, 3),
         "hand_normals_world": (num_frames, num_hand_points, 3),
-        "obj_point_id": (num_obj_pool,),
-        "hand_point_id": (num_hand_points,),
-        "hand_cano_points": (num_hand_points, 3),
-        "hand_finger_id": (num_hand_points,),
-        "hand_region_id": (num_hand_points,),
     }
     for key, shape in expected.items():
         value = _require_array(payload, key)
@@ -171,29 +152,19 @@ def _validate_stage2_geometry(
 def build_stage3_sequence(
     payload: dict[str, Any],
     *,
-    source_path: Path,
-    stage2_root: Path,
     num_obj_pool: int,
     num_hand_points: int,
-    k_cross: int,
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
     mirror_left_to_right: bool,
     coordinate_frame: str = "hand_root",
 ) -> dict[str, np.ndarray]:
-    """Build one Stage 3 sample.
+    """Build one minimal Stage 3 sample for correspondence_ptv3_v2.
 
-    ``coordinate_frame`` selects the canonical frame the model sees:
-      - ``"object"``: points are transformed by ``obj_root_pose`` (object
-        root at origin). Used for legacy Stage 3 data.
-      - ``"hand_root"`` (default): points are transformed by
-        ``hand_root_pose`` (MANO wrist at origin, orientation = MANO
-        ``global_orient``). Requires the Stage 2 payload to contain
-        ``hand_root_pose``; raises ``KeyError`` otherwise.
-
-    Distance / KNN fields (``obj_to_hand_min_dist``, ``obj_candidate_mask_5cm``,
-    ``gt_obj_to_hand_knn_idx``) are frame-invariant and reused as-is.
+    This schema deliberately omits legacy KNN, point-id, canonical-hand,
+    region/finger, pose, and per-file provenance fields. It is not compatible
+    with correspondence_ptv3 or the legacy render scripts.
     """
     if coordinate_frame not in {"object", "hand_root"}:
         raise ValueError(
@@ -204,8 +175,8 @@ def build_stage3_sequence(
         num_obj_pool=num_obj_pool,
         num_hand_points=num_hand_points,
     )
-    poses = _require_array(payload, "obj_root_pose", ndim=3, dtype=np.float32)
     if coordinate_frame == "object":
+        poses = _require_array(payload, "obj_root_pose", ndim=3, dtype=np.float32)
         obj_points = _points_world_to_obj(
             _require_array(payload, "obj_points_world", ndim=3, dtype=np.float32),
             poses,
@@ -222,8 +193,6 @@ def build_stage3_sequence(
             _require_array(payload, "hand_normals_world", ndim=3, dtype=np.float32),
             poses,
         )
-        frame_pose_field = "T_world_from_obj"
-        frame_pose_value = poses
     else:  # "hand_root"
         if "hand_root_pose" not in payload:
             raise KeyError(
@@ -250,54 +219,33 @@ def build_stage3_sequence(
             _require_array(payload, "hand_normals_world", ndim=3, dtype=np.float32),
             hand_root_poses,
         )
-        frame_pose_field = "T_world_from_hand_root"
-        frame_pose_value = hand_root_poses
-    hand_cano_points = _require_array(payload, "hand_cano_points", ndim=2, dtype=np.float32).copy()
     side = str(payload["side"])
     if mirror_left_to_right and side == "left":
         obj_points[..., 0] *= -1
         obj_normals[..., 0] *= -1
         hand_points[..., 0] *= -1
         hand_normals[..., 0] *= -1
-        hand_cano_points[..., 0] *= -1
 
-    min_dist, candidate_mask, clean_knn_idx, hand_to_obj_min = _compute_candidate_knn(
+    candidate_mask, hand_to_obj_min = _compute_contact_statistics(
         obj_points,
         hand_points,
-        k_cross=k_cross,
         candidate_threshold=candidate_threshold,
         frame_batch_size=frame_batch_size,
         device=device,
     )
-    source_rel = source_path.resolve().relative_to(stage2_root.resolve()).as_posix()
 
     out: dict[str, np.ndarray] = {
         "schema_name": np.asarray(SCHEMA_NAME),
         "schema_version": np.asarray(SCHEMA_VERSION),
-        "source_stage2_file": np.asarray(source_rel),
-        "processing_mode": np.asarray(str(payload["processing_mode"])),
-        "dataset_name": np.asarray(str(payload["dataset_name"])),
         "seq_id": np.asarray(str(payload["seq_id"])),
-        "subject_id": np.asarray(str(payload["subject_id"])),
-        "seq_name": np.asarray(str(payload["seq_name"])),
-        "object_name": np.asarray(str(payload["object_name"])),
         "side": np.asarray(side),
         "raw_frame_id": _require_array(payload, "raw_frame_id", ndim=1, dtype=np.int32),
-        "stage2_frame_idx": _require_array(payload, "stage2_frame_idx", ndim=1, dtype=np.int32),
         "obj_points": obj_points,
         "obj_normals": obj_normals,
-        "obj_point_id": _require_array(payload, "obj_point_id", ndim=1, dtype=np.int32),
         "hand_points": hand_points,
         "hand_normals": hand_normals,
-        "hand_point_id": _require_array(payload, "hand_point_id", ndim=1, dtype=np.int32),
-        "hand_cano_points": hand_cano_points,
-        "hand_finger_id": _require_array(payload, "hand_finger_id", ndim=1, dtype=np.int32),
-        "hand_region_id": _require_array(payload, "hand_region_id", ndim=1, dtype=np.int32),
-        "obj_to_hand_min_dist": min_dist,
         "hand_to_obj_min_dist": hand_to_obj_min,
         "obj_candidate_mask_5cm": candidate_mask,
-        "gt_obj_to_hand_knn_idx": clean_knn_idx,
-        frame_pose_field: frame_pose_value,
         "coordinate_frame": np.asarray(coordinate_frame),
     }
     return out
@@ -336,17 +284,24 @@ def _write_meta(
         "num_obj_pool": int(args.num_obj_pool),
         "num_obj_train": int(args.num_obj_train),
         "num_hand_points": int(args.num_hand_points),
-        "k_cross": int(args.k_cross),
         "candidate_threshold": float(args.candidate_threshold),
         "padding_policy": "pad_invalid_without_replacement",
         "epoch_sampling": True,
         "mirror_left_to_right": bool(args.mirror_left_to_right),
-        "knn_storage": {
-            "field": "gt_obj_to_hand_knn_idx",
-            "dtype": "int16",
-            "non_candidate_value": -1,
-            "distance_saved": False,
-        },
+        "fields": [
+            "schema_name",
+            "schema_version",
+            "seq_id",
+            "side",
+            "raw_frame_id",
+            "obj_points",
+            "obj_normals",
+            "hand_points",
+            "hand_normals",
+            "hand_to_obj_min_dist",
+            "obj_candidate_mask_5cm",
+            "coordinate_frame",
+        ],
         "stats": stats,
     }
     output_root.mkdir(parents=True, exist_ok=True)
@@ -363,7 +318,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-obj-pool", type=int, default=4096)
     parser.add_argument("--num-obj-train", type=int, default=512)
     parser.add_argument("--num-hand-points", type=int, default=1538)
-    parser.add_argument("--k-cross", type=int, default=32)
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
     parser.add_argument("--frame-batch-size", type=int, default=1)
     parser.add_argument("--device", default="auto")
@@ -379,7 +333,7 @@ def parse_args() -> argparse.Namespace:
             "'hand_root' (default): transformed by hand_root_pose (MANO wrist "
             "at origin, orientation = MANO global_orient); requires Stage 2 "
             "payload to contain hand_root_pose. 'object': transformed by "
-            "obj_root_pose (legacy)."
+            "obj_root_pose."
         ),
     )
     return parser.parse_args()
@@ -407,11 +361,8 @@ def main() -> None:
             payload = _load_stage2(source_path)
             stage3 = build_stage3_sequence(
                 payload,
-                source_path=source_path,
-                stage2_root=stage2_root,
                 num_obj_pool=args.num_obj_pool,
                 num_hand_points=args.num_hand_points,
-                k_cross=args.k_cross,
                 candidate_threshold=args.candidate_threshold,
                 frame_batch_size=args.frame_batch_size,
                 device=device,

@@ -1,5 +1,34 @@
 from __future__ import annotations
 
+# =============================================================================
+# 交互式可视化脚本 — 按键说明
+# =============================================================================
+# 通用操作
+#   A / D               上一帧 / 下一帧  (← / → 方向键亦可)
+#   [ / ]               上一 epoch / 下一 epoch
+#   H                   切换 CrossEdge / HandHeatmap 主模式
+#   G                   在当前主模式内切换 GT 与模型 Eval 概率的着色
+#   ,  / .              切换选中的物体 (仅 CrossEdge 着色使用)
+#   R                   重置相机视角
+#
+# 扰动模式 (Object Perturbation)
+#   P                   开启 / 关闭扰动模式 (开启后物体位姿/姿态会按
+#                       perturbation 平移旋转渲染)
+#   0                   清零扰动 (translation/rotation 归零并关闭扰动)
+#   F                   在扰动模式下,切换"用参考 GT(原始未扰动)着
+#                       色手部"和"用当前伪 GT(已扰动)着色手部"
+#
+# 平移扰动 (扰动开启时有效,单位: 米/按键)
+#   J / L               物体沿 X 轴 -/+  (左/右)
+#   I / K               物体沿 Y 轴 +/-   (上/下)
+#   U / O               物体沿 Z 轴 +/-   (前/后)
+#
+# 旋转扰动 (扰动开启时有效,单位: 度/按键)
+#   Z / X               物体绕 X 轴 -/+
+#   C / V               物体绕 Y 轴 -/+
+#   B / N               物体绕 Z 轴 -/+
+# =============================================================================
+
 import argparse
 import os
 from dataclasses import dataclass, field
@@ -21,6 +50,8 @@ os.environ.setdefault("DISPLAY", "localhost:10.0")
 OBJ_GRAY = np.asarray([0.62, 0.62, 0.66], dtype=np.float64)
 HAND_CROSS_LOW = np.asarray([0.18, 0.18, 0.22], dtype=np.float64)
 HAND_CROSS_HIGH = np.asarray([0.98, 0.16, 0.12], dtype=np.float64)
+HAND_HEATMAP_LOW = np.asarray([0.07, 0.13, 0.24], dtype=np.float64)
+HAND_HEATMAP_HIGH = np.asarray([0.72, 0.28, 0.96], dtype=np.float64)
 MARKER_COLOR = np.asarray([1.0, 0.95, 0.15], dtype=np.float64)
 
 
@@ -30,6 +61,7 @@ class ViewerState:
     epoch: int = 0
     selected_rank: int = 0
     show_gt: bool = True
+    display_mode: str = "cross_edge"
 
 
 @dataclass
@@ -40,7 +72,9 @@ class PerturbationState:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Visualize correspondence_ptv3_v2 cross-edge predictions.")
+    parser = argparse.ArgumentParser(
+        description="Visualize correspondence_ptv3_v2 CrossEdge and HandHeatmap predictions."
+    )
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True)
     parser.add_argument("--device", default="auto")
@@ -111,9 +145,17 @@ def _select_valid_obj(batch: dict[str, torch.Tensor], rank: int) -> int:
     return int(valid_idx[int(rank) % int(valid_idx.numel())].item())
 
 
-def _prob_to_cross_colors(prob: np.ndarray) -> np.ndarray:
+def _prob_to_colors(prob: np.ndarray, low: np.ndarray, high: np.ndarray) -> np.ndarray:
     alpha = np.clip(prob.astype(np.float64), 0.0, 1.0)[:, None]
-    return HAND_CROSS_LOW[None, :] * (1.0 - alpha) + HAND_CROSS_HIGH[None, :] * alpha
+    return low[None, :] * (1.0 - alpha) + high[None, :] * alpha
+
+
+def _prob_to_cross_colors(prob: np.ndarray) -> np.ndarray:
+    return _prob_to_colors(prob, HAND_CROSS_LOW, HAND_CROSS_HIGH)
+
+
+def _prob_to_hand_heatmap_colors(prob: np.ndarray) -> np.ndarray:
+    return _prob_to_colors(prob, HAND_HEATMAP_LOW, HAND_HEATMAP_HIGH)
 
 
 def _gt_cross_prob(batch: dict[str, torch.Tensor], obj_idx: int, contact_radius: float) -> torch.Tensor:
@@ -146,6 +188,58 @@ def _dense_cross_prob(
         raise RuntimeError("Runner model is not initialized.")
     with torch.no_grad():
         return model.predict_dense_cross_for_object(prepared, obj_idx).squeeze(0).detach().cpu()
+
+
+def _reference_hand_heatmap_prob(
+    batch: dict[str, torch.Tensor],
+    contact_radius: float,
+) -> torch.Tensor:
+    """Return the dense clean hand-contact target used by the training loss."""
+    return contact_target_from_distance(
+        batch["hand_min_dist"].float(), contact_radius=contact_radius
+    ).cpu()
+
+
+def _current_pseudo_hand_heatmap_prob(
+    batch: dict[str, torch.Tensor],
+    contact_radius: float,
+) -> torch.Tensor:
+    """Build the current-scene pseudo target from the visualizer input points.
+
+    This intentionally uses the perturbed object points that the model receives.
+    Unlike ``hand_min_dist`` (computed from the full clean object pool), it is a
+    sampled-object pseudo target and is only used to inspect perturbation behavior.
+    """
+    num_obj = int(batch["num_obj_points"])
+    num_hand = int(batch["num_hand_points"])
+    points = batch["points"].float()
+    valid = batch["runtime_obj_valid_mask"].bool()
+    hand_points = points[num_obj : num_obj + num_hand]
+    obj_points = points[:num_obj][valid]
+    if obj_points.numel() == 0:
+        return torch.zeros((num_hand,), dtype=hand_points.dtype)
+    min_dist = torch.cdist(hand_points, obj_points).amin(dim=-1)
+    return contact_target_from_distance(min_dist, contact_radius=contact_radius).cpu()
+
+
+def _predict_hand_heatmap_prob(
+    runner: CorrespondencePTV3V2Runner,
+    batch: dict[str, torch.Tensor],
+) -> torch.Tensor:
+    """Return only the dedicated dense hand-contact head prediction."""
+    prediction = _predict_batch(runner, batch)
+    if "pred_hand_contact_prob" not in prediction:
+        raise RuntimeError(
+            "This checkpoint has no dedicated hand-contact head. "
+            "Use a checkpoint trained with meta.loss_hand_contact_weight > 0."
+        )
+    probability = prediction["pred_hand_contact_prob"]
+    if probability.ndim != 2 or probability.shape[0] != 1:
+        raise ValueError(
+            "Expected pred_hand_contact_prob with shape [1, num_hand_points], "
+            f"got {tuple(probability.shape)}."
+        )
+    return probability.squeeze(0)
 
 
 def _axis_rotation_matrix(axis: int, angle_rad: float) -> torch.Tensor:
@@ -227,6 +321,17 @@ class InteractiveViewer:
         self.current_batch = _apply_object_perturbation(self.base_batch, self.perturbation)
         self.selected_obj_idx = _select_valid_obj(self.current_batch, self.state.selected_rank)
 
+    def _mode_label(self) -> str:
+        if self.state.display_mode == "cross_edge":
+            return "CrossEdge"
+        if self.state.display_mode == "hand_heatmap":
+            return "HandHeatmap"
+        raise ValueError(f"Unknown display mode: {self.state.display_mode!r}.")
+
+    def _has_hand_heatmap_head(self) -> bool:
+        model = self.runner.model
+        return bool(model is not None and getattr(model, "use_hand_contact_head", False))
+
     def _build_scene_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         assert self.current_batch is not None
         assert self.base_batch is not None
@@ -239,17 +344,36 @@ class InteractiveViewer:
 
         obj_points = gt_points[:num_obj]
         obj_colors = np.broadcast_to(OBJ_GRAY[None, :], (num_obj, 3)).copy()
-        if self.state.show_gt:
-            hand_points = gt_points[num_obj : num_obj + num_hand]
-            gt_color_batch = self.base_batch if (self.perturbation.enabled and self.show_reference_gt) else batch
-            hand_prob = _gt_cross_prob(
-                gt_color_batch, self.selected_obj_idx, self.vis_contact_radius
-            ).numpy()
+        if self.state.display_mode == "cross_edge":
+            if self.state.show_gt:
+                hand_points = gt_points[num_obj : num_obj + num_hand]
+                gt_color_batch = (
+                    self.base_batch
+                    if (self.perturbation.enabled and self.show_reference_gt)
+                    else batch
+                )
+                hand_prob = _gt_cross_prob(
+                    gt_color_batch, self.selected_obj_idx, self.vis_contact_radius
+                ).numpy()
+            else:
+                hand_points = noisy_points[num_obj : num_obj + num_hand]
+                hand_prob = _dense_cross_prob(self.runner, batch, self.selected_obj_idx).numpy()
+            hand_colors = _prob_to_cross_colors(hand_prob)
         else:
-            hand_points = noisy_points[num_obj : num_obj + num_hand]
-            hand_prob = _dense_cross_prob(self.runner, batch, self.selected_obj_idx).numpy()
-        hand_colors = _prob_to_cross_colors(hand_prob)
-
+            if self.state.show_gt:
+                hand_points = gt_points[num_obj : num_obj + num_hand]
+                if self.perturbation.enabled and not self.show_reference_gt:
+                    hand_prob = _current_pseudo_hand_heatmap_prob(
+                        batch, self.vis_contact_radius
+                    ).numpy()
+                else:
+                    hand_prob = _reference_hand_heatmap_prob(
+                        self.base_batch, self.vis_contact_radius
+                    ).numpy()
+            else:
+                hand_points = noisy_points[num_obj : num_obj + num_hand]
+                hand_prob = _predict_hand_heatmap_prob(self.runner, batch).numpy()
+            hand_colors = _prob_to_hand_heatmap_colors(hand_prob)
         obj_points = obj_points.copy()
         obj_points[~obj_valid] = 0.0
         obj_colors = obj_colors.copy()
@@ -283,21 +407,29 @@ class InteractiveViewer:
         self._print_status()
 
     def _print_status(self) -> None:
-        mode = "GT" if self.state.show_gt else "Eval"
+        source = "GT" if self.state.show_gt else "Eval"
         perturb_mode = "Perturb" if self.perturbation.enabled else "Base"
         if not self.state.show_gt:
             gt_color_mode = "N/A"
+        elif not self.perturbation.enabled:
+            gt_color_mode = "CleanGT"
         else:
             gt_color_mode = (
                 "RefGT"
                 if (self.perturbation.enabled and self.show_reference_gt)
-                else "CurrentGT"
+                else "CurrentPseudo"
             )
         translation = np.asarray(self.perturbation.translation, dtype=np.float32)
         rotation = np.asarray(self.perturbation.rotation_deg_xyz, dtype=np.float32)
+        selected = (
+            str(self.selected_obj_idx)
+            if self.state.display_mode == "cross_edge"
+            else "N/A"
+        )
         print(
-            f"frame={self.state.frame_idx} epoch={self.state.epoch} mode={mode} "
-            f"selected_obj={self.selected_obj_idx} scene={perturb_mode} "
+            f"frame={self.state.frame_idx} epoch={self.state.epoch} "
+            f"display={self._mode_label()} source={source} "
+            f"selected_obj={selected} scene={perturb_mode} "
             f"gt_color={gt_color_mode} "
             f"t(mm)=({translation[0] * 1e3:+.1f},{translation[1] * 1e3:+.1f},{translation[2] * 1e3:+.1f}) "
             f"r(deg)=({rotation[0]:+.1f},{rotation[1]:+.1f},{rotation[2]:+.1f})"
@@ -331,6 +463,19 @@ class InteractiveViewer:
 
     def _toggle_gt_eval(self, _vis):
         self.state.show_gt = not self.state.show_gt
+        return self._refresh_scene()
+
+    def _toggle_display_mode(self, _vis):
+        if self.state.display_mode == "cross_edge":
+            if not self._has_hand_heatmap_head():
+                print(
+                    "HandHeatmap is unavailable: this checkpoint has no dedicated "
+                    "hand-contact head."
+                )
+                return False
+            self.state.display_mode = "hand_heatmap"
+        else:
+            self.state.display_mode = "cross_edge"
         return self._refresh_scene()
 
     def _reset_camera(self, _vis):
@@ -408,6 +553,7 @@ class InteractiveViewer:
             262: self._change_frame(+1),
             ord("["): self._change_epoch(-1),
             ord("]"): self._change_epoch(+1),
+            ord("H"): self._toggle_display_mode,
             ord("G"): self._toggle_gt_eval,
             ord(","): self._change_selected(-1),
             ord("."): self._change_selected(+1),
@@ -432,7 +578,8 @@ class InteractiveViewer:
             vis.register_key_callback(key, callback)
 
         print(
-            "A/D or arrows: frame, [/]: epoch, G: GT/Eval, ,/.: object, "
+            "A/D or arrows: frame, [/]: epoch, H: CrossEdge/HandHeatmap, "
+            "G: GT/Eval, ,/.: CrossEdge object, "
             "P: perturb on/off, F: ref GT colors, 0: clear perturb, "
             "J/L: tx, I/K: ty, U/O: tz, "
             "Z/X: rx, C/V: ry, B/N: rz, R: reset camera"
@@ -464,6 +611,21 @@ def main() -> None:
     gt_cross = _gt_cross_prob(sample, selected_obj, vis_contact_radius)
     eval_cross = _dense_cross_prob(runner, sample, selected_obj)
     if args.check_only:
+        has_hand_heatmap_head = bool(
+            runner.model is not None and getattr(runner.model, "use_hand_contact_head", False)
+        )
+        hand_heatmap_info: dict[str, Any] = {"hand_heatmap_available": has_hand_heatmap_head}
+        if has_hand_heatmap_head:
+            hand_heatmap_info.update(
+                {
+                    "gt_hand_heatmap_shape": tuple(
+                        _reference_hand_heatmap_prob(sample, vis_contact_radius).shape
+                    ),
+                    "eval_hand_heatmap_shape": tuple(
+                        _predict_hand_heatmap_prob(runner, sample).shape
+                    ),
+                }
+            )
         print(
             {
                 "frame": state.frame_idx,
@@ -472,6 +634,7 @@ def main() -> None:
                 "vis_contact_radius": vis_contact_radius,
                 "gt_cross_shape": tuple(gt_cross.shape),
                 "eval_cross_shape": tuple(eval_cross.shape),
+                **hand_heatmap_info,
             }
         )
         return

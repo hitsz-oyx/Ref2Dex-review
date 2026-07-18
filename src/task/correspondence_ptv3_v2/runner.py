@@ -6,6 +6,7 @@ import torch
 
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
 from src.task.correspondence_ptv3_v2.dataset import make_dataloaders
+from src.task.correspondence_ptv3_v2.checkpoint_compat import adapt_checkpoint_payload
 from src.task.correspondence_ptv3_v2.losses import (
     contact_target_from_distance,
     binary_cross_entropy_with_logits_map,
@@ -94,15 +95,13 @@ class CorrespondencePTV3V2Runner(BaseRunner):
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
 
-    def train_epoch(self, epoch: int) -> dict[str, float]:
-        dataset = getattr(getattr(self, "train_loader", None), "dataset", None)
-        dataset_epoch = 0 if bool(getattr(self.cfg.train, "overfit_mode", False)) else epoch
-        if dataset is not None and hasattr(dataset, "set_epoch"):
-            dataset.set_epoch(dataset_epoch)
-        sampler = getattr(getattr(self, "train_loader", None), "sampler", None)
-        if sampler is not None and hasattr(sampler, "set_epoch"):
-            sampler.set_epoch(epoch)
-        return super().train_epoch(epoch)
+    def adapt_checkpoint_payload(self, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        return adapt_checkpoint_payload(checkpoint)
+
+    def dataset_epoch_for_train(self, epoch: int) -> int:
+        # Keep the sampled geometry fixed during overfit diagnosis while the
+        # base runner continues to advance a distributed sampler normally.
+        return 0 if bool(getattr(self.cfg.train, "overfit_mode", False)) else epoch
 
     def prepare_batch(self, batch: Any) -> Any:
         if not isinstance(batch, dict):

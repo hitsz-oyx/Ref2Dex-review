@@ -29,7 +29,8 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 # 加载检查点/配置的辅助函数。
-from src.base import cleanup_distributed, load_checkpoint, load_config, task_config_from_dict
+from src.base import cleanup_distributed, load_config, task_config_from_dict
+from src.task.correspondence_ptv3.checkpoint_compat import load_checkpoint_compat, resolve_checkpoint_path
 # 评估时所使用的运行器入口（与训练共用同一个类）。
 from src.task.correspondence_ptv3.runner import CorrespondencePTV3Runner
 
@@ -70,7 +71,7 @@ def main() -> None:
     # - 否则从检查点中读取当时保存的配置（确保评估时的模型结构与训练时一致）。
     if args.config is None:
         # 读取检查点（仅加载到 CPU，避免在没有 GPU 的机器上直接分配显存）。
-        checkpoint = load_checkpoint(args.checkpoint, map_location="cpu")
+        checkpoint = load_checkpoint_compat(args.checkpoint, map_location="cpu")
         # 把 checkpoint["config"] 字典还原为 TaskConfig 对象。
         cfg = task_config_from_dict(checkpoint["config"])
     else:
@@ -81,17 +82,18 @@ def main() -> None:
     cfg.train.device = args.device
     if args.distributed:
         cfg.train.distributed.enable = True
+    checkpoint_path = resolve_checkpoint_path(args.checkpoint)
 
     # 第四步：创建 Runner 并以 "eval" 模式启动评估流程。
     # Runner 在 eval 模式下会加载模型权重、跑前向推理、计算验证指标等。
     try:
-        CorrespondencePTV3Runner(cfg, mode="eval", checkpoint=args.checkpoint).run()
+        CorrespondencePTV3Runner(cfg, mode="eval", checkpoint=checkpoint_path).run()
     finally:
         cleanup_distributed()
 
     # 第五步：在终端输出所评估的检查点路径，便于人工确认。
     if int(os.environ.get("RANK", "0")) == 0:
-        print(f"checkpoint: {args.checkpoint}")
+        print(f"checkpoint: {checkpoint_path}")
 
 
 # 当脚本被直接执行（而非被 import）时，进入主流程。

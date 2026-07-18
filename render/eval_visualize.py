@@ -118,7 +118,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from src.base import build_runner_from_checkpoint
+from src.task.correspondence_ptv3.checkpoint_compat import build_runner_from_checkpoint, resolve_checkpoint_path
 from src.task.correspondence_ptv3.config import (
     resolve_logit_far_min_radius,
     resolve_logit_near_radius,
@@ -1060,14 +1060,15 @@ def main() -> None:
         data = {key: np.asarray(archive[key]) for key in archive.files}
     stats = _validate(data, input_path)
 
+    checkpoint_path = resolve_checkpoint_path(args.checkpoint)
     runner = build_runner_from_checkpoint(
-        checkpoint=args.checkpoint,
+        checkpoint=checkpoint_path,
         config=args.config,
         mode="eval",
         device=args.device,
         build_data=False,
     )
-    runner.setup_inference(args.checkpoint)
+    runner.setup_inference(checkpoint_path)
 
     # 强制从 checkpoint 内部的 config 加载解码模式（而非外部 config.json）
     runner.model.contact_bin_decode_mode = str(

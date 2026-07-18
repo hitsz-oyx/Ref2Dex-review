@@ -101,18 +101,19 @@ python -m process.ARCTIC.optimize \
 
 ```bash
 python -m process.stage3.prepare_corr_static \
-  --stage2-root processed_data/generated/stage2/grab_subset100_initonly_4096_ds4 \
-  --output-root processed_data/generated/stage3/grab_subset100_initonly_4096_ds4 \
+  --stage2-root processed_data/generated/stage2/grab_subset100_initonly_4096_ds4_handrootsrc \
+  --output-root processed_data/generated/stage3/grab_subset100_initonly_4096_ds4_hand_root_v2 \
   --num-obj-pool 4096 \
   --num-obj-train 512 \
   --candidate-threshold 0.05 \
-  --k-cross 32 \
+  --coordinate-frame hand_root \
   --device cuda
 ```
 
-Stage 3 保存完整 4096 点物体池、5cm 候选掩码和 clean object-to-hand
-KNN。训练时根据 `(frame, epoch)` 的稳定种子从候选池采样 512 点；候选不足
-时直接 padding。
+Stage 3 v2 保存完整 4096 点物体池和法向、1538 个手点和法向、5cm 候选掩码，以及
+hand-to-full-object 最短距离（dense hand heatmap GT）。训练时根据 `(frame, epoch)`
+的稳定种子从候选池采样 512 点；候选不足时直接 padding。它不再写入 KNN、point id、
+canonical hand 或 finger/region 字段，因此只能供 correspondence_ptv3_v2 使用。
 
 ## 可视化与检查
 
@@ -120,9 +121,11 @@ KNN。训练时根据 `(frame, epoch)` 的稳定种子从候选池采样 512 点
 DISPLAY=localhost:10.0 python -m render.stage2_visualize \
   --input processed_data/generated/stage2/<variant>/<subject>/<seq>_<side>.pkl
 
+# Legacy only: does not accept the minimal Stage 3 v2 schema.
 DISPLAY=localhost:10.0 python -m render.stage3_visualize \
   --input processed_data/generated/stage3/<variant>/<subject>/<seq>_<side>.npz
 
+# Legacy only: does not accept the minimal Stage 3 v2 schema.
 python -m tools.stage3_npz_to_ply \
   --input processed_data/generated/stage3/<variant>/<subject>/<seq>_<side>.npz \
   --object-view sampled \

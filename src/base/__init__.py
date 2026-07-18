@@ -1,4 +1,4 @@
-"""Shared base configuration, runner, utilities, datasets, checkpoints, and models."""
+"""Stable shared interfaces for task configuration, training, and evaluation."""
 
 from .base_config import (
     BaseConfig,
@@ -11,24 +11,14 @@ from .base_config import (
 from .checkpoint import (
     CheckpointManager,
     load_checkpoint,
-    resolve_checkpoint_dir,
     resolve_checkpoint_file,
     unwrap_model,
 )
 from .data import (
-    TensorStats,
-    BaseDataset,
-    as_tensor,
-    compute_tensor_stats,
-    create_dataloaders,
-    dataset_metadata,
-    get_sample_field,
     make_file_split_dataloaders,
     make_dataloader_kwargs,
     make_worker_init_fn,
-    sample_shape,
     split_items,
-    split_train_val,
     resolve_data_path,
 )
 from .distributed import (
@@ -44,15 +34,11 @@ from .distributed import (
     shard_sampler_for_distributed,
     wrap_model_for_distributed,
 )
-from .models import MLP, MLPModel, build_model
+from .metrics import MetricAverager, MetricStat
 from .utils import (
     JsonlLogger,
-    MetricAverager,
-    MetricStat,
-    flatten_features,
     format_seconds,
     import_from_path,
-    resolve_activation,
     resolve_device,
     resolve_optimizer,
     set_seed,
@@ -76,22 +62,12 @@ __all__ = [
     "set_config_default_if_not_explicit",
     "CheckpointManager",
     "load_checkpoint",
-    "resolve_checkpoint_dir",
     "resolve_checkpoint_file",
     "unwrap_model",
-    "TensorStats",
-    "BaseDataset",
-    "as_tensor",
-    "compute_tensor_stats",
-    "create_dataloaders",
-    "dataset_metadata",
-    "get_sample_field",
     "make_file_split_dataloaders",
     "make_dataloader_kwargs",
     "make_worker_init_fn",
-    "sample_shape",
     "split_items",
-    "split_train_val",
     "resolve_data_path",
     "DistributedSamplerAdapter",
     "DistributedState",
@@ -104,16 +80,11 @@ __all__ = [
     "reduce_dict",
     "shard_sampler_for_distributed",
     "wrap_model_for_distributed",
-    "MLP",
-    "MLPModel",
-    "build_model",
     "JsonlLogger",
     "MetricAverager",
     "MetricStat",
-    "flatten_features",
     "format_seconds",
     "import_from_path",
-    "resolve_activation",
     "resolve_device",
     "resolve_optimizer",
     "set_seed",

@@ -44,4 +44,4 @@ tmp/**
 *.pyc
 *.log
 wandb/*
-
+*.pt

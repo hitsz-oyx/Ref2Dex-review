@@ -14,6 +14,10 @@ from src.base import (
     set_config_default_if_not_explicit,
 )
 from src.task.correspondence_ptv3.dataset import make_dataloaders
+from src.task.correspondence_ptv3.checkpoint_compat import (
+    adapt_checkpoint_payload,
+    resolve_checkpoint_path,
+)
 from src.utils.correspondence import (
     contact_prob_to_bins,
     soft_contact_label,
@@ -164,15 +168,11 @@ class CorrespondencePTV3Runner(BaseRunner):
             target_shape=None,
         )
 
-    def train_epoch(self, epoch: int) -> dict[str, float]:
-        """Make runtime object sampling a deterministic function of the epoch."""
-        dataset = getattr(getattr(self, "train_loader", None), "dataset", None)
-        if dataset is not None and hasattr(dataset, "set_epoch"):
-            dataset.set_epoch(epoch)
-        sampler = getattr(getattr(self, "train_loader", None), "sampler", None)
-        if sampler is not None and hasattr(sampler, "set_epoch"):
-            sampler.set_epoch(epoch)
-        return super().train_epoch(epoch)
+    def resolve_checkpoint_path(self, path: str | Path) -> Path:
+        return resolve_checkpoint_path(path)
+
+    def adapt_checkpoint_payload(self, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        return adapt_checkpoint_payload(checkpoint)
 
     def step(
         self,

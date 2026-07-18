@@ -21,14 +21,16 @@ from src.task.correspondence_ptv3_v2.sampling import (
 
 class CorrStaticDatasetV2(Dataset):
     REQUIRED_FIELDS = {
+        "seq_id",
+        "side",
         "raw_frame_id",
         "obj_points",
         "obj_normals",
-        "obj_point_id",
         "hand_points",
         "hand_normals",
-        "obj_to_hand_min_dist",
+        "hand_to_obj_min_dist",
         "obj_candidate_mask_5cm",
+        "coordinate_frame",
     }
 
     def __init__(
@@ -192,13 +194,9 @@ class CorrStaticDatasetV2(Dataset):
 
         obj_points = np.asarray(data["obj_points"][frame_idx, safe_idx], dtype=np.float32).copy()
         obj_normals = np.asarray(data["obj_normals"][frame_idx, safe_idx], dtype=np.float32).copy()
-        obj_point_id = np.asarray(data["obj_point_id"][safe_idx], dtype=np.int64).copy()
-        obj_min_dist = np.asarray(data["obj_to_hand_min_dist"][frame_idx, safe_idx], dtype=np.float32).copy()
 
         obj_points[~obj_valid] = 0
         obj_normals[~obj_valid] = 0
-        obj_point_id[~obj_valid] = -1
-        obj_min_dist[~obj_valid] = 0
 
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
@@ -268,9 +266,6 @@ class CorrStaticDatasetV2(Dataset):
             "gt_normals": torch.from_numpy(gt_normals).float(),
             "point_valid_mask": torch.from_numpy(point_valid_mask),
             "runtime_obj_valid_mask": torch.from_numpy(obj_valid),
-            "selected_obj_idx": torch.from_numpy(selected_idx).long(),
-            "selected_obj_point_id": torch.from_numpy(obj_point_id).long(),
-            "selected_obj_min_dist": torch.from_numpy(obj_min_dist).float(),
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
             "hand_min_dist": hand_min_dist.float(),

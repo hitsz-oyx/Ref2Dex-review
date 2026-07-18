@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 import re
 import time
 from contextlib import nullcontext
@@ -27,10 +26,10 @@ from .distributed import (
     reduce_dict,
     wrap_model_for_distributed,
 )
+from .metrics import MetricAverager, MetricStat
+from .schedulers import CosineRestartScheduler, cosine_schedule, linear_schedule
 from .utils import (
     JsonlLogger,
-    MetricAverager,
-    MetricStat,
     format_seconds,
     import_from_path,
     resolve_device,
@@ -180,10 +179,16 @@ class BaseRunner:
         self.resolved_warmup_steps = 0
         self.resolved_warmup_ratio = 0.0
         self.best_metric: float | None = None
+        # Checkpoint selection and early stopping have intentionally separate
+        # references.  A checkpoint may be saved for any strict improvement,
+        # while early stopping can require an improvement larger than its
+        # configured threshold.
+        self.early_stopping_metric: float | None = None
         self.train_dataset: Any | None = None
         self.epochs_without_improvement = 0
         self.evals_without_improvement = 0
         self._early_stopping_triggered = False
+        self._last_validation_epoch: int | None = None
 
         if build_data:
             if mode == "train":
@@ -209,7 +214,6 @@ class BaseRunner:
         start_time = time.time()
         last_metrics: dict[str, float] = {}
         final_epoch = self.start_epoch
-        last_eval_epoch: int | None = None
         # When ``max_steps`` is set, it is the authoritative stop condition and
         # ``epochs`` is treated as a safety cap (or, more commonly, an iteration
         # counter). Expand the outer loop so the inner ``global_step >=
@@ -234,23 +238,23 @@ class BaseRunner:
             ):
                 val_metrics = self.evaluate_all()
                 last_metrics.update(val_metrics)
-                self._record_metrics(val_metrics, epoch + 1)
-                self._save_if_best(val_metrics, epoch + 1)
-                last_eval_epoch = epoch + 1
-                if self._check_early_stopping(val_metrics, epoch + 1):
+                if self._handle_validation(val_metrics, epoch + 1):
                     break
 
-            if (epoch + 1) % self.cfg.train.save_every_epochs == 0:
+            if self._epoch_due(getattr(self.cfg.train, "save_every_epochs", None), epoch + 1):
                 self.save(epoch=epoch + 1, is_best=False)
 
-            if self.global_step >= self.total_steps:
+            if self._early_stopping_triggered or self.global_step >= self.total_steps:
                 break
 
-        if self.val_loaders and last_eval_epoch != final_epoch:
+        if (
+            self.val_loaders
+            and not self._early_stopping_triggered
+            and self._last_validation_epoch != final_epoch
+        ):
             val_metrics = self.evaluate_all()
             last_metrics.update(val_metrics)
-            self._record_metrics(val_metrics, final_epoch)
-            self._save_if_best(val_metrics, final_epoch)
+            self._handle_validation(val_metrics, final_epoch)
         self.save(epoch=final_epoch, is_best=False)
         elapsed = format_seconds(time.time() - start_time)
         if self._early_stopping_triggered:
@@ -267,6 +271,7 @@ class BaseRunner:
 
     def train_epoch(self, epoch: int) -> dict[str, float]:
         self._require_train_ready()
+        self._set_train_epoch(epoch)
         self.train_mode()
         averager = MetricAverager()
         for batch in self.train_loader:
@@ -286,8 +291,8 @@ class BaseRunner:
 
             if self.val_loaders and self._step_due(self.cfg.train.eval_every_steps):
                 val_metrics = self.evaluate_all()
-                self._record_metrics(val_metrics, epoch + 1)
-                self._save_if_best(val_metrics, epoch + 1)
+                if self._handle_validation(val_metrics, epoch + 1):
+                    break
 
             if self._step_due(self.cfg.train.save_every_steps):
                 self.save(epoch=epoch + 1, is_best=False)
@@ -401,12 +406,10 @@ class BaseRunner:
         self.train_dataset = train_dataset
 
     def build_model(self, model_cfg) -> torch.nn.Module:
-        from .models import build_model
-
-        class_path = getattr(model_cfg, "class_path", None)
-        if class_path:
-            return self.build_model_from_config(model_cfg)
-        return build_model(model_cfg, self.metadata)
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement build_model(). "
+            "The shared runner does not define a generic model architecture."
+        )
 
     def build_model_from_config(self, model_cfg, **kwargs: Any) -> torch.nn.Module:
         model_cls = import_from_path(model_cfg.class_path)
@@ -439,16 +442,35 @@ class BaseRunner:
             return int(batch.shape[0])
         raise ValueError("Cannot infer batch size for this runner. Override BaseRunner.batch_size().")
 
+    def dataset_epoch_for_train(self, epoch: int) -> int:
+        """Return the dataset epoch used for deterministic runtime sampling.
+
+        Tasks with a fixed overfit sample can override this without having to
+        duplicate the sampler epoch plumbing in ``train_epoch``.
+        """
+        return int(epoch)
+
+    def _set_train_epoch(self, epoch: int) -> None:
+        dataset = getattr(self.train_loader, "dataset", None)
+        if dataset is not None and hasattr(dataset, "set_epoch"):
+            dataset.set_epoch(self.dataset_epoch_for_train(epoch))
+        sampler = getattr(self.train_loader, "sampler", None)
+        if sampler is not None and hasattr(sampler, "set_epoch"):
+            sampler.set_epoch(epoch)
+
     def state_dict(self) -> dict[str, Any]:
         return {
             "epochs_without_improvement": self.epochs_without_improvement,
             "evals_without_improvement": self.evals_without_improvement,
+            "early_stopping_metric": self.early_stopping_metric,
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        if state_dict:
-            self.epochs_without_improvement = int(state_dict.get("epochs_without_improvement", 0))
-            self.evals_without_improvement = int(state_dict.get("evals_without_improvement", 0))
+        state_dict = state_dict or {}
+        self.epochs_without_improvement = int(state_dict.get("epochs_without_improvement", 0))
+        self.evals_without_improvement = int(state_dict.get("evals_without_improvement", 0))
+        metric = state_dict.get("early_stopping_metric")
+        self.early_stopping_metric = None if metric is None else float(metric)
 
     def train_mode(self) -> None:
         if self.model is not None:
@@ -487,8 +509,10 @@ class BaseRunner:
         load_optimizer: bool = True,
         map_location: str | torch.device | None = None,
     ) -> dict[str, Any]:
-        ckpt_path = self._resolve_resume_path(path)
-        checkpoint = load_checkpoint(ckpt_path, map_location=map_location or self.device)
+        ckpt_path = self.resolve_checkpoint_path(self._resolve_resume_path(path))
+        checkpoint = self.adapt_checkpoint_payload(
+            load_checkpoint(ckpt_path, map_location=map_location or self.device)
+        )
         self._load_checkpoint_payload(checkpoint, load_optimizer=load_optimizer)
         if self.is_primary:
             print(f"Loaded checkpoint from {ckpt_path} at step {self.global_step}.")
@@ -497,13 +521,31 @@ class BaseRunner:
     resume = load
 
     def setup_inference(self, checkpoint: str | Path) -> dict[str, Any]:
-        checkpoint_data = load_checkpoint(checkpoint, map_location="cpu")
+        checkpoint_data = self.adapt_checkpoint_payload(
+            load_checkpoint(self.resolve_checkpoint_path(checkpoint), map_location="cpu")
+        )
         self.metadata = checkpoint_data["metadata"]
         self.configure_data(self.metadata, None)
         self.model = self.build_model(self.cfg.model).to(self.device)
         self._load_checkpoint_payload(checkpoint_data, load_optimizer=False)
         self.eval_mode()
         return checkpoint_data
+
+    def resolve_checkpoint_path(self, path: str | Path) -> Path:
+        """Resolve a task checkpoint before the shared loader reads it.
+
+        The default is intentionally strict: legacy layouts and payload
+        migrations must be declared by the task that owns their semantics.
+        """
+        return Path(path)
+
+    def adapt_checkpoint_payload(self, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        """Return a current-format checkpoint payload for this task.
+
+        BaseRunner deliberately does not infer historical keys.  A task that
+        changed model, data, or runner-state semantics owns any migration here.
+        """
+        return checkpoint
 
     def _setup_train(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -608,12 +650,8 @@ class BaseRunner:
         if load_optimizer and self.scaler is not None and checkpoint.get("scaler") is not None:
             self.scaler.load_state_dict(checkpoint["scaler"])
         state = checkpoint.get("runner_state")
-        if state is not None:
-            self.load_state_dict(state)
         self.best_metric = checkpoint.get("best_metric")
-        if state is None:
-            self.epochs_without_improvement = 0
-            self.evals_without_improvement = 0
+        self.load_state_dict(state or {})
         self._early_stopping_triggered = False
 
     def _resolve_resume_path(self, path: str | Path) -> Path:
@@ -713,10 +751,10 @@ class BaseRunner:
     def _epoch_due(self, interval: int | None, epoch: int) -> bool:
         return interval is not None and interval > 0 and epoch % interval == 0
 
-    def _save_if_best(self, metrics: dict[str, float], epoch: int) -> None:
+    def _save_if_best(self, metrics: dict[str, float], epoch: int) -> bool:
         key = self.cfg.train.metric_for_best
         if key not in metrics:
-            return
+            return False
         value = float(metrics[key])
         if self.best_metric is None:
             improved = True
@@ -727,6 +765,7 @@ class BaseRunner:
         if improved:
             self.best_metric = value
             self.save(epoch=epoch, is_best=True)
+        return improved
 
     def _check_early_stopping(self, metrics: dict[str, float], epoch: int) -> bool:
         patience = self.cfg.train.early_stopping_patience
@@ -738,18 +777,20 @@ class BaseRunner:
             return False
 
         value = float(metrics[key])
-        if self.best_metric is None:
+        if self.early_stopping_metric is None:
+            self.early_stopping_metric = value
             self.epochs_without_improvement = 0
             self.evals_without_improvement = 0
             return False
 
         threshold = float(self.cfg.train.early_stopping_threshold)
         if self.cfg.train.lower_is_better:
-            improved = value < (self.best_metric - threshold)
+            improved = value < (self.early_stopping_metric - threshold)
         else:
-            improved = value > (self.best_metric + threshold)
+            improved = value > (self.early_stopping_metric + threshold)
 
         if improved:
+            self.early_stopping_metric = value
             self.epochs_without_improvement = 0
             self.evals_without_improvement = 0
         else:
@@ -765,6 +806,18 @@ class BaseRunner:
                 )
             return True
         return False
+
+    def _handle_validation(self, metrics: dict[str, float], epoch: int) -> bool:
+        """Record one validation event and return whether training should stop.
+
+        Both step- and epoch-triggered validation use this path so checkpoint
+        selection, early stopping, and W&B/JSONL records cannot drift apart.
+        """
+        self._record_metrics(metrics, epoch)
+        should_stop = self._check_early_stopping(metrics, epoch)
+        self._save_if_best(metrics, epoch)
+        self._last_validation_epoch = int(epoch)
+        return should_stop
 
     def _record_metrics(self, metrics: dict[str, float], epoch: int) -> None:
         payload = {"step": self.global_step, "epoch": epoch, **metrics}
@@ -1045,95 +1098,3 @@ def compute_grad_norm(parameters, norm_type: float = 2.0) -> torch.Tensor:
         return torch.stack([grad.abs().max().to(device) for grad in grads]).max()
     norms = torch.stack([torch.linalg.vector_norm(grad, ord=norm_type).to(device) for grad in grads])
     return torch.linalg.vector_norm(norms, ord=norm_type)
-
-
-def cosine_schedule(step: int, total_steps: int, warmup_steps: int = 0) -> float:
-    if warmup_steps > 0 and step < warmup_steps:
-        return float(step + 1) / float(warmup_steps)
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    progress = min(1.0, max(0.0, progress))
-    return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-
-def linear_schedule(step: int, total_steps: int, warmup_steps: int = 0) -> float:
-    if warmup_steps > 0 and step < warmup_steps:
-        return float(step + 1) / float(warmup_steps)
-    progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
-    return max(0.0, 1.0 - progress)
-
-
-class CosineRestartScheduler:
-    """Checkpointable cosine fine-tuning phase independent of global step.
-
-    ``BaseRunner.global_step`` stays an absolute run counter. This scheduler
-    owns a phase-local counter, so a checkpoint from a long pre-training
-    schedule can begin a short fine-tune at the configured base LR and later
-    resume that same phase without restarting its decay.
-    """
-
-    STATE_TYPE = "cosine_restart"
-    STATE_VERSION = 1
-
-    def __init__(self, optimizer: torch.optim.Optimizer, *, total_steps: int, min_lr: float) -> None:
-        if total_steps <= 0:
-            raise ValueError(f"total_steps must be positive, got {total_steps}.")
-        self.optimizer = optimizer
-        self.total_steps = int(total_steps)
-        self.base_lrs = [float(group["lr"]) for group in optimizer.param_groups]
-        self.min_lrs = [float(min_lr) for _ in optimizer.param_groups]
-        if any(min_lr > base_lr for base_lr in self.base_lrs):
-            raise ValueError(f"min_lr={min_lr:g} exceeds an optimizer base LR {self.base_lrs}.")
-        self.completed_steps = 0
-        self.restart()
-
-    def restart(self) -> None:
-        self.completed_steps = 0
-        self._apply_lr()
-
-    @property
-    def progress(self) -> float:
-        return min(1.0, max(0.0, float(self.completed_steps) / float(self.total_steps)))
-
-    def _apply_lr(self) -> None:
-        cosine_factor = 0.5 * (1.0 + math.cos(math.pi * self.progress))
-        for group, base_lr, min_lr in zip(self.optimizer.param_groups, self.base_lrs, self.min_lrs):
-            group["lr"] = min_lr + (base_lr - min_lr) * cosine_factor
-
-    def step(self) -> None:
-        self.completed_steps = min(self.total_steps, self.completed_steps + 1)
-        self._apply_lr()
-
-    def state_dict(self) -> dict[str, Any]:
-        return {
-            "scheduler_type": self.STATE_TYPE,
-            "scheduler_version": self.STATE_VERSION,
-            "total_steps": self.total_steps,
-            "completed_steps": self.completed_steps,
-            "base_lrs": list(self.base_lrs),
-            "min_lrs": list(self.min_lrs),
-        }
-
-    def is_compatible_state_dict(self, state_dict: Any) -> bool:
-        if not isinstance(state_dict, dict) or state_dict.get("scheduler_type") != self.STATE_TYPE:
-            return False
-        if int(state_dict.get("scheduler_version", -1)) != self.STATE_VERSION:
-            return False
-        if int(state_dict.get("total_steps", -1)) != self.total_steps:
-            return False
-        state_base_lrs = [float(value) for value in state_dict.get("base_lrs", [])]
-        state_min_lrs = [float(value) for value in state_dict.get("min_lrs", [])]
-        if len(state_base_lrs) != len(self.base_lrs) or len(state_min_lrs) != len(self.min_lrs):
-            return False
-        return all(
-            math.isclose(old, new, rel_tol=1e-12, abs_tol=1e-15)
-            for old, new in zip(state_base_lrs, self.base_lrs)
-        ) and all(
-            math.isclose(old, new, rel_tol=1e-12, abs_tol=1e-15)
-            for old, new in zip(state_min_lrs, self.min_lrs)
-        )
-
-    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
-        if not self.is_compatible_state_dict(state_dict):
-            raise ValueError("Incompatible cosine_restart scheduler state.")
-        self.completed_steps = min(self.total_steps, max(0, int(state_dict["completed_steps"])))
-        self._apply_lr()

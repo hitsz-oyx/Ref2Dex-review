@@ -8,7 +8,6 @@ from typing import Any
 import torch
 
 
-CHECKPOINT_FILE = "checkpoint.pt"
 EPOCH_PREFIX = "epoch_"
 CHECKPOINT_SUFFIX = ".pt"
 BEST_FILE = "best.pt"
@@ -66,9 +65,6 @@ class CheckpointManager:
         latest = self.root / LATEST_FILE
         if latest.exists():
             return latest
-        legacy_last = self.root / "last"
-        if legacy_last.exists():
-            return legacy_last
         checkpoints = self._checkpoint_files()
         return checkpoints[-1] if checkpoints else None
 
@@ -77,7 +73,7 @@ class CheckpointManager:
             (
                 path
                 for path in self.root.iterdir()
-                if checkpoint_sort_key(path) is not None
+                if path.is_file() and checkpoint_sort_key(path) is not None
             ),
             key=lambda path: checkpoint_sort_key(path),
         )
@@ -102,44 +98,35 @@ class CheckpointManager:
         checkpoints = self._checkpoint_files()
         while len(checkpoints) > self.max_to_keep:
             removable = checkpoints[0]
-            if removable.is_dir():
-                shutil.rmtree(removable, ignore_errors=True)
-            else:
-                removable.unlink(missing_ok=True)
+            removable.unlink(missing_ok=True)
             checkpoints = [checkpoint for checkpoint in checkpoints if checkpoint != removable]
 
 
 def resolve_checkpoint_file(path: str | Path) -> Path:
+    """Resolve a checkpoint written by the current shared checkpoint format.
+
+    Task-specific legacy layouts intentionally belong to their task package;
+    this base layer only understands files plus the current ``latest.pt``,
+    ``best.pt``, and ``epoch_XXXXXX.pt`` aliases.
+    """
     path = Path(path)
     if path.is_file():
         return path
     if path.is_dir():
-        flat_latest = path / LATEST_FILE
-        if flat_latest.exists():
-            return flat_latest
-        legacy_file = path / CHECKPOINT_FILE
-        if legacy_file.exists():
-            return legacy_file
-        legacy_last = path / "last"
-        if legacy_last.exists():
-            return resolve_checkpoint_file(legacy_last)
+        for alias in (LATEST_FILE, BEST_FILE):
+            candidate = path / alias
+            if candidate.exists():
+                return candidate
         checkpoints = sorted(
             (
                 candidate
                 for candidate in path.iterdir()
-                if checkpoint_sort_key(candidate) is not None
+                if candidate.is_file() and checkpoint_sort_key(candidate) is not None
             ),
             key=lambda candidate: checkpoint_sort_key(candidate),
         )
         if checkpoints:
-            return resolve_checkpoint_file(checkpoints[-1])
-    return path
-
-
-def resolve_checkpoint_dir(path: str | Path) -> Path:
-    path = Path(path)
-    if path.is_file():
-        return path.parent
+            return checkpoints[-1]
     return path
 
 
@@ -152,14 +139,11 @@ def format_epoch_checkpoint_file(epoch: int) -> str:
 
 
 def checkpoint_sort_key(path: Path) -> tuple[int, int] | None:
-    name = path.name
-    stem = path.stem if path.is_file() else name
+    stem = path.stem
     if stem.startswith(EPOCH_PREFIX):
         suffix = stem[len(EPOCH_PREFIX) :]
         if suffix.isdigit():
-            return (1, int(suffix))
-    if stem.isdigit():
-        return (0, int(stem))
+            return (0, int(suffix))
     return None
 
 

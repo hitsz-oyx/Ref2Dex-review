@@ -1,13 +1,8 @@
-"""Tests for the hand-root coordinate frame support.
+"""Tests for hand-root transforms and the minimal v2 Stage 3 schema.
 
-Covers three layers:
-  1. Stage 2 ``pack_stage2_hand`` passes through ``hand_root_pose`` if the
-     preprocessor supplied it; legacy Stage 2 payloads without the field
-     still build (no spurious requirement).
-  2. Stage 3 ``build_stage3_sequence`` with ``coordinate_frame="hand_root"``
-     correctly transforms world -> hand_root, and ``coordinate_frame="object"``
-     still produces the legacy schema (with ``T_world_from_obj``).
-  3. Distance / KNN fields are frame-invariant (equal under both frames).
+Covers Stage 2 hand-root propagation, Stage 3 coordinate transforms, the
+minimal field set, and frame invariance of the candidate mask plus dense
+hand-to-object distance target.
 """
 
 from __future__ import annotations
@@ -29,6 +24,22 @@ from process.stage3.prepare_corr_static import (  # noqa: E402
     _points_world_to_hand_root,
 )
 from process.common.stage2 import pack_stage2_hand  # noqa: E402
+
+
+_STAGE3_V2_FIELDS = {
+    "schema_name",
+    "schema_version",
+    "seq_id",
+    "side",
+    "raw_frame_id",
+    "obj_points",
+    "obj_normals",
+    "hand_points",
+    "hand_normals",
+    "hand_to_obj_min_dist",
+    "obj_candidate_mask_5cm",
+    "coordinate_frame",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -235,46 +246,74 @@ def _build_payload_for_stage3(num_obj: int = 16, num_hand: int = 6, T: int = 2) 
     }
 
 
-def test_stage3_object_frame_keeps_legacy_schema() -> None:
+def test_stage3_object_frame_emits_minimal_v2_schema() -> None:
     payload = _build_payload_for_stage3()
     out = stage3_mod.build_stage3_sequence(
         payload,
-        source_path=Path("/tmp/synthetic.pkl"),
-        stage2_root=Path("/tmp"),
         num_obj_pool=16,
         num_hand_points=6,
-        k_cross=4,
         candidate_threshold=0.05,
         frame_batch_size=1,
         device=torch.device("cpu"),
         mirror_left_to_right=False,
         coordinate_frame="object",
     )
-    assert "T_world_from_obj" in out
-    assert "T_world_from_hand_root" not in out
+    assert set(out) == _STAGE3_V2_FIELDS
     assert str(out["coordinate_frame"].item()) == "object"
+    expected = stage3_mod._points_world_to_obj(
+        payload["obj_points_world"], payload["obj_root_pose"]
+    )
+    np.testing.assert_allclose(out["obj_points"], expected, atol=1e-6)
 
 
-def test_stage3_hand_root_frame_emits_pose_and_label() -> None:
+def test_stage3_hand_root_frame_emits_minimal_v2_schema() -> None:
     payload = _build_payload_for_stage3()
     out = stage3_mod.build_stage3_sequence(
         payload,
-        source_path=Path("/tmp/synthetic.pkl"),
-        stage2_root=Path("/tmp"),
         num_obj_pool=16,
         num_hand_points=6,
-        k_cross=4,
         candidate_threshold=0.05,
         frame_batch_size=1,
         device=torch.device("cpu"),
         mirror_left_to_right=False,
         coordinate_frame="hand_root",
     )
-    assert "T_world_from_hand_root" in out
-    assert "T_world_from_obj" not in out
+    assert set(out) == _STAGE3_V2_FIELDS
     assert str(out["coordinate_frame"].item()) == "hand_root"
-    # Pose shape sanity
-    assert out["T_world_from_hand_root"].shape == (2, 4, 4)
+    expected = _points_world_to_hand_root(
+        payload["obj_points_world"], payload["hand_root_pose"]
+    )
+    np.testing.assert_allclose(out["obj_points"], expected, atol=1e-6)
+
+
+def test_stage3_minimal_v2_does_not_require_legacy_stage2_metadata() -> None:
+    payload = _build_payload_for_stage3()
+    for key in (
+        "processing_mode",
+        "dataset_name",
+        "subject_id",
+        "seq_name",
+        "object_name",
+        "stage2_frame_idx",
+        "obj_point_id",
+        "obj_root_pose",
+        "hand_point_id",
+        "hand_cano_points",
+        "hand_finger_id",
+        "hand_region_id",
+    ):
+        del payload[key]
+    out = stage3_mod.build_stage3_sequence(
+        payload,
+        num_obj_pool=16,
+        num_hand_points=6,
+        candidate_threshold=0.05,
+        frame_batch_size=1,
+        device=torch.device("cpu"),
+        mirror_left_to_right=False,
+        coordinate_frame="hand_root",
+    )
+    assert set(out) == _STAGE3_V2_FIELDS
 
 
 def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:
@@ -283,11 +322,8 @@ def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:
     with pytest.raises(KeyError, match="hand_root_pose"):
         stage3_mod.build_stage3_sequence(
             payload,
-            source_path=Path("/tmp/synthetic.pkl"),
-            stage2_root=Path("/tmp"),
             num_obj_pool=16,
             num_hand_points=6,
-            k_cross=4,
             candidate_threshold=0.05,
             frame_batch_size=1,
             device=torch.device("cpu"),
@@ -297,15 +333,11 @@ def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:
 
 
 def test_stage3_distances_are_frame_invariant() -> None:
-    """obj_to_hand_min_dist, candidate mask and KNN index must be identical
-    under object frame and hand_root frame (rigid SE(3) preserves distances)."""
+    """The stored candidate mask and dense hand target are frame-invariant."""
     payload = _build_payload_for_stage3(num_obj=32, num_hand=10, T=2)
     common_kwargs = dict(
-        source_path=Path("/tmp/synthetic.pkl"),
-        stage2_root=Path("/tmp"),
         num_obj_pool=32,
         num_hand_points=10,
-        k_cross=4,
         candidate_threshold=1.0,  # accept all
         frame_batch_size=1,
         device=torch.device("cpu"),
@@ -313,13 +345,7 @@ def test_stage3_distances_are_frame_invariant() -> None:
     )
     obj_out = stage3_mod.build_stage3_sequence(payload, coordinate_frame="object", **common_kwargs)
     hand_out = stage3_mod.build_stage3_sequence(payload, coordinate_frame="hand_root", **common_kwargs)
-    np.testing.assert_allclose(obj_out["obj_to_hand_min_dist"], hand_out["obj_to_hand_min_dist"], atol=1e-5)
     np.testing.assert_array_equal(obj_out["obj_candidate_mask_5cm"], hand_out["obj_candidate_mask_5cm"])
-    np.testing.assert_array_equal(obj_out["gt_obj_to_hand_knn_idx"], hand_out["gt_obj_to_hand_knn_idx"])
-    # hand -> obj min distance must also be frame-invariant AND it must be
-    # computed over the *full* obj pool (size 32 here).
-    assert "hand_to_obj_min_dist" in obj_out
-    assert "hand_to_obj_min_dist" in hand_out
     np.testing.assert_allclose(
         obj_out["hand_to_obj_min_dist"], hand_out["hand_to_obj_min_dist"], atol=1e-5
     )
@@ -331,11 +357,8 @@ def test_stage3_rejects_invalid_coordinate_frame() -> None:
     with pytest.raises(ValueError, match="coordinate_frame"):
         stage3_mod.build_stage3_sequence(
             payload,
-            source_path=Path("/tmp/synthetic.pkl"),
-            stage2_root=Path("/tmp"),
             num_obj_pool=16,
             num_hand_points=6,
-            k_cross=4,
             candidate_threshold=0.05,
             frame_batch_size=1,
             device=torch.device("cpu"),
@@ -360,11 +383,8 @@ def _write_stage3_npz(
     payload = _build_payload_for_stage3(num_obj=num_obj, num_hand=num_hand, T=T)
     out = stage3_mod.build_stage3_sequence(
         payload,
-        source_path=Path("/tmp/synthetic.pkl"),
-        stage2_root=Path("/tmp"),
         num_obj_pool=num_obj,
         num_hand_points=num_hand,
-        k_cross=4,
         candidate_threshold=1.0,
         frame_batch_size=1,
         device=torch.device("cpu"),
@@ -423,6 +443,8 @@ def test_dataset_accepts_matching_coordinate_frame(tmp_path: Path) -> None:
     assert "hand_min_dist" in sample
     assert sample["hand_min_dist"].shape == (6,)
     assert "contact_seed" in sample
+    assert "selected_obj_point_id" not in sample
+    assert "selected_obj_min_dist" not in sample
 
 
 def test_dataset_inherits_coordinate_frame_when_unspecified(tmp_path: Path) -> None:
@@ -536,6 +558,7 @@ def test_v21_cross_edge_losses_are_batch_size_invariant_via_runner() -> None:
     torch.manual_seed(0)
     B, N = 1, 1538
     cfg = Config()
+    cfg.meta.loss_hand_contact_weight = 0.0
 
     # Build a bare runner that avoids the full __init__ (data discovery, dirs).
     runner = object.__new__(CorrespondencePTV3V2Runner)
