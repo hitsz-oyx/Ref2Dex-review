@@ -1,0 +1,47 @@
+_base_: src.task.Cm.config:Config
+
+name: cm_action_slot16_subset100_hop4_normal
+
+data:
+  # Same 100-sequence manifest as the Stage 3 reference set.  Stage 4 keeps
+  # the 25 ms target horizon (raw stride=3) but samples current frames at 30 Hz
+  # (hop=4).  Validation is held out by sequence, never by temporal pair.
+  train_path: processed_data/generated/stage4/grab_subset100_cm_raw_stride3_hop4_4096_hand_root
+  val_path: null
+  val_split: 0.1
+  batch_size: 2
+  val_batch_size: 2
+  num_workers: 0
+  pin_memory: true
+  persistent_workers: false
+  shuffle: true
+  group_val_by_sequence: true
+  active_only: true
+  min_object_flow_norm: 0.0
+  max_train_samples: null
+  max_val_samples: null
+
+train:
+  output_dir: outputs/train/cm_action_slot16_subset100_hop4_normal
+  seed: 42
+  overfit_mode: false
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.03
+  epochs: 20
+  max_steps: null
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 20
+  eval_every_epochs: 1
+  save_every_epochs: 5
+  metric_for_best: val/flow_mse
+  lower_is_better: true
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [cm, slot-attention, slot16, grab-subset100, hop4, group-held-out]
