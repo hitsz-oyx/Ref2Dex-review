@@ -62,11 +62,7 @@ class CmActionRunner(BaseRunner):
         flow_mae = (absolute_map * valid.float()).sum() / valid_count.float()
         gt_flow_norm = (torch.linalg.norm(gt_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         pred_flow_norm = (torch.linalg.norm(pred_flow, dim=-1) * valid.float()).sum() / valid_count.float()
-        activity_mean = prediction["cm_active"].mean()
-        total_loss = (
-            float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
-            + float(self.cfg.meta.loss_activity_weight) * activity_mean
-        )
+        total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
             "flow_smooth_l1": flow_smooth_l1,
@@ -74,7 +70,6 @@ class CmActionRunner(BaseRunner):
             "flow_mae": flow_mae,
             "gt_flow_norm": gt_flow_norm,
             "pred_flow_norm": pred_flow_norm,
-            "cm_active_mean": activity_mean,
             "valid_object_count": valid_count.float(),
         }
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(pred_flow.shape[0]))

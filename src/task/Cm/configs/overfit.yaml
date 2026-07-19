@@ -2,11 +2,6 @@ _base_: src.task.Cm.config:Config
 
 name: cm_action_overfit_raw_stride3_smoke
 
-meta:
-  # Do not regularize the activity score while proving that the decoder and
-  # temporal bottleneck can memorize the selected Stage 4 samples.
-  loss_activity_weight: 0.0
-
 data:
   train_path: processed_data/generated/stage4/grab_cm_raw_stride3_smoke
   val_path: null

@@ -20,11 +20,10 @@ class Config(TaskConfig):
         num_obj_points: int = 512
         num_hand_points: int = 1538
         cm_dim: int = 256
-        num_cm_tokens: int = 32
-        num_attention_heads: int = 8
+        num_cm_tokens: int = 16
+        slot_iters: int = 3
         flow_smooth_l1_beta: float = 0.01
         loss_flow_weight: float = 1.0
-        loss_activity_weight: float = 1e-4
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"
@@ -48,4 +47,4 @@ class Config(TaskConfig):
     class wandb(TaskConfig.wandb):
         project = "ref2dex"
         mode = "offline"
-        tags = ["cm", "temporal", "point-flow", "frozen-dense-token"]
+        tags = ["cm", "temporal", "point-flow", "slot-attention", "frozen-dense-token"]

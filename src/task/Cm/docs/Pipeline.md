@@ -88,25 +88,37 @@ PYTHONPATH=. python -m process.stage4.prepare_cm \
 ## CmAction 模型
 
 ```text
-(O_t, H_t) -- frozen PTv3 --> (Z_t^o, Z_t^h, dense hand-contact prior)
-(Z_t^h, H_t, ΔH_t, ΔT_wrist) -- temporal encoder --> U_t^h
-U_t^h -- cross-attend current Z_t^o --> hand action features
-top-K active hand anchors --> C_m = {feature, anchor, hand flow, active}_{k=1..K}
-(Z_t^o, C_m, O_t - anchor_k) -- flow decoder --> F_hat_obj,t
+(O_t, H_t) -- frozen PTv3 --> (Z_t^o, Z_t^h)
+(Z_t^h, y_h, n_h, ΔH_t, contact_h, vec(ΔT_wrist)) -- pointwise MLP --> U_t^h
+U_t^h -- Slot Attention --> C_m ∈ R^(K×256)
+(Z_t^o, x_o, n_o, C_m, soft hand anchors) -- geometric flow-edge decoder --> F_hat_obj,t
 ```
 
-默认 `K=32`。导出的 token 包含：
+当前版本保留完整手部动作场：`Z_t^h` 提供当前交互状态，`y_h/n_h` 提供
+局部几何，`ΔH_t` 提供局部运动，冻结 dense hand-contact 概率提供接触先验，
+`ΔT_wrist` 提供整体 wrist SE(3)。Slot Attention 是唯一替换项：它取代旧的
+scene cross-attention、activity head 和 hard Top-K，而不改动 object-side
+几何 flow decoder。
+
+默认 `K=16`、Slot Attention 迭代 3 次。导出字段为：
 
 ```text
-cm_tokens          # [K, 256] hand-anchored action feature
-cm_anchor_idx      # MANO face-center identity
-cm_anchor_pos      # current t-hand-root position
-cm_anchor_normal   # current normal
-cm_hand_flow       # local action displacement
-cm_active           # activity score
+cm_tokens          # [K, 256] hand-side temporal action slots
+cm_anchor_pos      # [K, 3] soft hand-region center
+cm_anchor_normal   # [K, 3] normalized soft hand-region normal
+cm_hand_flow       # [K, 3] soft hand-region mean local displacement
+cm_assignment      # [K, 1538], normalized hand-point assignment
 ```
 
-object flow decoder 对每个当前 512 sampled object point 从这些 token 聚合向量，使用 masked Smooth-L1 训练。没有可采样的 object candidate 的帧会被 mask，不会制造假的 zero-object 输入。
+`cm_anchor_pos/cm_hand_flow/cm_anchor_normal` 都由 `cm_assignment` 对手点软
+聚合而来；不存在 top-K hard anchor 或 activity loss。object flow decoder
+保留每个 object-point 到每个 slot 的相对位置、slot 平均手流和 slot 法向，
+并以 masked Smooth-L1 训练；没有可采样 object candidate 的帧会被 mask，
+不会制造假的 zero-object 输入。
+
+这与早期的 `top-K anchor + activity head` Cm head 参数结构不兼容；必须从
+新的 CmAction run 训练，不能恢复旧 Cm head checkpoint。冻结的
+DenseToken/PTv3 checkpoint 不受影响。
 
 ## BaseRunner 训练、评估与导出
 
@@ -152,7 +164,7 @@ PYTHONPATH=. python -m src.task.Cm.extract \
   --device cuda
 ```
 
-输出 NPZ 会保存每个 pair 的 sampled object identity、valid mask、`pred_obj_flow`、`obj_flow_gt`、dense hand-contact prior 与所有 Cm token 字段，并记录该文件的 masked `flow_mse`。这使后续的可视化、ablation 和 `C_p = ObjectProjection(C_m, correspondence, scene)` 能不重跑 PTv3。
+输出 NPZ 会保存每个 pair 的 sampled object identity、valid mask、`pred_obj_flow`、`obj_flow_gt`、Slot Attention 的所有 Cm 字段，并记录该文件的 masked `flow_mse`。这使后续的可视化、ablation 和 `C_p = ObjectProjection(C_m, correspondence, scene)` 能不重跑 PTv3。
 
 `--start-pair` 与 `--max-pairs` 可用于只导出某一段序列（例如先检查实际进入 5cm candidate 区间后的 pair）。
 
@@ -176,7 +188,7 @@ PYTHONPATH=. python -m src.task.Cm.visualize \
 1. Stage 4 中 `obj_flow_gt` 与 `hand_flow` 使用同一个 `hand_root_t`，而不是每帧各自 root。
 2. 以同一 raw frame id 重跑，512 selected object indices 与 dense-token 旧数据的 epoch-0 采样一致。
 3. 打乱 `hand_flow` 或 `wrist_delta` 后 flow 指标应显著变差；否则 Cm 可能没有使用动作信息。
-4. 导出的高 `cm_active` anchors 应落在运动/接触相关的手部区域，而不是稳定的任意 MANO face。
+4. `cm_assignment` 的每个 slot 应形成有限的手部区域；其 `cm_hand_flow` 应能区分运动手指、稳定抓持与非接触运动，而不是所有 slot 均匀覆盖整只手。
 5. 任何 future object 字段都不能进入 `FrozenDenseTokenEncoder` 或 `CmFlowModel`；`obj_flow_gt` 只在 loss/eval 中读取。
 
 ## Cp 的预留边界

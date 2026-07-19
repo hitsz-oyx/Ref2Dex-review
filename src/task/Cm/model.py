@@ -1,9 +1,10 @@
-"""Hand-anchored temporal Cm tokens and an object point-flow decoder."""
+"""Hand-motion Slot Attention bottleneck and current-object flow decoder."""
 from __future__ import annotations
 
 from typing import Any
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from src.task.Cm.dense_token import FrozenDenseTokenEncoder
@@ -18,40 +19,106 @@ def _mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
     )
 
 
-def _gather_points(values: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
-    return values.gather(1, index.unsqueeze(-1).expand(-1, -1, values.shape[-1]))
+class SlotAttention(nn.Module):
+    """Deterministic Slot Attention over hand-point motion features.
+
+    Slots start from distinct learned vectors rather than per-batch random
+    noise, which keeps Cm extraction deterministic for a fixed checkpoint.
+    ``slot_attention`` returned by :meth:`forward` is normalized across hand
+    points for each slot and can therefore be used to localize a slot after
+    training without making position an input to the motion encoder.
+    """
+
+    def __init__(self, *, dim: int, num_slots: int, num_iterations: int = 3) -> None:
+        super().__init__()
+        if dim <= 0 or num_slots <= 0 or num_iterations <= 0:
+            raise ValueError("SlotAttention requires positive dim, num_slots, and num_iterations.")
+        self.dim = int(dim)
+        self.num_slots = int(num_slots)
+        self.num_iterations = int(num_iterations)
+        self.slot_init = nn.Parameter(torch.empty(1, self.num_slots, self.dim))
+        nn.init.normal_(self.slot_init, std=self.dim**-0.5)
+        self.norm_inputs = nn.LayerNorm(self.dim)
+        self.norm_slots = nn.LayerNorm(self.dim)
+        self.norm_mlp = nn.LayerNorm(self.dim)
+        self.to_key = nn.Linear(self.dim, self.dim, bias=False)
+        self.to_value = nn.Linear(self.dim, self.dim, bias=False)
+        self.to_query = nn.Linear(self.dim, self.dim, bias=False)
+        self.gru = nn.GRUCell(self.dim, self.dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(self.dim, self.dim * 2),
+            nn.GELU(),
+            nn.Linear(self.dim * 2, self.dim),
+        )
+        self.scale = self.dim**-0.5
+
+    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return sparse slots and their normalized soft hand-point assignments.
+
+        Args:
+            inputs: `[B, H, D]` hand-point motion features.
+        """
+        if inputs.ndim != 3 or inputs.shape[-1] != self.dim:
+            raise ValueError(
+                f"Expected hand motion features [B, H, {self.dim}], got {tuple(inputs.shape)}."
+            )
+        batch_size = inputs.shape[0]
+        encoded = self.norm_inputs(inputs)
+        keys = self.to_key(encoded)
+        values = self.to_value(encoded)
+        slots = self.slot_init.expand(batch_size, -1, -1)
+        slot_weights: torch.Tensor | None = None
+        slot_assignment: torch.Tensor | None = None
+        for _ in range(self.num_iterations):
+            previous_slots = slots
+            queries = self.to_query(self.norm_slots(slots))
+            logits = torch.einsum("bkd,bhd->bkh", queries, keys) * self.scale
+            # Each hand point first assigns its mass among slots.  Each slot
+            # then normalizes its update across points.
+            slot_assignment = torch.softmax(logits, dim=1)
+            slot_weights = slot_assignment / slot_assignment.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+            updates = torch.einsum("bkh,bhd->bkd", slot_weights, values)
+            slots = self.gru(
+                updates.reshape(-1, self.dim),
+                previous_slots.reshape(-1, self.dim),
+            ).reshape(batch_size, self.num_slots, self.dim)
+            slots = slots + self.mlp(self.norm_mlp(slots))
+        assert slot_weights is not None and slot_assignment is not None
+        return slots, slot_weights
 
 
 class CmFlowHead(nn.Module):
-    """Learnable temporal bottleneck after the frozen current-frame encoder."""
+    """Full hand-action field compressed into sparse temporal ``C_m`` slots.
+
+    Slot Attention only replaces the old scene cross-attention, activity head,
+    and hard Top-K bottleneck.  The current-object geometric flow decoder stays
+    separate and sees ``C_m`` only after the hand-side bottleneck.
+    """
 
     def __init__(
         self,
         *,
         dense_token_dim: int,
         cm_dim: int = 256,
-        num_cm_tokens: int = 32,
-        num_attention_heads: int = 8,
+        num_cm_tokens: int = 16,
+        num_slot_iters: int = 3,
     ) -> None:
         super().__init__()
-        if cm_dim % num_attention_heads != 0:
-            raise ValueError("cm_dim must be divisible by num_attention_heads")
         self.dense_token_dim = int(dense_token_dim)
         self.cm_dim = int(cm_dim)
         self.num_cm_tokens = int(num_cm_tokens)
-        # z_h, current point/normal, hand flow, dense hand-contact prior,
-        # and T_{hand_t <- hand_t1} flattened to 12 values.
+        self.num_slot_iters = int(num_slot_iters)
+        # Frozen current interaction state, local geometry, local motion,
+        # frozen dense contact prior, and whole-wrist SE(3) delta.
         self.hand_motion_encoder = _mlp(self.dense_token_dim + 22, cm_dim, cm_dim)
+        self.slot_attention = SlotAttention(
+            dim=cm_dim,
+            num_slots=num_cm_tokens,
+            num_iterations=num_slot_iters,
+        )
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
-        self.motion_to_scene = nn.MultiheadAttention(
-            cm_dim, num_attention_heads, dropout=0.0, batch_first=True
-        )
-        self.motion_norm = nn.LayerNorm(cm_dim)
-        self.activity_head = nn.Sequential(
-            nn.Linear(cm_dim, cm_dim // 2), nn.GELU(), nn.Linear(cm_dim // 2, 1)
-        )
-        # object feature, Cm feature, relative object-to-hand anchor position,
-        # anchor hand flow, and anchor hand normal.
+        # Object feature, Cm feature, relative object-to-soft-anchor position,
+        # soft-anchor hand flow, and soft-anchor hand normal.
         self.flow_edge = nn.Sequential(
             nn.Linear(cm_dim * 2 + 9, cm_dim),
             nn.GELU(),
@@ -60,20 +127,8 @@ class CmFlowHead(nn.Module):
             nn.Linear(cm_dim // 2, 4),
         )
         # Point flow is measured in metres and normally starts close to zero.
-        # A zero initialized final decoder is a stable and interpretable
-        # baseline for overfit and large-scale training alike.
         nn.init.zeros_(self.flow_edge[-1].weight)
         nn.init.zeros_(self.flow_edge[-1].bias)
-
-    @staticmethod
-    def _safe_key_padding_mask(obj_valid_mask: torch.Tensor) -> torch.Tensor:
-        """Avoid all-masked attention rows for non-contact frames."""
-        mask = ~obj_valid_mask.bool()
-        no_valid_object = mask.all(dim=1)
-        if no_valid_object.any():
-            mask = mask.clone()
-            mask[no_valid_object, 0] = False
-        return mask
 
     def forward(
         self,
@@ -89,35 +144,33 @@ class CmFlowHead(nn.Module):
         wrist_delta: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        batch_size, num_hand, _ = hand_points.shape
+        batch_size, num_hand, _ = hand_flow.shape
         wrist_features = wrist_delta[:, :3, :4].reshape(batch_size, 1, 12).expand(-1, num_hand, -1)
         hand_input = torch.cat(
-            [z_hand, hand_points, hand_normals, hand_flow, dense_hand_contact.unsqueeze(-1), wrist_features], dim=-1
+            [
+                z_hand,
+                hand_points,
+                hand_normals,
+                hand_flow,
+                dense_hand_contact.unsqueeze(-1),
+                wrist_features,
+            ],
+            dim=-1,
         )
-        hand_motion = self.hand_motion_encoder(hand_input)
+        u_hand = self.hand_motion_encoder(hand_input)
+        cm_tokens, cm_assignment = self.slot_attention(u_hand)
+
         obj_context = self.object_context_encoder(torch.cat([z_obj, obj_points, obj_normals], dim=-1))
-        scene_motion, _ = self.motion_to_scene(
-            hand_motion,
-            obj_context,
-            obj_context,
-            key_padding_mask=self._safe_key_padding_mask(obj_valid_mask),
-            need_weights=False,
-        )
-        hand_action = self.motion_norm(hand_motion + scene_motion)
-        activity_logits = self.activity_head(hand_action).squeeze(-1)
-        num_tokens = min(self.num_cm_tokens, num_hand)
-        cm_anchor_idx = activity_logits.topk(num_tokens, dim=1).indices
-        cm_tokens = _gather_points(hand_action, cm_anchor_idx)
-        cm_anchor_pos = _gather_points(hand_points, cm_anchor_idx)
-        cm_anchor_normal = _gather_points(hand_normals, cm_anchor_idx)
-        cm_hand_flow = _gather_points(hand_flow, cm_anchor_idx)
-        cm_active = torch.sigmoid(activity_logits.gather(1, cm_anchor_idx))
+        cm_anchor_pos = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_points)
+        cm_hand_flow = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_flow)
+        cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_normals)
+        cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
         num_obj = obj_points.shape[1]
         relative = obj_points.unsqueeze(2) - cm_anchor_pos.unsqueeze(1)
         edge_input = torch.cat(
             [
-                obj_context.unsqueeze(2).expand(-1, -1, num_tokens, -1),
+                obj_context.unsqueeze(2).expand(-1, -1, self.num_cm_tokens, -1),
                 cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1),
                 relative,
                 cm_hand_flow.unsqueeze(1).expand(-1, num_obj, -1, -1),
@@ -126,28 +179,24 @@ class CmFlowHead(nn.Module):
             dim=-1,
         )
         edge_output = self.flow_edge(edge_input)
-        attention_logits = edge_output[..., 0] + torch.log(cm_active.unsqueeze(1).clamp_min(1e-6))
-        edge_weight = torch.softmax(attention_logits, dim=2)
+        edge_weight = torch.softmax(edge_output[..., 0], dim=2)
         pred_obj_flow = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
         return {
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
-            "cm_anchor_idx": cm_anchor_idx,
             "cm_anchor_pos": cm_anchor_pos,
             "cm_anchor_normal": cm_anchor_normal,
             "cm_hand_flow": cm_hand_flow,
-            "cm_active": cm_active,
+            "cm_assignment": cm_assignment,
         }
 
 
 class CmFlowModel(nn.Module):
-    """BaseRunner model: frozen dense tokens plus trainable Cm temporal head.
+    """Frozen dense interaction state plus trainable hand-motion ``C_m`` head.
 
-    ``state_dict`` deliberately omits the immutable 1.1GB correspondence
-    checkpoint.  Its absolute source path is saved in ``cfg.meta`` by the Base
-    checkpoint manager, and construction reloads it before Cm weights are
-    restored.  Cm checkpoints therefore contain only the newly trained head.
+    ``state_dict`` deliberately omits the immutable dense-token checkpoint.
+    Cm checkpoints contain only the temporal Slot Attention head and decoder.
     """
 
     _DENSE_PREFIX = "dense_encoder."
@@ -167,7 +216,7 @@ class CmFlowModel(nn.Module):
             dense_token_dim=self.dense_encoder.token_dim,
             cm_dim=int(meta.cm_dim),
             num_cm_tokens=int(meta.num_cm_tokens),
-            num_attention_heads=int(meta.num_attention_heads),
+            num_slot_iters=int(meta.slot_iters),
         )
 
     @property
@@ -183,7 +232,7 @@ class CmFlowModel(nn.Module):
         return self.head.num_cm_tokens
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        z_obj, z_hand, dense_contact = self.dense_encoder(
+        z_obj, z_hand, dense_hand_contact = self.dense_encoder(
             obj_points=batch["obj_points"],
             obj_normals=batch["obj_normals"],
             hand_points=batch["hand_points"],
@@ -193,7 +242,7 @@ class CmFlowModel(nn.Module):
         return self.head(
             z_obj=z_obj,
             z_hand=z_hand,
-            dense_hand_contact=dense_contact,
+            dense_hand_contact=dense_hand_contact,
             obj_points=batch["obj_points"],
             obj_normals=batch["obj_normals"],
             hand_points=batch["hand_points"],
@@ -213,7 +262,7 @@ class CmFlowModel(nn.Module):
         unexpected = list(incompatible.unexpected_keys)
         if strict and (missing or unexpected):
             raise RuntimeError(
-                "Cm checkpoint is incompatible with the temporal head: "
+                "Cm checkpoint is incompatible with the temporal Slot Attention head: "
                 f"missing={missing}, unexpected={unexpected}."
             )
         return incompatible

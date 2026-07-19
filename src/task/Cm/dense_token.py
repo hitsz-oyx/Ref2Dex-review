@@ -11,7 +11,7 @@ from src.task.correspondence_ptv3_v2.model import StaticHOCPTv3V2
 
 
 class FrozenDenseTokenEncoder(nn.Module):
-    """Expose only current-frame dense tokens and hand-contact prior.
+    """Expose frozen current-frame dense interaction tokens and contact prior.
 
     The wrapped model receives `(O_t, H_t)` only.  In particular, neither
     `hand_flow` nor any future object field enters the old PTv3 encoder.

@@ -8,11 +8,10 @@ meta:
   num_obj_points: 512
   num_hand_points: 1538
   cm_dim: 256
-  num_cm_tokens: 32
-  num_attention_heads: 8
+  num_cm_tokens: 16
+  slot_iters: 3
   flow_smooth_l1_beta: 0.01
   loss_flow_weight: 1.0
-  loss_activity_weight: 0.0001
 
 data:
   batch_size: 2
