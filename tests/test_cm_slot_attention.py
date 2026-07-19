@@ -30,14 +30,33 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     assert head.hand_motion_encoder[0].in_features == 8 + 22
     assert output["cm_tokens"].shape == (batch_size, 4, 16)
     assert output["cm_assignment"].shape == (batch_size, 4, num_hand)
+    assert output["cm_slot_weights"].shape == (batch_size, 4, num_hand)
     assert output["cm_anchor_pos"].shape == (batch_size, 4, 3)
     assert output["cm_anchor_normal"].shape == (batch_size, 4, 3)
     assert output["cm_hand_flow"].shape == (batch_size, 4, 3)
     assert output["pred_obj_flow"].shape == (batch_size, num_obj, 3)
-    torch.testing.assert_close(output["cm_assignment"].sum(dim=-1), torch.ones(batch_size, 4))
+    torch.testing.assert_close(output["cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
+    torch.testing.assert_close(output["cm_slot_weights"].sum(dim=-1), torch.ones(batch_size, 4))
     torch.testing.assert_close(
         torch.linalg.vector_norm(output["cm_anchor_normal"], dim=-1),
         torch.ones(batch_size, 4),
     )
     torch.testing.assert_close(output["pred_obj_flow"][0, ~torch.tensor([True, True, False, True, False])], torch.zeros(2, 3))
     assert torch.isfinite(output["cm_tokens"]).all()
+
+    repeated_inputs = {
+        "z_obj": torch.randn(batch_size, num_obj, 8),
+        "z_hand": torch.randn(batch_size, num_hand, 8),
+        "dense_hand_contact": torch.rand(batch_size, num_hand),
+        "obj_points": torch.randn(batch_size, num_obj, 3),
+        "obj_normals": torch.randn(batch_size, num_obj, 3),
+        "hand_points": torch.randn(batch_size, num_hand, 3),
+        "hand_normals": torch.randn(batch_size, num_hand, 3),
+        "hand_flow": torch.randn(batch_size, num_hand, 3),
+        "wrist_delta": torch.eye(4).expand(batch_size, -1, -1).clone(),
+        "obj_valid_mask": torch.ones(batch_size, num_obj, dtype=torch.bool),
+    }
+    repeated_output = head(**repeated_inputs)
+    repeated_output_again = head(**repeated_inputs)
+    for key in ("cm_tokens", "cm_assignment", "cm_slot_weights", "pred_obj_flow"):
+        torch.testing.assert_close(repeated_output_again[key], repeated_output[key])

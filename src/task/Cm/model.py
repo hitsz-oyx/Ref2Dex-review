@@ -24,9 +24,8 @@ class SlotAttention(nn.Module):
 
     Slots start from distinct learned vectors rather than per-batch random
     noise, which keeps Cm extraction deterministic for a fixed checkpoint.
-    ``slot_attention`` returned by :meth:`forward` is normalized across hand
-    points for each slot and can therefore be used to localize a slot after
-    training without making position an input to the motion encoder.
+    The returned slot weights can be projected back onto hand geometry to
+    localize each learned slot after training.
     """
 
     def __init__(self, *, dim: int, num_slots: int, num_iterations: int = 3) -> None:
@@ -52,8 +51,8 @@ class SlotAttention(nn.Module):
         )
         self.scale = self.dim**-0.5
 
-    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return sparse slots and their normalized soft hand-point assignments.
+    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return sparse slots, point-to-slot assignments, and slot weights.
 
         Args:
             inputs: `[B, H, D]` hand-point motion features.
@@ -84,7 +83,7 @@ class SlotAttention(nn.Module):
             ).reshape(batch_size, self.num_slots, self.dim)
             slots = slots + self.mlp(self.norm_mlp(slots))
         assert slot_weights is not None and slot_assignment is not None
-        return slots, slot_weights
+        return slots, slot_assignment, slot_weights
 
 
 class CmFlowHead(nn.Module):
@@ -158,12 +157,12 @@ class CmFlowHead(nn.Module):
             dim=-1,
         )
         u_hand = self.hand_motion_encoder(hand_input)
-        cm_tokens, cm_assignment = self.slot_attention(u_hand)
+        cm_tokens, cm_assignment, cm_slot_weights = self.slot_attention(u_hand)
 
         obj_context = self.object_context_encoder(torch.cat([z_obj, obj_points, obj_normals], dim=-1))
-        cm_anchor_pos = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_points)
-        cm_hand_flow = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_flow)
-        cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_assignment, hand_normals)
+        cm_anchor_pos = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points)
+        cm_hand_flow = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_flow)
+        cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
         cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
         num_obj = obj_points.shape[1]
@@ -189,6 +188,7 @@ class CmFlowHead(nn.Module):
             "cm_anchor_normal": cm_anchor_normal,
             "cm_hand_flow": cm_hand_flow,
             "cm_assignment": cm_assignment,
+            "cm_slot_weights": cm_slot_weights,
         }
 
 

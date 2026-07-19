@@ -62,6 +62,17 @@ class CmActionRunner(BaseRunner):
         flow_mae = (absolute_map * valid.float()).sum() / valid_count.float()
         gt_flow_norm = (torch.linalg.norm(gt_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         pred_flow_norm = (torch.linalg.norm(pred_flow, dim=-1) * valid.float()).sum() / valid_count.float()
+        cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
+        slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
+        cm_slot_weights = prediction["cm_slot_weights"]
+        num_slots = cm_slot_weights.shape[1]
+        if num_slots > 1:
+            normalized_weights = torch.nn.functional.normalize(cm_slot_weights, dim=-1, eps=1e-8)
+            slot_similarity = normalized_weights @ normalized_weights.transpose(1, 2)
+            off_diagonal = ~torch.eye(num_slots, device=slot_similarity.device, dtype=torch.bool)
+            slot_weight_overlap = slot_similarity[:, off_diagonal].mean()
+        else:
+            slot_weight_overlap = cm_slot_weights.new_zeros(())
         total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
@@ -70,6 +81,8 @@ class CmActionRunner(BaseRunner):
             "flow_mae": flow_mae,
             "gt_flow_norm": gt_flow_norm,
             "pred_flow_norm": pred_flow_norm,
+            "slot_assignment_entropy": slot_assignment_entropy,
+            "slot_weight_overlap": slot_weight_overlap,
             "valid_object_count": valid_count.float(),
         }
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(pred_flow.shape[0]))

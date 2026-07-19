@@ -107,14 +107,19 @@ cm_tokens          # [K, 256] hand-side temporal action slots
 cm_anchor_pos      # [K, 3] soft hand-region center
 cm_anchor_normal   # [K, 3] normalized soft hand-region normal
 cm_hand_flow       # [K, 3] soft hand-region mean local displacement
-cm_assignment      # [K, 1538], normalized hand-point assignment
+cm_assignment      # [K, 1538], point-to-slot assignment; sum over K is 1
+cm_slot_weights    # [K, 1538], per-slot aggregation weights; sum over hand points is 1
 ```
 
-`cm_anchor_pos/cm_hand_flow/cm_anchor_normal` 都由 `cm_assignment` 对手点软
-聚合而来；不存在 top-K hard anchor 或 activity loss。object flow decoder
+`cm_anchor_pos/cm_hand_flow/cm_anchor_normal` 都由 `cm_slot_weights` 对手点软
+聚合而来；`cm_assignment` 描述每个手点在各 slot 间的归属。不存在 top-K hard
+anchor 或 activity loss。object flow decoder
 保留每个 object-point 到每个 slot 的相对位置、slot 平均手流和 slot 法向，
 并以 masked Smooth-L1 训练；没有可采样 object candidate 的帧会被 mask，
 不会制造假的 zero-object 输入。
+
+训练只优化 flow loss；另记录 `slot_assignment_entropy`（手点在 slot 间的分配熵）与
+`slot_weight_overlap`（不同 slot 聚合权重的余弦重叠），用于发现 slot collapse，二者均不参与反传。
 
 这与早期的 `top-K anchor + activity head` Cm head 参数结构不兼容；必须从
 新的 CmAction run 训练，不能恢复旧 Cm head checkpoint。冻结的
@@ -188,7 +193,7 @@ PYTHONPATH=. python -m src.task.Cm.visualize \
 1. Stage 4 中 `obj_flow_gt` 与 `hand_flow` 使用同一个 `hand_root_t`，而不是每帧各自 root。
 2. 以同一 raw frame id 重跑，512 selected object indices 与 dense-token 旧数据的 epoch-0 采样一致。
 3. 打乱 `hand_flow` 或 `wrist_delta` 后 flow 指标应显著变差；否则 Cm 可能没有使用动作信息。
-4. `cm_assignment` 的每个 slot 应形成有限的手部区域；其 `cm_hand_flow` 应能区分运动手指、稳定抓持与非接触运动，而不是所有 slot 均匀覆盖整只手。
+4. `cm_slot_weights` 的每个 slot 应形成有限的手部区域；其 `cm_hand_flow` 应能区分运动手指、稳定抓持与非接触运动，而不是所有 slot 均匀覆盖整只手。`cm_assignment` 则应在每个 hand point 上形成有区分度的 slot 归属。
 5. 任何 future object 字段都不能进入 `FrozenDenseTokenEncoder` 或 `CmFlowModel`；`obj_flow_gt` 只在 loss/eval 中读取。
 
 ## Cp 的预留边界
