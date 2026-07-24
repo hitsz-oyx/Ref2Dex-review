@@ -109,6 +109,7 @@ cm_anchor_normal   # [K, 3] normalized soft hand-region normal
 cm_hand_flow       # [K, 3] soft hand-region mean local displacement
 cm_assignment      # [K, 1538], point-to-slot assignment; sum over K is 1
 cm_slot_weights    # [K, 1538], per-slot aggregation weights; sum over hand points is 1
+decoder_slot_usage # [K], mean valid-object decoder attention q_k; sum over K is 1
 ```
 
 `cm_anchor_pos/cm_hand_flow/cm_anchor_normal` 都由 `cm_slot_weights` 对手点软
@@ -119,7 +120,7 @@ anchor 或 activity loss。object flow decoder
 不会制造假的 zero-object 输入。
 
 训练只优化 flow loss；另记录 `slot_assignment_entropy`（手点在 slot 间的分配熵）与
-`slot_weight_overlap`（不同 slot 聚合权重的余弦重叠），用于发现 slot collapse，二者均不参与反传。
+`slot_weight_overlap`（不同 slot 聚合权重的余弦重叠），用于发现 slot collapse，二者均不参与反传。还会记录每个 `decoder_slot_usage/slot_XX` 及其 entropy/max，确认 object-flow decoder 是否实际使用多个 slot；这些指标同样不参与反传。
 
 这与早期的 `top-K anchor + activity head` Cm head 参数结构不兼容；必须从
 新的 CmAction run 训练，不能恢复旧 Cm head checkpoint。冻结的
@@ -184,7 +185,23 @@ PYTHONPATH=. python -m src.task.Cm.visualize \
   --device cuda
 ```
 
-按键：`A/D`（或左右方向键）切 pair；`G` 循环 `GT → Pred → Both`；`L` 开关稀疏 flow line；`H` 开关 future-hand context；`R` 重置相机。可先加 `--check-only` 检查预测 shape、有效 object 数和 flow MSE，不创建窗口。默认 `--pair` 是 active-pair 过滤后的索引；加入 `--include-inactive` 后它才对应完整 Stage 4 pair 顺序。
+按键：`A/D`（或左右方向键）切 pair；`G` 循环 `GT → Pred → Both`；`L` 开关稀疏 flow line；`H` 开关 future-hand context；`S` 切换当前手的 slot-assignment 着色及 soft-anchor 球；`R` 重置相机。Slot 模式显示每个 MANO point 的 `argmax_k cm_assignment[k,j]`，用于跨 pair 判断分区是动态功能 grouping 还是固定解剖分区。可先加 `--check-only` 检查预测 shape、有效 object 数和 flow MSE，不创建窗口。默认 `--pair` 是 active-pair 过滤后的索引；加入 `--include-inactive` 后它才对应完整 Stage 4 pair 顺序。
+
+`T` 进入 trajectory rollout 模式，`P` 从当前 pair 的 GT object state 开始执行（再次按 `P` 清除 rollout，回到该帧 GT）。rollout 会固定这批首帧 object source points，每一步把 **预测** object state 变换到下一 hand-root frame，再作为下一步模型输入；GT object 只用于显示和误差计算。此时 `A/D` 在 rollout 的时间点间切换，`G` 变为 `GT → Eval → Both`，红色 Eval 点云是累积预测而非当前 GT 的单步预测。`L` 可显示两条各自的下一步轨迹线。
+
+`W` 在训练用 `hand_root_t` 坐标与世界坐标间切换。Stage 4 schema 1.1 起额外保存 `hand_root_pose_world` / `next_hand_root_pose_world`（均为 `T_world←hand`）；它们只供可视化使用，模型输入、监督和 checkpoint 均不变。旧 Stage 4 文件缺少这些字段时按 `W` 会给出明确提示，需用 `process/stage4/prepare_cm.py` 重新生成该文件。
+
+严格 rollout 要求下一 temporal pair 的 current frame 等于前一 pair 的 future frame（例如 `pair_stride=3, pair_hop=1`：`t→t+3→t+6`）。训练使用的 `stride3_hop4` 数据为 `t→t+3` 后跳到 `t+4`，其中缺少 `t+3→…` 的输入状态，因此可视化会在第一步后停止，避免偷偷使用 GT object state 补帧。可用同一 checkpoint 在 `grab_cm_raw_stride3_smoke` 这类可链式 Stage 4 数据上检查多帧漂移；这不需要重新训练。
+
+若需要把这种判断做成可复现统计，可用 `--assignment-report`。它对输入 sequence 的每个（默认 active）pair 推理，报告相邻 active pair 的 `adjacent_assignment_change_rate`、发生过重分配的 MANO 点比例，以及每个手点经历过多少个不同 slot；同时输出整个 sequence 的 mean decoder usage。该命令只做推理、不创建窗口，也不改变 checkpoint：
+
+```bash
+PYTHONPATH=. python -m src.task.Cm.visualize \
+  --checkpoint outputs/train/<run>/checkpoints/best.pt \
+  --input processed_data/generated/stage4/<sequence>.npz \
+  --device cuda \
+  --assignment-report
+```
 
 ## 先验验证项
 

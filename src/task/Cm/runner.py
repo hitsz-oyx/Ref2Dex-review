@@ -73,6 +73,12 @@ class CmActionRunner(BaseRunner):
             slot_weight_overlap = slot_similarity[:, off_diagonal].mean()
         else:
             slot_weight_overlap = cm_slot_weights.new_zeros(())
+        decoder_slot_usage = prediction["decoder_slot_usage"]
+        mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
+        decoder_slot_usage_entropy = -(
+            mean_decoder_slot_usage.clamp_min(1e-8)
+            * mean_decoder_slot_usage.clamp_min(1e-8).log()
+        ).sum()
         total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
@@ -83,6 +89,14 @@ class CmActionRunner(BaseRunner):
             "pred_flow_norm": pred_flow_norm,
             "slot_assignment_entropy": slot_assignment_entropy,
             "slot_weight_overlap": slot_weight_overlap,
+            "decoder_slot_usage_entropy": decoder_slot_usage_entropy,
+            "decoder_slot_usage_max": mean_decoder_slot_usage.max(),
             "valid_object_count": valid_count.float(),
         }
+        metrics.update(
+            {
+                f"decoder_slot_usage/slot_{slot_idx:02d}": usage
+                for slot_idx, usage in enumerate(mean_decoder_slot_usage)
+            }
+        )
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(pred_flow.shape[0]))

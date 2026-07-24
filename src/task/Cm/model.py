@@ -181,6 +181,11 @@ class CmFlowHead(nn.Module):
         edge_weight = torch.softmax(edge_output[..., 0], dim=2)
         pred_obj_flow = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
+        # q_k: mean decoder attention paid to each slot by valid object points.
+        # This is a diagnostic only; it neither gates slots nor changes flow.
+        valid_object = obj_valid_mask.unsqueeze(-1).float()
+        decoder_slot_usage = (edge_weight * valid_object).sum(dim=1)
+        decoder_slot_usage = decoder_slot_usage / valid_object.sum(dim=1).clamp_min(1.0)
         return {
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
@@ -189,6 +194,7 @@ class CmFlowHead(nn.Module):
             "cm_hand_flow": cm_hand_flow,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
+            "decoder_slot_usage": decoder_slot_usage,
         }
 
 

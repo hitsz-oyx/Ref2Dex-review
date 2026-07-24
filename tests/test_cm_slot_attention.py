@@ -31,12 +31,17 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     assert output["cm_tokens"].shape == (batch_size, 4, 16)
     assert output["cm_assignment"].shape == (batch_size, 4, num_hand)
     assert output["cm_slot_weights"].shape == (batch_size, 4, num_hand)
+    assert output["decoder_slot_usage"].shape == (batch_size, 4)
     assert output["cm_anchor_pos"].shape == (batch_size, 4, 3)
     assert output["cm_anchor_normal"].shape == (batch_size, 4, 3)
     assert output["cm_hand_flow"].shape == (batch_size, 4, 3)
     assert output["pred_obj_flow"].shape == (batch_size, num_obj, 3)
     torch.testing.assert_close(output["cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
     torch.testing.assert_close(output["cm_slot_weights"].sum(dim=-1), torch.ones(batch_size, 4))
+    torch.testing.assert_close(output["decoder_slot_usage"].sum(dim=-1), torch.ones(batch_size))
+    # The zero-initialized edge head starts with equal decoder attention over
+    # slots, including when an object-valid mask excludes some points.
+    torch.testing.assert_close(output["decoder_slot_usage"], torch.full((batch_size, 4), 0.25))
     torch.testing.assert_close(
         torch.linalg.vector_norm(output["cm_anchor_normal"], dim=-1),
         torch.ones(batch_size, 4),
@@ -58,5 +63,5 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     }
     repeated_output = head(**repeated_inputs)
     repeated_output_again = head(**repeated_inputs)
-    for key in ("cm_tokens", "cm_assignment", "cm_slot_weights", "pred_obj_flow"):
+    for key in ("cm_tokens", "cm_assignment", "cm_slot_weights", "decoder_slot_usage", "pred_obj_flow"):
         torch.testing.assert_close(repeated_output_again[key], repeated_output[key])

@@ -29,7 +29,7 @@ from process.GRAB.raw import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage4" / "grab_cm_raw_stride3"
 SCHEMA_NAME = "ref2dex_cm_stage4"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 
 def _resolve_sequences(args: argparse.Namespace) -> list[str]:
@@ -128,6 +128,15 @@ def _mirror_x(
     wrist_delta[:, :3, 3] = np.einsum("ij,tj->ti", reflection, translation)
 
 
+def _mirror_hand_root_poses_world(hand_root_pose_world: np.ndarray) -> None:
+    """Mirror ``T_world<-hand`` consistently with the local-frame reflection."""
+    reflection = np.eye(4, dtype=np.float32)
+    reflection[0, 0] = -1.0
+    hand_root_pose_world[...] = np.einsum(
+        "ij,tjk,kl->til", reflection, hand_root_pose_world, reflection
+    )
+
+
 def _scalar_from_raw(path: Path, key: str, default: float) -> float:
     with np.load(path, allow_pickle=True) as raw:
         if key not in raw.files:
@@ -168,8 +177,13 @@ def build_stage4_sequence(
     # raw 0->3, 1->4, 2->5, ... (ds_rate=1, pair_stride=3, pair_hop=1).
     current_idx = np.arange(0, total_frames - pair_stride, pair_hop, dtype=np.int64)
     next_idx = current_idx + int(pair_stride)
+    # These are T_world<-hand.  Keep them in Stage 4 so visualizers can
+    # switch between the training hand-root frame and the original world frame
+    # without changing any model input or target.
     hand_root_t = np.asarray(source[root_key], dtype=np.float32)[current_idx]
     hand_root_t1 = np.asarray(source[root_key], dtype=np.float32)[next_idx]
+    hand_root_pose_world = hand_root_t.copy()
+    next_hand_root_pose_world = hand_root_t1.copy()
 
     obj_world = np.asarray(source["obj_points_world"], dtype=np.float32)
     obj_normals_world = np.asarray(source["obj_normals_world"], dtype=np.float32)
@@ -198,6 +212,8 @@ def build_stage4_sequence(
             wrist_delta,
             hand_cano_points,
         )
+        _mirror_hand_root_poses_world(hand_root_pose_world)
+        _mirror_hand_root_poses_world(next_hand_root_pose_world)
 
     obj_to_hand_min_dist, hand_to_obj_min_dist, candidate_mask = _compute_current_distance_statistics(
         obj_points,
@@ -225,6 +241,8 @@ def build_stage4_sequence(
         "pair_index": np.arange(len(current_idx), dtype=np.int32),
         "time_delta_sec": np.full((len(current_idx),), time_delta, dtype=np.float32),
         "coordinate_frame": np.asarray("hand_root_t"),
+        "hand_root_pose_world": hand_root_pose_world,
+        "next_hand_root_pose_world": next_hand_root_pose_world,
         "obj_points": obj_points,
         "obj_normals": obj_normals,
         "obj_point_id": np.asarray(source["obj_point_id"], dtype=np.int32),
@@ -254,6 +272,7 @@ def _write_meta(output_root: Path, args: argparse.Namespace, stats: dict[str, in
         "output_root": str(output_root.resolve()),
         "sample_unit": "single_sequence_single_hand_temporal_pair",
         "coordinate_frame": "hand_root_t",
+        "world_pose_fields": "hand_root_pose_world, next_hand_root_pose_world (T_world<-hand)",
         "future_object_policy": "not stored; obj_flow_gt is supervision only",
         "num_obj_pool": int(args.num_obj_points),
         "num_hand_points": 1538,
