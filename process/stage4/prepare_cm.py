@@ -23,6 +23,7 @@ from process.GRAB.raw import (
     DEFAULT_MANO_MODEL_DIR,
     GRABRawAdapter,
     load_manifest_seq_paths,
+    resolve_grab_sequence_root,
 )
 
 
@@ -36,13 +37,14 @@ def _resolve_sequences(args: argparse.Namespace) -> list[str]:
     """Resolve raw GRAB sequences without depending on the Stage 2 entrypoint."""
     if args.raw_file:
         return [str(Path(args.raw_file).resolve())]
-    sequences = sorted((Path(args.grab_root) / "grab").glob("*/*.npz"))
+    sequence_root = resolve_grab_sequence_root(args.grab_root)
+    sequences = sorted(sequence_root.glob("*/*.npz"))
     if not args.seq:
         return [str(path) for path in sequences]
     target = args.seq[:-4] if args.seq.endswith(".npz") else args.seq
     selected: list[str] = []
     for path in sequences:
-        relative = path.relative_to(Path(args.grab_root) / "grab").with_suffix("").as_posix()
+        relative = path.relative_to(sequence_root).with_suffix("").as_posix()
         if relative == target or target in relative:
             selected.append(str(path))
     return selected
