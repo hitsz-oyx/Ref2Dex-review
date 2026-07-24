@@ -45,8 +45,11 @@ from smplx import MANO
 REF2DEX_ROOT = op.dirname(op.dirname(op.dirname(op.abspath(__file__))))
 # MANO 模型目录（含 MANO_LEFT.pkl / MANO_RIGHT.pkl）
 DEFAULT_MANO_MODEL_DIR = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "body_models", "mano")
-# GRAB 原始数据根目录（含 grab/、tools/、tools/object_meshes/contact_meshes/）
-DEFAULT_GRAB_ROOT = op.join(REF2DEX_ROOT, "dataset", "GRAB", "data")
+# GRAB 数据集根目录；兼容以下布局：
+#   1) {root}/grab/{subject}/*.npz + {root}/tools/...
+#   2) {root}/data/{subject}/*.npz + {root}/tools/...
+#   3) {root}/{subject}/*.npz + {root}/tools/...
+DEFAULT_GRAB_ROOT = op.join(REF2DEX_ROOT, "dataset", "GRAB")
 DEFAULT_TORCH_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEFAULT_NN_BATCH_SIZE = 16
 SHARED_ASSET_ROOT = op.join(REF2DEX_ROOT, "assets", "shared")
@@ -183,9 +186,22 @@ def compute_canonical_hand_surface(mano_layer: MANO) -> tuple:
     return face_centers, face_normals
 
 
+def resolve_grab_sequence_root(grab_root: str | Path) -> Path:
+    """Return the directory that directly contains subject subdirectories."""
+    root = Path(grab_root).resolve()
+    for candidate in (root / "grab", root / "data", root):
+        if candidate.is_dir() and next(candidate.glob("*/*.npz"), None) is not None:
+            return candidate
+    raise FileNotFoundError(
+        f"No GRAB sequences found under {root}. Expected one of "
+        f"{root / 'grab'}, {root / 'data'}, or {root} to contain */*.npz"
+    )
+
+
 
 
 def _resolve_manifest_seq_path(manifest_path: str, grab_root: str, row: dict, line_num: int) -> str:
+    sequence_root = resolve_grab_sequence_root(grab_root)
     raw_path_text = str(
         row.get("raw_path")
         or row.get("raw_path_abs")
@@ -211,7 +227,7 @@ def _resolve_manifest_seq_path(manifest_path: str, grab_root: str, row: dict, li
                 f"Manifest {manifest_path} line {line_num}: seq_id must be '<subject>/<sequence>', got {seq_id_text!r}"
             )
         subject_id, seq_name = seq_id_text.split("/", 1)
-        candidate = Path(grab_root) / "grab" / subject_id / f"{seq_name}.npz"
+        candidate = sequence_root / subject_id / f"{seq_name}.npz"
     else:
         raise ValueError(
             f"Manifest {manifest_path} line {line_num}: expected one of raw_path/raw_path_abs/source_path/path/seq_id"
@@ -334,6 +350,8 @@ def load_object_canonical_mesh(obj_name: str, grab_root: str, unit: str = "m") -
     p = op.join(grab_root, "tools", "object_meshes", "contact_meshes", f"{obj_name}.ply")
     if not op.exists(p):
         p = op.join(grab_root, "tools", "object_meshes", "contact_meshes", f"{obj_name}.obj")
+    if not op.exists(p):
+        p = op.join(OBJECT_ASSET_ROOT, obj_name, "mesh.obj")
     if not op.exists(p):
         raise FileNotFoundError(f"GRAB object mesh not found: {obj_name} (tried {p})")
     mesh = trimesh.load(p, process=False)
@@ -487,6 +505,7 @@ class GRABRawAdapter:
         ).to(self.device)
         # 实际 forward 用的 MANO（按 subject vtemp 注入）—— 运行时构造并 cache
         self._mano_cache = {}    # key: (vtemp_path, is_rhand) -> ManoLayer
+        self._missing_vtemp_warned = set()
         self.mano_path = mano_path
 
         # 手部语义标签（cache）
@@ -514,15 +533,22 @@ class GRABRawAdapter:
         """
         key = (vtemp_path, is_rhand)
         if key not in self._mano_cache:
-            v_template = trimesh.load(vtemp_path, process=False).vertices.astype(np.float32)
-            m = MANO(
-                self.mano_path,
-                is_rhand=is_rhand,
-                use_pca=True,
-                num_pca_comps=24,
-                flat_hand_mean=True,
-                v_template=v_template,        # ★ 注入受试者手型
-            ).to(self.device)
+            mano_kwargs = {
+                "is_rhand": is_rhand,
+                "use_pca": True,
+                "num_pca_comps": 24,
+                "flat_hand_mean": True,
+            }
+            if op.exists(vtemp_path):
+                v_template = trimesh.load(vtemp_path, process=False).vertices.astype(np.float32)
+                mano_kwargs["v_template"] = v_template  # type: ignore[assignment]
+            elif vtemp_path not in self._missing_vtemp_warned:
+                print(
+                    f"[Preprocessor] WARNING: missing subject v_template {vtemp_path}. "
+                    "Falling back to default MANO mean shape."
+                )
+                self._missing_vtemp_warned.add(vtemp_path)
+            m = MANO(self.mano_path, **mano_kwargs).to(self.device)
             self._mano_cache[key] = m
         return self._mano_cache[key]
 
