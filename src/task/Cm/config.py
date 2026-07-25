@@ -23,7 +23,18 @@ class Config(TaskConfig):
         num_cm_tokens: int = 16
         slot_iters: int = 3
         flow_smooth_l1_beta: float = 0.01
-        loss_flow_weight: float = 1.0
+        loss_object_weight: float = 5.0
+        loss_hand_weight: float = 1.0
+        loss_wrist_weight: float = 1.0
+        loss_articulation_weight: float = 1.0
+        loss_global_articulation_weight: float = 0.2
+        wrist_rotation_weight_m_per_rad: float = 0.01
+        hand_contact_sigma_m: float = 0.005
+        hand_articulation_scale_m: float = 0.01
+        hand_loss_base_weight: float = 0.2
+        hand_loss_contact_weight: float = 1.5
+        hand_loss_articulation_weight: float = 0.8
+        hand_loss_max_weight: float = 3.0
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"

@@ -10,6 +10,30 @@ from src.base import BaseRunner, RunnerOutput, TaskConfig
 from src.task.Cm.dataset import make_dataloaders
 
 
+def _wrist_targets(
+    hand_points: torch.Tensor,
+    hand_flow: torch.Tensor,
+    wrist_delta: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split total hand flow into the documented wrist-rigid and residual parts.
+
+    Stage 4 stores ``T_hand_t<-hand_t1``.  With row-vector point storage the
+    inverse mapping is ``y_t1 = (y_t - t) @ R``.
+    """
+    rotation = wrist_delta[:, :3, :3]
+    translation = -torch.einsum("bi,bij->bj", wrist_delta[:, :3, 3], rotation)
+    rigid_next = torch.einsum("bhi,bij->bhj", hand_points, rotation) + translation.unsqueeze(1)
+    rigid_flow = rigid_next - hand_points
+    articulation_flow = hand_flow - rigid_flow
+    return rotation, translation, rigid_flow, articulation_flow
+
+
+def _rotation_geodesic(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    relative = prediction.transpose(-1, -2) @ target
+    cosine = ((relative.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) * 0.5).clamp(-1.0, 1.0)
+    return torch.acos(cosine)
+
+
 class CmActionRunner(BaseRunner):
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(
@@ -62,6 +86,45 @@ class CmActionRunner(BaseRunner):
         flow_mae = (absolute_map * valid.float()).sum() / valid_count.float()
         gt_flow_norm = (torch.linalg.norm(gt_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         pred_flow_norm = (torch.linalg.norm(pred_flow, dim=-1) * valid.float()).sum() / valid_count.float()
+
+        target_wrist_rotation, target_wrist_translation, target_rigid_flow, target_articulation_flow = _wrist_targets(
+            batch["hand_points"].float(), batch["hand_flow"].float(), batch["wrist_delta"].float()
+        )
+        pred_wrist_translation = prediction["pred_wrist_translation"]
+        wrist_translation_loss = F.smooth_l1_loss(
+            pred_wrist_translation,
+            target_wrist_translation,
+            beta=beta,
+        )
+        wrist_rotation_error = _rotation_geodesic(prediction["pred_wrist_rotation"], target_wrist_rotation)
+        wrist_rotation_loss = F.smooth_l1_loss(wrist_rotation_error, torch.zeros_like(wrist_rotation_error), beta=beta)
+        wrist_loss = wrist_translation_loss + float(self.cfg.meta.wrist_rotation_weight_m_per_rad) * wrist_rotation_loss
+
+        pred_articulation_flow = prediction["pred_hand_articulation_flow"]
+        articulation_map = F.smooth_l1_loss(
+            pred_articulation_flow, target_articulation_flow, beta=beta, reduction="none"
+        ).mean(dim=-1)
+        hand_distance = batch["hand_to_obj_min_dist"].float()
+        contact_weight = torch.exp(-0.5 * (hand_distance / float(self.cfg.meta.hand_contact_sigma_m)).square())
+        articulation_weight = torch.linalg.norm(target_articulation_flow, dim=-1)
+        articulation_weight = (articulation_weight / float(self.cfg.meta.hand_articulation_scale_m)).clamp(0.0, 1.0)
+        point_weight = (
+            float(self.cfg.meta.hand_loss_base_weight)
+            + float(self.cfg.meta.hand_loss_contact_weight) * contact_weight
+            + float(self.cfg.meta.hand_loss_articulation_weight) * articulation_weight
+        ).clamp(max=float(self.cfg.meta.hand_loss_max_weight))
+        point_weight = point_weight / point_weight.mean(dim=1, keepdim=True).clamp_min(1e-6)
+        weighted_articulation_loss = (articulation_map * point_weight).sum() / point_weight.sum().clamp_min(1e-6)
+        global_articulation_loss = articulation_map.mean()
+        hand_loss = (
+            float(self.cfg.meta.loss_wrist_weight) * wrist_loss
+            + float(self.cfg.meta.loss_articulation_weight) * weighted_articulation_loss
+            + float(self.cfg.meta.loss_global_articulation_weight) * global_articulation_loss
+        )
+        pred_hand_flow = prediction["pred_hand_flow"]
+        hand_epe = torch.linalg.norm(pred_hand_flow - batch["hand_flow"].float(), dim=-1)
+        contact_denominator = contact_weight.sum().clamp_min(1e-6)
+        hand_epe_contact = (hand_epe * contact_weight).sum() / contact_denominator
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
         cm_slot_weights = prediction["cm_slot_weights"]
@@ -79,7 +142,10 @@ class CmActionRunner(BaseRunner):
             mean_decoder_slot_usage.clamp_min(1e-8)
             * mean_decoder_slot_usage.clamp_min(1e-8).log()
         ).sum()
-        total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
+        total_loss = (
+            float(self.cfg.meta.loss_object_weight) * flow_smooth_l1
+            + float(self.cfg.meta.loss_hand_weight) * hand_loss
+        )
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
             "flow_smooth_l1": flow_smooth_l1,
@@ -87,6 +153,20 @@ class CmActionRunner(BaseRunner):
             "flow_mae": flow_mae,
             "gt_flow_norm": gt_flow_norm,
             "pred_flow_norm": pred_flow_norm,
+            "hand_loss": hand_loss,
+            "wrist_loss": wrist_loss,
+            "wrist_translation_loss": wrist_translation_loss,
+            "wrist_rotation_loss": wrist_rotation_loss,
+            "weighted_articulation_loss": weighted_articulation_loss,
+            "global_articulation_loss": global_articulation_loss,
+            "hand_epe_mm": hand_epe.mean() * 1000.0,
+            "hand_epe_contact_mm": hand_epe_contact * 1000.0,
+            "wrist_translation_error_mm": torch.linalg.norm(
+                pred_wrist_translation - target_wrist_translation, dim=-1
+            ).mean() * 1000.0,
+            "wrist_rotation_error_deg": wrist_rotation_error.mean() * (180.0 / torch.pi),
+            "hand_contact_weight_mean": contact_weight.mean(),
+            "hand_supervision_weight_mean": point_weight.mean(),
             "slot_assignment_entropy": slot_assignment_entropy,
             "slot_weight_overlap": slot_weight_overlap,
             "decoder_slot_usage_entropy": decoder_slot_usage_entropy,

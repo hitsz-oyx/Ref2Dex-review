@@ -8,7 +8,7 @@
 # 显示切换
 #   G                   循环切换物体流显示模式: GT -> Pred -> Both
 #   L                   开关流线段 (current→future 的连线,稀疏采样)
-#   H                   开关"未来手"点云 (hand_future) 的显示
+#   H                   开关 GT / predicted future hand 点云的显示
 #   S                   切换手部 Slot Assignment 分区与 soft-anchor 球
 #   T                   切换单步 teacher-forced / 整段 trajectory rollout 模式
 #   P                   trajectory 模式中：从当前帧开始 rollout / 回到当前 GT 帧
@@ -20,7 +20,8 @@
 #   GT_COLOR      绿色   物体 GT 未来位置
 #   PRED_COLOR    红色   物体模型预测的未来位置
 #   HAND_CURRENT  暖黄   手部当前帧
-#   HAND_FUTURE   青色   手部未来帧 (H 键开关)
+#   HAND_FUTURE   青色   手部 GT 未来帧 (H 键开关)
+#   HAND_PRED     红色   手部预测未来帧 (H 键开关)
 # =============================================================================
 """Interactive GT / prediction point-flow viewer for a trained CmAction model.
 
@@ -56,6 +57,7 @@ os.environ.setdefault("DISPLAY", "localhost:10.0")
 CURRENT_COLOR = np.asarray([0.38, 0.40, 0.45], dtype=np.float64)
 HAND_CURRENT_COLOR = np.asarray([0.90, 0.78, 0.46], dtype=np.float64)
 HAND_FUTURE_COLOR = np.asarray([0.34, 0.90, 0.90], dtype=np.float64)
+HAND_PRED_COLOR = np.asarray([0.96, 0.24, 0.16], dtype=np.float64)
 GT_COLOR = np.asarray([0.15, 0.85, 0.34], dtype=np.float64)
 PRED_COLOR = np.asarray([0.96, 0.24, 0.16], dtype=np.float64)
 ROLLOUT_CONTACT_RADIUS_M = 0.05
@@ -262,6 +264,7 @@ class InteractiveFlowViewer:
         self.pred_obj = None
         self.hand_current = None
         self.hand_future = None
+        self.hand_pred_future = None
         self.gt_lines = None
         self.pred_lines = None
         self.slot_anchors: list[Any] = []
@@ -439,6 +442,7 @@ class InteractiveFlowViewer:
         pred_future = current + self.prediction["pred_obj_flow"].squeeze(0).numpy()[valid].astype(np.float64)
         hand_current = self.sample["hand_points"].numpy().astype(np.float64)
         hand_future = hand_current + self.sample["hand_flow"].numpy().astype(np.float64)
+        hand_pred_future = hand_current + self.prediction["pred_hand_flow"].squeeze(0).numpy().astype(np.float64)
         cm_assignment = self.prediction["cm_assignment"].squeeze(0).numpy()
         slot_ids = cm_assignment.argmax(axis=0)
         palette = _slot_colors(cm_assignment.shape[0])
@@ -448,6 +452,7 @@ class InteractiveFlowViewer:
             "pred_future": pred_future,
             "hand_current": hand_current,
             "hand_future": hand_future,
+            "hand_pred_future": hand_pred_future,
             "hand_slot_colors": palette[slot_ids],
             "slot_colors": palette,
             "slot_anchor_pos": self.prediction["cm_anchor_pos"].squeeze(0).numpy().astype(np.float64),
@@ -462,6 +467,7 @@ class InteractiveFlowViewer:
         gt_next = current + self.sample["obj_flow_gt"].numpy()[valid].astype(np.float64)
         hand_current = self.sample["hand_points"].numpy().astype(np.float64)
         hand_future = hand_current + self.sample["hand_flow"].numpy().astype(np.float64)
+        hand_pred_future = hand_current + self.prediction["pred_hand_flow"].squeeze(0).numpy().astype(np.float64)
         cm_assignment = self.prediction["cm_assignment"].squeeze(0).numpy()
         slot_ids = cm_assignment.argmax(axis=0)
         palette = _slot_colors(cm_assignment.shape[0])
@@ -474,6 +480,7 @@ class InteractiveFlowViewer:
             "eval_next": _empty_points(),
             "hand_current": hand_current,
             "hand_future": hand_future,
+            "hand_pred_future": hand_pred_future,
             "hand_slot_colors": palette[slot_ids],
             "slot_colors": palette,
             "slot_anchor_pos": self.prediction["cm_anchor_pos"].squeeze(0).numpy().astype(np.float64),
@@ -487,6 +494,7 @@ class InteractiveFlowViewer:
         visible = self.rollout_seed_valid_mask
         hand_current = self.sample["hand_points"].numpy().astype(np.float64)
         hand_future = hand_current + self.sample["hand_flow"].numpy().astype(np.float64)
+        hand_pred_future = hand_current + self.prediction["pred_hand_flow"].squeeze(0).numpy().astype(np.float64)
         cm_assignment = self.prediction["cm_assignment"].squeeze(0).numpy()
         slot_ids = cm_assignment.argmax(axis=0)
         palette = _slot_colors(cm_assignment.shape[0])
@@ -498,6 +506,7 @@ class InteractiveFlowViewer:
             "eval_next": rollout_step.pred_next_obj_points[visible],
             "hand_current": hand_current,
             "hand_future": hand_future,
+            "hand_pred_future": hand_pred_future,
             "hand_slot_colors": palette[slot_ids],
             "slot_colors": palette,
             "slot_anchor_pos": self.prediction["cm_anchor_pos"].squeeze(0).numpy().astype(np.float64),
@@ -577,6 +586,11 @@ class InteractiveFlowViewer:
             self._to_display_coordinates(arrays["hand_future"]) if self.state.show_future_hand else _empty_points(),
             HAND_FUTURE_COLOR,
         )
+        self._set_point_cloud(
+            self.hand_pred_future,
+            self._to_display_coordinates(arrays["hand_pred_future"]) if self.state.show_future_hand else _empty_points(),
+            HAND_PRED_COLOR,
+        )
         if is_trajectory:
             gt_line_start, gt_line_end = arrays["gt_current"], arrays["gt_next"]
             pred_line_start, pred_line_end = arrays["eval_current"], arrays["eval_next"]
@@ -617,6 +631,7 @@ class InteractiveFlowViewer:
             self.pred_obj,
             self.hand_current,
             self.hand_future,
+            self.hand_pred_future,
             self.gt_lines,
             self.pred_lines,
             *self.slot_anchors,
@@ -773,6 +788,7 @@ class InteractiveFlowViewer:
         self.pred_obj = o3d.geometry.PointCloud()
         self.hand_current = o3d.geometry.PointCloud()
         self.hand_future = o3d.geometry.PointCloud()
+        self.hand_pred_future = o3d.geometry.PointCloud()
         self.gt_lines = o3d.geometry.LineSet()
         self.pred_lines = o3d.geometry.LineSet()
         num_slots = int(self.prediction["cm_tokens"].shape[1])
@@ -787,6 +803,7 @@ class InteractiveFlowViewer:
             self.pred_obj,
             self.hand_current,
             self.hand_future,
+            self.hand_pred_future,
             self.gt_lines,
             self.pred_lines,
             *self.slot_anchors,
@@ -855,9 +872,13 @@ def main() -> None:
                 "valid_object_count": int(valid.sum()),
                 "cm_tokens_shape": tuple(prediction["cm_tokens"].shape),
                 "pred_obj_flow_shape": tuple(prediction["pred_obj_flow"].shape),
+                "pred_hand_flow_shape": tuple(prediction["pred_hand_flow"].shape),
                 "decoder_slot_usage": prediction["decoder_slot_usage"].squeeze(0).tolist(),
                 "flow_mse": float(torch.mean((pred - gt).square())) if len(gt) else None,
                 "flow_mae": float(torch.mean((pred - gt).abs())) if len(gt) else None,
+                "hand_epe_mm": float(
+                    torch.linalg.norm(prediction["pred_hand_flow"].squeeze(0) - sample["hand_flow"], dim=-1).mean() * 1000.0
+                ),
             }
         )
         return

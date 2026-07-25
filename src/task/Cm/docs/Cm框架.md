@@ -93,7 +93,25 @@ n_k       = Normalize(Σ_j W_kj n_j)      slot 平均法向
 
 因此每个 slot 同时具有 token 表征、软空间锚点和局部运动摘要。这里没有 hard Top-K anchor、activity head 或 activity/diversity loss；slot 的分化完全由下游 object-flow 监督驱动。
 
-## 5. Object-flow 解码器
+## 5. 双解码器
+
+`C_m` 同时解码手自身运动和物体效果。手流分支使用当前手几何作为 point query，但不直接读取 `hand_flow` 或 `wrist_delta`；二者只能在 hand-side encoder 中用于形成 `C_m`，不能绕过 bottleneck。
+
+手部总流按 Stage 4 保存的 `T_{hand_t←hand_{t+Δ}}` 分解为：
+
+```text
+F_m = F_rigid(wrist) + F_articulation
+```
+
+decoder 从 `C_m` 的池化结果预测 current-to-next wrist rotation（6D rotation 表示）与 translation；当前 hand point 对 `C_m` 做 attention 后预测每点 `F̂_articulation`。最终：
+
+```text
+F̂_m = F̂_rigid + F̂_articulation
+```
+
+这避免 wrist 的同一刚体运动在 1538 个点上被重复当作独立关节动作学习，同时仍保留完整手表面的连续运动监督。
+
+### Object-flow 解码器
 
 物体分支先对每个当前物体点构造局部上下文：
 
@@ -118,15 +136,24 @@ F̂_i^o = Σ_k α_ik f_ik
 
 ## 6. 训练目标与评估
 
-训练仅对 valid object point 使用 masked Smooth-L1：
+object 分支仅对 valid object point 使用 masked Smooth-L1：
 
 ```text
-L_flow = (1 / Σ_i mask_i) Σ_i mask_i · SmoothL1(F̂_i^o, F_i^{o*})
+L_object = (1 / Σ_i mask_i) Σ_i mask_i · SmoothL1(F̂_i^o, F_i^{o*})
 ```
+
+hand 分支使用三项损失：wrist translation 与 rotation 的 `L_wrist`，对接触/高 articulation 区域加权的 `L_weighted_art`，以及所有点等权的 `L_global_art`。点权重为基础权重加 soft current-contact 与 GT articulation magnitude，并在每个样本内归一化到均值 1：
+
+```text
+L_hand = L_wrist + L_weighted_art + 0.2 · L_global_art
+L = 5.0 · L_object + 1.0 · L_hand
+```
+
+`5.0` 是初始平衡系数：既有 `Cm_20260720_164133` 的验证 `L_object≈1.66e-4`，而 wrist/residual 项的量纲与收敛速度不同。所有分项均记录到训练日志，首轮训练后应根据实际曲线调整该系数。
 
 优化器只更新 hand motion MLP、Slot Attention、object context MLP 和 flow-edge decoder。常规设置使用 AdamW、余弦学习率、3% warmup 和梯度裁剪；验证按 sequence 划分，而不是把同一条序列的不同时间对随机分到训练与验证中。
 
-主评估量为 masked `flow_mse`、`flow_mae`、预测/GT flow norm。由于有效 object point 的数目及运动幅度随样本变化，这些标量应与可视化和分组分析一起解释，而不宜作为唯一结论。
+主评估量为 masked `flow_mse`、`flow_mae`、预测/GT flow norm，以及全手/接触区 `hand_epe_mm`、wrist translation error（mm）和 rotation error（deg）。由于有效 object point 的数目及运动幅度随样本变化，这些标量应与可视化和分组分析一起解释，而不宜作为唯一结论。
 
 ## 7. 可解释性诊断
 

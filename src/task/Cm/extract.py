@@ -71,11 +71,14 @@ def extract_file(
     fields = (
         "raw_frame_id", "next_raw_frame_id", "pair_index", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
         "pred_obj_flow", "cm_tokens", "cm_anchor_pos", "cm_anchor_normal", "cm_hand_flow",
-        "cm_assignment", "cm_slot_weights", "decoder_slot_usage",
+        "cm_assignment", "cm_slot_weights", "decoder_slot_usage", "pred_hand_flow",
+        "pred_rigid_hand_flow", "pred_hand_articulation_flow", "pred_wrist_rotation", "pred_wrist_translation",
     )
     collected: dict[str, list[np.ndarray]] = {key: [] for key in fields}
     total_squared_error = 0.0
     total_coordinate_count = 0
+    total_hand_squared_error = 0.0
+    total_hand_coordinate_count = 0
     for batch in loader:
         prediction = _predict_batch(runner, batch)
         prepared = runner.prepare_batch(batch)
@@ -84,6 +87,10 @@ def extract_file(
             (((prediction["pred_obj_flow"] - prepared["obj_flow_gt"]) ** 2) * valid).sum().item()
         )
         total_coordinate_count += int(valid.sum().item()) * 3
+        total_hand_squared_error += float(
+            ((prediction["pred_hand_flow"] - prepared["hand_flow"]) ** 2).sum().item()
+        )
+        total_hand_coordinate_count += int(prepared["hand_flow"].numel())
         tensors = {
             "raw_frame_id": batch["raw_frame_id"],
             "next_raw_frame_id": batch["next_raw_frame_id"],
@@ -99,17 +106,23 @@ def extract_file(
     payload.update(
         {
             "schema_name": np.asarray("ref2dex_cm_action_tokens"),
-            "schema_version": np.asarray("3.2.0"),
+            "schema_version": np.asarray("3.3.0"),
             "source_stage4_file": np.asarray(str(input_path.resolve())),
             "source_cm_checkpoint": np.asarray(str(Path(runner.cfg.train.output_dir))),
             "num_pairs": np.asarray(len(indices), dtype=np.int32),
             "flow_mse": np.asarray(total_squared_error / max(total_coordinate_count, 1), dtype=np.float32),
+            "hand_flow_mse": np.asarray(
+                total_hand_squared_error / max(total_hand_coordinate_count, 1), dtype=np.float32
+            ),
         }
     )
     payload.update({key: np.concatenate(values, axis=0) for key, values in collected.items()})
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(output_path, **payload)
-    print(f"[cm-extract] wrote {output_path} pairs={len(indices)} flow_mse={float(payload['flow_mse']):.8f}")
+    print(
+        f"[cm-extract] wrote {output_path} pairs={len(indices)} "
+        f"flow_mse={float(payload['flow_mse']):.8f} hand_flow_mse={float(payload['hand_flow_mse']):.8f}"
+    )
 
 
 def main() -> None:

@@ -11,7 +11,20 @@ meta:
   num_cm_tokens: 16
   slot_iters: 3
   flow_smooth_l1_beta: 0.01
-  loss_flow_weight: 1.0
+  # Object SmoothL1 was ~1.7e-4 on Cm_20260720_164133.  Its factor offsets
+  # the larger wrist/articulation supervision introduced by the hand decoder.
+  loss_object_weight: 5.0
+  loss_hand_weight: 1.0
+  loss_wrist_weight: 1.0
+  loss_articulation_weight: 1.0
+  loss_global_articulation_weight: 0.2
+  wrist_rotation_weight_m_per_rad: 0.01
+  hand_contact_sigma_m: 0.005
+  hand_articulation_scale_m: 0.01
+  hand_loss_base_weight: 0.2
+  hand_loss_contact_weight: 1.5
+  hand_loss_articulation_weight: 0.8
+  hand_loss_max_weight: 3.0
 
 data:
   batch_size: 2

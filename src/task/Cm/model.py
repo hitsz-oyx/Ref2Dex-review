@@ -19,6 +19,19 @@ def _mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
     )
 
 
+def rotation_6d_to_matrix(rotation_6d: torch.Tensor) -> torch.Tensor:
+    """Convert Zhou et al.'s continuous 6D rotation representation to SO(3)."""
+    first = F.normalize(rotation_6d[..., :3], dim=-1, eps=1e-6)
+    second_raw = rotation_6d[..., 3:]
+    second = F.normalize(
+        second_raw - (first * second_raw).sum(dim=-1, keepdim=True) * first,
+        dim=-1,
+        eps=1e-6,
+    )
+    third = torch.linalg.cross(first, second, dim=-1)
+    return torch.stack((first, second, third), dim=-1)
+
+
 class SlotAttention(nn.Module):
     """Deterministic Slot Attention over hand-point motion features.
 
@@ -128,6 +141,35 @@ class CmFlowHead(nn.Module):
         # Point flow is measured in metres and normally starts close to zero.
         nn.init.zeros_(self.flow_edge[-1].weight)
         nn.init.zeros_(self.flow_edge[-1].bias)
+        # The hand decoder queries the frozen current-hand state, then attends
+        # to Cm.  It deliberately has no direct hand-flow or wrist-delta
+        # input: those future variables may form Cm, but cannot bypass it.
+        self.hand_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
+        self.hand_token_score = nn.Linear(cm_dim, cm_dim, bias=False)
+        self.hand_articulation_decoder = nn.Sequential(
+            nn.Linear(cm_dim * 2, cm_dim),
+            nn.GELU(),
+            nn.Linear(cm_dim, cm_dim // 2),
+            nn.GELU(),
+            nn.Linear(cm_dim // 2, 3),
+        )
+        # Cm alone predicts the global wrist transform.  The rotation maps
+        # current hand-root coordinates into the next hand-root coordinates.
+        self.wrist_decoder = nn.Sequential(
+            nn.Linear(cm_dim, cm_dim),
+            nn.GELU(),
+            nn.Linear(cm_dim, cm_dim // 2),
+            nn.GELU(),
+            nn.Linear(cm_dim // 2, 9),
+        )
+        nn.init.zeros_(self.hand_articulation_decoder[-1].weight)
+        nn.init.zeros_(self.hand_articulation_decoder[-1].bias)
+        nn.init.zeros_(self.wrist_decoder[-1].weight)
+        nn.init.zeros_(self.wrist_decoder[-1].bias)
+        # Identity in the 6D representation makes the initial rigid flow zero.
+        self.wrist_decoder[-1].bias.data[:6] = torch.tensor(
+            [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]
+        )
 
     def forward(
         self,
@@ -181,6 +223,21 @@ class CmFlowHead(nn.Module):
         edge_weight = torch.softmax(edge_output[..., 0], dim=2)
         pred_obj_flow = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
+
+        hand_context = self.hand_context_encoder(torch.cat([z_hand, hand_points, hand_normals], dim=-1))
+        hand_score = torch.einsum("bhd,bkd->bhk", self.hand_token_score(hand_context), cm_tokens)
+        hand_attention = torch.softmax(hand_score * (self.cm_dim**-0.5), dim=-1)
+        hand_cm_context = torch.einsum("bhk,bkd->bhd", hand_attention, cm_tokens)
+        pred_hand_articulation_flow = self.hand_articulation_decoder(
+            torch.cat([hand_context, hand_cm_context], dim=-1)
+        )
+        wrist_output = self.wrist_decoder(cm_tokens.mean(dim=1))
+        pred_wrist_rotation = rotation_6d_to_matrix(wrist_output[:, :6])
+        pred_wrist_translation = wrist_output[:, 6:]
+        rigid_next_hand = torch.einsum("bhi,bij->bhj", hand_points, pred_wrist_rotation)
+        rigid_next_hand = rigid_next_hand + pred_wrist_translation.unsqueeze(1)
+        pred_rigid_hand_flow = rigid_next_hand - hand_points
+        pred_hand_flow = pred_rigid_hand_flow + pred_hand_articulation_flow
         # q_k: mean decoder attention paid to each slot by valid object points.
         # This is a diagnostic only; it neither gates slots nor changes flow.
         valid_object = obj_valid_mask.unsqueeze(-1).float()
@@ -188,6 +245,12 @@ class CmFlowHead(nn.Module):
         decoder_slot_usage = decoder_slot_usage / valid_object.sum(dim=1).clamp_min(1.0)
         return {
             "pred_obj_flow": pred_obj_flow,
+            "pred_hand_flow": pred_hand_flow,
+            "pred_rigid_hand_flow": pred_rigid_hand_flow,
+            "pred_hand_articulation_flow": pred_hand_articulation_flow,
+            "pred_wrist_rotation": pred_wrist_rotation,
+            "pred_wrist_translation": pred_wrist_translation,
+            "hand_decoder_attention": hand_attention,
             "cm_tokens": cm_tokens,
             "cm_anchor_pos": cm_anchor_pos,
             "cm_anchor_normal": cm_anchor_normal,
