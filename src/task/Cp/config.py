@@ -8,17 +8,22 @@ class Config(TaskConfig):
     runner_class = "src.task.Cp.runner.CpHumanClosureRunner"
 
     class meta(TaskConfig.meta):
-        stage: str = "hand_decoder"  # hand_decoder | cp_effect | closed_loop
+        stage: str = "cp_effect"  # cp_effect | closed_loop
         num_obj_points: int = 512
         num_hand_points: int = 1538
         dim: int = 256
+        cm_dense_token_dim: int = 96
         num_cp_tokens: int = 8
         num_cm_tokens: int = 16
         slot_iters: int = 3
         contact_radius: float = 0.02
         flow_smooth_l1_beta: float = 0.01
-        hand_decoder_checkpoint: str = ""
         cp_effect_checkpoint: str = ""
+        # A Cm checkpoint that already includes the trained Cm->Fm decoder.
+        cm_hand_checkpoint: str = ""
+        # Optional override when the Cm checkpoint config contains an obsolete
+        # dense-token checkpoint path.
+        cm_dense_checkpoint: str = ""
 
     class model(TaskConfig.model):
         class_path = "src.task.Cp.model.CpHumanClosureModel"

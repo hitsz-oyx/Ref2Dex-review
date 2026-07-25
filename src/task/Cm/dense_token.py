@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
 
 import torch
 from torch import nn
@@ -25,6 +26,18 @@ class FrozenDenseTokenEncoder(nn.Module):
             raise ValueError(f"Unsupported dense-token checkpoint: {checkpoint}")
         self.cfg = task_config_from_dict(checkpoint_data["config"])
         meta = self.cfg.meta
+        # DenseToken checkpoints are often produced on another workstation.
+        # Keep their architecture config, but repair the repository-local
+        # PointTransformerV3 source path when the serialized absolute path no
+        # longer exists on this machine.
+        configured_ptv3 = Path(str(meta.ptv3_repo_path))
+        local_ptv3 = Path(__file__).resolve().parents[3] / "third_party" / "PointTransformerV3"
+        if not configured_ptv3.is_dir() and local_ptv3.is_dir():
+            meta.ptv3_repo_path = str(local_ptv3)
+        if bool(getattr(meta, "ptv3_enable_flash", False)) and importlib.util.find_spec("flash_attn") is None:
+            # The serialized model parameters are unchanged; PTv3 simply uses
+            # its standard PyTorch attention implementation instead.
+            meta.ptv3_enable_flash = False
         if int(meta.num_obj_points) != 512 or int(meta.num_hand_points) != 1538:
             raise ValueError(
                 "Cm bootstrap expects the current 512-object / 1538-hand dense-token checkpoint, "

@@ -83,16 +83,16 @@ PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
 
 实现：`src/task/Cp/model.py`，主类为 `CpHumanClosureModel`。所有阶段都在同一个 module 内，Runner 用 `meta.stage` 选择训练目标。
 
-### 4.1 Stage A：Cm teacher 到无泄漏 hand-flow decoder
+### 4.1 Stage A：旧 Cm 空间到无泄漏 hand-flow decoder
 
 ```text
-[H_t position, H_t normal, F_m_gt, zero]
-      → teacher_encoder → SlotAttention(16) → C_m_teacher
-      → hand decoder(C_m_teacher, H_t position, H_t normal)
-      → F_m_hat_teacher
+旧 Cm checkpoint（warm start）
+      → frozen hand_motion_encoder + SlotAttention → C_m
+      → trainable Cm hand decoder(C_m, z_hand, H_t)
+      → F_m_hat
 ```
 
-`hand_flow` 只允许进入 `teacher_encoder` 以构造 Stage-A teacher token；`hand_decoder` 的输入中不含 future hand、`hand_flow` 或 `wrist_delta`。训练完成后，Stage-C 仅加载并冻结 `hand_decoder`。
+旧 checkpoint 中的 `hand_motion_encoder`、`slot_attention`、object-flow decoder 被兼容加载后冻结；只随机初始化并训练新增的 `hand_context_encoder`、`hand_token_score`、`hand_articulation_decoder` 和 `wrist_decoder`。hand decoder 的输入中不含 future hand、GT `hand_flow` 或 `wrist_delta`。训练完成的完整 Cm checkpoint（包括 decoder）将在 Stage C 中整体冻结。
 
 ### 4.2 Stage B：object effect 到 Cp
 
@@ -103,12 +103,12 @@ PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
       → [contact logit, F_o_hat]
 ```
 
-使用有效 object point 的 Smooth L1 object-flow loss 与 BCE contact loss。Stage-C 加载并冻结 `cp_encoder`、`cp_slots`、`cp_decode`，使 `C_p` 的 task-effect 语义固定。
+effect decoder 为每个 object-point / Cp-slot 预测 mixture logit、contact logit 和 flow，再用 slot softmax 加权聚合，避免对所有 slots 的简单平均。使用有效 object point 的 Smooth L1 object-flow loss 与 BCE contact loss。Stage-C 加载并冻结 `cp_encoder`、`cp_slots`、`cp_effect_decoder`，使 `C_p` 的 task-effect 语义固定。
 
 ### 4.3 Stage C：真正的人类闭环
 
 ```text
-current hand state E_state(H_t)
+frozen DenseToken z_hand + current hand state E_state(H_t)
       ├─ query C_p via cross attention
       └─ SlotAttention(16)
               ↓
@@ -119,13 +119,13 @@ current hand state E_state(H_t)
            F_m_hat
 ```
 
-Stage-C 仅优化 `hand_state`、`cp_to_hand` 和 `cm_slots`。loss 为：
+Stage-C 仅优化独立的 `closure_hand_state`、`cp_to_hand` 和 `closure_cm_slots`。Cm decoder 使用完全不同且冻结的 current-state encoder。loss 复用 Cm 的 wrist/articulation 分解：
 
 ```text
-SmoothL1(F_m_hat, F_m_gt)
+L_wrist + L_weighted_articulation + 0.2 L_global_articulation
 ```
 
-不直接比较 `C_m_hat` 和 `C_m_teacher`，因为 slot index 存在置换自由度。
+不直接比较 `C_m_hat` 和 teacher slot，因为 slot index 存在置换自由度。
 
 ## 5. BaseRunner 覆写点
 
@@ -134,7 +134,7 @@ SmoothL1(F_m_hat, F_m_gt)
 | 方法 | 任务职责 |
 | --- | --- |
 | `make_dataloaders` | 创建 Stage 5 train/val loader |
-| `build_model` | Stage C 时加载并冻结 Stage A/B checkpoint 子模块 |
+| `build_model` | Stage C 时加载并冻结完整 Cm hand decoder 与 Cp effect checkpoint |
 | `step` | 根据 `meta.stage` 计算阶段损失与指标 |
 
 因此 optimizer、AMP、checkpoint、distributed、日志和 overfit mode 均使用 `src/base` 的公共实现。
@@ -144,12 +144,11 @@ SmoothL1(F_m_hat, F_m_gt)
 先训练 A 和 B，之后才允许训练 C：
 
 ```bash
-# A: Cm teacher -> hand flow decoder
-PYTHONPATH=. python -m src.task.Cp.train \
-  --config src/task/Cp/configs/baseline.yaml \
-  --set meta.stage=hand_decoder \
+# A: legacy Cm warm start -> train only Cm->Fm decoder
+PYTHONPATH=. python -m src.task.Cm.train \
+  --config src/task/Cm/configs/hand_decoder_warm_start.yaml \
   --data processed_data/generated/stage5 \
-  --output-dir outputs/train/cp_hand_decoder
+  --output-dir outputs/train/cm_hand_decoder
 
 # B: object effect -> Cp
 PYTHONPATH=. python -m src.task.Cp.train \
@@ -158,11 +157,11 @@ PYTHONPATH=. python -m src.task.Cp.train \
   --data processed_data/generated/stage5 \
   --output-dir outputs/train/cp_effect
 
-# C: frozen A/B + trainable Cp -> Cm generator
+# C: frozen complete Cm decoder + frozen B + trainable Cp -> Cm generator
 PYTHONPATH=. python -m src.task.Cp.train \
   --config src/task/Cp/configs/baseline.yaml \
   --set meta.stage=closed_loop \
-  --set meta.hand_decoder_checkpoint=outputs/train/cp_hand_decoder/<run>/checkpoints/latest.pt \
+  --set meta.cm_hand_checkpoint=outputs/train/cm_hand_decoder/<run>/checkpoints/latest.pt \
   --set meta.cp_effect_checkpoint=outputs/train/cp_effect/<run>/checkpoints/latest.pt \
   --data processed_data/generated/stage5 \
   --output-dir outputs/train/cp_closed_loop
@@ -200,20 +199,19 @@ minimum object-to-hand distance: 0.075 mm
 
 | 阶段 | 指标 | 结果 |
 | --- | --- | --- |
-| Stage A | hand-flow EPE | 206.3 mm → 1.32 mm |
-| Stage B | contact BCE | 0.585 → 6.4e-4 |
-| Stage B | object-flow EPE | 203.6 mm → 14.5 mm |
-| Stage C | hand-flow EPE | 124.1 mm → 1.316 mm |
-| Stage C | hand-flow P90 EPE | 2.146 mm |
+| A：Cm decoder warm start | hand-flow EPE | 12.946 mm → **0.347 mm** |
+| A：Cm decoder warm start | wrist translation / rotation | **0.048 mm / 0.028°** |
+| B：Cp effect | object-flow EPE | **17.700 mm**（200 step 末值） |
+| B：Cp effect | contact BCE | **8.79e-4**（200 step 末值） |
+| C：真实 `Cp → Cm → Fm` 闭环 | hand-flow EPE | 6.653 mm → **0.346 mm** |
 
-对应静态可视化在：`outputs/train/cp_overfit_closed/closure_overfit.png`。红色预测未来手与绿色 GT 未来手已基本重合，说明当前代码路径、冻结 checkpoint 加载和闭环梯度均可运行。
+所有结果均在同一个真实 active pair（`cylindersmall_pass_1_right.npz`, pair 27）上以 200 step 单样本 overfit 得到；其目的是验证梯度和冻结边界贯通，不能代表泛化性能。闭环静态图在：`outputs/train/cp_closed_overfit/Cp_20260725_125657/closure_overfit_stage5.png`。
 
 ## 9. 当前边界与后续工作
 
-当前实现的目标是首先跑通人类闭环。它已验证数据、三阶段 checkpoint 链路、冻结语义、过拟合和可视化，但尚未完成：
+当前实现已完成真实 Cm 接口、warm-start、冻结边界和单样本闭环验证；以下仍待完成：
 
 1. 多 sequence 的正式训练与 sequence-held-out 验证；
 2. `H-only`、zero-`C_p`、shuffle-`C_p` 三项必要 ablation；
 3. fingertip EPE、direction cosine、magnitude ratio 的完整报告；
 4. `C_m_hat -> object flow` effect-cycle 评估；
-5. 将现有 `Cm`/DenseToken checkpoint 作为外部 frozen teacher 的兼容接入。

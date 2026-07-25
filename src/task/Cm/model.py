@@ -1,6 +1,7 @@
 """Hand-motion Slot Attention bottleneck and current-object flow decoder."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -224,20 +225,18 @@ class CmFlowHead(nn.Module):
         pred_obj_flow = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
 
-        hand_context = self.hand_context_encoder(torch.cat([z_hand, hand_points, hand_normals], dim=-1))
-        hand_score = torch.einsum("bhd,bkd->bhk", self.hand_token_score(hand_context), cm_tokens)
-        hand_attention = torch.softmax(hand_score * (self.cm_dim**-0.5), dim=-1)
-        hand_cm_context = torch.einsum("bhk,bkd->bhd", hand_attention, cm_tokens)
-        pred_hand_articulation_flow = self.hand_articulation_decoder(
-            torch.cat([hand_context, hand_cm_context], dim=-1)
+        hand_prediction = self.decode_hand_from_cm(
+            cm_tokens=cm_tokens,
+            z_hand=z_hand,
+            hand_points=hand_points,
+            hand_normals=hand_normals,
         )
-        wrist_output = self.wrist_decoder(cm_tokens.mean(dim=1))
-        pred_wrist_rotation = rotation_6d_to_matrix(wrist_output[:, :6])
-        pred_wrist_translation = wrist_output[:, 6:]
-        rigid_next_hand = torch.einsum("bhi,bij->bhj", hand_points, pred_wrist_rotation)
-        rigid_next_hand = rigid_next_hand + pred_wrist_translation.unsqueeze(1)
-        pred_rigid_hand_flow = rigid_next_hand - hand_points
-        pred_hand_flow = pred_rigid_hand_flow + pred_hand_articulation_flow
+        pred_hand_flow = hand_prediction["pred_hand_flow"]
+        pred_rigid_hand_flow = hand_prediction["pred_rigid_hand_flow"]
+        pred_hand_articulation_flow = hand_prediction["pred_hand_articulation_flow"]
+        pred_wrist_rotation = hand_prediction["pred_wrist_rotation"]
+        pred_wrist_translation = hand_prediction["pred_wrist_translation"]
+        hand_attention = hand_prediction["hand_decoder_attention"]
         # q_k: mean decoder attention paid to each slot by valid object points.
         # This is a diagnostic only; it neither gates slots nor changes flow.
         valid_object = obj_valid_mask.unsqueeze(-1).float()
@@ -258,6 +257,43 @@ class CmFlowHead(nn.Module):
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
             "decoder_slot_usage": decoder_slot_usage,
+        }
+
+    def decode_hand_from_cm(
+        self,
+        *,
+        cm_tokens: torch.Tensor,
+        z_hand: torch.Tensor,
+        hand_points: torch.Tensor,
+        hand_normals: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Decode hand motion from Cm without any GT future-motion input.
+
+        This is the public hand-decoder boundary consumed by Cp.  Keeping it
+        separate from ``forward`` ensures Cp cannot accidentally access the
+        legacy object-flow path that receives GT ``cm_hand_flow``.
+        """
+        hand_context = self.hand_context_encoder(torch.cat([z_hand, hand_points, hand_normals], dim=-1))
+        hand_score = torch.einsum("bhd,bkd->bhk", self.hand_token_score(hand_context), cm_tokens)
+        hand_attention = torch.softmax(hand_score * (self.cm_dim**-0.5), dim=-1)
+        hand_cm_context = torch.einsum("bhk,bkd->bhd", hand_attention, cm_tokens)
+        pred_hand_articulation_flow = self.hand_articulation_decoder(
+            torch.cat([hand_context, hand_cm_context], dim=-1)
+        )
+        wrist_output = self.wrist_decoder(cm_tokens.mean(dim=1))
+        pred_wrist_rotation = rotation_6d_to_matrix(wrist_output[:, :6])
+        pred_wrist_translation = wrist_output[:, 6:]
+        rigid_next_hand = torch.einsum("bhi,bij->bhj", hand_points, pred_wrist_rotation)
+        rigid_next_hand = rigid_next_hand + pred_wrist_translation.unsqueeze(1)
+        pred_rigid_hand_flow = rigid_next_hand - hand_points
+        pred_hand_flow = pred_rigid_hand_flow + pred_hand_articulation_flow
+        return {
+            "pred_hand_flow": pred_hand_flow,
+            "pred_rigid_hand_flow": pred_rigid_hand_flow,
+            "pred_hand_articulation_flow": pred_hand_articulation_flow,
+            "pred_wrist_rotation": pred_wrist_rotation,
+            "pred_wrist_translation": pred_wrist_translation,
+            "hand_decoder_attention": hand_attention,
         }
 
 
@@ -335,3 +371,36 @@ class CmFlowModel(nn.Module):
                 f"missing={missing}, unexpected={unexpected}."
             )
         return incompatible
+
+    def load_legacy_warm_start(self, checkpoint_path: str | Path) -> list[str]:
+        """Load compatible old-Cm tensors while leaving new hand decoder fresh.
+
+        This is intentionally a warm start rather than ``train.resume``: no
+        optimizer, scheduler, global-step, or missing new decoder tensor is
+        restored from the legacy checkpoint.
+        """
+        payload = torch.load(Path(checkpoint_path), map_location="cpu")
+        checkpoint_state = payload.get("model", payload)
+        current_state = self.state_dict()
+        compatible_state = {
+            key: value
+            for key, value in checkpoint_state.items()
+            if key in current_state and current_state[key].shape == value.shape
+        }
+        incompatible = self.load_state_dict(compatible_state, strict=False)
+        allowed_missing_prefixes = (
+            "dense_encoder.",
+            "head.hand_context_encoder.",
+            "head.hand_token_score.",
+            "head.hand_articulation_decoder.",
+            "head.wrist_decoder.",
+        )
+        unexpected_missing = [
+            key for key in incompatible.missing_keys if not key.startswith(allowed_missing_prefixes)
+        ]
+        if unexpected_missing:
+            raise RuntimeError(
+                "Legacy Cm checkpoint unexpectedly misses established parameters: "
+                f"{unexpected_missing}"
+            )
+        return [key for key in incompatible.missing_keys if not key.startswith("dense_encoder.")]

@@ -1,4 +1,4 @@
-"""Future-leak-free modules for the three-stage Cp human closure."""
+"""Cp effect tokens and a closure generator in the pretrained Cm space."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,6 +6,9 @@ from typing import Any
 
 import torch
 from torch import nn
+
+from src.base import task_config_from_dict
+from src.task.Cm.model import CmFlowModel
 
 
 def make_mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
@@ -19,7 +22,7 @@ def make_mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
 
 
 class SlotAttention(nn.Module):
-    """Deterministic sparse bottleneck over a dense point feature field."""
+    """Deterministic sparse bottleneck over a dense feature field."""
 
     def __init__(self, dim: int, num_slots: int, num_iterations: int) -> None:
         super().__init__()
@@ -37,10 +40,9 @@ class SlotAttention(nn.Module):
         self.scale = dim**-0.5
 
     def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        inputs = self.norm_inputs(inputs)
-        keys, values = self.to_key(inputs), self.to_value(inputs)
+        normalized = self.norm_inputs(inputs)
+        keys, values = self.to_key(normalized), self.to_value(normalized)
         slots = self.slot_init.expand(inputs.shape[0], -1, -1)
-
         for _ in range(self.num_iterations):
             logits = torch.einsum("bkd,bnd->bkn", self.to_query(self.norm_slots(slots)), keys)
             assignment = torch.softmax(logits * self.scale, dim=1)
@@ -51,102 +53,142 @@ class SlotAttention(nn.Module):
         return slots, assignment, weights
 
 
-class CpHumanClosureModel(nn.Module):
-    """Cp effect model, Cm teacher/decoder, and current-hand closure generator.
+class FrozenCmHandDecoder(nn.Module):
+    """Frozen current-state encoder and Cm-to-hand decoder from a Cm checkpoint."""
 
-    ``hand_flow`` is only used by ``teacher_cm`` during Stage A.  Neither
-    hand-flow decoder nor closed-loop generator receives a future variable.
+    def __init__(self, checkpoint: str | Path, *, dense_checkpoint: str | None = None) -> None:
+        super().__init__()
+        checkpoint_path = Path(checkpoint).resolve()
+        payload = torch.load(checkpoint_path, map_location="cpu")
+        if "config" not in payload or "model" not in payload:
+            raise ValueError(f"Unsupported Cm checkpoint: {checkpoint_path}")
+        cm_cfg = task_config_from_dict(payload["config"])
+        if dense_checkpoint:
+            cm_cfg.meta.dense_checkpoint = str(Path(dense_checkpoint).resolve())
+        self.cm_model = CmFlowModel(cm_cfg)
+        self.cm_model.load_state_dict(payload["model"], strict=True)
+        self.cm_model.requires_grad_(False)
+        self.cm_model.eval()
+        self.cm_dim = int(self.cm_model.cm_dim)
+        self.dense_token_dim = int(self.cm_model.dense_token_dim)
+        self.loss_meta = cm_cfg.meta
+
+    @torch.no_grad()
+    def encode_current_hand(self, batch: dict[str, torch.Tensor]) -> torch.Tensor:
+        _, z_hand, _ = self.cm_model.dense_encoder(
+            obj_points=batch["obj_points"],
+            obj_normals=batch["obj_normals"],
+            hand_points=batch["hand_points"],
+            hand_normals=batch["hand_normals"],
+            obj_valid_mask=batch["obj_valid_mask"],
+        )
+        return z_hand
+
+    def decode(self, cm_tokens: torch.Tensor, z_hand: torch.Tensor, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        self.cm_model.eval()
+        return self.cm_model.head.decode_hand_from_cm(
+            cm_tokens=cm_tokens,
+            z_hand=z_hand,
+            hand_points=batch["hand_points"],
+            hand_normals=batch["hand_normals"],
+        )
+
+
+class CpHumanClosureModel(nn.Module):
+    """Cp effect autoencoder plus trainable ``Cp + H_t -> Cm`` generator.
+
+    The closure branch owns its hand-state encoder.  The independent frozen
+    ``FrozenCmHandDecoder`` owns the pretrained Cm interpretation protocol.
     """
 
     def __init__(self, cfg: Any, **_: Any) -> None:
         super().__init__()
         meta = cfg.meta
         self.dim = int(meta.dim)
-        cp_slots = int(meta.num_cp_tokens)
-        cm_slots = int(meta.num_cm_tokens)
-        slot_iters = int(meta.slot_iters)
-
-        # Stage B: [position, normal, contact, object flow] -> Cp -> effect.
         self.cp_encoder = make_mlp(10, self.dim, self.dim)
-        self.cp_slots = SlotAttention(self.dim, cp_slots, slot_iters)
-        self.cp_decode = make_mlp(self.dim + 6, self.dim, 4)
+        self.cp_slots = SlotAttention(self.dim, int(meta.num_cp_tokens), int(meta.slot_iters))
+        # Per object/slot: mixture logit, contact logit, and flow vector.
+        self.cp_effect_decoder = make_mlp(self.dim + 6, self.dim, 5)
 
-        # Stage A: only teacher construction may use GT hand flow.
-        self.teacher_encoder = make_mlp(12, self.dim, self.dim)
-        self.teacher_slots = SlotAttention(self.dim, cm_slots, slot_iters)
-        self.hand_decoder = make_mlp(self.dim + 6, self.dim, 3)
-
-        # Stage C: Cp plus current hand state, without future geometry.
-        self.hand_state = make_mlp(6, self.dim, self.dim)
+        self.closure_hand_state = make_mlp(int(meta.cm_dense_token_dim) + 6, self.dim, self.dim)
         self.cp_to_hand = nn.MultiheadAttention(self.dim, num_heads=8, batch_first=True)
-        self.cm_slots = SlotAttention(self.dim, cm_slots, slot_iters)
+        self.closure_cm_slots = SlotAttention(self.dim, int(meta.num_cm_tokens), int(meta.slot_iters))
+        self.cm_hand_decoder: FrozenCmHandDecoder | None = None
+        if str(meta.stage) == "closed_loop":
+            if not meta.cm_hand_checkpoint:
+                raise ValueError("closed_loop requires meta.cm_hand_checkpoint.")
+            self.cm_hand_decoder = FrozenCmHandDecoder(
+                meta.cm_hand_checkpoint,
+                dense_checkpoint=meta.cm_dense_checkpoint or None,
+            )
+            if self.cm_hand_decoder.cm_dim != self.dim:
+                raise ValueError(
+                    f"Cp dim={self.dim} does not match pretrained Cm dim={self.cm_hand_decoder.cm_dim}."
+                )
+            if self.cm_hand_decoder.dense_token_dim != int(meta.cm_dense_token_dim):
+                raise ValueError("meta.cm_dense_token_dim does not match the Cm checkpoint.")
 
     def encode_cp(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         effect = torch.cat(
-            [
-                batch["obj_points"],
-                batch["obj_normals"],
-                batch["obj_contact_gt"].unsqueeze(-1),
-                batch["obj_flow_gt"],
-            ],
-            dim=-1,
+            [batch["obj_points"], batch["obj_normals"], batch["obj_contact_gt"].unsqueeze(-1), batch["obj_flow_gt"]], dim=-1
         )
         return self.cp_slots(self.cp_encoder(effect))
 
-    def decode_effect(self, cp_tokens: torch.Tensor, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
-        num_obj = batch["obj_points"].shape[1]
-        num_slots = cp_tokens.shape[1]
-        expanded_tokens = cp_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1)
-        expanded_points = batch["obj_points"].unsqueeze(2).expand(-1, -1, num_slots, -1)
-        expanded_normals = batch["obj_normals"].unsqueeze(2).expand(-1, -1, num_slots, -1)
-        decoded = self.cp_decode(torch.cat([expanded_tokens, expanded_points, expanded_normals], dim=-1)).mean(2)
-        return decoded[..., 0], decoded[..., 1:]
+    def decode_effect(self, cp_tokens: torch.Tensor, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        num_obj, num_slots = batch["obj_points"].shape[1], cp_tokens.shape[1]
+        tokens = cp_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1)
+        points = batch["obj_points"].unsqueeze(2).expand(-1, -1, num_slots, -1)
+        normals = batch["obj_normals"].unsqueeze(2).expand(-1, -1, num_slots, -1)
+        per_slot = self.cp_effect_decoder(torch.cat([tokens, points, normals], dim=-1))
+        slot_weight = torch.softmax(per_slot[..., 0], dim=2)
+        contact_logits = (slot_weight * per_slot[..., 1]).sum(dim=2)
+        object_flow = (slot_weight.unsqueeze(-1) * per_slot[..., 2:]).sum(dim=2)
+        return contact_logits, object_flow, slot_weight
 
-    def teacher_cm(self, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        zeros = torch.zeros_like(batch["hand_points"])
-        teacher_input = torch.cat(
-            [batch["hand_points"], batch["hand_normals"], batch["hand_flow"], zeros], dim=-1
-        )
-        return self.teacher_slots(self.teacher_encoder(teacher_input))
-
-    def decode_hand(self, cm_tokens: torch.Tensor, batch: dict[str, torch.Tensor]) -> torch.Tensor:
-        hand_points = batch["hand_points"]
-        state = self.hand_state(torch.cat([hand_points, batch["hand_normals"]], dim=-1))
-        score = torch.einsum("bhd,bkd->bhk", state, cm_tokens) / self.dim**0.5
-        context = torch.einsum("bhk,bkd->bhd", score.softmax(dim=-1), cm_tokens)
-        return self.hand_decoder(torch.cat([context, hand_points, batch["hand_normals"]], dim=-1))
-
-    def closure_cm(self, cp_tokens: torch.Tensor, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        state = self.hand_state(torch.cat([batch["hand_points"], batch["hand_normals"]], dim=-1))
-        attended, _ = self.cp_to_hand(state, cp_tokens, cp_tokens, need_weights=False)
-        return self.cm_slots(state + attended)
+    def generate_cm(
+        self,
+        cp_tokens: torch.Tensor,
+        z_hand: torch.Tensor,
+        batch: dict[str, torch.Tensor],
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        hand_input = torch.cat([z_hand, batch["hand_points"], batch["hand_normals"]], dim=-1)
+        hand_state = self.closure_hand_state(hand_input)
+        task_state, _ = self.cp_to_hand(hand_state, cp_tokens, cp_tokens, need_weights=False)
+        return self.closure_cm_slots(hand_state + task_state)
 
     def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         cp_tokens, cp_assignment, cp_weights = self.encode_cp(batch)
-        teacher_tokens, teacher_assignment, _ = self.teacher_cm(batch)
-        pred_cm_tokens, pred_cm_assignment, _ = self.closure_cm(cp_tokens, batch)
-        contact_logits, pred_obj_flow = self.decode_effect(cp_tokens, batch)
-        return {
+        contact_logits, object_flow, effect_slot_weight = self.decode_effect(cp_tokens, batch)
+        output = {
             "cp_tokens": cp_tokens,
             "cp_assignment": cp_assignment,
             "cp_slot_weights": cp_weights,
-            "teacher_cm_tokens": teacher_tokens,
-            "teacher_cm_assignment": teacher_assignment,
-            "pred_hand_flow_teacher": self.decode_hand(teacher_tokens, batch),
             "pred_obj_contact_logits": contact_logits,
-            "pred_obj_flow": pred_obj_flow,
-            "pred_cm_tokens": pred_cm_tokens,
-            "pred_cm_assignment": pred_cm_assignment,
-            "pred_hand_flow": self.decode_hand(pred_cm_tokens, batch),
+            "pred_obj_flow": object_flow,
+            "cp_effect_slot_weight": effect_slot_weight,
         }
+        if self.cm_hand_decoder is not None:
+            z_hand = self.cm_hand_decoder.encode_current_hand(batch)
+            cm_tokens, cm_assignment, cm_weights = self.generate_cm(cp_tokens, z_hand, batch)
+            hand_prediction = self.cm_hand_decoder.decode(cm_tokens, z_hand, batch)
+            output.update(
+                {
+                    "pred_cm_tokens": cm_tokens,
+                    "pred_cm_assignment": cm_assignment,
+                    "pred_cm_slot_weights": cm_weights,
+                    **hand_prediction,
+                }
+            )
+        return output
 
-    def load_stage(self, path: str | Path, prefixes: tuple[str, ...]) -> None:
+    def load_cp_effect(self, path: str | Path) -> None:
         payload = torch.load(Path(path), map_location="cpu")
         state = payload.get("model", payload)
-        own_state = self.state_dict()
-        selected = {key: value for key, value in state.items() if key in own_state and key.startswith(prefixes)}
+        prefixes = ("cp_encoder.", "cp_slots.", "cp_effect_decoder.")
+        own = self.state_dict()
+        selected = {key: value for key, value in state.items() if key in own and key.startswith(prefixes)}
         if not selected:
-            raise ValueError(f"{path} contains no Cp parameters matching {prefixes}.")
+            raise ValueError(f"{path} contains no Cp effect parameters.")
         self.load_state_dict(selected, strict=False)
         for name, parameter in self.named_parameters():
             if name.startswith(prefixes):

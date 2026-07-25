@@ -35,6 +35,10 @@ class Config(TaskConfig):
         hand_loss_contact_weight: float = 1.5
         hand_loss_articulation_weight: float = 0.8
         hand_loss_max_weight: float = 3.0
+        # Load an old object-flow Cm checkpoint without restoring its optimizer
+        # or requiring the newly added hand decoder tensors to be present.
+        warm_start_checkpoint: str | None = None
+        freeze_cm_encoder: bool = False
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"
@@ -52,7 +56,7 @@ class Config(TaskConfig):
     class train(TaskConfig.train):
         output_dir = "outputs/train/cm_action"
         amp = False
-        metric_for_best = "val/flow_mse"
+        metric_for_best = "val/hand_epe_mm"
         lower_is_better = True
 
     class wandb(TaskConfig.wandb):

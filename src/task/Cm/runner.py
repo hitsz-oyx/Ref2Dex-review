@@ -30,7 +30,13 @@ def _wrist_targets(
 
 def _rotation_geodesic(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     relative = prediction.transpose(-1, -2) @ target
-    cosine = ((relative.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) * 0.5).clamp(-1.0, 1.0)
+    # ``acos`` has an infinite derivative at +/-1.  Exact or near-exact
+    # rotations are common during single-example overfitting, so keep the
+    # argument strictly inside the domain to avoid NaN gradients.
+    cosine = ((relative.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) * 0.5).clamp(
+        -1.0 + 1e-7,
+        1.0 - 1e-7,
+    )
     return torch.acos(cosine)
 
 
@@ -58,7 +64,24 @@ class CmActionRunner(BaseRunner):
             raise ValueError("Stage 4 hand point count does not match Cm config.")
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
-        return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
+        model = self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
+        warm_start = getattr(self.cfg.meta, "warm_start_checkpoint", None)
+        if warm_start:
+            missing = model.load_legacy_warm_start(warm_start)
+            if self.is_primary:
+                print(f"[cm] warm-started from {warm_start}; new tensors: {missing}")
+        if bool(getattr(self.cfg.meta, "freeze_cm_encoder", False)):
+            trainable_prefixes = (
+                "head.hand_context_encoder.",
+                "head.hand_token_score.",
+                "head.hand_articulation_decoder.",
+                "head.wrist_decoder.",
+            )
+            for name, parameter in model.named_parameters():
+                parameter.requires_grad_(name.startswith(trainable_prefixes))
+            if self.is_primary:
+                print("[cm] frozen legacy Cm encoder/object decoder; training hand decoder only.")
+        return model
 
     def step(
         self,

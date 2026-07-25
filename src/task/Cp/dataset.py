@@ -14,7 +14,8 @@ from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stab
 STAGE5_SCHEMA = "ref2dex_cp_stage5"
 REQUIRED_FIELDS = {
     "schema_name", "seq_id", "side", "raw_frame_id", "obj_points", "obj_normals",
-    "obj_flow_gt", "obj_contact_gt", "hand_points", "hand_normals", "hand_flow",
+    "obj_flow_gt", "obj_contact_gt", "hand_points", "hand_normals", "hand_flow", "wrist_delta",
+    "hand_to_obj_min_dist",
     "obj_candidate_mask_5cm",
 }
 
@@ -116,6 +117,10 @@ class Stage5CpDataset(Dataset):
             "hand_points": torch.from_numpy(np.asarray(data["hand_points"][pair_index], dtype=np.float32).copy()),
             "hand_normals": torch.from_numpy(np.asarray(data["hand_normals"][pair_index], dtype=np.float32).copy()),
             "hand_flow": torch.from_numpy(np.asarray(data["hand_flow"][pair_index], dtype=np.float32).copy()),
+            "wrist_delta": torch.from_numpy(np.asarray(data["wrist_delta"][pair_index], dtype=np.float32).copy()),
+            "hand_to_obj_min_dist": torch.from_numpy(
+                np.asarray(data["hand_to_obj_min_dist"][pair_index], dtype=np.float32).copy()
+            ),
             "raw_frame_id": torch.tensor(raw_frame_id, dtype=torch.long),
             "pair_index": torch.tensor(pair_index, dtype=torch.long),
         }

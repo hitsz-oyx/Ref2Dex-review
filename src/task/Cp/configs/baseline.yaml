@@ -2,12 +2,17 @@ _base_: src.task.Cp.config:Config
 
 name: cp_human_closure
 meta:
-  stage: hand_decoder
+  stage: cp_effect
   num_obj_points: 512
   num_hand_points: 1538
   dim: 256
+  cm_dense_token_dim: 96
   num_cp_tokens: 8
   num_cm_tokens: 16
+  # Required only for meta.stage=closed_loop. This checkpoint must be the
+  # warm-started Cm model after its Cm->Fm hand decoder has been trained.
+  cm_hand_checkpoint: ''
+  cm_dense_checkpoint: ''
 data:
   train_path: processed_data/generated/stage5
   val_split: 0.1
@@ -18,8 +23,8 @@ data:
 train:
   epochs: 20
   lr: 1.0e-4
-  output_dir: outputs/train/cp_hand_decoder
-  metric_for_best: val/hand_flow_epe_mm
+  output_dir: outputs/train/cp_effect
+  metric_for_best: val/obj_flow_epe_mm
   lower_is_better: true
 wandb:
   enable: false

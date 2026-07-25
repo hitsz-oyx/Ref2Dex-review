@@ -13,6 +13,7 @@ from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stab
 
 
 STAGE4_SCHEMA_NAME = "ref2dex_cm_stage4"
+STAGE5_SCHEMA_NAME = "ref2dex_cp_stage5"
 REQUIRED_FIELDS = {
     "schema_name",
     "raw_frame_id",
@@ -85,8 +86,10 @@ class Stage4CmDataset(Dataset):
                 if missing:
                     raise KeyError(f"{path}: missing Stage 4 fields {sorted(missing)}")
                 schema = str(np.asarray(data["schema_name"]).item())
-                if schema != STAGE4_SCHEMA_NAME:
-                    raise ValueError(f"{path}: expected schema {STAGE4_SCHEMA_NAME!r}, got {schema!r}")
+                if schema not in {STAGE4_SCHEMA_NAME, STAGE5_SCHEMA_NAME}:
+                    raise ValueError(
+                        f"{path}: expected {STAGE4_SCHEMA_NAME!r} or {STAGE5_SCHEMA_NAME!r}, got {schema!r}"
+                    )
                 frame = str(np.asarray(data["coordinate_frame"]).item())
                 if frame != self.coordinate_frame:
                     raise ValueError(
