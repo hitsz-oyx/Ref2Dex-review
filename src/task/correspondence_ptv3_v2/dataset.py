@@ -51,9 +51,12 @@ class CorrStaticDatasetV2(Dataset):
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
         apply_hand_perturb: bool = False,
-        hand_perturb_pca_std: float = 0.0,
+        hand_perturb_pca_scale: float = 0.0,
         hand_perturb_prob: float = 1.0,
         mano_model_dir: str | None = None,
+        hand_perturb_pose_std: np.ndarray | None = None,
+        hand_perturb_pose_p01: np.ndarray | None = None,
+        hand_perturb_pose_p99: np.ndarray | None = None,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
@@ -82,9 +85,12 @@ class CorrStaticDatasetV2(Dataset):
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
         self.apply_hand_perturb = bool(apply_hand_perturb)
-        self.hand_perturb_pca_std = float(hand_perturb_pca_std)
+        self.hand_perturb_pca_scale = float(hand_perturb_pca_scale)
         self.hand_perturb_prob = float(hand_perturb_prob)
         self.mano_model_dir = None if mano_model_dir is None else str(mano_model_dir)
+        self.hand_perturb_pose_std = None if hand_perturb_pose_std is None else np.asarray(hand_perturb_pose_std, dtype=np.float32)
+        self.hand_perturb_pose_p01 = None if hand_perturb_pose_p01 is None else np.asarray(hand_perturb_pose_p01, dtype=np.float32)
+        self.hand_perturb_pose_p99 = None if hand_perturb_pose_p99 is None else np.asarray(hand_perturb_pose_p99, dtype=np.float32)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -159,15 +165,36 @@ class CorrStaticDatasetV2(Dataset):
                         "mano_v_template",
                         "mano_is_right",
                         "mano_mirror_x",
+                        "mano_pose_representation",
+                        "mano_num_pca_comps",
+                        "mano_flat_hand_mean",
                     }.difference(data.files)
                     if missing:
                         raise KeyError(
                             f"{path}: hand PCA perturbation requires Stage 3 MANO fields "
                             f"{sorted(missing)}. Regenerate Stage 2 and Stage 3 with current scripts."
                         )
+                    if str(np.asarray(data["mano_pose_representation"]).item()) != "pca":
+                        raise ValueError(f"{path}: mano_pose_representation must be 'pca'.")
+                    if not bool(np.asarray(data["mano_flat_hand_mean"]).item()):
+                        raise ValueError(f"{path}: mano_flat_hand_mean must be true for PCA perturbation.")
+                    pose_dim = int(np.asarray(data["mano_hand_pose"]).shape[-1])
+                    saved_dim = int(np.asarray(data["mano_num_pca_comps"]).item())
+                    if saved_dim != pose_dim:
+                        raise ValueError(
+                            f"{path}: mano_num_pca_comps={saved_dim} but mano_hand_pose dim={pose_dim}."
+                        )
             start = len(self._samples)
             self._samples.extend((path, frame_idx) for frame_idx in range(num_frames))
             self.file_sample_ranges.append((start, len(self._samples)))
+        if self.apply_hand_perturb and (
+            self.hand_perturb_pose_std is None
+            or self.hand_perturb_pose_p01 is None
+            or self.hand_perturb_pose_p99 is None
+        ):
+            self.hand_perturb_pose_std, self.hand_perturb_pose_p01, self.hand_perturb_pose_p99 = (
+                self._compute_hand_pose_statistics()
+            )
 
     @property
     def epoch(self) -> int:
@@ -200,6 +227,18 @@ class CorrStaticDatasetV2(Dataset):
                 num_pca_comps=int(pose_dim),
             )
         return self._mano_perturber
+
+    def _compute_hand_pose_statistics(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        all_pose: list[np.ndarray] = []
+        for path in self.file_paths:
+            with np.load(path, allow_pickle=False) as data:
+                all_pose.append(np.asarray(data["mano_hand_pose"], dtype=np.float32))
+        stacked = np.concatenate(all_pose, axis=0)
+        pose_std = np.std(stacked, axis=0).astype(np.float32)
+        pose_std = np.clip(pose_std, 1e-6, None)
+        pose_p01 = np.percentile(stacked, 1.0, axis=0).astype(np.float32)
+        pose_p99 = np.percentile(stacked, 99.0, axis=0).astype(np.float32)
+        return pose_std, pose_p01, pose_p99
 
     @staticmethod
     def _scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> str:
@@ -242,6 +281,9 @@ class CorrStaticDatasetV2(Dataset):
         hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
         noisy_hand_points = None
         noisy_hand_normals = None
+        hand_perturbed = False
+        hand_perturb_pca_l2 = 0.0
+        hand_displacement_p95 = 0.0
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -252,16 +294,24 @@ class CorrStaticDatasetV2(Dataset):
         )
         if (
             self.apply_hand_perturb
-            and self.hand_perturb_pca_std > 0
+            and self.hand_perturb_pca_scale > 0
             and self.hand_perturb_prob > 0
         ):
             rng = np.random.default_rng(aug_seed ^ 0x48414E44)
             if rng.random() <= self.hand_perturb_prob:
                 clean_pose = np.asarray(data["mano_hand_pose"][frame_idx], dtype=np.float32)
-                noisy_pose = clean_pose + rng.normal(
+                assert self.hand_perturb_pose_std is not None
+                assert self.hand_perturb_pose_p01 is not None
+                assert self.hand_perturb_pose_p99 is not None
+                noise = rng.normal(
                     0.0,
-                    self.hand_perturb_pca_std,
+                    self.hand_perturb_pca_scale * self.hand_perturb_pose_std,
                     size=clean_pose.shape,
+                ).astype(np.float32)
+                noisy_pose = np.clip(
+                    clean_pose + noise,
+                    self.hand_perturb_pose_p01,
+                    self.hand_perturb_pose_p99,
                 ).astype(np.float32)
                 noisy_hand_points, noisy_hand_normals = self._get_mano_perturber(
                     int(clean_pose.shape[-1])
@@ -272,6 +322,10 @@ class CorrStaticDatasetV2(Dataset):
                     is_right=bool(np.asarray(data["mano_is_right"]).item()),
                     mirror_x=bool(np.asarray(data["mano_mirror_x"]).item()),
                 )
+                hand_perturbed = True
+                hand_perturb_pca_l2 = float(np.linalg.norm(noisy_pose - clean_pose))
+                hand_displacement = np.linalg.norm(noisy_hand_points - hand_points, axis=-1)
+                hand_displacement_p95 = float(np.percentile(hand_displacement, 95.0))
         geometry = perturb_object_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
@@ -319,6 +373,13 @@ class CorrStaticDatasetV2(Dataset):
         input_normals = np.concatenate([geometry.input_obj_normals, geometry.input_hand_normals], axis=0)
         gt_points = np.concatenate([geometry.gt_obj_points, geometry.gt_hand_points], axis=0)
         gt_normals = np.concatenate([geometry.gt_obj_normals, geometry.gt_hand_normals], axis=0)
+        if bool(obj_valid.any()):
+            obj_displacement = np.linalg.norm(
+                geometry.input_obj_points[obj_valid] - geometry.gt_obj_points[obj_valid], axis=-1
+            )
+            obj_displacement_p95 = float(np.percentile(obj_displacement, 95.0))
+        else:
+            obj_displacement_p95 = 0.0
         point_valid_mask = np.concatenate(
             [obj_valid, np.ones((self.num_hand_points,), dtype=bool)],
             axis=0,
@@ -331,6 +392,11 @@ class CorrStaticDatasetV2(Dataset):
             "gt_normals": torch.from_numpy(gt_normals).float(),
             "point_valid_mask": torch.from_numpy(point_valid_mask),
             "runtime_obj_valid_mask": torch.from_numpy(obj_valid),
+            "obj_perturbed": torch.tensor(bool(geometry.obj_perturbed)),
+            "hand_perturbed": torch.tensor(hand_perturbed),
+            "hand_perturb_pca_l2": torch.tensor(hand_perturb_pca_l2, dtype=torch.float32),
+            "hand_displacement_p95": torch.tensor(hand_displacement_p95, dtype=torch.float32),
+            "obj_displacement_p95": torch.tensor(obj_displacement_p95, dtype=torch.float32),
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
             "hand_min_dist": hand_min_dist.float(),
@@ -469,7 +535,7 @@ def make_dataloaders(
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
         "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
-        "hand_perturb_pca_std": float(getattr(meta_cfg, "hand_perturb_pca_std", 0.0)),
+        "hand_perturb_pca_scale": float(getattr(meta_cfg, "hand_perturb_pca_scale", 0.0)),
         "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
         "mano_model_dir": getattr(meta_cfg, "mano_model_dir", None),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
@@ -524,6 +590,10 @@ def make_dataloaders(
     if val_loader is not None:
         val_loader.dataset.set_epoch(0)
         val_loaders["val_clean/"] = val_loader
+        if bool(getattr(meta_cfg, "apply_hand_perturb", False)):
+            val_perturbed_kwargs["hand_perturb_pose_std"] = train_loader.dataset.hand_perturb_pose_std
+            val_perturbed_kwargs["hand_perturb_pose_p01"] = train_loader.dataset.hand_perturb_pose_p01
+            val_perturbed_kwargs["hand_perturb_pose_p99"] = train_loader.dataset.hand_perturb_pose_p99
         # Perturbed val loader — only if val_obj_perturb_prob > 0.
         if (
             float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)) > 0

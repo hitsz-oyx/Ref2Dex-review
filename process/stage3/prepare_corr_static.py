@@ -166,6 +166,9 @@ def _maybe_copy_mano_fields(
     out["mano_v_template"] = np.asarray(mano_v_template, dtype=np.float32)
     out["mano_is_right"] = np.asarray(side == "right")
     out["mano_mirror_x"] = np.asarray(bool(mirror_left_to_right and side == "left"))
+    out["mano_pose_representation"] = np.asarray(str(payload.get("mano_pose_representation", "pca")))
+    out["mano_num_pca_comps"] = np.asarray(int(np.asarray(payload.get("mano_num_pca_comps", 0)).item()), dtype=np.int32)
+    out["mano_flat_hand_mean"] = np.asarray(bool(np.asarray(payload.get("mano_flat_hand_mean", True)).item()))
     return out
 
 
@@ -333,6 +336,9 @@ def _write_meta(
             "mano_v_template",
             "mano_is_right",
             "mano_mirror_x",
+            "mano_pose_representation",
+            "mano_num_pca_comps",
+            "mano_flat_hand_mean",
         ],
         "stats": stats,
     }

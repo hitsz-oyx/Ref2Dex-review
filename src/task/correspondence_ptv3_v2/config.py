@@ -75,7 +75,7 @@ class Config(TaskConfig):
         val_obj_perturb_prob: float = 1.0
         mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
         apply_hand_perturb: bool = False
-        hand_perturb_pca_std: float = 0.0
+        hand_perturb_pca_scale: float = 0.0
         hand_perturb_prob: float = 1.0
         val_hand_perturb_prob: float = 1.0
 

@@ -31,6 +31,8 @@ class ManoPcaHandPerturber:
         }
         self.right_mano = MANO(is_rhand=True, **common)
         self.left_mano = MANO(is_rhand=False, **common)
+        self.right_mano.requires_grad_(False)
+        self.left_mano.requires_grad_(False)
         self.right_mano.eval()
         self.left_mano.eval()
         self.right_faces = torch.as_tensor(self.right_mano.faces, dtype=torch.long)
@@ -106,22 +108,23 @@ class ManoPcaHandPerturber:
         hand_pose_t = torch.as_tensor(np.asarray(hand_pose, dtype=np.float32)).view(1, -1)
         betas_t = torch.as_tensor(np.asarray(betas, dtype=np.float32)).view(1, -1)
         v_template_t = torch.as_tensor(np.asarray(v_template, dtype=np.float32))
-        if is_right:
-            points_t, normals_t = self._forward_side(
-                self.right_mano,
-                self.right_faces,
-                hand_pose=hand_pose_t,
-                betas=betas_t,
-                v_template=v_template_t,
-            )
-        else:
-            points_t, normals_t = self._forward_side(
-                self.left_mano,
-                self.left_faces,
-                hand_pose=hand_pose_t,
-                betas=betas_t,
-                v_template=v_template_t,
-            )
+        with torch.no_grad():
+            if is_right:
+                points_t, normals_t = self._forward_side(
+                    self.right_mano,
+                    self.right_faces,
+                    hand_pose=hand_pose_t,
+                    betas=betas_t,
+                    v_template=v_template_t,
+                )
+            else:
+                points_t, normals_t = self._forward_side(
+                    self.left_mano,
+                    self.left_faces,
+                    hand_pose=hand_pose_t,
+                    betas=betas_t,
+                    v_template=v_template_t,
+                )
         points = points_t[0].detach().cpu().numpy().astype(np.float32)
         normals = normals_t[0].detach().cpu().numpy().astype(np.float32)
         if mirror_x:
