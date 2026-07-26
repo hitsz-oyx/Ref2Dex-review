@@ -288,6 +288,8 @@ def perturb_object_geometry(
     obj_normals: np.ndarray,
     hand_points: np.ndarray,
     hand_normals: np.ndarray,
+    noisy_hand_points: np.ndarray | None = None,
+    noisy_hand_normals: np.ndarray | None = None,
     seed: int,
     apply_obj_perturb: bool,
     obj_rot_std_deg: float,
@@ -309,8 +311,16 @@ def perturb_object_geometry(
     gt_hand_normals = np.asarray(hand_normals, dtype=np.float32).copy()
     input_obj_points = gt_obj_points.copy()
     input_obj_normals = gt_obj_normals.copy()
-    input_hand_points = gt_hand_points.copy()
-    input_hand_normals = gt_hand_normals.copy()
+    input_hand_points = (
+        np.asarray(noisy_hand_points, dtype=np.float32).copy()
+        if noisy_hand_points is not None
+        else gt_hand_points.copy()
+    )
+    input_hand_normals = (
+        np.asarray(noisy_hand_normals, dtype=np.float32).copy()
+        if noisy_hand_normals is not None
+        else gt_hand_normals.copy()
+    )
 
     obj_perturbed = False
     if (

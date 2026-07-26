@@ -149,6 +149,26 @@ def _validate_stage2_geometry(
             raise ValueError(f"{key} contains non-finite values")
 
 
+def _maybe_copy_mano_fields(
+    payload: dict[str, Any],
+    *,
+    side: str,
+    mirror_left_to_right: bool,
+) -> dict[str, np.ndarray]:
+    out: dict[str, np.ndarray] = {}
+    mano_hand_pose = payload.get("mano_hand_pose")
+    mano_betas = payload.get("mano_betas")
+    mano_v_template = payload.get("mano_v_template")
+    if mano_hand_pose is None or mano_betas is None or mano_v_template is None:
+        return out
+    out["mano_hand_pose"] = np.asarray(mano_hand_pose, dtype=np.float32)
+    out["mano_betas"] = np.asarray(mano_betas, dtype=np.float32)
+    out["mano_v_template"] = np.asarray(mano_v_template, dtype=np.float32)
+    out["mano_is_right"] = np.asarray(side == "right")
+    out["mano_mirror_x"] = np.asarray(bool(mirror_left_to_right and side == "left"))
+    return out
+
+
 def build_stage3_sequence(
     payload: dict[str, Any],
     *,
@@ -248,6 +268,13 @@ def build_stage3_sequence(
         "obj_candidate_mask_5cm": candidate_mask,
         "coordinate_frame": np.asarray(coordinate_frame),
     }
+    out.update(
+        _maybe_copy_mano_fields(
+            payload,
+            side=side,
+            mirror_left_to_right=mirror_left_to_right,
+        )
+    )
     return out
 
 
@@ -301,6 +328,11 @@ def _write_meta(
             "hand_to_obj_min_dist",
             "obj_candidate_mask_5cm",
             "coordinate_frame",
+            "mano_hand_pose",
+            "mano_betas",
+            "mano_v_template",
+            "mano_is_right",
+            "mano_mirror_x",
         ],
         "stats": stats,
     }

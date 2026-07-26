@@ -50,6 +50,10 @@ class CorrStaticDatasetV2(Dataset):
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
+        apply_hand_perturb: bool = False,
+        hand_perturb_pca_std: float = 0.0,
+        hand_perturb_prob: float = 1.0,
+        mano_model_dir: str | None = None,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
@@ -77,11 +81,16 @@ class CorrStaticDatasetV2(Dataset):
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
+        self.apply_hand_perturb = bool(apply_hand_perturb)
+        self.hand_perturb_pca_std = float(hand_perturb_pca_std)
+        self.hand_perturb_prob = float(hand_perturb_prob)
+        self.mano_model_dir = None if mano_model_dir is None else str(mano_model_dir)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
         self.root_coordinate_frame = _load_root_coordinate_frame(self.data_root)
+        self._mano_perturber = None
 
         if self.num_supervision_edges <= 0:
             raise ValueError("num_supervision_edges must be positive.")
@@ -132,12 +141,30 @@ class CorrStaticDatasetV2(Dataset):
                 f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
             )
         self.coordinate_frame = actual_frame
+        if self.apply_hand_perturb and self.coordinate_frame != "hand_root":
+            raise ValueError(
+                "Hand PCA perturbation only supports coordinate_frame='hand_root', "
+                f"got {self.coordinate_frame!r}."
+            )
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 num_frames = int(data["raw_frame_id"].shape[0])
+                if self.apply_hand_perturb:
+                    missing = {
+                        "mano_hand_pose",
+                        "mano_betas",
+                        "mano_v_template",
+                        "mano_is_right",
+                        "mano_mirror_x",
+                    }.difference(data.files)
+                    if missing:
+                        raise KeyError(
+                            f"{path}: hand PCA perturbation requires Stage 3 MANO fields "
+                            f"{sorted(missing)}. Regenerate Stage 2 and Stage 3 with current scripts."
+                        )
             start = len(self._samples)
             self._samples.extend((path, frame_idx) for frame_idx in range(num_frames))
             self.file_sample_ranges.append((start, len(self._samples)))
@@ -161,6 +188,18 @@ class CorrStaticDatasetV2(Dataset):
         self._cached_path = path
         self._cached_data = payload
         return payload
+
+    def _get_mano_perturber(self, pose_dim: int):
+        if self._mano_perturber is None:
+            if not self.mano_model_dir:
+                raise ValueError("mano_model_dir must be set when apply_hand_perturb=True.")
+            from src.task.correspondence_ptv3_v2.mano_perturb import ManoPcaHandPerturber
+
+            self._mano_perturber = ManoPcaHandPerturber(
+                self.mano_model_dir,
+                num_pca_comps=int(pose_dim),
+            )
+        return self._mano_perturber
 
     @staticmethod
     def _scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> str:
@@ -201,6 +240,8 @@ class CorrStaticDatasetV2(Dataset):
         hand_points = np.asarray(data["hand_points"][frame_idx], dtype=np.float32)
         hand_normals = np.asarray(data["hand_normals"][frame_idx], dtype=np.float32)
         hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
+        noisy_hand_points = None
+        noisy_hand_normals = None
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -209,11 +250,35 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="augmentation",
         )
+        if (
+            self.apply_hand_perturb
+            and self.hand_perturb_pca_std > 0
+            and self.hand_perturb_prob > 0
+        ):
+            rng = np.random.default_rng(aug_seed ^ 0x48414E44)
+            if rng.random() <= self.hand_perturb_prob:
+                clean_pose = np.asarray(data["mano_hand_pose"][frame_idx], dtype=np.float32)
+                noisy_pose = clean_pose + rng.normal(
+                    0.0,
+                    self.hand_perturb_pca_std,
+                    size=clean_pose.shape,
+                ).astype(np.float32)
+                noisy_hand_points, noisy_hand_normals = self._get_mano_perturber(
+                    int(clean_pose.shape[-1])
+                ).reconstruct(
+                    hand_pose=noisy_pose,
+                    betas=np.asarray(data["mano_betas"][frame_idx], dtype=np.float32),
+                    v_template=np.asarray(data["mano_v_template"], dtype=np.float32),
+                    is_right=bool(np.asarray(data["mano_is_right"]).item()),
+                    mirror_x=bool(np.asarray(data["mano_mirror_x"]).item()),
+                )
         geometry = perturb_object_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
             hand_points=hand_points,
             hand_normals=hand_normals,
+            noisy_hand_points=noisy_hand_points,
+            noisy_hand_normals=noisy_hand_normals,
             seed=aug_seed,
             apply_obj_perturb=self.apply_obj_perturb,
             obj_rot_std_deg=self.obj_rot_std_deg,
@@ -403,6 +468,10 @@ def make_dataloaders(
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "hand_perturb_pca_std": float(getattr(meta_cfg, "hand_perturb_pca_std", 0.0)),
+        "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
+        "mano_model_dir": getattr(meta_cfg, "mano_model_dir", None),
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
     }
@@ -410,12 +479,18 @@ def make_dataloaders(
         **train_kwargs,
         "apply_obj_perturb": False,
         "obj_perturb_prob": 0.0,
+        "apply_hand_perturb": False,
+        "hand_perturb_prob": 0.0,
         "eval_sampling_epoch": 0,
     }
     val_perturbed_kwargs = {
         **train_kwargs,
         "apply_obj_perturb": True,
         "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "hand_perturb_prob": float(
+            getattr(meta_cfg, "val_hand_perturb_prob", getattr(meta_cfg, "hand_perturb_prob", 1.0))
+        ),
         "eval_sampling_epoch": 0,
     }
     train_loader, val_loader, metadata = make_file_split_dataloaders(
@@ -450,7 +525,16 @@ def make_dataloaders(
         val_loader.dataset.set_epoch(0)
         val_loaders["val_clean/"] = val_loader
         # Perturbed val loader — only if val_obj_perturb_prob > 0.
-        if float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)) > 0:
+        if (
+            float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)) > 0
+            or (
+                bool(getattr(meta_cfg, "apply_hand_perturb", False))
+                and float(
+                    getattr(meta_cfg, "val_hand_perturb_prob", getattr(meta_cfg, "hand_perturb_prob", 1.0))
+                )
+                > 0
+            )
+        ):
             val_perturbed_dataset = CorrStaticDatasetV2(
                 val_loader.dataset.data_root,
                 file_list=val_loader.dataset.file_paths,

@@ -134,6 +134,13 @@ def pack_stage2_hand(
     }
     if hand_root_pose is not None:
         payload["hand_root_pose"] = hand_root_pose[keep]
+    mano_pose_key = f"{side}_mano_hand_pose"
+    mano_betas_key = f"{side}_mano_betas"
+    mano_v_template_key = f"{side}_mano_v_template"
+    if mano_pose_key in source and mano_betas_key in source and mano_v_template_key in source:
+        payload["mano_hand_pose"] = np.asarray(source[mano_pose_key], dtype=np.float32)[keep]
+        payload["mano_betas"] = np.asarray(source[mano_betas_key], dtype=np.float32)[keep]
+        payload["mano_v_template"] = np.asarray(source[mano_v_template_key], dtype=np.float32)
     return payload
 
 

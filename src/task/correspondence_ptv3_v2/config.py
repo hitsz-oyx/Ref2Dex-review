@@ -73,6 +73,11 @@ class Config(TaskConfig):
         obj_perturb_prob: float = 1.0
         apply_obj_perturb: bool = True
         val_obj_perturb_prob: float = 1.0
+        mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
+        apply_hand_perturb: bool = False
+        hand_perturb_pca_std: float = 0.0
+        hand_perturb_prob: float = 1.0
+        val_hand_perturb_prob: float = 1.0
 
         loss_cross_edge_weight: float = 1.0
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
