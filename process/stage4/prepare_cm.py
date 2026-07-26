@@ -30,7 +30,7 @@ from process.GRAB.raw import (
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage4" / "grab_cm_raw_stride3"
 SCHEMA_NAME = "ref2dex_cm_stage4"
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 
 def _resolve_sequences(args: argparse.Namespace) -> list[str]:
@@ -202,6 +202,12 @@ def build_stage4_sequence(
     hand_flow = (hand_next_in_current_frame - hand_points).astype(np.float32)
     wrist_delta = _relative_wrist_pose(hand_root_t, hand_root_t1)
     hand_cano_points = np.asarray(source[f"{side}_hand_cano_points"], dtype=np.float32).copy()
+    mano_pose_all = np.asarray(source[f"{side}_mano_hand_pose"], dtype=np.float32)
+    mano_betas_all = np.asarray(source[f"{side}_mano_betas"], dtype=np.float32)
+    mano_pose_t = mano_pose_all[current_idx]
+    mano_pose_t1 = mano_pose_all[next_idx]
+    mano_betas = mano_betas_all[current_idx]
+    mano_v_template = np.asarray(source[f"{side}_mano_v_template"], dtype=np.float32)
 
     if mirror_left_to_right and side == "left":
         _mirror_x(
@@ -257,6 +263,12 @@ def build_stage4_sequence(
         "hand_region_id": np.asarray(source[f"{side}_hand_region_id"], dtype=np.int32),
         "hand_flow": hand_flow,
         "wrist_delta": wrist_delta,
+        "mano_hand_pose": mano_pose_t,
+        "next_mano_hand_pose": mano_pose_t1,
+        "mano_betas": mano_betas,
+        "mano_v_template": mano_v_template,
+        "mano_is_right": np.asarray(side == "right"),
+        "mano_mirror_x": np.asarray(bool(mirror_left_to_right and side == "left")),
         "obj_to_hand_min_dist": obj_to_hand_min_dist,
         "hand_to_obj_min_dist": hand_to_obj_min_dist,
         "obj_candidate_mask_5cm": candidate_mask,

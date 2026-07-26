@@ -28,6 +28,14 @@ REQUIRED_FIELDS = {
     "hand_to_obj_min_dist",
     "obj_candidate_mask_5cm",
 }
+MANO_REQUIRED_FIELDS = {
+    "mano_hand_pose",
+    "next_mano_hand_pose",
+    "mano_betas",
+    "mano_v_template",
+    "mano_is_right",
+    "mano_mirror_x",
+}
 
 
 def scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> str:
@@ -53,6 +61,7 @@ class Stage4CmDataset(Dataset):
         min_object_flow_norm: float = 0.0,
         max_samples: int | None = None,
         coordinate_frame: str = "hand_root_t",
+        require_mano_aux: bool = False,
     ) -> None:
         self.data_path = Path(data_path)
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
@@ -64,6 +73,7 @@ class Stage4CmDataset(Dataset):
         if self.min_object_flow_norm < 0.0:
             raise ValueError("min_object_flow_norm must be non-negative")
         self.coordinate_frame = str(coordinate_frame)
+        self.require_mano_aux = bool(require_mano_aux)
         self.file_paths = (
             sorted(Path(path) for path in file_list)
             if file_list is not None
@@ -82,7 +92,10 @@ class Stage4CmDataset(Dataset):
 
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
-                missing = REQUIRED_FIELDS.difference(data.files)
+                required_fields = set(REQUIRED_FIELDS)
+                if self.require_mano_aux:
+                    required_fields.update(MANO_REQUIRED_FIELDS)
+                missing = required_fields.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 4 fields {sorted(missing)}")
                 schema = str(np.asarray(data["schema_name"]).item())
@@ -160,7 +173,7 @@ class Stage4CmDataset(Dataset):
             value[~obj_valid_mask] = 0.0
             return value
 
-        return {
+        sample = {
             "obj_points": torch.from_numpy(selected("obj_points")),
             "obj_normals": torch.from_numpy(selected("obj_normals")),
             "obj_flow_gt": torch.from_numpy(selected("obj_flow_gt")),
@@ -177,6 +190,26 @@ class Stage4CmDataset(Dataset):
             "next_raw_frame_id": torch.tensor(int(np.asarray(data["next_raw_frame_id"])[pair_idx]), dtype=torch.long),
             "pair_index": torch.tensor(pair_idx, dtype=torch.long),
         }
+        if self.require_mano_aux:
+            sample.update(
+                {
+                    "mano_hand_pose": torch.from_numpy(
+                        np.asarray(data["mano_hand_pose"][pair_idx], dtype=np.float32).copy()
+                    ),
+                    "next_mano_hand_pose": torch.from_numpy(
+                        np.asarray(data["next_mano_hand_pose"][pair_idx], dtype=np.float32).copy()
+                    ),
+                    "mano_betas": torch.from_numpy(
+                        np.asarray(data["mano_betas"][pair_idx], dtype=np.float32).copy()
+                    ),
+                    "mano_v_template": torch.from_numpy(
+                        np.asarray(data["mano_v_template"], dtype=np.float32).copy()
+                    ),
+                    "mano_is_right": torch.tensor(bool(np.asarray(data["mano_is_right"]).item())),
+                    "mano_mirror_x": torch.tensor(bool(np.asarray(data["mano_mirror_x"]).item())),
+                }
+            )
+        return sample
 
 
 def _sequence_group_key(path: Path) -> str:
@@ -208,6 +241,7 @@ def make_dataloaders(
         "active_only": bool(getattr(data_cfg, "active_only", True)),
         "min_object_flow_norm": float(getattr(data_cfg, "min_object_flow_norm", 0.0)),
         "coordinate_frame": str(meta_cfg.coordinate_frame),
+        "require_mano_aux": bool(getattr(meta_cfg, "use_mano_aux", False)),
     }
     train_kwargs = {
         **common,

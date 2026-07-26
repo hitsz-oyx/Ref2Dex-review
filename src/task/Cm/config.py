@@ -39,6 +39,12 @@ class Config(TaskConfig):
         # or requiring the newly added hand decoder tensors to be present.
         warm_start_checkpoint: str | None = None
         freeze_cm_encoder: bool = False
+        use_mano_aux: bool = False
+        mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
+        mano_pose_dim: int = 24
+        loss_mano_flow_weight: float = 0.5
+        loss_mano_consistency_weight: float = 0.0
+        loss_mano_pose_weight: float = 0.05
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"

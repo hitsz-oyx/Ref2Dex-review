@@ -9,6 +9,9 @@ meta:
   cm_dense_token_dim: 96
   num_cp_tokens: 8
   num_cm_tokens: 16
+  object_flow_scale_m: 0.01
+  loss_object_flow_weight: 1.0
+  loss_object_contact_weight: 1.0
   # Required only for meta.stage=closed_loop. This checkpoint must be the
   # warm-started Cm model after its Cm->Fm hand decoder has been trained.
   cm_hand_checkpoint: ''
@@ -20,6 +23,7 @@ data:
   val_batch_size: 8
   num_workers: 0
   group_val_by_sequence: true
+  selected_pair_index: null
 train:
   epochs: 20
   lr: 1.0e-4

@@ -659,12 +659,25 @@ class GRABRawAdapter:
         )
 
         min_per_frame = hand_to_obj_dist.min(axis=1)
+        betas = np.asarray(hand_params_sel["betas"], dtype=np.float32)
+        if betas.ndim == 1:
+            betas = np.broadcast_to(betas[None], (T, betas.shape[0])).copy()
+        v_template_tensor = mano_for_seq.v_template.detach().cpu()
+        # smplx releases expose either [1, 778, 3] or [778, 3].
+        v_template = (
+            v_template_tensor[0] if v_template_tensor.ndim == 3 else v_template_tensor
+        ).numpy().astype(np.float32)
         return {
             "points": face_pts,
             "normals": normals,
             "to_obj_nn_id": hand_to_obj_nn_id,
             "min_dist_to_obj": min_per_frame.astype(np.float32),
             "root_pose": hand_root_pose,
+            # Keep the raw MANO articulation parameters available for the
+            # optional execution-specific auxiliary branch in Cm.
+            "mano_hand_pose": np.asarray(hand_params_sel["hand_pose"], dtype=np.float32),
+            "mano_betas": betas,
+            "mano_v_template": v_template,
         }
 
     def process_sequence(self, seq_path: str) -> dict:
@@ -738,4 +751,9 @@ class GRABRawAdapter:
             output["right_hand_root_pose"] = right_data["root_pose"]
         if "root_pose" in left_data:
             output["left_hand_root_pose"] = left_data["root_pose"]
+        for side_name, side_data in (("right", right_data), ("left", left_data)):
+            if "mano_hand_pose" in side_data:
+                output[f"{side_name}_mano_hand_pose"] = side_data["mano_hand_pose"]
+                output[f"{side_name}_mano_betas"] = side_data["mano_betas"]
+                output[f"{side_name}_mano_v_template"] = side_data["mano_v_template"]
         return output

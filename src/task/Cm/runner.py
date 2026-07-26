@@ -40,6 +40,17 @@ def _rotation_geodesic(prediction: torch.Tensor, target: torch.Tensor) -> torch.
     return torch.acos(cosine)
 
 
+def _weighted_point_flow_loss(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    point_weight: torch.Tensor,
+    *,
+    beta: float,
+) -> torch.Tensor:
+    loss_map = F.smooth_l1_loss(prediction, target, beta=beta, reduction="none").mean(dim=-1)
+    return (loss_map * point_weight).sum() / point_weight.sum().clamp_min(1e-6)
+
+
 class CmActionRunner(BaseRunner):
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(
@@ -76,6 +87,7 @@ class CmActionRunner(BaseRunner):
                 "head.hand_token_score.",
                 "head.hand_articulation_decoder.",
                 "head.wrist_decoder.",
+                "mano_pose_head.",
             )
             for name, parameter in model.named_parameters():
                 parameter.requires_grad_(name.startswith(trainable_prefixes))
@@ -148,6 +160,35 @@ class CmActionRunner(BaseRunner):
         hand_epe = torch.linalg.norm(pred_hand_flow - batch["hand_flow"].float(), dim=-1)
         contact_denominator = contact_weight.sum().clamp_min(1e-6)
         hand_epe_contact = (hand_epe * contact_weight).sum() / contact_denominator
+        mano_flow_loss = pred_flow.new_zeros(())
+        mano_consistency_loss = pred_flow.new_zeros(())
+        mano_pose_loss = pred_flow.new_zeros(())
+        mano_current_fit_mm = pred_flow.new_zeros(())
+        mano_epe_mm = pred_flow.new_zeros(())
+        if bool(getattr(self.cfg.meta, "use_mano_aux", False)):
+            pred_mano_flow = prediction["pred_mano_flow"]
+            pred_mano_articulation_flow = prediction["pred_mano_articulation_flow"]
+            mano_flow_loss = _weighted_point_flow_loss(
+                pred_mano_flow,
+                batch["hand_flow"].float(),
+                point_weight,
+                beta=beta,
+            )
+            mano_consistency_loss = _weighted_point_flow_loss(
+                prediction["pred_hand_articulation_flow"],
+                pred_mano_articulation_flow.detach(),
+                point_weight,
+                beta=beta,
+            )
+            target_delta_pose = batch["next_mano_hand_pose"].float() - batch["mano_hand_pose"].float()
+            mano_pose_loss = F.smooth_l1_loss(
+                prediction["pred_mano_delta_pose"], target_delta_pose, beta=beta
+            )
+            mano_current_fit_mm = (
+                torch.linalg.norm(prediction["pred_mano_current_points"] - batch["hand_points"].float(), dim=-1).mean()
+                * 1000.0
+            )
+            mano_epe_mm = torch.linalg.norm(pred_mano_flow - batch["hand_flow"].float(), dim=-1).mean() * 1000.0
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
         cm_slot_weights = prediction["cm_slot_weights"]
@@ -168,6 +209,9 @@ class CmActionRunner(BaseRunner):
         total_loss = (
             float(self.cfg.meta.loss_object_weight) * flow_smooth_l1
             + float(self.cfg.meta.loss_hand_weight) * hand_loss
+            + float(self.cfg.meta.loss_mano_flow_weight) * mano_flow_loss
+            + float(self.cfg.meta.loss_mano_consistency_weight) * mano_consistency_loss
+            + float(self.cfg.meta.loss_mano_pose_weight) * mano_pose_loss
         )
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
@@ -184,6 +228,11 @@ class CmActionRunner(BaseRunner):
             "global_articulation_loss": global_articulation_loss,
             "hand_epe_mm": hand_epe.mean() * 1000.0,
             "hand_epe_contact_mm": hand_epe_contact * 1000.0,
+            "mano_flow_loss": mano_flow_loss,
+            "mano_consistency_loss": mano_consistency_loss,
+            "mano_pose_loss": mano_pose_loss,
+            "mano_current_fit_mm": mano_current_fit_mm,
+            "mano_flow_epe_mm": mano_epe_mm,
             "wrist_translation_error_mm": torch.linalg.norm(
                 pred_wrist_translation - target_wrist_translation, dim=-1
             ).mean() * 1000.0,

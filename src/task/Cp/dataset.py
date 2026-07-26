@@ -32,6 +32,7 @@ class Stage5CpDataset(Dataset):
         num_hand_points: int = 1538,
         base_seed: int = 42,
         active_only: bool = False,
+        selected_pair_index: int | None = None,
         max_samples: int | None = None,
         **_: Any,
     ) -> None:
@@ -40,6 +41,7 @@ class Stage5CpDataset(Dataset):
         self.num_hand_points = int(num_hand_points)
         self.base_seed = int(base_seed)
         self.active_only = bool(active_only)
+        self.selected_pair_index = None if selected_pair_index is None else int(selected_pair_index)
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
         self.file_paths = self._resolve_paths(file_list)
@@ -57,6 +59,8 @@ class Stage5CpDataset(Dataset):
                 if self.active_only:
                     candidate = np.asarray(data["obj_candidate_mask_5cm"], dtype=bool)
                     pair_indices = pair_indices[candidate.any(axis=1)]
+                if self.selected_pair_index is not None:
+                    pair_indices = pair_indices[pair_indices == self.selected_pair_index]
                 self.samples.extend((path, int(index)) for index in pair_indices)
 
         if max_samples is not None and int(max_samples) > 0:
@@ -136,6 +140,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         "num_hand_points": int(meta_cfg.num_hand_points),
         "base_seed": int(seed),
         "active_only": bool(getattr(data_cfg, "active_only", False)),
+        "selected_pair_index": getattr(data_cfg, "selected_pair_index", None),
     }
     train_loader, val_loader, metadata = make_file_split_dataloaders(
         data_cfg,

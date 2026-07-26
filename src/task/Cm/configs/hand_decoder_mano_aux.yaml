@@ -1,0 +1,32 @@
+_base_: src.task.Cm.config:Config
+
+name: cm_hand_decoder_mano_aux
+
+meta:
+  warm_start_checkpoint: src/task/Cp/pretrained_ckpt/Cm_ckpt/best.pt
+  dense_checkpoint: src/task/Cm/densetoken_ckpt/best.pt
+  freeze_cm_encoder: true
+  loss_object_weight: 0.0
+  loss_hand_weight: 1.0
+  use_mano_aux: true
+  mano_pose_dim: 24
+  loss_mano_flow_weight: 0.5
+  loss_mano_consistency_weight: 0.0
+  loss_mano_pose_weight: 0.05
+
+data:
+  train_path: processed_data/generated/stage4_mano
+  active_only: true
+  group_val_by_sequence: true
+  batch_size: 8
+  val_batch_size: 8
+
+train:
+  output_dir: outputs/train/cm_hand_decoder_mano_aux
+  lr: 1.0e-4
+  epochs: 20
+  metric_for_best: val/hand_epe_mm
+  lower_is_better: true
+
+wandb:
+  enable: false

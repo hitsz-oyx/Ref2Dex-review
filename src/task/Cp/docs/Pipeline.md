@@ -103,7 +103,7 @@ PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
       → [contact logit, F_o_hat]
 ```
 
-effect decoder 为每个 object-point / Cp-slot 预测 mixture logit、contact logit 和 flow，再用 slot softmax 加权聚合，避免对所有 slots 的简单平均。使用有效 object point 的 Smooth L1 object-flow loss 与 BCE contact loss。Stage-C 加载并冻结 `cp_encoder`、`cp_slots`、`cp_effect_decoder`，使 `C_p` 的 task-effect 语义固定。
+effect decoder 为每个 object-point / Cp-slot 先预测共享 effect feature，再由独立的 mixture、contact 和 flow heads 解码。slot softmax 加权聚合避免对所有 slots 的简单平均；独立 head 避免 contact BCE 与毫米级 flow 在最终投影层发生梯度冲突。object flow 以 `object_flow_scale_m=0.01` 归一化后计算 Smooth L1。contact 的优化项与 BCE 梯度相同，但记录并最小化 excess BCE：`BCE(logit, c_gt) - H(c_gt)`；其中 `H(c_gt)` 是软标签给出的不可约理论下界，因此 excess 为 0 表示达到最优。Stage-C 加载并冻结这些 Cp effect 模块，使 `C_p` 的 task-effect 语义固定。
 
 ### 4.3 Stage C：真正的人类闭环
 
@@ -137,7 +137,7 @@ L_wrist + L_weighted_articulation + 0.2 L_global_articulation
 | `build_model` | Stage C 时加载并冻结完整 Cm hand decoder 与 Cp effect checkpoint |
 | `step` | 根据 `meta.stage` 计算阶段损失与指标 |
 
-因此 optimizer、AMP、checkpoint、distributed、日志和 overfit mode 均使用 `src/base` 的公共实现。
+因此 optimizer、AMP、checkpoint、distributed、日志和 overfit mode 均使用 `src/base` 的 公共实现。
 
 ## 6. 训练顺序
 
@@ -185,6 +185,18 @@ DISPLAY=localhost:10.0 PYTHONPATH=. python -m src.task.Cp.visualize \
 
 `--check-only` 只做 checkpoint 和一次前向兼容性检查，不开启窗口。`--save` 可在无窗口环境输出静态图。
 
+交互窗口采用与 `Cm/visualize.py` 相同的深色背景、GT 绿色、预测红色和稀疏流线表示。按键如下：
+
+| 按键 | 操作 |
+| --- | --- |
+| `A` / `D`（或方向键） | 上一 / 下一 temporal pair |
+| `V` | Human → Object flow → Both |
+| `G` | 物体流 GT → Pred → Both |
+| `C` | 当前物体点颜色 Off → GT contact → Pred contact |
+| `L` | 开关稀疏的当前→未来物体流线段 |
+| `H` | 开关 GT / predicted future hand |
+| `R` | 重置相机 |
+
 ## 8. 已完成验证
 
 数据验证使用 `s1/cylindersmall_pass_1` right hand：
@@ -195,17 +207,19 @@ DISPLAY=localhost:10.0 PYTHONPATH=. python -m src.task.Cp.visualize \
 minimum object-to-hand distance: 0.075 mm
 ```
 
-对固定的一个 active pair（pair 27）进行了 200-step 单样本过拟合：
+已进行单样本过拟合诊断；新的 Cp effect 使用有真实物体运动的 pair 42：
 
 | 阶段 | 指标 | 结果 |
 | --- | --- | --- |
 | A：Cm decoder warm start | hand-flow EPE | 12.946 mm → **0.347 mm** |
 | A：Cm decoder warm start | wrist translation / rotation | **0.048 mm / 0.028°** |
-| B：Cp effect | object-flow EPE | **17.700 mm**（200 step 末值） |
-| B：Cp effect | contact BCE | **8.79e-4**（200 step 末值） |
+| B：旧共享 effect head | object-flow EPE | **未通过**（17.700 mm；已废弃） |
+| B：新独立 effect heads（标准训练入口） | object-flow EPE | **0.410 mm**（pair 42，500 step） |
+| B：新独立 effect heads | contact BCE 理论下界 | **0.3641** |
+| B：新独立 effect heads | excess contact BCE | **0.2263** |
 | C：真实 `Cp → Cm → Fm` 闭环 | hand-flow EPE | 6.653 mm → **0.346 mm** |
 
-所有结果均在同一个真实 active pair（`cylindersmall_pass_1_right.npz`, pair 27）上以 200 step 单样本 overfit 得到；其目的是验证梯度和冻结边界贯通，不能代表泛化性能。闭环静态图在：`outputs/train/cp_closed_overfit/Cp_20260725_125657/closure_overfit_stage5.png`。
+上述旧 B/C 结果来自共享 effect head，现已确认 Cp object-flow 未收敛，**不可作为通过结果或用于后续闭环训练**。新的独立 effect heads 已在真实移动 pair 42（GT 平均物体位移 35.3 mm）上通过标准训练入口完成 500-step 诊断：object-flow EPE 为 **0.410 mm**。该 pair 的软接触标签熵下界为 **0.3641**，当前 BCE 为 **0.5904**，故 excess contact BCE 为 **0.2263**；这正是还可优化的接触预测误差。仍需使用新架构训练完整 Stage B，再重新训练 Stage C；此前的闭环静态图只保留为历史记录。
 
 ## 9. 当前边界与后续工作
 

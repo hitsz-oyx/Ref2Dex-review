@@ -39,13 +39,28 @@ class SlotAttention(nn.Module):
         )
         self.scale = dim**-0.5
 
-    def forward(self, inputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        inputs: torch.Tensor,
+        valid_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         normalized = self.norm_inputs(inputs)
         keys, values = self.to_key(normalized), self.to_value(normalized)
         slots = self.slot_init.expand(inputs.shape[0], -1, -1)
+        if valid_mask is not None:
+            valid_mask = valid_mask.bool()
+            if valid_mask.shape != inputs.shape[:2]:
+                raise ValueError(
+                    f"valid_mask must have shape {tuple(inputs.shape[:2])}, got {tuple(valid_mask.shape)}."
+                )
         for _ in range(self.num_iterations):
             logits = torch.einsum("bkd,bnd->bkn", self.to_query(self.norm_slots(slots)), keys)
-            assignment = torch.softmax(logits * self.scale, dim=1)
+            logits = logits * self.scale
+            if valid_mask is not None:
+                logits = logits.masked_fill(~valid_mask[:, None, :], torch.finfo(logits.dtype).min)
+            assignment = torch.softmax(logits, dim=1)
+            if valid_mask is not None:
+                assignment = assignment * valid_mask[:, None, :]
             weights = assignment / assignment.sum(dim=-1, keepdim=True).clamp_min(1e-8)
             updates = torch.einsum("bkn,bnd->bkd", weights, values)
             slots = self.gru(updates.flatten(0, 1), slots.flatten(0, 1)).view_as(slots)
@@ -107,8 +122,17 @@ class CpHumanClosureModel(nn.Module):
         self.dim = int(meta.dim)
         self.cp_encoder = make_mlp(10, self.dim, self.dim)
         self.cp_slots = SlotAttention(self.dim, int(meta.num_cp_tokens), int(meta.slot_iters))
-        # Per object/slot: mixture logit, contact logit, and flow vector.
-        self.cp_effect_decoder = make_mlp(self.dim + 6, self.dim, 5)
+        # Predicting sub-millimetre object flow and a contact logit through
+        # one final projection causes destructive multi-task gradients. Keep a
+        # common Cp/object feature trunk but give the two physical quantities
+        # independent heads. A zero flow head is also the correct prior for
+        # stationary grasp frames.
+        self.cp_effect_decoder = make_mlp(self.dim + 6, self.dim, self.dim)
+        self.cp_mixture_head = nn.Linear(self.dim, 1)
+        self.cp_contact_head = nn.Linear(self.dim, 1)
+        self.cp_flow_head = nn.Linear(self.dim, 3)
+        nn.init.zeros_(self.cp_flow_head.weight)
+        nn.init.zeros_(self.cp_flow_head.bias)
 
         self.closure_hand_state = make_mlp(int(meta.cm_dense_token_dim) + 6, self.dim, self.dim)
         self.cp_to_hand = nn.MultiheadAttention(self.dim, num_heads=8, batch_first=True)
@@ -132,17 +156,20 @@ class CpHumanClosureModel(nn.Module):
         effect = torch.cat(
             [batch["obj_points"], batch["obj_normals"], batch["obj_contact_gt"].unsqueeze(-1), batch["obj_flow_gt"]], dim=-1
         )
-        return self.cp_slots(self.cp_encoder(effect))
+        return self.cp_slots(self.cp_encoder(effect), valid_mask=batch["obj_valid_mask"])
 
     def decode_effect(self, cp_tokens: torch.Tensor, batch: dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         num_obj, num_slots = batch["obj_points"].shape[1], cp_tokens.shape[1]
         tokens = cp_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1)
         points = batch["obj_points"].unsqueeze(2).expand(-1, -1, num_slots, -1)
         normals = batch["obj_normals"].unsqueeze(2).expand(-1, -1, num_slots, -1)
-        per_slot = self.cp_effect_decoder(torch.cat([tokens, points, normals], dim=-1))
-        slot_weight = torch.softmax(per_slot[..., 0], dim=2)
-        contact_logits = (slot_weight * per_slot[..., 1]).sum(dim=2)
-        object_flow = (slot_weight.unsqueeze(-1) * per_slot[..., 2:]).sum(dim=2)
+        decoded = self.cp_effect_decoder(torch.cat([tokens, points, normals], dim=-1))
+        mixture_logits = self.cp_mixture_head(decoded).squeeze(-1)
+        contact_per_slot = self.cp_contact_head(decoded).squeeze(-1)
+        flow_per_slot = self.cp_flow_head(decoded)
+        slot_weight = torch.softmax(mixture_logits, dim=2)
+        contact_logits = (slot_weight * contact_per_slot).sum(dim=2)
+        object_flow = (slot_weight.unsqueeze(-1) * flow_per_slot).sum(dim=2)
         return contact_logits, object_flow, slot_weight
 
     def generate_cm(
@@ -184,11 +211,23 @@ class CpHumanClosureModel(nn.Module):
     def load_cp_effect(self, path: str | Path) -> None:
         payload = torch.load(Path(path), map_location="cpu")
         state = payload.get("model", payload)
-        prefixes = ("cp_encoder.", "cp_slots.", "cp_effect_decoder.")
+        prefixes = (
+            "cp_encoder.",
+            "cp_slots.",
+            "cp_effect_decoder.",
+            "cp_mixture_head.",
+            "cp_contact_head.",
+            "cp_flow_head.",
+        )
         own = self.state_dict()
         selected = {key: value for key, value in state.items() if key in own and key.startswith(prefixes)}
-        if not selected:
-            raise ValueError(f"{path} contains no Cp effect parameters.")
+        required_prefixes = tuple(prefixes)
+        missing_prefixes = [prefix for prefix in required_prefixes if not any(key.startswith(prefix) for key in selected)]
+        if missing_prefixes:
+            raise ValueError(
+                f"{path} does not contain a complete Cp effect checkpoint; missing {missing_prefixes}. "
+                "Retrain the Cp effect stage with the current architecture."
+            )
         self.load_state_dict(selected, strict=False)
         for name, parameter in self.named_parameters():
             if name.startswith(prefixes):

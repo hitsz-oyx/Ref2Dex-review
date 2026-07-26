@@ -8,7 +8,7 @@
 # 显示切换
 #   G                   循环切换物体流显示模式: GT -> Pred -> Both
 #   L                   开关流线段 (current→future 的连线,稀疏采样)
-#   H                   开关 GT / predicted future hand 点云的显示
+#   H                   开关 GT / predicted future hand 点云的显示（仅单步模式）
 #   S                   切换手部 Slot Assignment 分区与 soft-anchor 球
 #   T                   切换单步 teacher-forced / 整段 trajectory rollout 模式
 #   P                   trajectory 模式中：从当前帧开始 rollout / 回到当前 GT 帧
@@ -29,7 +29,7 @@ Keys:
   A / D or ← / →  previous / next temporal pair
   G              cycle GT -> Pred -> Both
   L              toggle flow line segments
-  H              toggle future-hand context
+  H              toggle future-hand context (teacher-forced view only)
   S              toggle argmax Slot Assignment colors and soft anchors
   T              toggle teacher-forced / trajectory-rollout view
   P              start rollout from current pair, or clear it back to GT
@@ -88,6 +88,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True, help="CmAction BaseRunner checkpoint (.pt or run directory).")
     parser.add_argument("--input", required=True, help="One Stage 4 sequence NPZ.")
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--dense-checkpoint",
+        default=None,
+        help="Override the DenseToken checkpoint path saved in the Cm checkpoint config.",
+    )
+    parser.add_argument(
+        "--allow-legacy-checkpoint",
+        action="store_true",
+        help=(
+            "Load a pre-hand-decoder Cm checkpoint as an object-flow warm start. "
+            "The newly added hand decoder remains initialized, so its predicted hand flow is diagnostic only."
+        ),
+    )
     parser.add_argument("--pair", type=int, default=0, help="Pair index after optional active-pair filtering.")
     parser.add_argument(
         "--include-inactive",
@@ -581,16 +594,23 @@ class InteractiveFlowViewer:
             )
         hand_color = arrays["hand_slot_colors"] if self.state.show_slot_assignment else HAND_CURRENT_COLOR
         self._set_point_cloud(self.hand_current, self._to_display_coordinates(arrays["hand_current"]), hand_color)
-        self._set_point_cloud(
-            self.hand_future,
-            self._to_display_coordinates(arrays["hand_future"]) if self.state.show_future_hand else _empty_points(),
-            HAND_FUTURE_COLOR,
-        )
-        self._set_point_cloud(
-            self.hand_pred_future,
-            self._to_display_coordinates(arrays["hand_pred_future"]) if self.state.show_future_hand else _empty_points(),
-            HAND_PRED_COLOR,
-        )
+        if is_trajectory:
+            # Rollout accumulates object-state error only. Hand inputs remain
+            # GT context at every step, so future-hand clouds would suggest a
+            # hand trajectory prediction that this mode does not perform.
+            self._set_point_cloud(self.hand_future, _empty_points(), HAND_FUTURE_COLOR)
+            self._set_point_cloud(self.hand_pred_future, _empty_points(), HAND_PRED_COLOR)
+        else:
+            self._set_point_cloud(
+                self.hand_future,
+                self._to_display_coordinates(arrays["hand_future"]) if self.state.show_future_hand else _empty_points(),
+                HAND_FUTURE_COLOR,
+            )
+            self._set_point_cloud(
+                self.hand_pred_future,
+                self._to_display_coordinates(arrays["hand_pred_future"]) if self.state.show_future_hand else _empty_points(),
+                HAND_PRED_COLOR,
+            )
         if is_trajectory:
             gt_line_start, gt_line_end = arrays["gt_current"], arrays["gt_next"]
             pred_line_start, pred_line_end = arrays["eval_current"], arrays["eval_next"]
@@ -675,7 +695,6 @@ class InteractiveFlowViewer:
                 f"input_valid={int(arrays['rollout_valid_count'])} "
                 f"drift_mse={mse:.8f} drift_mae={mae:.8f} "
                 f"lines={'on' if self.state.show_lines else 'off'} "
-                f"future_hand={'on' if self.state.show_future_hand else 'off'} "
                 f"slots={'on' if self.state.show_slot_assignment else 'off'} "
                 f"frame={'world' if self.state.show_world_coordinates else 'hand'} "
                 f"decoder_top=slot_{top_slot:02d}:{float(decoder_usage[top_slot]):.3f}"
@@ -719,6 +738,9 @@ class InteractiveFlowViewer:
         return self._refresh()
 
     def _toggle_future_hand(self, _vis):
+        if self.state.trajectory_mode:
+            print("future-hand display is unavailable in trajectory mode; only the current hand is shown")
+            return False
         self.state.show_future_hand = not self.state.show_future_hand
         return self._refresh()
 
@@ -827,7 +849,7 @@ class InteractiveFlowViewer:
         for key, callback in keymap.items():
             vis.register_key_callback(key, callback)
         print(
-            "A/D: pair or trajectory step, G: GT/Eval/Both, L: flow lines, H: future hand, "
+            "A/D: pair or trajectory step, G: GT/Eval/Both, L: flow lines, H: future hand (one-step only), "
             "S: slot colors/anchors, T: trajectory mode, P: start/clear rollout, W: hand/world, R: reset"
         )
         vis.run()
@@ -842,7 +864,18 @@ def main() -> None:
         device=args.device,
         build_data=False,
     )
-    runner.setup_inference(args.checkpoint)
+    if args.dense_checkpoint:
+        runner.cfg.meta.dense_checkpoint = str(Path(args.dense_checkpoint).resolve())
+    if args.allow_legacy_checkpoint:
+        runner.model = runner.build_model(runner.cfg.model).to(runner.device)
+        missing = runner.model.load_legacy_warm_start(args.checkpoint)
+        runner.eval_mode()
+        print(
+            "Loaded legacy Cm object-flow weights; initialized hand-decoder tensors: "
+            f"{missing}"
+        )
+    else:
+        runner.setup_inference(args.checkpoint)
     runner = _ensure_cm_runner(runner)
     dataset = Stage4CmDataset(
         Path(args.input),

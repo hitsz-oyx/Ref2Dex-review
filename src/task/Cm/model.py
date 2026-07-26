@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from src.task.Cm.dense_token import FrozenDenseTokenEncoder
+from src.task.Cm.mano_aux import ManoForwardAuxiliary
 
 
 def _mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
@@ -250,6 +251,7 @@ class CmFlowHead(nn.Module):
             "pred_wrist_rotation": pred_wrist_rotation,
             "pred_wrist_translation": pred_wrist_translation,
             "hand_decoder_attention": hand_attention,
+            "hand_motion_feature": hand_prediction["hand_motion_feature"],
             "cm_tokens": cm_tokens,
             "cm_anchor_pos": cm_anchor_pos,
             "cm_anchor_normal": cm_anchor_normal,
@@ -287,6 +289,10 @@ class CmFlowHead(nn.Module):
         rigid_next_hand = rigid_next_hand + pred_wrist_translation.unsqueeze(1)
         pred_rigid_hand_flow = rigid_next_hand - hand_points
         pred_hand_flow = pred_rigid_hand_flow + pred_hand_articulation_flow
+        hand_motion_feature = torch.cat(
+            [cm_tokens.mean(dim=1), hand_context.mean(dim=1), hand_cm_context.mean(dim=1)],
+            dim=-1,
+        )
         return {
             "pred_hand_flow": pred_hand_flow,
             "pred_rigid_hand_flow": pred_rigid_hand_flow,
@@ -294,6 +300,7 @@ class CmFlowHead(nn.Module):
             "pred_wrist_rotation": pred_wrist_rotation,
             "pred_wrist_translation": pred_wrist_translation,
             "hand_decoder_attention": hand_attention,
+            "hand_motion_feature": hand_motion_feature,
         }
 
 
@@ -304,7 +311,7 @@ class CmFlowModel(nn.Module):
     Cm checkpoints contain only the temporal Slot Attention head and decoder.
     """
 
-    _DENSE_PREFIX = "dense_encoder."
+    _FROZEN_ASSET_PREFIXES = ("dense_encoder.", "mano_forward.")
 
     def __init__(
         self,
@@ -323,6 +330,25 @@ class CmFlowModel(nn.Module):
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
         )
+        self.use_mano_aux = bool(getattr(meta, "use_mano_aux", False))
+        if self.use_mano_aux:
+            mano_pose_dim = int(meta.mano_pose_dim)
+            self.mano_pose_head = nn.Sequential(
+                nn.Linear(int(meta.cm_dim) * 3 + mano_pose_dim, int(meta.cm_dim)),
+                nn.GELU(),
+                nn.Linear(int(meta.cm_dim), int(meta.cm_dim) // 2),
+                nn.GELU(),
+                nn.Linear(int(meta.cm_dim) // 2, mano_pose_dim),
+            )
+            nn.init.zeros_(self.mano_pose_head[-1].weight)
+            nn.init.zeros_(self.mano_pose_head[-1].bias)
+            self.mano_forward = ManoForwardAuxiliary(
+                meta.mano_model_dir,
+                num_pca_comps=mano_pose_dim,
+            )
+        else:
+            self.mano_pose_head = None
+            self.mano_forward = None
 
     @property
     def dense_token_dim(self) -> int:
@@ -344,7 +370,7 @@ class CmFlowModel(nn.Module):
             hand_normals=batch["hand_normals"],
             obj_valid_mask=batch["obj_valid_mask"],
         )
-        return self.head(
+        prediction = self.head(
             z_obj=z_obj,
             z_hand=z_hand,
             dense_hand_contact=dense_hand_contact,
@@ -356,14 +382,32 @@ class CmFlowModel(nn.Module):
             wrist_delta=batch["wrist_delta"],
             obj_valid_mask=batch["obj_valid_mask"],
         )
+        if self.use_mano_aux:
+            assert self.mano_pose_head is not None and self.mano_forward is not None
+            mano_pose_t = batch["mano_hand_pose"].float()
+            pred_delta_pose = self.mano_pose_head(
+                torch.cat([prediction["hand_motion_feature"], mano_pose_t], dim=-1)
+            )
+            mano_prediction = self.mano_forward(
+                current_pose=mano_pose_t,
+                delta_pose=pred_delta_pose,
+                betas=batch["mano_betas"].float(),
+                v_template=batch["mano_v_template"].float(),
+                is_right=batch["mano_is_right"].bool(),
+                mirror_x=batch["mano_mirror_x"].bool(),
+                wrist_rotation=prediction["pred_wrist_rotation"],
+                wrist_translation=prediction["pred_wrist_translation"],
+            )
+            prediction.update({"pred_mano_delta_pose": pred_delta_pose, **mano_prediction})
+        return prediction
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
         state = super().state_dict(*args, **kwargs)
-        return {key: value for key, value in state.items() if not key.startswith(self._DENSE_PREFIX)}
+        return {key: value for key, value in state.items() if not key.startswith(self._FROZEN_ASSET_PREFIXES)}
 
     def load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
         incompatible = super().load_state_dict(state_dict, strict=False)
-        missing = [key for key in incompatible.missing_keys if not key.startswith(self._DENSE_PREFIX)]
+        missing = [key for key in incompatible.missing_keys if not key.startswith(self._FROZEN_ASSET_PREFIXES)]
         unexpected = list(incompatible.unexpected_keys)
         if strict and (missing or unexpected):
             raise RuntimeError(
@@ -390,6 +434,8 @@ class CmFlowModel(nn.Module):
         incompatible = self.load_state_dict(compatible_state, strict=False)
         allowed_missing_prefixes = (
             "dense_encoder.",
+            "mano_forward.",
+            "mano_pose_head.",
             "head.hand_context_encoder.",
             "head.hand_token_score.",
             "head.hand_articulation_decoder.",
@@ -403,4 +449,8 @@ class CmFlowModel(nn.Module):
                 "Legacy Cm checkpoint unexpectedly misses established parameters: "
                 f"{unexpected_missing}"
             )
-        return [key for key in incompatible.missing_keys if not key.startswith("dense_encoder.")]
+        return [
+            key
+            for key in incompatible.missing_keys
+            if not key.startswith(self._FROZEN_ASSET_PREFIXES)
+        ]

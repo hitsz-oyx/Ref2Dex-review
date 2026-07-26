@@ -78,22 +78,41 @@ class CpHumanClosureRunner(BaseRunner):
         denominator = valid.sum().clamp_min(1)
 
         if stage == "cp_effect":
-            beta = float(self.cfg.meta.flow_smooth_l1_beta)
+            flow_scale = float(self.cfg.meta.object_flow_scale_m)
+            if flow_scale <= 0.0:
+                raise ValueError("meta.object_flow_scale_m must be positive.")
             flow_map = F.smooth_l1_loss(
-                prediction["pred_obj_flow"], batch["obj_flow_gt"], beta=beta, reduction="none"
+                prediction["pred_obj_flow"] / flow_scale,
+                batch["obj_flow_gt"] / flow_scale,
+                beta=1.0,
+                reduction="none",
             ).mean(dim=-1)
             flow_loss = (flow_map * valid).sum() / denominator
             contact_map = F.binary_cross_entropy_with_logits(
                 prediction["pred_obj_contact_logits"], batch["obj_contact_gt"], reduction="none"
             )
-            contact_loss = (contact_map * valid).sum() / denominator
-            loss = flow_loss + contact_loss
+            contact_target = batch["obj_contact_gt"].float()
+            contact_entropy_map = -(
+                torch.xlogy(contact_target, contact_target)
+                + torch.xlogy(1.0 - contact_target, 1.0 - contact_target)
+            )
+            contact_lower_bound = (contact_entropy_map * valid).sum() / denominator
+            contact_excess_loss = ((contact_map - contact_entropy_map) * valid).sum() / denominator
+            loss = (
+                float(self.cfg.meta.loss_object_flow_weight) * flow_loss
+                # Subtracting the target entropy is constant with respect to
+                # the prediction, so this has the same gradients as BCE while
+                # making zero the meaningful theoretical optimum.
+                + float(self.cfg.meta.loss_object_contact_weight) * contact_excess_loss
+            )
             metrics: dict[str, torch.Tensor] = {
                 "loss": loss,
+                "obj_flow_loss": flow_loss,
                 "obj_flow_epe_mm": (
                     torch.linalg.norm(prediction["pred_obj_flow"] - batch["obj_flow_gt"], dim=-1) * valid
                 ).sum() / denominator * 1000,
-                "obj_contact_bce": contact_loss,
+                "contact_bce_lower_bound": contact_lower_bound,
+                "excess_contact_bce": contact_excess_loss.clamp_min(0.0),
             }
         elif stage == "closed_loop":
             cm_decoder = model.cm_hand_decoder
