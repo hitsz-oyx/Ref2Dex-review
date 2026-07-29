@@ -38,7 +38,7 @@ class Config(TaskConfig):
         # remove static object targets: they teach no-effect interactions.
         min_stride: int = 1
         max_stride: int = 12
-        val_strides = (1, 2, 3, 4, 5)
+        val_strides = tuple(range(1, 13))
         max_train_samples = None
         max_val_samples = None
 

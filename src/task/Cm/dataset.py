@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import multiprocessing as mp
 
 import numpy as np
 import torch
@@ -71,7 +72,10 @@ class Stage4CmDataset(Dataset):
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
-        self.base_seed, self.epoch = int(base_seed), 0
+        self.base_seed = int(base_seed)
+        # DataLoader persistent workers own Dataset replicas.  A shared value
+        # makes BaseRunner.set_epoch visible to every replica.
+        self._epoch = mp.Value("q", 0, lock=True)
         self.active_only = bool(active_only)
         self.min_stride, self.max_stride = int(min_stride), int(max_stride)
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
@@ -111,7 +115,12 @@ class Stage4CmDataset(Dataset):
         return len(self._samples)
 
     def set_epoch(self, epoch: int) -> None:
-        self.epoch = int(epoch)
+        with self._epoch.get_lock():
+            self._epoch.value = int(epoch)
+
+    @property
+    def epoch(self) -> int:
+        return int(self._epoch.value)
 
     def _load_file(self, path: Path) -> dict[str, np.ndarray]:
         if self._cached_path != path or self._cached_data is None:
@@ -127,15 +136,17 @@ class Stage4CmDataset(Dataset):
         path, current = self._samples[index]
         data = self._load_file(path)
         raw_frame = int(data["raw_frame_id"][current])
-        seed = stable_frame_seed(base_seed=self.base_seed, seq_id=scalar_string(data, "seq_id", path.stem),
-                                 side=scalar_string(data, "side", ""), raw_frame_id=raw_frame, epoch=self.epoch)
+        seed_args = dict(base_seed=self.base_seed, seq_id=scalar_string(data, "seq_id", path.stem),
+                         side=scalar_string(data, "side", ""), raw_frame_id=raw_frame, epoch=self.epoch)
+        stride_seed = stable_frame_seed(**seed_args, namespace="cm-stride")
+        object_seed = stable_frame_seed(**seed_args, namespace="cm-object-sampling")
         stride = self.fixed_stride if self.fixed_stride is not None else int(
-            np.random.default_rng(seed).integers(self.min_stride, self.max_stride + 1)
+            np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1)
         )
         future = current + stride
         pose = data["hand_root_pose_world"][current]
         candidate = np.asarray(data["obj_candidate_mask_5cm"][current], dtype=bool)
-        selected_idx, valid = sample_object_indices(candidate, num_samples=self.num_obj_points, seed=seed)
+        selected_idx, valid = sample_object_indices(candidate, num_samples=self.num_obj_points, seed=object_seed)
         safe = np.maximum(selected_idx, 0)
         obj_current = _world_to_hand(data["obj_points_world"][current, safe], pose)
         obj_future = _world_to_hand(data["obj_points_world"][future, safe], pose)

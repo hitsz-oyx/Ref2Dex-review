@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-pair", type=int, default=0)
     parser.add_argument("--max-pairs", type=int, default=0)
     parser.add_argument("--include-inactive", action="store_true")
+    parser.add_argument("--stride", type=int, default=None, help="Fixed endpoint stride; default samples deterministically.")
     return parser.parse_args()
 
 
@@ -53,6 +54,7 @@ def extract_file(
     start_pair: int,
     max_pairs: int,
     active_only: bool,
+    stride: int | None,
 ) -> None:
     dataset = Stage4CmDataset(
         input_path,
@@ -60,6 +62,9 @@ def extract_file(
         num_hand_points=int(runner.cfg.meta.num_hand_points),
         base_seed=int(runner.cfg.train.seed),
         active_only=active_only,
+        min_stride=int(runner.cfg.data.min_stride),
+        max_stride=int(runner.cfg.data.max_stride),
+        fixed_stride=stride,
         coordinate_frame=str(runner.cfg.meta.coordinate_frame),
     )
     if start_pair < 0 or start_pair >= len(dataset):
@@ -132,6 +137,7 @@ def main() -> None:
             start_pair=args.start_pair,
             max_pairs=args.max_pairs,
             active_only=not args.include_inactive,
+            stride=args.stride,
         )
 
 

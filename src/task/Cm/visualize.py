@@ -47,7 +47,7 @@ import numpy as np
 import torch
 
 from src.base import build_runner_from_checkpoint
-from src.task.Cm.dataset import Stage4CmDataset
+from src.task.Cm.dataset import Stage4CmDataset, _normal_world_to_hand, _world_to_hand
 from src.task.Cm.runner import CmActionRunner
 
 
@@ -156,13 +156,13 @@ def _assignment_report(runner: CmActionRunner, dataset: Stage4CmDataset) -> dict
     """
     assignments: list[np.ndarray] = []
     decoder_usages: list[np.ndarray] = []
-    raw_pair_indices: list[int] = []
+    raw_frame_ids: list[int] = []
     for dataset_idx in range(len(dataset)):
         sample = dataset[dataset_idx]
         prediction = _predict(runner, sample)
         assignments.append(prediction["cm_assignment"].squeeze(0).numpy().argmax(axis=0))
         decoder_usages.append(prediction["decoder_slot_usage"].squeeze(0).numpy())
-        raw_pair_indices.append(int(sample["pair_index"]))
+        raw_frame_ids.append(int(sample["raw_frame_id"]))
 
     assignment_array = np.stack(assignments, axis=0)
     unique_slot_count = np.asarray(
@@ -179,8 +179,8 @@ def _assignment_report(runner: CmActionRunner, dataset: Stage4CmDataset) -> dict
         -(np.clip(mean_decoder_usage, 1e-8, None) * np.log(np.clip(mean_decoder_usage, 1e-8, None))).sum()
     )
     return {
-        "num_pairs": len(dataset),
-        "raw_pair_index_range": (raw_pair_indices[0], raw_pair_indices[-1]),
+        "num_samples": len(dataset),
+        "raw_frame_id_range": (raw_frame_ids[0], raw_frame_ids[-1]),
         "adjacent_assignment_change_rate": adjacent_change_rate,
         "reassigned_hand_point_fraction": reassigned_point_fraction,
         "mean_unique_slots_per_hand_point": float(unique_slot_count.mean()),
@@ -208,14 +208,16 @@ class RolloutStep:
 def _transform_to_next_hand_frame(
     points: np.ndarray,
     normals: np.ndarray,
-    wrist_delta: np.ndarray,
+    current_pose_world: np.ndarray,
+    next_pose_world: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Map vectors from ``H_t`` to ``H_{t+stride}`` using ``T_{H_t<-H_t1}``."""
-    transform = np.asarray(wrist_delta, dtype=np.float64)
-    rotation = transform[:3, :3]
-    translation = transform[:3, 3]
-    next_points = (np.asarray(points, dtype=np.float64) - translation[None, :]) @ rotation
-    next_normals = np.asarray(normals, dtype=np.float64) @ rotation
+    """Map geometry between hand frames using cached world hand-root poses."""
+    current = np.asarray(current_pose_world, dtype=np.float64)
+    future = np.asarray(next_pose_world, dtype=np.float64)
+    world_points = np.asarray(points, dtype=np.float64) @ current[:3, :3].T + current[:3, 3]
+    next_points = (world_points - future[:3, 3]) @ future[:3, :3]
+    world_normals = np.asarray(normals, dtype=np.float64) @ current[:3, :3].T
+    next_normals = world_normals @ future[:3, :3]
     next_normals /= np.clip(np.linalg.norm(next_normals, axis=-1, keepdims=True), 1e-8, None)
     return next_points, next_normals
 
@@ -316,13 +318,16 @@ class InteractiveFlowViewer:
         data = self.dataset._load_file(path)
         safe_idx = np.maximum(np.asarray(selected_obj_idx, dtype=np.int64), 0)
         valid = np.asarray(seed_valid_mask, dtype=bool)
-        current = np.asarray(data["obj_points"][raw_pair_idx, safe_idx], dtype=np.float64).copy()
-        normals = np.asarray(data["obj_normals"][raw_pair_idx, safe_idx], dtype=np.float64).copy()
-        flow = np.asarray(data["obj_flow_gt"][raw_pair_idx, safe_idx], dtype=np.float64).copy()
+        sample = self.dataset[dataset_idx]
+        future_idx = raw_pair_idx + int(sample["stride"])
+        pose = np.asarray(data["hand_root_pose_world"][raw_pair_idx], dtype=np.float32)
+        current = _world_to_hand(data["obj_points_world"][raw_pair_idx, safe_idx], pose).astype(np.float64)
+        normals = _normal_world_to_hand(data["obj_normals_world"][raw_pair_idx, safe_idx], pose).astype(np.float64)
+        endpoint = _world_to_hand(data["obj_points_world"][future_idx, safe_idx], pose).astype(np.float64)
         current[~valid] = 0.0
         normals[~valid] = 0.0
-        flow[~valid] = 0.0
-        return current, normals, current + flow
+        endpoint[~valid] = 0.0
+        return current, normals, endpoint
 
     @staticmethod
     def _rollout_input(
@@ -394,10 +399,14 @@ class InteractiveFlowViewer:
             if next_idx <= current_idx:
                 stop_reason = f"invalid non-forward temporal chain at raw frame {target_raw_frame}"
                 break
+            current_path, current_raw_idx = self.dataset.sample_location(current_idx)
+            next_path, next_raw_idx = self.dataset.sample_location(next_idx)
+            current_data = self.dataset._load_file(current_path)
+            next_data = self.dataset._load_file(next_path)
             current_points, current_normals = _transform_to_next_hand_frame(
-                pred_next_points,
-                current_normals,
-                current_sample["wrist_delta"].numpy(),
+                pred_next_points, current_normals,
+                current_data["hand_root_pose_world"][current_raw_idx],
+                next_data["hand_root_pose_world"][next_raw_idx],
             )
             next_sample = self.dataset[next_idx]
             current_valid_mask = _rollout_valid_mask(

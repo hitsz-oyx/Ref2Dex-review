@@ -11,6 +11,13 @@ from src.task.Cm.dataset import make_dataloaders
 
 
 class CmActionRunner(BaseRunner):
+    def evaluate_all(self) -> dict[str, float]:
+        metrics = super().evaluate_all()
+        stride_mse = [value for key, value in metrics.items() if key.endswith("/flow_mse") and "/stride_" in key]
+        if stride_mse:
+            metrics["val/mean_stride_flow_mse"] = float(sum(stride_mse) / len(stride_mse))
+        return metrics
+
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(
             data_cfg,
