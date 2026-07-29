@@ -107,9 +107,11 @@ class CmFlowHead(nn.Module):
         self.cm_dim = int(cm_dim)
         self.num_cm_tokens = int(num_cm_tokens)
         self.num_slot_iters = int(num_slot_iters)
-        # Frozen current interaction state, local geometry, local motion,
-        # frozen dense contact prior, and whole-wrist SE(3) delta.
-        self.hand_motion_encoder = _mlp(self.dense_token_dim + 22, cm_dim, cm_dim)
+        # Frozen current interaction state, local geometry, endpoint motion,
+        # and frozen dense contact prior.  The dataset uses hand-root poses
+        # only to form this current-frame representation; wrist pose/delta is
+        # never an input to Cm.
+        self.hand_motion_encoder = _mlp(self.dense_token_dim + 10, cm_dim, cm_dim)
         self.slot_attention = SlotAttention(
             dim=cm_dim,
             num_slots=num_cm_tokens,
@@ -117,9 +119,10 @@ class CmFlowHead(nn.Module):
         )
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
         # Object feature, Cm feature, relative object-to-soft-anchor position,
-        # soft-anchor hand flow, and soft-anchor hand normal.
+        # and soft-anchor hand normal.  Cm already contains the hand motion,
+        # so exposing the pooled hand flow here would bypass the bottleneck.
         self.flow_edge = nn.Sequential(
-            nn.Linear(cm_dim * 2 + 9, cm_dim),
+            nn.Linear(cm_dim * 2 + 6, cm_dim),
             nn.GELU(),
             nn.Linear(cm_dim, cm_dim // 2),
             nn.GELU(),
@@ -140,11 +143,8 @@ class CmFlowHead(nn.Module):
         hand_points: torch.Tensor,
         hand_normals: torch.Tensor,
         hand_flow: torch.Tensor,
-        wrist_delta: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        batch_size, num_hand, _ = hand_flow.shape
-        wrist_features = wrist_delta[:, :3, :4].reshape(batch_size, 1, 12).expand(-1, num_hand, -1)
         hand_input = torch.cat(
             [
                 z_hand,
@@ -152,7 +152,6 @@ class CmFlowHead(nn.Module):
                 hand_normals,
                 hand_flow,
                 dense_hand_contact.unsqueeze(-1),
-                wrist_features,
             ],
             dim=-1,
         )
@@ -161,7 +160,6 @@ class CmFlowHead(nn.Module):
 
         obj_context = self.object_context_encoder(torch.cat([z_obj, obj_points, obj_normals], dim=-1))
         cm_anchor_pos = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points)
-        cm_hand_flow = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_flow)
         cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
         cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
@@ -172,7 +170,6 @@ class CmFlowHead(nn.Module):
                 obj_context.unsqueeze(2).expand(-1, -1, self.num_cm_tokens, -1),
                 cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1),
                 relative,
-                cm_hand_flow.unsqueeze(1).expand(-1, num_obj, -1, -1),
                 cm_anchor_normal.unsqueeze(1).expand(-1, num_obj, -1, -1),
             ],
             dim=-1,
@@ -191,7 +188,6 @@ class CmFlowHead(nn.Module):
             "cm_tokens": cm_tokens,
             "cm_anchor_pos": cm_anchor_pos,
             "cm_anchor_normal": cm_anchor_normal,
-            "cm_hand_flow": cm_hand_flow,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
             "decoder_slot_usage": decoder_slot_usage,
@@ -254,7 +250,6 @@ class CmFlowModel(nn.Module):
             hand_points=batch["hand_points"],
             hand_normals=batch["hand_normals"],
             hand_flow=batch["hand_flow"],
-            wrist_delta=batch["wrist_delta"],
             obj_valid_mask=batch["obj_valid_mask"],
         )
 

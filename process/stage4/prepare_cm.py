@@ -28,9 +28,9 @@ from process.GRAB.raw import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage4" / "grab_cm_raw_stride3"
-SCHEMA_NAME = "ref2dex_cm_stage4"
-SCHEMA_VERSION = "1.1.0"
+DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "cm_sequence_cache"
+SCHEMA_NAME = "ref2dex_cm_sequence"
+SCHEMA_VERSION = "2.0.0"
 
 
 def _resolve_sequences(args: argparse.Namespace) -> list[str]:
@@ -153,81 +153,41 @@ def build_stage4_sequence(
     source_path: Path,
     grab_root: Path,
     side: str,
-    pair_stride: int,
-    pair_hop: int,
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
     ds_rate: int,
     mirror_left_to_right: bool,
 ) -> dict[str, np.ndarray]:
-    """Convert one reconstructed raw sequence into one side-specific Stage 4 NPZ."""
+    """Cache every reconstructed state for runtime Cm stride sampling."""
     if side not in {"left", "right"}:
         raise ValueError(f"Unsupported side {side!r}")
     root_key = f"{side}_hand_root_pose"
     if root_key not in source:
         raise ValueError(f"{source['seq_id']} has no reconstructed {side}-hand trajectory")
 
-    total_frames = int(np.asarray(source["raw_frame_id"]).shape[0])
-    if pair_stride <= 0 or pair_stride >= total_frames:
-        raise ValueError(
-            f"pair_stride must be in [1, {total_frames - 1}] for {source['seq_id']}, got {pair_stride}"
-        )
-    if pair_hop <= 0:
-        raise ValueError(f"pair_hop must be positive, got {pair_hop}")
-    # The default raw-frame policy is an overlapping temporal window:
-    # raw 0->3, 1->4, 2->5, ... (ds_rate=1, pair_stride=3, pair_hop=1).
-    current_idx = np.arange(0, total_frames - pair_stride, pair_hop, dtype=np.int64)
-    next_idx = current_idx + int(pair_stride)
-    # These are T_world<-hand.  Keep them in Stage 4 so visualizers can
-    # switch between the training hand-root frame and the original world frame
-    # without changing any model input or target.
-    hand_root_t = np.asarray(source[root_key], dtype=np.float32)[current_idx]
-    hand_root_t1 = np.asarray(source[root_key], dtype=np.float32)[next_idx]
-    hand_root_pose_world = hand_root_t.copy()
-    next_hand_root_pose_world = hand_root_t1.copy()
-
-    obj_world = np.asarray(source["obj_points_world"], dtype=np.float32)
-    obj_normals_world = np.asarray(source["obj_normals_world"], dtype=np.float32)
-    hand_world = np.asarray(source[f"{side}_hand_points_world"], dtype=np.float32)
-    hand_normals_world = np.asarray(source[f"{side}_hand_normals_world"], dtype=np.float32)
-
-    obj_points = _points_world_to_current_hand(obj_world[current_idx], hand_root_t)
-    obj_normals = _normals_world_to_current_hand(obj_normals_world[current_idx], hand_root_t)
-    obj_next_in_current_frame = _points_world_to_current_hand(obj_world[next_idx], hand_root_t)
-    obj_flow = (obj_next_in_current_frame - obj_points).astype(np.float32)
-    hand_points = _points_world_to_current_hand(hand_world[current_idx], hand_root_t)
-    hand_normals = _normals_world_to_current_hand(hand_normals_world[current_idx], hand_root_t)
-    hand_next_in_current_frame = _points_world_to_current_hand(hand_world[next_idx], hand_root_t)
-    hand_flow = (hand_next_in_current_frame - hand_points).astype(np.float32)
-    wrist_delta = _relative_wrist_pose(hand_root_t, hand_root_t1)
+    obj_world = np.asarray(source["obj_points_world"], dtype=np.float32).copy()
+    obj_normals_world = np.asarray(source["obj_normals_world"], dtype=np.float32).copy()
+    hand_world = np.asarray(source[f"{side}_hand_points_world"], dtype=np.float32).copy()
+    hand_normals_world = np.asarray(source[f"{side}_hand_normals_world"], dtype=np.float32).copy()
+    hand_root_pose_world = np.asarray(source[root_key], dtype=np.float32).copy()
     hand_cano_points = np.asarray(source[f"{side}_hand_cano_points"], dtype=np.float32).copy()
-
     if mirror_left_to_right and side == "left":
-        _mirror_x(
-            obj_points,
-            obj_normals,
-            obj_flow,
-            hand_points,
-            hand_normals,
-            hand_flow,
-            wrist_delta,
-            hand_cano_points,
-        )
+        for value in (obj_world, obj_normals_world, hand_world, hand_normals_world):
+            value[..., 0] *= -1.0
+        hand_cano_points[..., 0] *= -1.0
         _mirror_hand_root_poses_world(hand_root_pose_world)
-        _mirror_hand_root_poses_world(next_hand_root_pose_world)
-
+    # Candidate masks are current-state geometry only; no future frame enters.
+    hand_local = _points_world_to_current_hand(hand_world, hand_root_pose_world)
+    obj_local = _points_world_to_current_hand(obj_world, hand_root_pose_world)
     obj_to_hand_min_dist, hand_to_obj_min_dist, candidate_mask = _compute_current_distance_statistics(
-        obj_points,
-        hand_points,
+        obj_local,
+        hand_local,
         candidate_threshold=candidate_threshold,
         frame_batch_size=frame_batch_size,
         device=device,
     )
     source_rel = source_path.resolve().relative_to(grab_root.resolve()).as_posix()
-    framerate = _scalar_from_raw(source_path, "framerate", default=30.0)
-    time_delta = float(pair_stride * ds_rate) / max(framerate, 1e-8)
-
     return {
         "schema_name": np.asarray(SCHEMA_NAME),
         "schema_version": np.asarray(SCHEMA_VERSION),
@@ -238,25 +198,18 @@ def build_stage4_sequence(
         "seq_name": np.asarray(str(source["seq_name"])),
         "object_name": np.asarray(str(source["object_name"])),
         "side": np.asarray(side),
-        "raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32)[current_idx],
-        "next_raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32)[next_idx],
-        "pair_index": np.arange(len(current_idx), dtype=np.int32),
-        "time_delta_sec": np.full((len(current_idx),), time_delta, dtype=np.float32),
-        "coordinate_frame": np.asarray("hand_root_t"),
+        "raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32),
+        "coordinate_frame": np.asarray("world"),
         "hand_root_pose_world": hand_root_pose_world,
-        "next_hand_root_pose_world": next_hand_root_pose_world,
-        "obj_points": obj_points,
-        "obj_normals": obj_normals,
+        "obj_points_world": obj_world,
+        "obj_normals_world": obj_normals_world,
         "obj_point_id": np.asarray(source["obj_point_id"], dtype=np.int32),
-        "obj_flow_gt": obj_flow,
-        "hand_points": hand_points,
-        "hand_normals": hand_normals,
+        "hand_points_world": hand_world,
+        "hand_normals_world": hand_normals_world,
         "hand_point_id": np.asarray(source[f"{side}_hand_point_id"], dtype=np.int32),
         "hand_cano_points": hand_cano_points,
         "hand_finger_id": np.asarray(source[f"{side}_hand_finger_id"], dtype=np.int32),
         "hand_region_id": np.asarray(source[f"{side}_hand_region_id"], dtype=np.int32),
-        "hand_flow": hand_flow,
-        "wrist_delta": wrist_delta,
         "obj_to_hand_min_dist": obj_to_hand_min_dist,
         "hand_to_obj_min_dist": hand_to_obj_min_dist,
         "obj_candidate_mask_5cm": candidate_mask,
@@ -272,15 +225,12 @@ def _write_meta(output_root: Path, args: argparse.Namespace, stats: dict[str, in
         "source": "raw GRAB; no Stage 2 or Stage 3 dependency",
         "source_grab_root": str(Path(args.grab_root).resolve()),
         "output_root": str(output_root.resolve()),
-        "sample_unit": "single_sequence_single_hand_temporal_pair",
-        "coordinate_frame": "hand_root_t",
-        "world_pose_fields": "hand_root_pose_world, next_hand_root_pose_world (T_world<-hand)",
-        "future_object_policy": "not stored; obj_flow_gt is supervision only",
+        "sample_unit": "single_sequence_single_hand_all_frames",
+        "coordinate_frame": "world; Dataset maps endpoints to hand_root_t",
+        "future_object_policy": "not stored as a pair; Dataset creates endpoint flow at runtime",
         "num_obj_pool": int(args.num_obj_points),
         "num_hand_points": 1538,
         "ds_rate": int(args.ds_rate),
-        "pair_stride": int(args.pair_stride),
-        "pair_hop": int(args.pair_hop),
         "candidate_threshold": float(args.candidate_threshold),
         "mirror_left_to_right": bool(args.mirror_left_to_right),
         "stats": stats,
@@ -290,7 +240,7 @@ def _write_meta(output_root: Path, args: argparse.Namespace, stats: dict[str, in
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Raw GRAB -> temporal Cm Stage 4 pairs")
+    parser = argparse.ArgumentParser(description="Raw GRAB -> complete Cm sequence cache")
     parser.add_argument("--grab-root", default=DEFAULT_GRAB_ROOT)
     parser.add_argument("--mano-path", default=DEFAULT_MANO_MODEL_DIR)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
@@ -303,19 +253,7 @@ def parse_args() -> argparse.Namespace:
         "--ds-rate",
         type=int,
         default=1,
-        help="Raw-frame subsampling before temporal pairing; default keeps every GRAB frame.",
-    )
-    parser.add_argument(
-        "--pair-stride",
-        type=int,
-        default=3,
-        help="Future-index offset in the ds-rate sampled sequence; default is raw 1->4.",
-    )
-    parser.add_argument(
-        "--pair-hop",
-        type=int,
-        default=1,
-        help="Current-frame hop in the sampled sequence; default creates overlapping windows 1->4, 2->5, ...",
+        help="Raw-frame subsampling before sequence caching; default keeps every GRAB frame.",
     )
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
@@ -376,8 +314,6 @@ def main() -> None:
                         source_path=raw_path,
                         grab_root=grab_root,
                         side=side,
-                        pair_stride=args.pair_stride,
-                        pair_hop=args.pair_hop,
                         candidate_threshold=args.candidate_threshold,
                         frame_batch_size=args.frame_batch_size,
                         device=device,
@@ -395,10 +331,10 @@ def main() -> None:
                 else:
                     np.savez(output_path, **stage4)
                 stats["written"] += 1
-                stats["pairs"] += int(stage4["pair_index"].shape[0])
+                stats["pairs"] += int(stage4["raw_frame_id"].shape[0])
                 candidate_counts = stage4["obj_candidate_mask_5cm"].sum(axis=1)
                 print(
-                    f"[stage4] wrote {output_path} pairs={len(stage4['pair_index'])} "
+                    f"[stage4] wrote {output_path} frames={len(stage4['raw_frame_id'])} "
                     f"candidate[min/median/max]={int(candidate_counts.min())}/"
                     f"{int(np.median(candidate_counts))}/{int(candidate_counts.max())}"
                 )

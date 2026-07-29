@@ -69,8 +69,8 @@ def extract_file(
         indices = indices[:max_pairs]
     loader = DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=False, num_workers=0)
     fields = (
-        "raw_frame_id", "next_raw_frame_id", "pair_index", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
-        "pred_obj_flow", "cm_tokens", "cm_anchor_pos", "cm_anchor_normal", "cm_hand_flow",
+        "raw_frame_id", "next_raw_frame_id", "stride", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
+        "pred_obj_flow", "cm_tokens", "cm_anchor_pos", "cm_anchor_normal",
         "cm_assignment", "cm_slot_weights", "decoder_slot_usage",
     )
     collected: dict[str, list[np.ndarray]] = {key: [] for key in fields}
@@ -87,7 +87,7 @@ def extract_file(
         tensors = {
             "raw_frame_id": batch["raw_frame_id"],
             "next_raw_frame_id": batch["next_raw_frame_id"],
-            "pair_index": batch["pair_index"],
+            "stride": batch["stride"],
             "selected_obj_idx": batch["selected_obj_idx"],
             "obj_valid_mask": batch["obj_valid_mask"],
             "obj_flow_gt": batch["obj_flow_gt"],
@@ -99,7 +99,7 @@ def extract_file(
     payload.update(
         {
             "schema_name": np.asarray("ref2dex_cm_action_tokens"),
-            "schema_version": np.asarray("3.2.0"),
+            "schema_version": np.asarray("4.0.0"),
             "source_stage4_file": np.asarray(str(input_path.resolve())),
             "source_cm_checkpoint": np.asarray(str(Path(runner.cfg.train.output_dir))),
             "num_pairs": np.asarray(len(indices), dtype=np.int32),

@@ -34,7 +34,11 @@ class Config(TaskConfig):
         # training path selects only pairs that have at least one valid object
         # candidate.  Set false only for explicit no-contact diagnostics.
         active_only: bool = True
-        min_object_flow_norm: float = 0.0
+        # Current 5cm contact is the only training-sample filter.  Do not
+        # remove static object targets: they teach no-effect interactions.
+        min_stride: int = 1
+        max_stride: int = 12
+        val_strides = (1, 2, 3, 4, 5)
         max_train_samples = None
         max_val_samples = None
 

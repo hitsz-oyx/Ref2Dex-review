@@ -23,18 +23,16 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
         hand_points=torch.randn(batch_size, num_hand, 3),
         hand_normals=torch.randn(batch_size, num_hand, 3),
         hand_flow=torch.randn(batch_size, num_hand, 3),
-        wrist_delta=torch.eye(4).expand(batch_size, -1, -1).clone(),
         obj_valid_mask=torch.tensor([[True, True, False, True, False], [True] * num_obj]),
     )
 
-    assert head.hand_motion_encoder[0].in_features == 8 + 22
+    assert head.hand_motion_encoder[0].in_features == 8 + 10
     assert output["cm_tokens"].shape == (batch_size, 4, 16)
     assert output["cm_assignment"].shape == (batch_size, 4, num_hand)
     assert output["cm_slot_weights"].shape == (batch_size, 4, num_hand)
     assert output["decoder_slot_usage"].shape == (batch_size, 4)
     assert output["cm_anchor_pos"].shape == (batch_size, 4, 3)
     assert output["cm_anchor_normal"].shape == (batch_size, 4, 3)
-    assert output["cm_hand_flow"].shape == (batch_size, 4, 3)
     assert output["pred_obj_flow"].shape == (batch_size, num_obj, 3)
     torch.testing.assert_close(output["cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
     torch.testing.assert_close(output["cm_slot_weights"].sum(dim=-1), torch.ones(batch_size, 4))
@@ -58,7 +56,6 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
         "hand_points": torch.randn(batch_size, num_hand, 3),
         "hand_normals": torch.randn(batch_size, num_hand, 3),
         "hand_flow": torch.randn(batch_size, num_hand, 3),
-        "wrist_delta": torch.eye(4).expand(batch_size, -1, -1).clone(),
         "obj_valid_mask": torch.ones(batch_size, num_obj, dtype=torch.bool),
     }
     repeated_output = head(**repeated_inputs)
