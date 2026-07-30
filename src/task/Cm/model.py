@@ -101,12 +101,16 @@ class CmFlowHead(nn.Module):
         cm_dim: int = 256,
         num_cm_tokens: int = 16,
         num_slot_iters: int = 3,
+        internal_point_flow_scale: float = 1.0,
     ) -> None:
         super().__init__()
         self.dense_token_dim = int(dense_token_dim)
         self.cm_dim = int(cm_dim)
         self.num_cm_tokens = int(num_cm_tokens)
         self.num_slot_iters = int(num_slot_iters)
+        self.internal_point_flow_scale = float(internal_point_flow_scale)
+        if self.internal_point_flow_scale <= 0.0:
+            raise ValueError("internal_point_flow_scale must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
         # and frozen dense contact prior.  The dataset uses hand-root poses
         # only to form this current-frame representation; wrist pose/delta is
@@ -145,12 +149,19 @@ class CmFlowHead(nn.Module):
         hand_flow: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
+        # The pretrained dense encoder deliberately remains in metres.  Only
+        # the trainable Cm geometry / motion path works in the configurable
+        # internal unit (e.g. centimetres for scale=100).
+        scale = self.internal_point_flow_scale
+        obj_points_internal = obj_points * scale
+        hand_points_internal = hand_points * scale
+        hand_flow_internal = hand_flow * scale
         hand_input = torch.cat(
             [
                 z_hand,
-                hand_points,
+                hand_points_internal,
                 hand_normals,
-                hand_flow,
+                hand_flow_internal,
                 dense_hand_contact.unsqueeze(-1),
             ],
             dim=-1,
@@ -158,13 +169,15 @@ class CmFlowHead(nn.Module):
         u_hand = self.hand_motion_encoder(hand_input)
         cm_tokens, cm_assignment, cm_slot_weights = self.slot_attention(u_hand)
 
-        obj_context = self.object_context_encoder(torch.cat([z_obj, obj_points, obj_normals], dim=-1))
-        cm_anchor_pos = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points)
+        obj_context = self.object_context_encoder(
+            torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
+        )
+        cm_anchor_pos_internal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points_internal)
         cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
         cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
         num_obj = obj_points.shape[1]
-        relative = obj_points.unsqueeze(2) - cm_anchor_pos.unsqueeze(1)
+        relative = obj_points_internal.unsqueeze(2) - cm_anchor_pos_internal.unsqueeze(1)
         edge_input = torch.cat(
             [
                 obj_context.unsqueeze(2).expand(-1, -1, self.num_cm_tokens, -1),
@@ -176,7 +189,10 @@ class CmFlowHead(nn.Module):
         )
         edge_output = self.flow_edge(edge_input)
         edge_weight = torch.softmax(edge_output[..., 0], dim=2)
-        pred_obj_flow = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
+        pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
+        # Restore metres at the public model boundary; runner losses and
+        # visualization therefore remain unit-consistent with cached data.
+        pred_obj_flow = pred_obj_flow_internal / scale
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
         # q_k: mean decoder attention paid to each slot by valid object points.
         # This is a diagnostic only; it neither gates slots nor changes flow.
@@ -186,7 +202,7 @@ class CmFlowHead(nn.Module):
         return {
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
-            "cm_anchor_pos": cm_anchor_pos,
+            "cm_anchor_pos": cm_anchor_pos_internal / scale,
             "cm_anchor_normal": cm_anchor_normal,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
@@ -219,6 +235,7 @@ class CmFlowModel(nn.Module):
             cm_dim=int(meta.cm_dim),
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
+            internal_point_flow_scale=float(meta.internal_point_flow_scale),
         )
 
     @property

@@ -62,3 +62,31 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     repeated_output_again = head(**repeated_inputs)
     for key in ("cm_tokens", "cm_assignment", "cm_slot_weights", "decoder_slot_usage", "pred_obj_flow"):
         torch.testing.assert_close(repeated_output_again[key], repeated_output[key])
+
+
+def test_cm_flow_head_restores_metric_anchor_coordinates_after_internal_scaling() -> None:
+    torch.manual_seed(11)
+    head = CmFlowHead(
+        dense_token_dim=4,
+        cm_dim=8,
+        num_cm_tokens=2,
+        num_slot_iters=1,
+        internal_point_flow_scale=100.0,
+    )
+    hand_points = torch.randn(1, 3, 3)
+    output = head(
+        z_obj=torch.randn(1, 2, 4),
+        z_hand=torch.randn(1, 3, 4),
+        dense_hand_contact=torch.rand(1, 3),
+        obj_points=torch.randn(1, 2, 3),
+        obj_normals=torch.randn(1, 2, 3),
+        hand_points=hand_points,
+        hand_normals=torch.randn(1, 3, 3),
+        hand_flow=torch.randn(1, 3, 3),
+        obj_valid_mask=torch.ones(1, 2, dtype=torch.bool),
+    )
+    expected_anchor_m = torch.einsum("bkh,bhd->bkd", output["cm_slot_weights"], hand_points)
+    torch.testing.assert_close(output["cm_anchor_pos"], expected_anchor_m)
+    # The zero-initialized decoder predicts internal zero, which restores to
+    # metric zero independently of the internal scale.
+    torch.testing.assert_close(output["pred_obj_flow"], torch.zeros_like(output["pred_obj_flow"]))

@@ -24,6 +24,10 @@ class Config(TaskConfig):
         slot_iters: int = 3
         flow_smooth_l1_beta: float = 0.01
         loss_flow_weight: float = 1.0
+        # The frozen dense encoder and dataset stay in metres.  This scales
+        # only the trainable Cm head's geometric / flow coordinates, then
+        # converts its flow output back to metres before loss computation.
+        internal_point_flow_scale: float = 1.0
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"
