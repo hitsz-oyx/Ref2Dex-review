@@ -25,6 +25,17 @@ class FrozenDenseTokenEncoder(nn.Module):
             raise ValueError(f"Unsupported dense-token checkpoint: {checkpoint}")
         self.cfg = task_config_from_dict(checkpoint_data["config"])
         meta = self.cfg.meta
+        # Older checkpoints record the training host's absolute PTv3 path.
+        # The backbone source is repository-local, so relocate only a missing
+        # path rather than requiring users to recreate the dense checkpoint.
+        if not Path(str(meta.ptv3_repo_path)).is_dir():
+            local_ptv3 = Path(__file__).resolve().parents[3] / "third_party" / "PointTransformerV3"
+            if not local_ptv3.is_dir():
+                raise FileNotFoundError(
+                    f"PointTransformerV3 is missing at checkpoint path {meta.ptv3_repo_path!r} "
+                    f"and local fallback {local_ptv3}."
+                )
+            meta.ptv3_repo_path = str(local_ptv3)
         if int(meta.num_obj_points) != 512 or int(meta.num_hand_points) != 1538:
             raise ValueError(
                 "Cm bootstrap expects the current 512-object / 1538-hand dense-token checkpoint, "

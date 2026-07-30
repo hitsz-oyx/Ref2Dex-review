@@ -199,6 +199,7 @@ def build_stage4_sequence(
         "object_name": np.asarray(str(source["object_name"])),
         "side": np.asarray(side),
         "raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32),
+        "ds_rate": np.asarray(int(ds_rate), dtype=np.int32),
         "coordinate_frame": np.asarray("world"),
         "hand_root_pose_world": hand_root_pose_world,
         "obj_points_world": obj_world,
@@ -256,6 +257,12 @@ def parse_args() -> argparse.Namespace:
         help="Raw-frame subsampling before sequence caching; default keeps every GRAB frame.",
     )
     parser.add_argument("--max-frames", type=int, default=0)
+    parser.add_argument(
+        "--frame-start",
+        type=int,
+        default=0,
+        help="First original GRAB frame to cache; raw_frame_id remains absolute.",
+    )
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
     parser.add_argument("--frame-batch-size", type=int, default=4)
     parser.add_argument("--device", default="auto")
@@ -275,6 +282,10 @@ def main() -> None:
         raise SystemExit("Current Cm Stage 4 contract requires --num-obj-points=4096")
     if args.ds_rate <= 0:
         raise SystemExit("--ds-rate must be positive")
+    if args.ds_rate != 1:
+        raise SystemExit(
+            "Cm dynamic-stride sequence cache requires --ds-rate=1 so stride denotes original GRAB frames."
+        )
 
     if args.manifest:
         sequences = load_manifest_seq_paths(args.manifest, args.grab_root)
@@ -290,6 +301,7 @@ def main() -> None:
         num_obj_points=args.num_obj_points,
         device=str(device),
         max_frames=args.max_frames if args.max_frames > 0 else None,
+        frame_start=args.frame_start,
         grab_root=str(grab_root),
         mano_path=args.mano_path,
         ds_rate=args.ds_rate,

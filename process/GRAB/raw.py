@@ -473,6 +473,7 @@ class GRABRawAdapter:
         num_obj_points: int = 4096,
         device: str = DEFAULT_TORCH_DEVICE,
         max_frames: Optional[int] = None,
+        frame_start: int = 0,
         grab_root: str = DEFAULT_GRAB_ROOT,
         mano_path: str = DEFAULT_MANO_MODEL_DIR,
         ds_rate: int = 1,
@@ -482,6 +483,7 @@ class GRABRawAdapter:
         self.num_obj_points = num_obj_points
         self.device = resolve_torch_device(device)
         self.max_frames = max_frames
+        self.frame_start = max(0, int(frame_start))
         self.grab_root = grab_root
         self.ds_rate = max(1, int(ds_rate))
         self.obj_unit = obj_unit
@@ -599,7 +601,7 @@ class GRABRawAdapter:
         return out.vertices, out.joints  # (T, 778, 3), (T, 16, 3)
 
     def _select_frame_ids(self, n_frames: int) -> np.ndarray:
-        frame_ids = np.arange(0, n_frames, self.ds_rate, dtype=np.int32)
+        frame_ids = np.arange(self.frame_start, n_frames, self.ds_rate, dtype=np.int32)
         if self.max_frames is not None:
             frame_ids = frame_ids[:self.max_frames]
         if frame_ids.size == 0:

@@ -93,6 +93,7 @@ def parse_args() -> argparse.Namespace:
         help="Include pairs without a 5cm object candidate; they render no object flow slots.",
     )
     parser.add_argument("--flow-stride", type=int, default=8, help="Draw one line every N selected object points.")
+    parser.add_argument("--stride", type=int, default=None, help="Fixed endpoint stride for inspection.")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument(
         "--assignment-report",
@@ -842,6 +843,9 @@ def main() -> None:
         num_hand_points=int(runner.cfg.meta.num_hand_points),
         base_seed=int(runner.cfg.train.seed),
         active_only=not args.include_inactive,
+        min_stride=int(runner.cfg.data.min_stride),
+        max_stride=int(runner.cfg.data.max_stride),
+        fixed_stride=args.stride,
         coordinate_frame=str(runner.cfg.meta.coordinate_frame),
     )
     if args.assignment_report:

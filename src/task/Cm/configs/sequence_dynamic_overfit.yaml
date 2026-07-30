@@ -5,8 +5,10 @@ name: cm_sequence_dynamic_overfit
 data:
   train_path: processed_data/generated/cm_sequence_cache
   active_only: true
-  min_stride: 1
-  max_stride: 12
+  # Keep the target stationary while diagnosing memorization.  The normal
+  # training configuration remains uniformly random over 1..12.
+  min_stride: 3
+  max_stride: 3
   batch_size: 2
   shuffle: false
   num_workers: 0

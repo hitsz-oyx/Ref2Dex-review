@@ -1,0 +1,32 @@
+# Thirty interactions for the three-times-larger dynamic-stride Cm run.
+# Paths are relative to dataset/GRAB/data/grab.
+s1/airplane_lift
+s1/alarmclock_lift
+s1/apple_lift
+s1/banana_peel_1
+s1/binoculars_lift
+s1/bowl_lift
+s1/camera_lift
+s1/cubelarge_lift
+s1/cup_lift
+s1/torussmall_inspect_1
+s1/cubemedium_lift
+s1/cubesmall_lift
+s1/cylinderlarge_lift
+s1/cylindermedium_lift
+s1/cylindersmall_lift
+s1/duck_lift
+s1/elephant_lift
+s1/flashlight_lift
+s1/flute_lift
+s1/gamecontroller_lift
+s1/knife_lift
+s1/mouse_lift
+s1/mug_lift
+s1/phone_lift
+s1/piggybank_lift
+s1/pyramidlarge_lift
+s1/spherelarge_lift
+s1/stanfordbunny_lift
+s1/stapler_lift
+s1/toothbrush_lift

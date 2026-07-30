@@ -17,7 +17,7 @@ SEQUENCE_SCHEMA_NAME = "ref2dex_cm_sequence"
 REQUIRED_FIELDS = {
     "schema_name", "raw_frame_id", "obj_points_world", "obj_normals_world", "obj_point_id",
     "hand_points_world", "hand_normals_world", "hand_root_pose_world",
-    "obj_to_hand_min_dist", "obj_candidate_mask_5cm",
+    "obj_to_hand_min_dist", "obj_candidate_mask_5cm", "ds_rate",
 }
 
 
@@ -97,6 +97,8 @@ class Stage4CmDataset(Dataset):
                     raise ValueError(f"{path}: expected schema {SEQUENCE_SCHEMA_NAME!r}")
                 if str(np.asarray(data.get("coordinate_frame", "world")).item()) != "world":
                     raise ValueError(f"{path}: cached sequence coordinates must be world-frame")
+                if int(np.asarray(data["ds_rate"]).item()) != 1:
+                    raise ValueError(f"{path}: expected ds_rate=1 so stride denotes original GRAB frames")
                 if data["obj_points_world"].shape[1:] != (4096, 3):
                     raise ValueError(f"{path}: expected obj_points_world [T,4096,3]")
                 if data["hand_points_world"].shape[1:] != (self.num_hand_points, 3):

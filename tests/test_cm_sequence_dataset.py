@@ -21,6 +21,7 @@ def test_runtime_stride_uses_current_hand_frame_and_epoch_seed() -> None:
         pose[:, 1, 3] = np.arange(frames, dtype=np.float32)
         np.savez(
             path, schema_name=np.asarray("ref2dex_cm_sequence"), coordinate_frame=np.asarray("world"),
+            ds_rate=np.asarray(1, dtype=np.int32),
             seq_id=np.asarray("unit"), side=np.asarray("right"), raw_frame_id=np.arange(frames, dtype=np.int32),
             obj_points_world=obj, obj_normals_world=np.broadcast_to(np.array([0, 0, 1], np.float32), obj.shape).copy(),
             obj_point_id=np.arange(obj_count, dtype=np.int32), hand_points_world=hand,
