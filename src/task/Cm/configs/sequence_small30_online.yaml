@@ -2,6 +2,11 @@ _base_: src.task.Cm.config:Config
 
 name: cm_sequence_small30_stride12
 
+meta:
+  # Dataset/DenseToken/output stay in metres; the trainable Cm head operates
+  # on centimetre-scale geometry and uses its matching internal loss.
+  internal_point_flow_scale: 100.0
+
 data:
   train_path: processed_data/generated/cm_sequence_small30
   active_only: true

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import torch
+from torch import nn
 
-from src.task.Cm.model import CmFlowHead
+from src.task.Cm.model import CmFlowHead, CmFlowModel
+from src.task.Cm.runner import internal_flow_smooth_l1
 
 
 def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None:
@@ -87,6 +89,62 @@ def test_cm_flow_head_restores_metric_anchor_coordinates_after_internal_scaling(
     )
     expected_anchor_m = torch.einsum("bkh,bhd->bkd", output["cm_slot_weights"], hand_points)
     torch.testing.assert_close(output["cm_anchor_pos"], expected_anchor_m)
-    # The zero-initialized decoder predicts internal zero, which restores to
-    # metric zero independently of the internal scale.
-    torch.testing.assert_close(output["pred_obj_flow"], torch.zeros_like(output["pred_obj_flow"]))
+    # A nonzero internal-centimetre decoder output must be restored to metres.
+    with torch.no_grad():
+        head.flow_edge[-1].bias[1:] = torch.tensor([1.0, 2.0, 3.0])
+    output = head(
+        z_obj=torch.randn(1, 2, 4), z_hand=torch.randn(1, 3, 4),
+        dense_hand_contact=torch.rand(1, 3), obj_points=torch.randn(1, 2, 3),
+        obj_normals=torch.randn(1, 2, 3), hand_points=hand_points,
+        hand_normals=torch.randn(1, 3, 3), hand_flow=torch.randn(1, 3, 3),
+        obj_valid_mask=torch.ones(1, 2, dtype=torch.bool),
+    )
+    expected_m = torch.tensor([0.01, 0.02, 0.03]).expand(1, 2, 3)
+    torch.testing.assert_close(output["pred_obj_flow"], expected_m)
+
+
+def test_dense_token_input_stays_in_metres_and_internal_loss_scales_gradient() -> None:
+    class CapturingDense(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.token_dim = 4
+            self.received: dict[str, torch.Tensor] = {}
+
+        def forward(self, **kwargs):
+            self.received = kwargs
+            batch_size = kwargs["obj_points"].shape[0]
+            return (
+                torch.zeros(batch_size, 2, 4),
+                torch.zeros(batch_size, 3, 4),
+                torch.zeros(batch_size, 3),
+            )
+
+    class PassthroughHead(nn.Module):
+        def forward(self, **kwargs):
+            return {"pred_obj_flow": kwargs["obj_points"]}
+
+    model = object.__new__(CmFlowModel)
+    nn.Module.__init__(model)
+    dense = CapturingDense()
+    model.dense_encoder = dense
+    model.head = PassthroughHead()
+    obj_points_m = torch.tensor([[[0.01, 0.02, 0.03], [0.04, 0.05, 0.06]]])
+    batch = {
+        "obj_points": obj_points_m,
+        "obj_normals": torch.zeros_like(obj_points_m),
+        "hand_points": torch.zeros(1, 3, 3),
+        "hand_normals": torch.zeros(1, 3, 3),
+        "hand_flow": torch.zeros(1, 3, 3),
+        "obj_valid_mask": torch.ones(1, 2, dtype=torch.bool),
+    }
+    model(batch)
+    torch.testing.assert_close(dense.received["obj_points"], obj_points_m)
+
+    pred_m = torch.tensor([[[0.01, 0.0, 0.0]]], requires_grad=True)
+    gt_m = torch.zeros_like(pred_m)
+    valid = torch.ones(1, 1, dtype=torch.bool)
+    loss_m = internal_flow_smooth_l1(pred_m, gt_m, valid, beta_m=0.01, internal_scale=1.0)
+    loss_cm = internal_flow_smooth_l1(pred_m, gt_m, valid, beta_m=0.01, internal_scale=100.0)
+    grad_m = torch.autograd.grad(loss_m, pred_m, retain_graph=True)[0]
+    grad_cm = torch.autograd.grad(loss_cm, pred_m)[0]
+    torch.testing.assert_close(grad_cm, grad_m * 100.0)

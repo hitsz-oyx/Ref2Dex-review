@@ -10,6 +10,35 @@ from src.base import BaseRunner, RunnerOutput, TaskConfig
 from src.task.Cm.dataset import make_dataloaders
 
 
+def internal_flow_smooth_l1(
+    pred_flow_m: torch.Tensor,
+    gt_flow_m: torch.Tensor,
+    valid_mask: torch.Tensor,
+    *,
+    beta_m: float,
+    internal_scale: float,
+) -> torch.Tensor:
+    """Compute the training loss in Cm-head internal units.
+
+    Public Cm inputs, predictions, and metrics remain metres.  Multiplying
+    both endpoints and the Huber transition by the internal scale removes the
+    reciprocal scale factor from the decoder's gradient.
+    """
+    scale = float(internal_scale)
+    if scale <= 0.0:
+        raise ValueError("internal_point_flow_scale must be positive.")
+    valid_count = valid_mask.sum()
+    pred_internal = pred_flow_m * scale
+    gt_internal = gt_flow_m * scale
+    smooth_l1_map = F.smooth_l1_loss(
+        pred_internal,
+        gt_internal,
+        beta=float(beta_m) * scale,
+        reduction="none",
+    ).mean(dim=-1)
+    return (smooth_l1_map * valid_mask.float()).sum() / valid_count.float()
+
+
 class CmActionRunner(BaseRunner):
     def evaluate_all(self) -> dict[str, float]:
         metrics = super().evaluate_all()
@@ -60,9 +89,13 @@ class CmActionRunner(BaseRunner):
             )
         pred_flow = prediction["pred_obj_flow"]
         gt_flow = batch["obj_flow_gt"].float()
-        beta = float(self.cfg.meta.flow_smooth_l1_beta)
-        smooth_l1_map = F.smooth_l1_loss(pred_flow, gt_flow, beta=beta, reduction="none").mean(dim=-1)
-        flow_smooth_l1 = (smooth_l1_map * valid.float()).sum() / valid_count.float()
+        flow_smooth_l1 = internal_flow_smooth_l1(
+            pred_flow,
+            gt_flow,
+            valid,
+            beta_m=float(self.cfg.meta.flow_smooth_l1_beta),
+            internal_scale=float(self.cfg.meta.internal_point_flow_scale),
+        )
         squared_map = (pred_flow - gt_flow).square().mean(dim=-1)
         absolute_map = (pred_flow - gt_flow).abs().mean(dim=-1)
         flow_mse = (squared_map * valid.float()).sum() / valid_count.float()
