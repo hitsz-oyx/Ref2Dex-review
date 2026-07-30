@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from src.base import make_file_split_dataloaders
+from src.base import make_default_eval_sampler, make_file_split_dataloaders
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
 
 
@@ -208,7 +208,12 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
             )
             loader_kwargs = {"batch_size": int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
                              "shuffle": False, "num_workers": int(getattr(data_cfg, "num_workers", 0)),
-                             "pin_memory": bool(getattr(data_cfg, "pin_memory", False))}
+                             "pin_memory": bool(getattr(data_cfg, "pin_memory", False)),
+                             # Unlike the original shared val_loader, these
+                             # per-stride views are constructed here.  Shard
+                             # them too so DDP ranks do not duplicate the full
+                             # 12-stride evaluation workload.
+                             "sampler": make_default_eval_sampler(dataset, distributed=distributed)}
             if loader_kwargs["num_workers"] > 0:
                 loader_kwargs["persistent_workers"] = bool(getattr(data_cfg, "persistent_workers", False))
                 prefetch = getattr(data_cfg, "prefetch_factor", None)

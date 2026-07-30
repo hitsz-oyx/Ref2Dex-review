@@ -4,7 +4,9 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+from torch.utils.data import SequentialSampler
 
+from src.base.distributed import DistributedState, make_default_eval_sampler
 from src.task.Cm.dataset import Stage4CmDataset
 
 
@@ -39,3 +41,20 @@ def test_runtime_stride_uses_current_hand_frame_and_epoch_seed() -> None:
         np.testing.assert_allclose(sample["hand_flow"].numpy(), np.zeros((hand_count, 3)))
         dataset.set_epoch(3)
         assert 1 <= int(dataset[0]["stride"]) <= 12
+
+
+def test_distributed_eval_sampler_shards_without_padding() -> None:
+    dataset = list(range(7))
+    rank0 = make_default_eval_sampler(
+        dataset,
+        distributed=DistributedState(enabled=True, world_size=2, rank=0),
+    )
+    rank1 = make_default_eval_sampler(
+        dataset,
+        distributed=DistributedState(enabled=True, world_size=2, rank=1),
+    )
+    assert rank0 is not None and rank1 is not None
+    assert set(rank0).isdisjoint(set(rank1))
+    assert sorted([*rank0, *rank1]) == list(range(7))
+    # The base sampler is sequential, preserving deterministic validation.
+    assert isinstance(rank0.sampler, SequentialSampler)
