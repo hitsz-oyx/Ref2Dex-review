@@ -144,31 +144,43 @@ def make_file_split_dataloaders(
     Ref2Dex tasks own their sample schema and Dataset implementation.  The
     base layer only owns the shared file split, worker seeding, and DDP sampler
     policy.
+
+    中文：构造「按文件粒度」做 train/val 切分的 DataLoader。
+    - 各 task 自己拥有 sample schema 和 Dataset 实现；
+    - base 层只负责共享的文件切分、worker seed 注入和 DDP sampler 策略。
     """
+    # 把 data_cfg 里的相对路径解析为绝对路径；root 通常是项目根，用作相对路径基准
     train_path = resolve_data_path(data_cfg.train_path, root=root)
     val_path = None if data_cfg.val_path in {None, ""} else resolve_data_path(data_cfg.val_path, root=root)
     val_split = float(data_cfg.val_split)
+    # resolve_data_dir 允许把一个文件路径标准化为「它所在的目录」；默认就是恒等
     resolve_data_dir = resolve_data_dir or (lambda path: path)
+    # 复制 kwargs 避免外部 dict 被原地修改
     train_dataset_kwargs = dict(train_dataset_kwargs or {})
     val_dataset_kwargs = dict(val_dataset_kwargs or {})
     split_metadata: dict[str, Any] = {}
 
     def build_dataset(path, *, file_list=None, kwargs: dict[str, Any]):
+        """统一构造 dataset 的小工具：把 file_list 注入到 kwargs 里再交给 dataset_cls。"""
         payload = dict(kwargs)
         if file_list is not None:
             payload["file_list"] = file_list
         return dataset_cls(path, **payload)
 
     if val_path is not None:
+        # 显式给了 val_path：train / val 各走各的目录，直接各自构造
         train_dataset = build_dataset(train_path, kwargs=train_dataset_kwargs)
         val_dataset = build_dataset(val_path, kwargs=val_dataset_kwargs)
     else:
+        # 没给 val_path：需要从一个目录里按文件粒度切分
         data_dir = resolve_data_dir(train_path)
         file_list = sorted(Path(data_dir).glob(file_pattern))
         if not file_list:
             raise ValueError(f"No files matching {file_pattern!r} found in {data_dir}")
 
         if 0.0 < val_split < 1.0:
+            # 按比例切分；如果给了 split_group_fn 就按 group 切（保证同组文件不会
+            # 跨 train/val 出现），否则直接按文件切
             if split_group_fn is not None:
                 train_files, val_files, split_metadata = split_grouped_items(
                     file_list,
@@ -181,6 +193,7 @@ def make_file_split_dataloaders(
             if not train_files:
                 raise ValueError("Training set size must be positive")
         else:
+            # val_split=0 或越界：全部文件进 train，val 为空
             train_files = file_list
             val_files = []
 
@@ -191,7 +204,9 @@ def make_file_split_dataloaders(
             else None
         )
 
+    # loader_seed：worker 初始化的 RNG 用；DDP 时叠加 rank 让各 rank 的随机流不冲突
     loader_seed = int(seed) + int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
+    # 训练 sampler：DDP 时返回 DistributedSampler；否则按 shuffle 选 Random/Sequential
     train_sampler = make_default_train_sampler(
         train_dataset,
         shuffle=bool(data_cfg.shuffle),
@@ -202,6 +217,7 @@ def make_file_split_dataloaders(
     train_loader = dataloader_cls(
         train_dataset,
         batch_size=int(data_cfg.batch_size),
+        # sampler 非 None 时 PyTorch 要求 shuffle=False；显式写出来防误用
         shuffle=bool(data_cfg.shuffle) and train_sampler is None,
         sampler=train_sampler,
         **make_dataloader_kwargs(data_cfg, loader_seed),
@@ -217,6 +233,7 @@ def make_file_split_dataloaders(
             **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
         )
 
+    # 把路径、样本数等元信息返回出去，给 logger / runner 记录
     metadata = {
         "train_path": str(train_path),
         "val_path": None if val_path is None else str(val_path),

@@ -103,22 +103,40 @@ class CmActionRunner(BaseRunner):
         gt_flow_norm = (torch.linalg.norm(gt_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         pred_flow_norm = (torch.linalg.norm(pred_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
+        # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
+        # 沿 slot 维度求熵再对 N 求平均：惩罚「每个点都均匀分到所有 slot」的情况（鼓励点选最确定的 slot）
         cm_slot_weights = prediction["cm_slot_weights"]
+        # cm_slot_weights: [B, S, D]  S = num_slots, D = slot 隐维度
         num_slots = cm_slot_weights.shape[1]
         if num_slots > 1:
+            # 多个 slot 才有「去相关」意义；= 1 时强行算会得到 mean([1.0])=1.0，物理上无意义
             normalized_weights = torch.nn.functional.normalize(cm_slot_weights, dim=-1, eps=1e-8)
+            # 沿 D 维做 L2 归一化：每个 slot 向量变成单位向量，让后续内积 = cosine 相似度
+            # eps=1e-8 防止某个 slot 全 0 时除零
             slot_similarity = normalized_weights @ normalized_weights.transpose(1, 2)
+            # [B, S, D] @ [B, D, S]  →  [B, S, S]
+            # 对 batch 内每个样本构造 S×S 的「slot vs slot」余弦相似度矩阵
+            # 对角线 = 1（自身 vs 自身），矩阵对称
             off_diagonal = ~torch.eye(num_slots, device=slot_similarity.device, dtype=torch.bool)
+            # 构造 off-diagonal mask：对角线 0、其它 1，用于排除「自身 vs 自身」的 1.0
             slot_weight_overlap = slot_similarity[:, off_diagonal].mean()
+            # 用 bool mask 沿最后一维挑掉对角线 → [B, S*(S-1)]，再求平均 → 标量
+            # ∈ [-1, 1]：当前只作为 metric 监控 slot 是否塌缩（同向 → 接近 1 / 反向 → 接近 -1），
+            # 并没有被加到 total_loss 里（total_loss 现在只有 flow_smooth_l1 一项）
         else:
+            # 单 slot 占位：返 0 让下游代码不必做分支
             slot_weight_overlap = cm_slot_weights.new_zeros(())
         decoder_slot_usage = prediction["decoder_slot_usage"]
+        # decoder_slot_usage: [B, S]  每个样本里每个 slot 被 decoder 实际使用到的程度（例如被分配到的 token 数 / 总数）
         mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
+        # 沿 batch 维求平均：得到每个 slot 在整个 batch 上的平均使用率 → [S]
         decoder_slot_usage_entropy = -(
             mean_decoder_slot_usage.clamp_min(1e-8)
             * mean_decoder_slot_usage.clamp_min(1e-8).log()
         ).sum()
+        # 对 S 个 slot 的平均使用率求熵：鼓励各 slot 使用率接近均匀分布
+        # 防止某些 slot 完全没被用上（collapse）
         total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,

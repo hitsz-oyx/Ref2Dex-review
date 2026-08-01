@@ -1,4 +1,8 @@
-"""Runtime-stride Cm samples from cached complete GRAB sequences."""
+"""Runtime-stride Cm samples from cached complete GRAB sequences.
+
+从缓存的完整 GRAB 序列中按运行时 stride 采样，构造 Cm（contact-motion /
+correspondence-motion）任务样本。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,6 +17,7 @@ from src.base import make_default_eval_sampler, make_file_split_dataloaders
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
 
 
+# 缓存的 stage4 cm-sequence npz 必须带上的 schema 名称与字段集合
 SEQUENCE_SCHEMA_NAME = "ref2dex_cm_sequence"
 REQUIRED_FIELDS = {
     "schema_name", "raw_frame_id", "obj_points_world", "obj_normals_world", "obj_point_id",
@@ -22,6 +27,11 @@ REQUIRED_FIELDS = {
 
 
 def scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> str:
+    """
+    从 npz 字段中读取长度为 1 的字符串标量，找不到时返回 default。
+    长度为 1 的字符串标量」= shape=() 、 size=1 、dtype 是字符串的 0-d 数组。
+    它是 npz 里用来表示「单个字符串字段」的标准形式，取值时必须 .item() 才能拿到真正的 Python str 。
+    """
     value = data.get(key)
     if value is None:
         return default
@@ -30,13 +40,18 @@ def scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> s
 
 
 def _world_to_hand(points: np.ndarray, pose_world: np.ndarray) -> np.ndarray:
-    """Map world points to the current ``hand_root_t`` frame."""
+    """Map world points to the current ``hand_root_t`` frame.
+
+    把世界坐标下的点变换到当前帧的 ``hand_root_t``（手根坐标系）下：
+    ``x_hand = R^T @ (x_world - t)``，其中 ``(R, t)`` 来自 ``hand_root_pose_world``。
+    """
     rotation = np.asarray(pose_world[:3, :3], dtype=np.float32)
     translation = np.asarray(pose_world[:3, 3], dtype=np.float32)
     return ((np.asarray(points, dtype=np.float32) - translation) @ rotation).astype(np.float32)
 
 
 def _normal_world_to_hand(normals: np.ndarray, pose_world: np.ndarray) -> np.ndarray:
+    """把世界坐标下的法向旋转到 ``hand_root_t`` 帧（法向只旋转不平移），并重新归一化。"""
     rotation = np.asarray(pose_world[:3, :3], dtype=np.float32)
     result = np.asarray(normals, dtype=np.float32) @ rotation
     return (result / np.clip(np.linalg.norm(result, axis=-1, keepdims=True), 1e-8, None)).astype(np.float32)
@@ -45,8 +60,9 @@ def _normal_world_to_hand(normals: np.ndarray, pose_world: np.ndarray) -> np.nda
 class Stage4CmDataset(Dataset):
     """One active current frame, with endpoint stride chosen at runtime.
 
-    The cached NPZ contains states only.  Future geometry is read solely to
-    construct supervision after both endpoints are represented in H_t.
+    一个样本对应「当前帧」加一个「未来帧」，两者 stride 在运行时按 seed 决定。
+    缓存的 npz 里只存世界坐标系下的状态；监督量在两个端点都被表达在
+    ``hand_root_t``（当前帧的手根系）下之后再构造。
     """
 
     def __init__(
@@ -58,9 +74,12 @@ class Stage4CmDataset(Dataset):
         num_hand_points: int = 1538,
         base_seed: int = 42,
         active_only: bool = True,
+        # 当前帧到未来帧之间的最小/最大帧间隔（按 ds_rate=1 下的原始 GRAB 帧数计）
         min_stride: int = 1,
         max_stride: int = 12,
+        # 验证时若指定 fixed_stride，则每个样本都使用同一个 stride，便于对比
         fixed_stride: int | None = None,
+        # 可选：只取前 N 个样本，方便做小型实验
         max_samples: int | None = None,
         coordinate_frame: str = "hand_root_t",
     ) -> None:
@@ -69,27 +88,33 @@ class Stage4CmDataset(Dataset):
         if fixed_stride is not None and not min_stride <= fixed_stride <= max_stride:
             raise ValueError("fixed_stride must lie in [min_stride, max_stride].")
         self.data_path = Path(data_path)
+        # data_root：若 data_path 是文件则回退到父目录，用于定位 meta.npz 等
         self.data_root = self.data_path if self.data_path.is_dir() else self.data_path.parent
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
         self.base_seed = int(base_seed)
-        # DataLoader persistent workers own Dataset replicas.  A shared value
-        # makes BaseRunner.set_epoch visible to every replica.
+        # DataLoader 的 persistent worker 会拿到 Dataset 副本；用共享 Value
+        # 让 BaseRunner.set_epoch 写入的 epoch 对所有副本都可见。
         self._epoch = mp.Value("q", 0, lock=True)
         self.active_only = bool(active_only)
         self.min_stride, self.max_stride = int(min_stride), int(max_stride)
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
         self.coordinate_frame = str(coordinate_frame)
+        # 收集所有 npz：file_list 优先；否则按目录递归搜索 *.npz；单文件也支持
         self.file_paths = (sorted(Path(path) for path in file_list) if file_list is not None else
                            (sorted(self.data_path.glob("**/*.npz")) if self.data_path.is_dir() else [self.data_path]))
+        # 排除数据集根目录下的 meta.npz（它描述整个数据集而不是单个序列）
         self.file_paths = [path for path in self.file_paths if path.name != "meta.npz"]
         if not self.file_paths:
             raise ValueError(f"No cached Cm sequence NPZ files found in {self.data_path}")
+        # 简单缓存：连续 __getitem__ 通常落在同一个 npz 上，避免反复 IO
         self._cached_path: Path | None = None
         self._cached_data: dict[str, np.ndarray] | None = None
+        # 预展开 (file, frame_idx) 样本列表，便于 __len__/__getitem__ 直接索引
         self._samples: list[tuple[Path, int]] = []
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
+                # 必备字段检查
                 missing = REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing cached-sequence fields {sorted(missing)}")
@@ -105,7 +130,9 @@ class Stage4CmDataset(Dataset):
                     raise ValueError(f"{path}: unexpected hand point shape")
                 candidate = np.asarray(data["obj_candidate_mask_5cm"], dtype=bool)
                 frame_count = int(data["raw_frame_id"].shape[0])
+                # 只枚举「当前帧 + 允许 stride 范围内还有未来帧」的位置
                 for current in range(0, frame_count - self.max_stride):
+                    # active_only：当前帧必须存在 5cm 候选物点（视为「手物接触中」）
                     if not self.active_only or candidate[current].any():
                         self._samples.append((path, current))
         if max_samples is not None and int(max_samples) > 0:
@@ -117,6 +144,7 @@ class Stage4CmDataset(Dataset):
         return len(self._samples)
 
     def set_epoch(self, epoch: int) -> None:
+        """供 Runner 调用的 epoch 切换接口；写入共享 Value 让所有 worker 副本可见。"""
         with self._epoch.get_lock():
             self._epoch.value = int(epoch)
 
@@ -125,6 +153,7 @@ class Stage4CmDataset(Dataset):
         return int(self._epoch.value)
 
     def _load_file(self, path: Path) -> dict[str, np.ndarray]:
+        """带本地缓存的 npz 读取：连续取样通常落在同一文件，缓存后免去重复 IO。"""
         if self._cached_path != path or self._cached_data is None:
             with np.load(path, allow_pickle=False) as data:
                 self._cached_data = {key: np.asarray(data[key]) for key in data.files}
@@ -132,28 +161,37 @@ class Stage4CmDataset(Dataset):
         return self._cached_data
 
     def sample_location(self, index: int) -> tuple[Path, int]:
+        """返回样本 (npz 路径, 当前帧在文件内索引)，便于评估脚本按位置读取。"""
         return self._samples[index]
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        # 1) 读出当前帧 raw_frame_id，作为采样的稳定随机源
         path, current = self._samples[index]
         data = self._load_file(path)
         raw_frame = int(data["raw_frame_id"][current])
+        # 用稳定 hash 派生两个独立随机流：stride 选择 + 物点采样
         seed_args = dict(base_seed=self.base_seed, seq_id=scalar_string(data, "seq_id", path.stem),
                          side=scalar_string(data, "side", ""), raw_frame_id=raw_frame, epoch=self.epoch)
         stride_seed = stable_frame_seed(**seed_args, namespace="cm-stride")
         object_seed = stable_frame_seed(**seed_args, namespace="cm-object-sampling")
+        # 验证模式走 fixed_stride；训练模式从 [min_stride, max_stride] 闭区间随机
         stride = self.fixed_stride if self.fixed_stride is not None else int(
             np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1)
         )
         future = current + stride
+        # 当前帧手根位姿作为世界->hand_root_t 的变换源
         pose = data["hand_root_pose_world"][current]
+        # 5cm 候选物点 mask：仅从这些点中再采 512 个作为运行时物点
         candidate = np.asarray(data["obj_candidate_mask_5cm"][current], dtype=bool)
         selected_idx, valid = sample_object_indices(candidate, num_samples=self.num_obj_points, seed=object_seed)
         safe = np.maximum(selected_idx, 0)
+        # 把世界系下的物点 / 物点法向都转到当前帧 hand_root_t
         obj_current = _world_to_hand(data["obj_points_world"][current, safe], pose)
         obj_future = _world_to_hand(data["obj_points_world"][future, safe], pose)
         obj_normals = _normal_world_to_hand(data["obj_normals_world"][current, safe], pose)
+        # 无效物点用 0 占位，模型/损失侧会用 valid mask 跳过
         obj_current[~valid] = obj_future[~valid] = obj_normals[~valid] = 0.0
+        # 手部：当前帧与未来帧都转到 hand_root_t，flow = future - current
         hand_current = _world_to_hand(data["hand_points_world"][current], pose)
         hand_future = _world_to_hand(data["hand_points_world"][future], pose)
         return {
@@ -169,11 +207,16 @@ class Stage4CmDataset(Dataset):
 
 
 def _sequence_group_key(path: Path) -> str:
+    """按「所在目录 + 去后缀的 stem」分组序列，用于 train/val 切分时按序列打散。"""
     stem = path.stem.rsplit("_", 1)[0] if path.stem.endswith(("_left", "_right")) else path.stem
     return f"{path.parent.as_posix()}/{stem}"
 
 
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any | None = None):
+    """构造训练 / 验证 DataLoader，并为每个 val_stride 单独构造一个 view。
+
+    验证分多种 horizon 评估，所以同一个序列在不同 fixed_stride 下重复构造 dataset。
+    """
     common = {"num_obj_points": int(meta_cfg.num_obj_points), "num_hand_points": int(meta_cfg.num_hand_points),
               "base_seed": int(seed), "active_only": bool(getattr(data_cfg, "active_only", True)),
               "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 12)),
@@ -186,6 +229,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         split_group_fn=_sequence_group_key if bool(getattr(data_cfg, "group_val_by_sequence", True)) else None,
         distributed=distributed,
     )
+    # 从第一个训练文件里读出 schema / 点云规模等元信息挂到 metadata，便于 logger 记录
     first = train_loader.dataset.file_paths[0]
     with np.load(first, allow_pickle=False) as data:
         metadata.update({"schema_name": str(np.asarray(data["schema_name"]).item()), "coordinate_frame": "hand_root_t",

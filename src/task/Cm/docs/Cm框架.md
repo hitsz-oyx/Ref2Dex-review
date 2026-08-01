@@ -141,7 +141,7 @@ CmAction 不把低 loss 自动等同于获得了动态动作表征。训练过�
 
 可视化中，`S` 显示每个手点的 `argmax_k A_kj` 与 soft anchor，用于观察同一 MANO 点是否随动作和接触发生 slot 重分配。`--assignment-report` 可以在整条序列上统计重分配比例与 decoder usage。
 
-此外，trajectory rollout 通过把前一步预测的物体状态送入下一步模型来观察多步漂移。严格 rollout 要求前一 pair 的 future frame 正好是后一 pair 的 current frame，例如 `t→t+3→t+6`。当前正式训练数据的 `pair_stride=3, pair_hop=4` 不满足该条件，因此只能在 `hop=1` 的可链式 Stage 4 文件上做严格多步诊断；不能用 GT object state 填补缺失帧。
+此外，可视化的 fixed-stride chunk 预览从当前 pair 开始，按同一 stride 浏览不超过 12 帧范围内的完整 chunk。每个 chunk 都用该 chunk 的 GT current object state 独立推理，不会把前一段预测送入下一段，因此显示的是逐段 teacher-forced 输出而非自回归漂移。
 
 ## 8. 当前框架的结论边界
 
