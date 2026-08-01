@@ -17,12 +17,16 @@ from src.base import make_default_eval_sampler, make_file_split_dataloaders
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
 
 
-# 缓存的 stage4 cm-sequence npz 必须带上的 schema 名称与字段集合
-SEQUENCE_SCHEMA_NAME = "ref2dex_cm_sequence"
-REQUIRED_FIELDS = {
+# Cm cache separates sequence-shared object states from hand-side states.
+SHARED_SCHEMA_NAME = "ref2dex_cm_sequence_shared"
+HAND_SCHEMA_NAME = "ref2dex_cm_sequence_hand"
+REQUIRED_SHARED_FIELDS = {
     "schema_name", "raw_frame_id", "obj_points_world", "obj_normals_world", "obj_point_id",
-    "hand_points_world", "hand_normals_world", "hand_root_pose_world",
-    "obj_to_hand_min_dist", "obj_candidate_mask_5cm", "ds_rate",
+    "ds_rate", "source_fps", "coordinate_frame", "seq_id",
+}
+REQUIRED_HAND_FIELDS = {
+    "schema_name", "side", "hand_points_world", "hand_normals_world", "hand_root_pose_world",
+    "obj_candidate_mask_5cm",
 }
 
 
@@ -74,7 +78,7 @@ class Stage4CmDataset(Dataset):
         num_hand_points: int = 1538,
         base_seed: int = 42,
         active_only: bool = True,
-        # 当前帧到未来帧之间的最小/最大帧间隔（按 ds_rate=1 下的原始 GRAB 帧数计）
+        # 当前帧到未来帧之间的最小/最大间隔，按缓存后的时间轴计数。
         min_stride: int = 1,
         max_stride: int = 12,
         # 验证时若指定 fixed_stride，则每个样本都使用同一个 stride，便于对比
@@ -100,39 +104,58 @@ class Stage4CmDataset(Dataset):
         self.min_stride, self.max_stride = int(min_stride), int(max_stride)
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
         self.coordinate_frame = str(coordinate_frame)
-        # 收集所有 npz：file_list 优先；否则按目录递归搜索 *.npz；单文件也支持
+        # Collect hand-side files; their sibling shared.npz is merged on load.
         self.file_paths = (sorted(Path(path) for path in file_list) if file_list is not None else
                            (sorted(self.data_path.glob("**/*.npz")) if self.data_path.is_dir() else [self.data_path]))
-        # 排除数据集根目录下的 meta.npz（它描述整个数据集而不是单个序列）
-        self.file_paths = [path for path in self.file_paths if path.name != "meta.npz"]
+        self.file_paths = [path for path in self.file_paths if path.name in {"left.npz", "right.npz"}]
         if not self.file_paths:
-            raise ValueError(f"No cached Cm sequence NPZ files found in {self.data_path}")
-        # 简单缓存：连续 __getitem__ 通常落在同一个 npz 上，避免反复 IO
-        self._cached_path: Path | None = None
-        self._cached_data: dict[str, np.ndarray] | None = None
+            raise ValueError(f"No Cm hand-side NPZ files found in {self.data_path}")
+        self._cached_sequence_path: Path | None = None
+        self._cached_shared_data: dict[str, np.ndarray] | None = None
+        self._cached_side_path: Path | None = None
+        self._cached_hand_data: dict[str, np.ndarray] | None = None
+        self.ds_rate: int | None = None
+        self.source_fps: float | None = None
+        self.effective_fps: float | None = None
         # 预展开 (file, frame_idx) 样本列表，便于 __len__/__getitem__ 直接索引
         self._samples: list[tuple[Path, int]] = []
         for path in self.file_paths:
-            with np.load(path, allow_pickle=False) as data:
-                # 必备字段检查
-                missing = REQUIRED_FIELDS.difference(data.files)
-                if missing:
-                    raise KeyError(f"{path}: missing cached-sequence fields {sorted(missing)}")
-                if str(np.asarray(data["schema_name"]).item()) != SEQUENCE_SCHEMA_NAME:
-                    raise ValueError(f"{path}: expected schema {SEQUENCE_SCHEMA_NAME!r}")
-                if str(np.asarray(data.get("coordinate_frame", "world")).item()) != "world":
-                    raise ValueError(f"{path}: cached sequence coordinates must be world-frame")
-                if int(np.asarray(data["ds_rate"]).item()) != 1:
-                    raise ValueError(f"{path}: expected ds_rate=1 so stride denotes original GRAB frames")
-                if data["obj_points_world"].shape[1:] != (4096, 3):
-                    raise ValueError(f"{path}: expected obj_points_world [T,4096,3]")
-                if data["hand_points_world"].shape[1:] != (self.num_hand_points, 3):
+            shared_path = path.parent / "shared.npz"
+            if not shared_path.exists():
+                raise FileNotFoundError(f"{path}: missing shared sequence file {shared_path}")
+            with np.load(shared_path, allow_pickle=False) as shared, np.load(path, allow_pickle=False) as hand:
+                missing_shared = REQUIRED_SHARED_FIELDS.difference(shared.files)
+                missing_hand = REQUIRED_HAND_FIELDS.difference(hand.files)
+                if missing_shared:
+                    raise KeyError(f"{shared_path}: missing shared fields {sorted(missing_shared)}")
+                if missing_hand:
+                    raise KeyError(f"{path}: missing hand fields {sorted(missing_hand)}")
+                if str(np.asarray(shared["schema_name"]).item()) != SHARED_SCHEMA_NAME:
+                    raise ValueError(f"{shared_path}: expected schema {SHARED_SCHEMA_NAME!r}")
+                if str(np.asarray(hand["schema_name"]).item()) != HAND_SCHEMA_NAME:
+                    raise ValueError(f"{path}: expected schema {HAND_SCHEMA_NAME!r}")
+                if str(np.asarray(shared["coordinate_frame"]).item()) != "world":
+                    raise ValueError(f"{shared_path}: cached sequence coordinates must be world-frame")
+                ds_rate = int(np.asarray(shared["ds_rate"]).item())
+                source_fps = float(np.asarray(shared["source_fps"]).item())
+                if ds_rate <= 0 or source_fps <= 0.0:
+                    raise ValueError(f"{shared_path}: ds_rate and source_fps must be positive")
+                if shared["obj_points_world"].shape[1:] != (4096, 3):
+                    raise ValueError(f"{shared_path}: expected obj_points_world [T,4096,3]")
+                if hand["hand_points_world"].shape[1:] != (self.num_hand_points, 3):
                     raise ValueError(f"{path}: unexpected hand point shape")
-                candidate = np.asarray(data["obj_candidate_mask_5cm"], dtype=bool)
-                frame_count = int(data["raw_frame_id"].shape[0])
-                # 只枚举「当前帧 + 允许 stride 范围内还有未来帧」的位置
+                frame_count = int(shared["raw_frame_id"].shape[0])
+                if hand["obj_candidate_mask_5cm"].shape != (frame_count, 4096):
+                    raise ValueError(f"{path}: candidate mask must have shape [{frame_count},4096]")
+                if hand["hand_points_world"].shape[0] != frame_count:
+                    raise ValueError(f"{path}: hand frame count must match {shared_path}")
+                if self.ds_rate is None:
+                    self.ds_rate, self.source_fps = ds_rate, source_fps
+                    self.effective_fps = source_fps / ds_rate
+                elif (self.ds_rate, self.source_fps) != (ds_rate, source_fps):
+                    raise ValueError("All Cm cache files in one Dataset must use the same ds_rate and source_fps")
+                candidate = np.asarray(hand["obj_candidate_mask_5cm"], dtype=bool)
                 for current in range(0, frame_count - self.max_stride):
-                    # active_only：当前帧必须存在 5cm 候选物点（视为「手物接触中」）
                     if not self.active_only or candidate[current].any():
                         self._samples.append((path, current))
         if max_samples is not None and int(max_samples) > 0:
@@ -153,12 +176,19 @@ class Stage4CmDataset(Dataset):
         return int(self._epoch.value)
 
     def _load_file(self, path: Path) -> dict[str, np.ndarray]:
-        """带本地缓存的 npz 读取：连续取样通常落在同一文件，缓存后免去重复 IO。"""
-        if self._cached_path != path or self._cached_data is None:
+        """Load and merge one side file with its sequence-level shared state."""
+        sequence_path = path.parent
+        if self._cached_sequence_path != sequence_path or self._cached_shared_data is None:
+            with np.load(sequence_path / "shared.npz", allow_pickle=False) as data:
+                self._cached_shared_data = {key: np.asarray(data[key]) for key in data.files}
+            self._cached_sequence_path = sequence_path
+            self._cached_side_path = None
+            self._cached_hand_data = None
+        if self._cached_side_path != path or self._cached_hand_data is None:
             with np.load(path, allow_pickle=False) as data:
-                self._cached_data = {key: np.asarray(data[key]) for key in data.files}
-            self._cached_path = path
-        return self._cached_data
+                self._cached_hand_data = {key: np.asarray(data[key]) for key in data.files}
+            self._cached_side_path = path
+        return {**self._cached_shared_data, **self._cached_hand_data}
 
     def sample_location(self, index: int) -> tuple[Path, int]:
         """返回样本 (npz 路径, 当前帧在文件内索引)，便于评估脚本按位置读取。"""
@@ -207,9 +237,8 @@ class Stage4CmDataset(Dataset):
 
 
 def _sequence_group_key(path: Path) -> str:
-    """按「所在目录 + 去后缀的 stem」分组序列，用于 train/val 切分时按序列打散。"""
-    stem = path.stem.rsplit("_", 1)[0] if path.stem.endswith(("_left", "_right")) else path.stem
-    return f"{path.parent.as_posix()}/{stem}"
+    """Keep left/right files of one shared sequence in the same data split."""
+    return path.parent.as_posix()
 
 
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any | None = None):
@@ -229,13 +258,15 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         split_group_fn=_sequence_group_key if bool(getattr(data_cfg, "group_val_by_sequence", True)) else None,
         distributed=distributed,
     )
-    # 从第一个训练文件里读出 schema / 点云规模等元信息挂到 metadata，便于 logger 记录
+    # Read shared metadata through the Dataset merger rather than side NPZ alone.
     first = train_loader.dataset.file_paths[0]
-    with np.load(first, allow_pickle=False) as data:
-        metadata.update({"schema_name": str(np.asarray(data["schema_name"]).item()), "coordinate_frame": "hand_root_t",
-                         "num_obj_pool": int(data["obj_points_world"].shape[1]), "num_obj_points": int(meta_cfg.num_obj_points),
-                         "num_hand_points": int(data["hand_points_world"].shape[1]), "min_stride": common["min_stride"],
-                         "max_stride": common["max_stride"]})
+    data = train_loader.dataset._load_file(first)
+    metadata.update({"schema_name": str(np.asarray(data["schema_name"]).item()), "coordinate_frame": "hand_root_t",
+                     "num_obj_pool": int(data["obj_points_world"].shape[1]), "num_obj_points": int(meta_cfg.num_obj_points),
+                     "num_hand_points": int(data["hand_points_world"].shape[1]), "min_stride": common["min_stride"],
+                     "max_stride": common["max_stride"], "ds_rate": int(train_loader.dataset.ds_rate),
+                     "source_fps": float(train_loader.dataset.source_fps),
+                     "effective_fps": float(train_loader.dataset.effective_fps)})
     val_loaders: dict[str, DataLoader] = {}
     if val_loader is not None:
         # Evaluation is deterministic and reports each fixed horizon separately.

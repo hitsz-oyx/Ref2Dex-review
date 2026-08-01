@@ -40,20 +40,27 @@ F_hand     = y_{t+Δ}^{h_t} - y_t
 
 这个定义保留 wrist 的全局平移/旋转与手指关节运动，且 object flow 与 hand flow 的坐标系一致。不要对每一帧分别 hand-root 规范化后直接相减。
 
-一个 Stage 4 NPZ 是一条 sequence、一个 side；关键字段如下。
+Stage 4 对一条 sequence 写入一个共享文件和每个可用 side 的一个手部文件：
+
+```text
+subject/sequence/shared.npz
+subject/sequence/left.npz
+subject/sequence/right.npz
+```
+
+`shared.npz` 保存 sequence 共享的 `raw_frame_id`、`ds_rate`、`source_fps`、物体点/法向和物点 ID；`left.npz` / `right.npz` 只保存该侧的手点/法向/根位姿、手部静态字段和 `obj_candidate_mask_5cm`。运行时 Dataset 合并两者。距离诊断数组不再落盘，candidate mask 在生成缓存时直接计算。
+
+关键字段如下。
 
 | 字段 | 形状 | 用途 |
 | --- | --- | --- |
-| `obj_points`, `obj_normals` | `P × 4096 × 3` | `O_t`；dense-token 的当前 object context |
-| `hand_points`, `hand_normals` | `P × 1538 × 3` | `H_t`；dense-token/current hand context |
-| `hand_flow` | `P × 1538 × 3` | `H_{t+Δ}^{h_t} - H_t`，Cm 的动作输入 |
-| `wrist_delta` | `P × 4 × 4` | `T_hand_t_from_hand_t+Δ`，显式 wrist SE(3) |
-| `obj_flow_gt` | `P × 4096 × 3` | 唯一 future-object 监督，不作为模型输入 |
-| `obj_candidate_mask_5cm` | `P × 4096` | 对齐旧 checkpoint 的 512 point 采样候选 |
-| `obj_to_hand_min_dist`, `hand_to_obj_min_dist` | `P × 4096` / `P × 1538` | 当前帧接触、active-pair 和诊断统计 |
-| `raw_frame_id`, `next_raw_frame_id` | `P` | 可复现采样与时间索引 |
+| `obj_points_world`, `obj_normals_world`（shared） | `T × 4096 × 3` | 当前/未来 object state，由 Dataset 在运行时选端点 |
+| `hand_points_world`, `hand_normals_world`（side） | `T × 1538 × 3` | 当前/未来 hand state |
+| `hand_root_pose_world`（side） | `T × 4 × 4` | 各端点转入 current hand-root frame |
+| `obj_candidate_mask_5cm`（side） | `T × 4096` | 对齐 DenseToken 的 512 point 采样候选 |
+| `raw_frame_id`, `ds_rate`, `source_fps`（shared） | `T` / scalar | 可复现时间索引与有效帧率 |
 
-其中 `P = ceil((T - pair_stride) / pair_hop)`；`pair_stride` 是 future frame 的偏移，`pair_hop` 是相邻样本 current frame 的偏移。默认 `ds_rate=1`、`pair_stride=3`、`pair_hop=1`，因此使用所有 GRAB 原始帧并构造重叠窗口：`1→4、2→5、3→6…`。GRAB 是 120Hz，所以 point-flow 的时间间隔是 `3 / 120 = 25ms`。并使用当前 5cm candidate mask 完全复现 dense-token 的 `epoch=0` 512 点采样。
+GRAB 原始数据为 120 Hz。新缓存使用 `ds_rate=4`，即缓存时间轴为 30 Hz；Dataset 在该时间轴按 runtime stride 选未来端点。训练 stride 为 1–10，对应 33.3–333.3 ms，并按每个 stride 分别验证。当前 5cm candidate mask 仍用于复现 DenseToken 的 512 点采样。
 
 ### 生成命令
 
@@ -62,12 +69,10 @@ F_hand     = y_{t+Δ}^{h_t} - y_t
 ```bash
 PYTHONPATH=. python -m process.stage4.prepare_cm \
   --seq s1/bowl_pass_1 \
-  --side right \
-  --ds-rate 1 \
-  --pair-stride 3 \
-  --pair-hop 1 \
+  --side both \
+  --ds-rate 4 \
   --device cuda \
-  --output-root processed_data/generated/stage4/grab_cm_raw_stride3_smoke
+  --output-root processed_data/generated/cm_sequence_cache_ds4_smoke
 ```
 
 批量运行可传入 GRAB manifest：
@@ -76,14 +81,12 @@ PYTHONPATH=. python -m process.stage4.prepare_cm \
 PYTHONPATH=. python -m process.stage4.prepare_cm \
   --manifest tmp/manifests/grab_subset_100.csv \
   --side both \
-  --ds-rate 1 \
-  --pair-stride 3 \
-  --pair-hop 1 \
+  --ds-rate 4 \
   --device cuda \
-  --output-root processed_data/generated/stage4/grab_cm_raw_stride3
+  --output-root processed_data/generated/cm_sequence_cache_ds4
 ```
 
-缺少某一侧手轨迹的 GRAB sequence 会跳过该 side；它不是错误。默认不镜像左手，因为现有 dense-token checkpoint 的 full-GRAB 训练配置也没有镜像；只有明确决定改为右手统一约定时才使用 `--mirror-left-to-right`，且 Stage 4 和后续 Cm 训练必须保持一致。
+缺少某一侧手轨迹的 GRAB sequence 会跳过该 side；它不是错误。
 
 ## CmAction 模型
 

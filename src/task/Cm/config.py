@@ -41,8 +41,8 @@ class Config(TaskConfig):
         # Current 5cm contact is the only training-sample filter.  Do not
         # remove static object targets: they teach no-effect interactions.
         min_stride: int = 1
-        max_stride: int = 12
-        val_strides = tuple(range(1, 13))
+        max_stride: int = 10
+        val_strides = tuple(range(1, 11))
         max_train_samples = None
         max_val_samples = None
 
