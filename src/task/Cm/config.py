@@ -24,6 +24,14 @@ class Config(TaskConfig):
         slot_iters: int = 3
         flow_smooth_l1_beta: float = 0.01
         loss_flow_weight: float = 1.0
+        loss_slot_count_weight: float = 1.0e-3
+        loss_active_overlap_weight: float = 0.0
+        # Train dynamic experts before pruning them; 0.1 means the first 10%
+        # of optimizer steps keep all slots active and suppress the null expert.
+        slot_gate_warmup_ratio: float = 0.1
+        slot_count_warmup_ratio: float = 0.1
+        null_warmup_ratio: float = 0.1
+        null_warmup_logit: float = -3.0
         # The frozen dense encoder and dataset stay in metres.  This scales
         # only the trainable Cm head's geometric / flow coordinates, then
         # converts its flow output back to metres before loss computation.

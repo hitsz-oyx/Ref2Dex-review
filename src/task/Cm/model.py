@@ -1,6 +1,7 @@
 """Hand-motion Slot Attention bottleneck and current-object flow decoder."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -17,6 +18,45 @@ def _mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
         nn.Linear(hidden_dim, output_dim),
         nn.GELU(),
     )
+
+
+class HardConcreteGate(nn.Module):
+    """Differentiable stochastic gates with an analytic expected L0 penalty."""
+
+    def __init__(
+        self,
+        *,
+        temperature: float = 2.0 / 3.0,
+        gamma: float = -0.1,
+        zeta: float = 1.1,
+        eps: float = 1e-6,
+    ) -> None:
+        super().__init__()
+        if temperature <= 0.0:
+            raise ValueError("HardConcreteGate temperature must be positive.")
+        if gamma >= 0.0 or zeta <= 1.0:
+            raise ValueError("HardConcreteGate requires gamma < 0 and zeta > 1.")
+        self.temperature = float(temperature)
+        self.gamma = float(gamma)
+        self.zeta = float(zeta)
+        self.eps = float(eps)
+
+    def nonzero_probability(self, log_alpha: torch.Tensor) -> torch.Tensor:
+        offset = self.temperature * math.log(-self.gamma / self.zeta)
+        return torch.sigmoid(log_alpha - offset)
+
+    def forward(self, log_alpha: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        nonzero_probability = self.nonzero_probability(log_alpha)
+        if self.training:
+            uniform = torch.rand_like(log_alpha).clamp(self.eps, 1.0 - self.eps)
+            logistic_noise = torch.log(uniform) - torch.log1p(-uniform)
+            soft_gate = torch.sigmoid((log_alpha + logistic_noise) / self.temperature)
+            gate = (soft_gate * (self.zeta - self.gamma) + self.gamma).clamp(0.0, 1.0)
+        else:
+            # Extraction uses an exact, fixed-size binary mask.  The analytic
+            # probability is retained separately for diagnostics and L0 loss.
+            gate = (nonzero_probability > 0.5).to(dtype=log_alpha.dtype)
+        return gate, nonzero_probability
 
 
 class SlotAttention(nn.Module):
@@ -102,6 +142,7 @@ class CmFlowHead(nn.Module):
         num_cm_tokens: int = 16,
         num_slot_iters: int = 3,
         internal_point_flow_scale: float = 1.0,
+        null_warmup_logit: float = -3.0,
     ) -> None:
         super().__init__()
         self.dense_token_dim = int(dense_token_dim)
@@ -109,6 +150,7 @@ class CmFlowHead(nn.Module):
         self.num_cm_tokens = int(num_cm_tokens)
         self.num_slot_iters = int(num_slot_iters)
         self.internal_point_flow_scale = float(internal_point_flow_scale)
+        self.null_warmup_logit = float(null_warmup_logit)
         if self.internal_point_flow_scale <= 0.0:
             raise ValueError("internal_point_flow_scale must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
@@ -121,7 +163,23 @@ class CmFlowHead(nn.Module):
             num_slots=num_cm_tokens,
             num_iterations=num_slot_iters,
         )
+        # One shared gate head preserves the permutation symmetry of Slot
+        # Attention: slots do not have hard-coded, index-specific roles.
+        self.slot_gate_head = nn.Sequential(
+            nn.LayerNorm(cm_dim),
+            nn.Linear(cm_dim, cm_dim // 2),
+            nn.GELU(),
+            nn.Linear(cm_dim // 2, 1),
+        )
+        self.hard_concrete = HardConcreteGate()
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
+        # This expert is intentionally outside Slot Attention.  It always
+        # proposes exactly zero flow and only learns its per-object-point logit.
+        self.null_logit_head = nn.Sequential(
+            nn.Linear(cm_dim, cm_dim // 2),
+            nn.GELU(),
+            nn.Linear(cm_dim // 2, 1),
+        )
         # Object feature, Cm feature, relative object-to-soft-anchor position,
         # and soft-anchor hand normal.  Cm already contains the hand motion,
         # so exposing the pooled hand flow here would bypass the bottleneck.
@@ -148,6 +206,8 @@ class CmFlowHead(nn.Module):
         hand_normals: torch.Tensor,
         hand_flow: torch.Tensor,
         obj_valid_mask: torch.Tensor,
+        gate_warmup_progress: float = 1.0,
+        null_warmup_progress: float = 1.0,
     ) -> dict[str, torch.Tensor]:
         # The pretrained dense encoder deliberately remains in metres.  Only
         # the trainable Cm geometry / motion path works in the configurable
@@ -168,6 +228,24 @@ class CmFlowHead(nn.Module):
         )
         u_hand = self.hand_motion_encoder(hand_input)
         cm_tokens, cm_assignment, cm_slot_weights = self.slot_attention(u_hand)
+        slot_gate_logits = self.slot_gate_head(cm_tokens).squeeze(-1)
+        sampled_slot_gate, slot_nonzero_prob = self.hard_concrete(slot_gate_logits)
+        # During early optimization all dynamic slots remain available, then
+        # smoothly transition to the learned gate.  This lets slot experts
+        # learn useful flow predictions before L0 pressure can prune them.
+        # 训练初期先让所有动态槽位全部可用，再平滑过渡到学习到的门控，
+        # 避免 L0 稀疏压力过早把还没学好的槽位剪掉。
+        # gate_warmup_progress 通常由训练侧按 epoch/step 从 0 线性升到 1，
+        # 这里 clamp 到 [0, 1] 防止异常调度值越界。
+        gate_progress = min(1.0, max(0.0, float(gate_warmup_progress)))
+        # 把"硬采样门 sampled_slot_gate"和"全开 1.0"按 gate_progress 做线性插值：
+        #   gate_progress = 0 时 slot_gate = 1.0    （所有槽位强制放行，未启用 L0）
+        #   gate_progress = 1 时 slot_gate = sampled_slot_gate  （完全采用学习到的门）
+        # 公式 1 - p*(1 - x) 等价于 (1 - p)*1 + p*x。
+        slot_gate = 1.0 - gate_progress * (1.0 - sampled_slot_gate)
+        # 非零概率走同样的插值：warmup 阶段全部视为非零(概率=1)，
+        # 完全 warmup 后才用真实的解析非零概率作为 L0 惩罚输入。
+        effective_nonzero_prob = 1.0 - gate_progress * (1.0 - slot_nonzero_prob)
 
         obj_context = self.object_context_encoder(
             torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
@@ -188,8 +266,22 @@ class CmFlowHead(nn.Module):
             dim=-1,
         )
         edge_output = self.flow_edge(edge_input)
-        edge_weight = torch.softmax(edge_output[..., 0], dim=2)
-        pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * edge_output[..., 1:]).sum(dim=2)
+        dynamic_logits = edge_output[..., 0]
+        dynamic_flow = edge_output[..., 1:]
+        learned_null_logits = self.null_logit_head(obj_context)
+        null_progress = min(1.0, max(0.0, float(null_warmup_progress)))
+        null_logits = self.null_warmup_logit + null_progress * (
+            learned_null_logits - self.null_warmup_logit
+        )
+        # Adding log(gate) before the common softmax performs a properly
+        # renormalized masked mixture.  The always-on null expert makes the
+        # all-slots-closed case well-defined.
+        gated_dynamic_logits = dynamic_logits + torch.log(slot_gate[:, None, :].clamp_min(1e-8))
+        all_logits = torch.cat([null_logits, gated_dynamic_logits], dim=2)
+        all_weight = torch.softmax(all_logits, dim=2)
+        null_weight = all_weight[..., :1]
+        edge_weight = all_weight[..., 1:]
+        pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2)
         # Restore metres at the public model boundary; runner losses and
         # visualization therefore remain unit-consistent with cached data.
         pred_obj_flow = pred_obj_flow_internal / scale
@@ -202,11 +294,18 @@ class CmFlowHead(nn.Module):
         return {
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
+            "cm_tokens_masked": cm_tokens * slot_gate.unsqueeze(-1),
             "cm_anchor_pos": cm_anchor_pos_internal / scale,
             "cm_anchor_normal": cm_anchor_normal,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
+            "slot_gate_logits": slot_gate_logits,
+            "slot_gate": slot_gate,
+            "slot_nonzero_prob": slot_nonzero_prob,
+            "effective_slot_nonzero_prob": effective_nonzero_prob,
             "decoder_slot_usage": decoder_slot_usage,
+            "decoder_null_usage": (null_weight.squeeze(-1) * obj_valid_mask.float()).sum(dim=1)
+            / obj_valid_mask.sum(dim=1).clamp_min(1).float(),
         }
 
 
@@ -236,6 +335,7 @@ class CmFlowModel(nn.Module):
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
             internal_point_flow_scale=float(meta.internal_point_flow_scale),
+            null_warmup_logit=float(meta.null_warmup_logit),
         )
 
     @property
@@ -250,7 +350,13 @@ class CmFlowModel(nn.Module):
     def num_cm_tokens(self) -> int:
         return self.head.num_cm_tokens
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        gate_warmup_progress: float = 1.0,
+        null_warmup_progress: float = 1.0,
+    ) -> dict[str, torch.Tensor]:
         z_obj, z_hand, dense_hand_contact = self.dense_encoder(
             obj_points=batch["obj_points"],
             obj_normals=batch["obj_normals"],
@@ -268,6 +374,8 @@ class CmFlowModel(nn.Module):
             hand_normals=batch["hand_normals"],
             hand_flow=batch["hand_flow"],
             obj_valid_mask=batch["obj_valid_mask"],
+            gate_warmup_progress=gate_warmup_progress,
+            null_warmup_progress=null_warmup_progress,
         )
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:

@@ -1,0 +1,46 @@
+_base_: src.task.Cm.config:Config
+
+name: cm_sequence_ds4_dynamic_slots
+
+meta:
+  internal_point_flow_scale: 100.0
+  # The count penalty is ramped in after the initial expert-learning phase.
+  # Keep overlap disabled for the first run; it remains available as a small
+  # second-stage regularizer if diagnostics show duplicate active slots.
+  loss_slot_count_weight: 1.0e-3
+  loss_active_overlap_weight: 0.0
+  slot_gate_warmup_ratio: 0.1
+  slot_count_warmup_ratio: 0.1
+  null_warmup_ratio: 0.1
+  null_warmup_logit: -3.0
+
+data:
+  train_path: processed_data/generated/cm_sequence_cache_ds4
+  active_only: true
+  min_stride: 1
+  max_stride: 10
+  val_strides: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  group_val_by_sequence: true
+  batch_size: 2
+  val_batch_size: 2
+  num_workers: 4
+  persistent_workers: true
+
+train:
+  output_dir: outputs/train/cm_sequence_ds4_dynamic_slots
+  lr: 1.5e-4
+  amp: false
+  epochs: 15
+  max_steps: 24000
+  log_every_steps: 50
+  eval_every_epochs: 2
+  save_every_steps: 3000
+  save_every_epochs: 2
+  metric_for_best: val/mean_stride_flow_mse
+  lower_is_better: true
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [cm, grab, ds4, 30hz, dynamic-slots, hard-concrete, null-expert]

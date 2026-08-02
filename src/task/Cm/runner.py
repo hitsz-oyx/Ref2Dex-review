@@ -40,6 +40,13 @@ def internal_flow_smooth_l1(
 
 
 class CmActionRunner(BaseRunner):
+    def _warmup_progress(self, ratio: float) -> float:
+        """Return 0..1 progress through an optional initial training phase."""
+        if ratio <= 0.0 or self.total_steps <= 0:
+            return 1.0
+        warmup_steps = max(1, int(round(float(ratio) * self.total_steps)))
+        return min(1.0, float(self.global_step) / float(warmup_steps))
+
     def evaluate_all(self) -> dict[str, float]:
         metrics = super().evaluate_all()
         stride_mse = [value for key, value in metrics.items() if key.endswith("/flow_mse") and "/stride_" in key]
@@ -78,8 +85,16 @@ class CmActionRunner(BaseRunner):
         batch: dict[str, torch.Tensor],
         mode: str = "train",
     ) -> RunnerOutput:
-        del mode
-        prediction = model(batch)
+        gate_progress = self._warmup_progress(float(self.cfg.meta.slot_gate_warmup_ratio))
+        null_progress = self._warmup_progress(float(self.cfg.meta.null_warmup_ratio))
+        # Validation at an intermediate checkpoint deliberately observes the
+        # same phase as the current training step; final checkpoints use the
+        # deterministic (non-sampled) Hard-Concrete gate automatically.
+        prediction = model(
+            batch,
+            gate_warmup_progress=gate_progress,
+            null_warmup_progress=null_progress,
+        )
         valid = batch["obj_valid_mask"].bool()
         valid_count = valid.sum()
         if int(valid_count.detach().item()) <= 0:
@@ -137,7 +152,26 @@ class CmActionRunner(BaseRunner):
         ).sum()
         # 对 S 个 slot 的平均使用率求熵：鼓励各 slot 使用率接近均匀分布
         # 防止某些 slot 完全没被用上（collapse）
-        total_loss = float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
+        slot_nonzero_prob = prediction["effective_slot_nonzero_prob"]
+        slot_count_loss = (slot_nonzero_prob.sum(dim=-1) / num_slots).mean()
+        # Only pairs that are currently active contribute.  Slot weights are
+        # probability distributions across hand points, so their cosine
+        # similarity measures redundant hand-region assignment.
+        if num_slots > 1:
+            slot_gate = prediction["slot_gate"]
+            active_pair_weight = slot_gate.unsqueeze(2) * slot_gate.unsqueeze(1)
+            active_pair_weight = active_pair_weight * off_diagonal.unsqueeze(0)
+            active_overlap_loss = (slot_similarity * active_pair_weight).sum() / active_pair_weight.sum().clamp_min(1e-8)
+        else:
+            active_overlap_loss = cm_slot_weights.new_zeros(())
+        slot_count_progress = self._warmup_progress(float(self.cfg.meta.slot_count_warmup_ratio))
+        total_loss = (
+            float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
+            + slot_count_progress * float(self.cfg.meta.loss_slot_count_weight) * slot_count_loss
+            + slot_count_progress * float(self.cfg.meta.loss_active_overlap_weight) * active_overlap_loss
+        )
+        hard_active_count = (slot_nonzero_prob > 0.5).sum(dim=-1).float()
+        decoder_null_usage = prediction["decoder_null_usage"]
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
             "flow_smooth_l1": flow_smooth_l1,
@@ -149,6 +183,18 @@ class CmActionRunner(BaseRunner):
             "slot_weight_overlap": slot_weight_overlap,
             "decoder_slot_usage_entropy": decoder_slot_usage_entropy,
             "decoder_slot_usage_max": mean_decoder_slot_usage.max(),
+            "slot_count_loss": slot_count_loss,
+            "active_overlap_loss": active_overlap_loss,
+            "slot_count_weight_scale": flow_smooth_l1.new_tensor(slot_count_progress),
+            "slot_gate_warmup_progress": flow_smooth_l1.new_tensor(gate_progress),
+            "null_warmup_progress": flow_smooth_l1.new_tensor(null_progress),
+            "slot/expected_active_mean": slot_nonzero_prob.sum(dim=-1).mean(),
+            "slot/hard_active_mean": hard_active_count.mean(),
+            "slot/hard_active_min": hard_active_count.min(),
+            "slot/hard_active_max": hard_active_count.max(),
+            "slot/gate_probability_mean": slot_nonzero_prob.mean(),
+            "slot/active_overlap": active_overlap_loss,
+            "decoder/null_usage": decoder_null_usage.mean(),
             "valid_object_count": valid_count.float(),
         }
         metrics.update(

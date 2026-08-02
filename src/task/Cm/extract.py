@@ -75,8 +75,9 @@ def extract_file(
     loader = DataLoader(Subset(dataset, indices), batch_size=batch_size, shuffle=False, num_workers=0)
     fields = (
         "raw_frame_id", "next_raw_frame_id", "stride", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
-        "pred_obj_flow", "cm_tokens", "cm_anchor_pos", "cm_anchor_normal",
-        "cm_assignment", "cm_slot_weights", "decoder_slot_usage",
+        "pred_obj_flow", "cm_tokens", "cm_tokens_masked", "cm_anchor_pos", "cm_anchor_normal",
+        "cm_assignment", "cm_slot_weights", "slot_gate", "slot_nonzero_prob",
+        "effective_slot_nonzero_prob", "decoder_slot_usage", "decoder_null_usage",
     )
     collected: dict[str, list[np.ndarray]] = {key: [] for key in fields}
     total_squared_error = 0.0
@@ -104,7 +105,7 @@ def extract_file(
     payload.update(
         {
             "schema_name": np.asarray("ref2dex_cm_action_tokens"),
-            "schema_version": np.asarray("4.0.0"),
+            "schema_version": np.asarray("4.1.0"),
             "source_stage4_file": np.asarray(str(input_path.resolve())),
             "source_cm_checkpoint": np.asarray(str(Path(runner.cfg.train.output_dir))),
             "num_pairs": np.asarray(len(indices), dtype=np.int32),
