@@ -25,8 +25,11 @@ class Config(TaskConfig):
         flow_smooth_l1_beta: float = 0.01
         loss_flow_weight: float = 1.0
         loss_slot_count_weight: float = 1.0e-3
-        loss_null_zero_weight: float = 0.05
+        loss_slot_confidence_weight: float = 0.1
         loss_active_overlap_weight: float = 0.0
+        # Hard-Concrete's analytic nonzero probability is about 0.83 at a
+        # zero log-alpha, so 0.85 makes the fallback path meaningful at init.
+        slot_threshold: float = 0.85
         # The frozen dense encoder and dataset stay in metres.  This scales
         # only the trainable Cm head's geometric / flow coordinates, then
         # converts its flow output back to metres before loss computation.

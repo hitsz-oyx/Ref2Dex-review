@@ -31,20 +31,17 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     assert head.hand_motion_encoder[0].in_features == 8 + 10
     assert output["cm_tokens"].shape == (batch_size, 4, 16)
     assert output["cm_assignment"].shape == (batch_size, 4, num_hand)
-    assert output["all_cm_assignment"].shape == (batch_size, 5, num_hand)
-    assert output["null_assignment"].shape == (batch_size, 1, num_hand)
     assert output["cm_slot_weights"].shape == (batch_size, 4, num_hand)
     assert output["slot_gate"].shape == (batch_size, 4)
     assert output["slot_nonzero_prob"].shape == (batch_size, 4)
     assert output["decoder_slot_usage"].shape == (batch_size, 4)
-    assert output["decoder_null_usage"].shape == (batch_size,)
     assert output["cm_anchor_pos"].shape == (batch_size, 4, 3)
     assert output["cm_anchor_normal"].shape == (batch_size, 4, 3)
     assert output["pred_obj_flow"].shape == (batch_size, num_obj, 3)
-    torch.testing.assert_close(output["all_cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
+    torch.testing.assert_close(output["cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
     torch.testing.assert_close(output["cm_slot_weights"].sum(dim=-1), torch.ones(batch_size, 4))
     torch.testing.assert_close(
-        output["decoder_slot_usage"].sum(dim=-1) + output["decoder_null_usage"],
+        output["decoder_slot_usage"].sum(dim=-1),
         torch.ones(batch_size),
     )
     torch.testing.assert_close(
@@ -71,8 +68,8 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     repeated_output = head(**repeated_inputs)
     repeated_output_again = head(**repeated_inputs)
     for key in (
-        "cm_tokens", "cm_assignment", "all_cm_assignment", "cm_slot_weights", "slot_gate",
-        "slot_nonzero_prob", "decoder_slot_usage", "decoder_null_usage", "pred_obj_flow",
+        "cm_tokens", "cm_assignment", "cm_slot_weights", "slot_gate", "slot_hard_mask",
+        "slot_nonzero_prob", "decoder_slot_usage", "pred_obj_flow",
     ):
         torch.testing.assert_close(repeated_output_again[key], repeated_output[key])
 
@@ -117,7 +114,7 @@ def test_cm_flow_head_restores_metric_anchor_coordinates_after_internal_scaling(
     torch.testing.assert_close(output["pred_obj_flow"], expected_m)
 
 
-def test_hard_concrete_gate_can_close_all_dynamic_slots_with_null_expert() -> None:
+def test_slot_gate_fallback_keeps_one_dynamic_slot_active() -> None:
     torch.manual_seed(13)
     head = CmFlowHead(dense_token_dim=4, cm_dim=8, num_cm_tokens=2, num_slot_iters=1)
     head.eval()
@@ -131,9 +128,8 @@ def test_hard_concrete_gate_can_close_all_dynamic_slots_with_null_expert() -> No
         hand_normals=torch.randn(1, 4, 3), hand_flow=torch.randn(1, 4, 3),
         obj_valid_mask=torch.ones(1, 3, dtype=torch.bool),
     )
-    torch.testing.assert_close(output["slot_gate"], torch.zeros_like(output["slot_gate"]))
-    torch.testing.assert_close(output["decoder_slot_usage"], torch.zeros_like(output["decoder_slot_usage"]))
-    torch.testing.assert_close(output["decoder_null_usage"], torch.ones_like(output["decoder_null_usage"]))
+    torch.testing.assert_close(output["slot_hard_mask"].sum(dim=-1), torch.ones(1, dtype=torch.long))
+    torch.testing.assert_close(output["decoder_slot_usage"].sum(dim=-1), torch.ones(1))
     torch.testing.assert_close(output["pred_obj_flow"], torch.zeros_like(output["pred_obj_flow"]))
 
 

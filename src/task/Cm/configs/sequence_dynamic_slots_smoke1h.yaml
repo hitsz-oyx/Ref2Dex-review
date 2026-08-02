@@ -6,7 +6,8 @@ meta:
   internal_point_flow_scale: 100.0
   loss_flow_weight: 1.0
   loss_slot_count_weight: 1.0e-3
-  loss_null_zero_weight: 0.05
+  loss_slot_confidence_weight: 0.1
+  slot_threshold: 0.85
   loss_active_overlap_weight: 0.0
 
 data:

@@ -81,9 +81,8 @@ def extract_file(
     fields = (
         "raw_frame_id", "next_raw_frame_id", "stride", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
         "pred_obj_flow", "cm_tokens", "cm_tokens_masked", "cm_anchor_pos", "cm_anchor_normal",
-        "cm_assignment", "cm_slot_weights", "slot_gate", "slot_nonzero_prob",
-        "null_token", "null_assignment", "null_slot_weights", "null_candidate_flow",
-        "decoder_slot_usage", "decoder_null_usage",
+        "cm_assignment", "cm_slot_weights", "slot_gate", "slot_hard_mask", "slot_nonzero_prob",
+        "decoder_slot_usage", "dynamic_candidate_flow",
     )
     collected: dict[str, list[np.ndarray]] = {key: [] for key in fields}
     total_squared_error = 0.0

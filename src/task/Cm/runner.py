@@ -102,7 +102,7 @@ class CmActionRunner(BaseRunner):
         flow_mae = (absolute_map * valid.float()).sum() / valid_count.float()
         gt_flow_norm = (torch.linalg.norm(gt_flow, dim=-1) * valid.float()).sum() / valid_count.float()
         pred_flow_norm = (torch.linalg.norm(pred_flow, dim=-1) * valid.float()).sum() / valid_count.float()
-        cm_assignment = prediction["all_cm_assignment"].clamp_min(1e-8)
+        cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
         # 沿 slot 维度求熵再对 N 求平均：惩罚「每个点都均匀分到所有 slot」的情况（鼓励点选最确定的 slot）
@@ -129,12 +129,10 @@ class CmActionRunner(BaseRunner):
             slot_weight_overlap = cm_slot_weights.new_zeros(())
         decoder_slot_usage = prediction["decoder_slot_usage"]
         # decoder_slot_usage: [B, S]  每个样本里每个 slot 被 decoder 实际使用到的程度（例如被分配到的 token 数 / 总数）
-        decoder_null_usage = prediction["decoder_null_usage"]
         mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
         # 沿 batch 维求平均：得到每个 slot 在整个 batch 上的平均使用率 → [S]
-        full_decoder_usage = torch.cat([decoder_null_usage[:, None], decoder_slot_usage], dim=-1)
         full_usage_entropy = -(
-            full_decoder_usage.clamp_min(1e-8) * full_decoder_usage.clamp_min(1e-8).log()
+            decoder_slot_usage.clamp_min(1e-8) * decoder_slot_usage.clamp_min(1e-8).log()
         ).sum(dim=-1)
         decoder_slot_usage_entropy = full_usage_entropy.mean()
         # 对 S 个 slot 的平均使用率求熵：鼓励各 slot 使用率接近均匀分布
@@ -151,26 +149,18 @@ class CmActionRunner(BaseRunner):
             active_overlap_loss = (slot_similarity * active_pair_weight).sum() / active_pair_weight.sum().clamp_min(1e-8)
         else:
             active_overlap_loss = cm_slot_weights.new_zeros(())
-        null_candidate_flow = prediction["null_candidate_flow"]
-        null_zero_loss = internal_flow_smooth_l1(
-            null_candidate_flow,
-            torch.zeros_like(null_candidate_flow),
-            valid,
-            beta_m=float(self.cfg.meta.flow_smooth_l1_beta),
-            internal_scale=float(self.cfg.meta.internal_point_flow_scale),
-        )
+        max_slot_probability = slot_nonzero_prob.max(dim=-1).values
+        confidence_loss = torch.relu(
+            float(self.cfg.meta.slot_threshold) - max_slot_probability
+        ).square().mean()
         total_loss = (
             float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
             + float(self.cfg.meta.loss_slot_count_weight) * slot_count_loss
-            + float(self.cfg.meta.loss_null_zero_weight) * null_zero_loss
+            + float(self.cfg.meta.loss_slot_confidence_weight) * confidence_loss
             + float(self.cfg.meta.loss_active_overlap_weight) * active_overlap_loss
         )
         expected_active_count = slot_nonzero_prob.sum(dim=-1)
-        sampled_active_count = (prediction["slot_gate"] > 0).sum(dim=-1).float()
-        null_assignment_mass = prediction["null_assignment"].mean()
-        null_candidate_flow_norm = (
-            torch.linalg.norm(null_candidate_flow, dim=-1) * valid.float()
-        ).sum() / valid_count.float()
+        sampled_active_count = prediction["slot_hard_mask"].sum(dim=-1).float()
         dynamic_candidate_flow = prediction["dynamic_candidate_flow"]
         dynamic_slot_std = torch.linalg.norm(dynamic_candidate_flow.std(dim=2), dim=-1)
         dynamic_slot_std = (dynamic_slot_std * valid.float()).sum() / valid_count.float()
@@ -192,7 +182,7 @@ class CmActionRunner(BaseRunner):
             "decoder_slot_usage_entropy": decoder_slot_usage_entropy,
             "decoder_slot_usage_max": mean_decoder_slot_usage.max(),
             "slot_count_loss": slot_count_loss,
-            "null_zero_loss": null_zero_loss,
+            "slot_confidence_loss": confidence_loss,
             "active_overlap_loss": active_overlap_loss,
             "slot/expected_active_mean": expected_active_count.mean(),
             "slot/sampled_active_mean": sampled_active_count.mean(),
@@ -203,9 +193,6 @@ class CmActionRunner(BaseRunner):
             "gate/log_alpha_min": slot_gate_logits.min(),
             "gate/log_alpha_max": slot_gate_logits.max(),
             "slot/active_overlap": active_overlap_loss,
-            "null/candidate_flow_norm": null_candidate_flow_norm,
-            "null/decoder_usage": decoder_null_usage.mean(),
-            "null/assignment_mass": null_assignment_mass,
             "candidate_flow/dynamic_pairwise_cosine": dynamic_pairwise_cosine,
             "candidate_flow/dynamic_slot_std": dynamic_slot_std,
             "decoder/effective_branch_count": effective_branch_count,

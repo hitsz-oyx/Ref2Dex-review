@@ -142,16 +142,16 @@ class CmFlowHead(nn.Module):
         num_cm_tokens: int = 16,
         num_slot_iters: int = 3,
         internal_point_flow_scale: float = 1.0,
+        slot_threshold: float = 0.5,
     ) -> None:
         super().__init__()
         self.dense_token_dim = int(dense_token_dim)
         self.cm_dim = int(cm_dim)
         self.num_cm_tokens = int(num_cm_tokens)
         self.num_dynamic_slots = int(num_cm_tokens)
-        self.num_total_slots = self.num_dynamic_slots + 1
-        self.null_slot_idx = self.num_dynamic_slots
         self.num_slot_iters = int(num_slot_iters)
         self.internal_point_flow_scale = float(internal_point_flow_scale)
+        self.slot_threshold = float(slot_threshold)
         if self.internal_point_flow_scale <= 0.0:
             raise ValueError("internal_point_flow_scale must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
@@ -161,7 +161,7 @@ class CmFlowHead(nn.Module):
         self.hand_motion_encoder = _mlp(self.dense_token_dim + 10, cm_dim, cm_dim)
         self.slot_attention = SlotAttention(
             dim=cm_dim,
-            num_slots=self.num_total_slots,
+            num_slots=self.num_dynamic_slots,
             num_iterations=num_slot_iters,
         )
         # One shared gate head preserves the permutation symmetry of Slot
@@ -172,7 +172,7 @@ class CmFlowHead(nn.Module):
             nn.GELU(),
             nn.Linear(cm_dim // 2, 1),
         )
-        nn.init.zeros_(self.slot_gate_head[-1].weight)
+        nn.init.normal_(self.slot_gate_head[-1].weight, std=1e-3)
         nn.init.zeros_(self.slot_gate_head[-1].bias)
         self.hard_concrete = HardConcreteGate()
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
@@ -189,11 +189,6 @@ class CmFlowHead(nn.Module):
         # initialization lets the decoder learn slot selection immediately.
         self.edge_logit_head = nn.Linear(cm_dim // 2, 1)
         self.edge_flow_head = nn.Linear(cm_dim // 2, 3)
-        self.dynamic_group_logit_head = nn.Sequential(
-            nn.Linear(cm_dim, cm_dim // 2),
-            nn.GELU(),
-            nn.Linear(cm_dim // 2, 1),
-        )
         nn.init.normal_(self.edge_logit_head.weight, std=1e-3)
         nn.init.zeros_(self.edge_logit_head.bias)
         nn.init.zeros_(self.edge_flow_head.weight)
@@ -230,62 +225,44 @@ class CmFlowHead(nn.Module):
             dim=-1,
         )
         u_hand = self.hand_motion_encoder(hand_input)
-        all_cm_tokens, all_cm_assignment, all_cm_slot_weights = self.slot_attention(u_hand)
-        cm_tokens = all_cm_tokens[:, :self.num_dynamic_slots]
-        cm_assignment = all_cm_assignment[:, :self.num_dynamic_slots]
-        cm_slot_weights = all_cm_slot_weights[:, :self.num_dynamic_slots]
-        null_token = all_cm_tokens[:, self.null_slot_idx:self.null_slot_idx + 1]
-        null_assignment = all_cm_assignment[:, self.null_slot_idx:self.null_slot_idx + 1]
-        null_slot_weights = all_cm_slot_weights[:, self.null_slot_idx:self.null_slot_idx + 1]
+        cm_tokens, cm_assignment, cm_slot_weights = self.slot_attention(u_hand)
         slot_gate_logits = self.slot_gate_head(cm_tokens).squeeze(-1)
-        slot_gate, slot_nonzero_prob = self.hard_concrete(slot_gate_logits)
+        slot_nonzero_prob = self.hard_concrete.nonzero_probability(slot_gate_logits)
+        hard_slot_mask = slot_nonzero_prob >= self.slot_threshold
+        all_below_threshold = ~hard_slot_mask.any(dim=-1, keepdim=True)
+        selection_score = slot_gate_logits
+        if self.training:
+            selection_score = selection_score + 1e-3 * torch.randn_like(selection_score)
+        fallback_index = selection_score.argmax(dim=-1, keepdim=True)
+        fallback_mask = torch.zeros_like(slot_nonzero_prob).scatter_(1, fallback_index, 1.0).bool()
+        hard_slot_mask = torch.where(all_below_threshold, fallback_mask, hard_slot_mask)
+        # Strict binary routing in the forward pass, while flow gradients use
+        # the continuous gate probability as a straight-through estimator.
+        slot_gate = slot_nonzero_prob + (hard_slot_mask.float() - slot_nonzero_prob).detach()
 
         obj_context = self.object_context_encoder(
             torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
         )
-        all_cm_anchor_pos_internal = torch.einsum("bkh,bhd->bkd", all_cm_slot_weights, hand_points_internal)
-        all_cm_anchor_normal = torch.einsum("bkh,bhd->bkd", all_cm_slot_weights, hand_normals)
-        all_cm_anchor_normal = F.normalize(all_cm_anchor_normal, dim=-1, eps=1e-6)
+        cm_anchor_pos_internal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points_internal)
+        cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
+        cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
         num_obj = obj_points.shape[1]
         edge_input = torch.cat(
             [
-                obj_context.unsqueeze(2).expand(-1, -1, self.num_total_slots, -1),
-                all_cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1),
-                obj_points_internal.unsqueeze(2) - all_cm_anchor_pos_internal.unsqueeze(1),
-                all_cm_anchor_normal.unsqueeze(1).expand(-1, num_obj, -1, -1),
+                obj_context.unsqueeze(2).expand(-1, -1, self.num_dynamic_slots, -1),
+                cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1),
+                obj_points_internal.unsqueeze(2) - cm_anchor_pos_internal.unsqueeze(1),
+                cm_anchor_normal.unsqueeze(1).expand(-1, num_obj, -1, -1),
             ],
             dim=-1,
         )
         edge_features = self.edge_backbone(edge_input)
-        all_logits = self.edge_logit_head(edge_features).squeeze(-1)
-        all_flow = self.edge_flow_head(edge_features)
-        dynamic_logits = all_logits[..., :self.num_dynamic_slots]
-        dynamic_flow = all_flow[..., :self.num_dynamic_slots, :]
-        null_logits = all_logits[..., self.null_slot_idx:self.null_slot_idx + 1]
-        null_flow_internal = all_flow[..., self.null_slot_idx:self.null_slot_idx + 1, :]
-        dynamic_gate = slot_gate[:, None, :]
-        active_dynamic = dynamic_gate > 0
-        gated_dynamic_logits = dynamic_logits + torch.log(dynamic_gate.clamp_min(1e-12))
-        gated_dynamic_logits = gated_dynamic_logits.masked_fill(~active_dynamic, -torch.inf)
-        # softmax(-inf, ..., -inf) is undefined.  The explicit fallback does
-        # not contribute flow because dynamic mass is forced to zero below.
-        has_active_dynamic = active_dynamic.any(dim=2, keepdim=True)
-        safe_dynamic_logits = torch.where(has_active_dynamic, gated_dynamic_logits, torch.zeros_like(gated_dynamic_logits))
-        dynamic_inner_weight = torch.softmax(safe_dynamic_logits, dim=2)
-
-        # First choose null vs. dynamic as a two-way mixture.  The dynamic
-        # branch logit is independent of the number of active slots, avoiding
-        # the flat 17-way softmax's implicit reward for opening more slots.
-        dynamic_group_logits = self.dynamic_group_logit_head(obj_context)
-        branch_weight = torch.softmax(torch.cat([null_logits, dynamic_group_logits], dim=2), dim=2)
-        dynamic_branch_weight = branch_weight[..., 1:2] * has_active_dynamic.float()
-        null_weight = 1.0 - dynamic_branch_weight
-        edge_weight = dynamic_inner_weight * dynamic_branch_weight
-        pred_obj_flow_internal = (
-            null_weight.unsqueeze(-1) * null_flow_internal
-            + (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2, keepdim=True)
-        ).squeeze(2)
+        dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
+        dynamic_flow = self.edge_flow_head(edge_features)
+        routing_logits = dynamic_logits + torch.log(slot_gate[:, None, :].clamp_min(1e-8))
+        edge_weight = torch.softmax(routing_logits, dim=2)
+        pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2)
         # Restore metres at the public model boundary; runner losses and
         # visualization therefore remain unit-consistent with cached data.
         pred_obj_flow = pred_obj_flow_internal / scale
@@ -299,25 +276,16 @@ class CmFlowHead(nn.Module):
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
             "cm_tokens_masked": cm_tokens * slot_gate.unsqueeze(-1),
-            "null_token": null_token,
-            "cm_anchor_pos": all_cm_anchor_pos_internal[:, :self.num_dynamic_slots] / scale,
-            "cm_anchor_normal": all_cm_anchor_normal[:, :self.num_dynamic_slots],
-            "null_anchor_pos": all_cm_anchor_pos_internal[:, self.null_slot_idx:self.null_slot_idx + 1] / scale,
-            "null_anchor_normal": all_cm_anchor_normal[:, self.null_slot_idx:self.null_slot_idx + 1],
+            "cm_anchor_pos": cm_anchor_pos_internal / scale,
+            "cm_anchor_normal": cm_anchor_normal,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
-            "all_cm_assignment": all_cm_assignment,
-            "null_assignment": null_assignment,
-            "null_slot_weights": null_slot_weights,
             "slot_gate_logits": slot_gate_logits,
             "slot_gate": slot_gate,
+            "slot_hard_mask": hard_slot_mask,
             "slot_nonzero_prob": slot_nonzero_prob,
             "decoder_slot_usage": decoder_slot_usage,
-            "decoder_null_usage": (null_weight.squeeze(-1) * obj_valid_mask.float()).sum(dim=1)
-            / obj_valid_mask.sum(dim=1).clamp_min(1).float(),
-            "null_candidate_flow": null_flow_internal.squeeze(2) / scale,
             "dynamic_candidate_flow": dynamic_flow / scale,
-            "dynamic_branch_weight": dynamic_branch_weight.squeeze(-1),
         }
 
 
@@ -347,6 +315,7 @@ class CmFlowModel(nn.Module):
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
             internal_point_flow_scale=float(meta.internal_point_flow_scale),
+            slot_threshold=float(meta.slot_threshold),
         )
 
     @property

@@ -1,13 +1,14 @@
 _base_: src.task.Cm.config:Config
 
-name: cm_dynamic_slots_two_level_smoke12_1h
+name: cm_dynamic_slots_hard_gate_smoke12_1h
 
 meta:
   internal_point_flow_scale: 100.0
   loss_flow_weight: 1.0
   # This is now a sum across 16 dynamic slots rather than a normalized mean.
   loss_slot_count_weight: 1.0e-3
-  loss_null_zero_weight: 0.05
+  loss_slot_confidence_weight: 0.1
+  slot_threshold: 0.85
   loss_active_overlap_weight: 0.0
 
 data:
@@ -21,7 +22,7 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_dynamic_slots_two_level_smoke12_1h
+  output_dir: outputs/train/cm_dynamic_slots_hard_gate_smoke12_1h
   device: cuda:0
   lr: 1.5e-4
   amp: false
@@ -33,4 +34,4 @@ train:
 
 wandb:
   enable: false
-  tags: [cm, dynamic-slots, hard-concrete, learned-null-slot, two-level-mixture, smoke12]
+  tags: [cm, dynamic-slots, hard-gate, straight-through, fallback-slot, smoke12]
