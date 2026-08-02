@@ -138,7 +138,10 @@ class CmActionRunner(BaseRunner):
         # 对 S 个 slot 的平均使用率求熵：鼓励各 slot 使用率接近均匀分布
         # 防止某些 slot 完全没被用上（collapse）
         slot_nonzero_prob = prediction["slot_nonzero_prob"]
-        slot_count_loss = slot_nonzero_prob.sum(dim=-1).mean()
+        max_slot_probability = slot_nonzero_prob.max(dim=-1).values
+        # A fallback guarantees one slot, so its probability is free; only
+        # extra slots pay the L0-style count cost.
+        slot_count_loss = (slot_nonzero_prob.sum(dim=-1) - max_slot_probability).mean()
         # Only pairs that are currently active contribute.  Slot weights are
         # probability distributions across hand points, so their cosine
         # similarity measures redundant hand-region assignment.
@@ -149,7 +152,6 @@ class CmActionRunner(BaseRunner):
             active_overlap_loss = (slot_similarity * active_pair_weight).sum() / active_pair_weight.sum().clamp_min(1e-8)
         else:
             active_overlap_loss = cm_slot_weights.new_zeros(())
-        max_slot_probability = slot_nonzero_prob.max(dim=-1).values
         confidence_loss = torch.relu(
             float(self.cfg.meta.slot_threshold) - max_slot_probability
         ).square().mean()
@@ -161,6 +163,9 @@ class CmActionRunner(BaseRunner):
         )
         expected_active_count = slot_nonzero_prob.sum(dim=-1)
         sampled_active_count = prediction["slot_hard_mask"].sum(dim=-1).float()
+        pre_fallback_mask = slot_nonzero_prob >= float(self.cfg.meta.slot_threshold)
+        fallback_used = prediction["slot_fallback_used"]
+        fallback_index = prediction["slot_fallback_index"]
         dynamic_candidate_flow = prediction["dynamic_candidate_flow"]
         dynamic_slot_std = torch.linalg.norm(dynamic_candidate_flow.std(dim=2), dim=-1)
         dynamic_slot_std = (dynamic_slot_std * valid.float()).sum() / valid_count.float()
@@ -187,6 +192,10 @@ class CmActionRunner(BaseRunner):
             "slot/expected_active_mean": expected_active_count.mean(),
             "slot/sampled_active_mean": sampled_active_count.mean(),
             "slot/sampled_active_min": sampled_active_count.min(),
+            "slot/pre_fallback_active_mean": pre_fallback_mask.float().sum(dim=-1).mean(),
+            "slot/fallback_ratio": fallback_used.float().mean(),
+            "slot/max_probability_mean": max_slot_probability.mean(),
+            "slot/max_probability_min": max_slot_probability.min(),
             "slot/sampled_active_max": sampled_active_count.max(),
             "slot/gate_probability_mean": slot_nonzero_prob.mean(),
             "gate/log_alpha_mean": slot_gate_logits.mean(),
@@ -202,6 +211,14 @@ class CmActionRunner(BaseRunner):
             {
                 f"decoder_slot_usage/slot_{slot_idx:02d}": usage
                 for slot_idx, usage in enumerate(mean_decoder_slot_usage)
+            }
+        )
+        metrics.update(
+            {
+                f"slot/fallback_winner/slot_{slot_idx:02d}": (
+                    fallback_used & (fallback_index == slot_idx)
+                ).float().mean()
+                for slot_idx in range(num_slots)
             }
         )
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(pred_flow.shape[0]))

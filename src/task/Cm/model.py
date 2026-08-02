@@ -236,9 +236,6 @@ class CmFlowHead(nn.Module):
         fallback_index = selection_score.argmax(dim=-1, keepdim=True)
         fallback_mask = torch.zeros_like(slot_nonzero_prob).scatter_(1, fallback_index, 1.0).bool()
         hard_slot_mask = torch.where(all_below_threshold, fallback_mask, hard_slot_mask)
-        # Strict binary routing in the forward pass, while flow gradients use
-        # the continuous gate probability as a straight-through estimator.
-        slot_gate = slot_nonzero_prob + (hard_slot_mask.float() - slot_nonzero_prob).detach()
 
         obj_context = self.object_context_encoder(
             torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
@@ -260,8 +257,15 @@ class CmFlowHead(nn.Module):
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
         dynamic_flow = self.edge_flow_head(edge_features)
-        routing_logits = dynamic_logits + torch.log(slot_gate[:, None, :].clamp_min(1e-8))
-        edge_weight = torch.softmax(routing_logits, dim=2)
+        # Forward routing is strictly masked, but its backward pass follows a
+        # probability-weighted soft route.  Applying straight-through here
+        # (rather than before clamp/log) keeps flow-to-gate gradients alive for
+        # currently inactive slots.
+        soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
+        soft_weight = torch.softmax(soft_routing_logits, dim=2)
+        hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
+        hard_weight = torch.softmax(hard_routing_logits, dim=2)
+        edge_weight = soft_weight + (hard_weight - soft_weight).detach()
         pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2)
         # Restore metres at the public model boundary; runner losses and
         # visualization therefore remain unit-consistent with cached data.
@@ -275,15 +279,17 @@ class CmFlowHead(nn.Module):
         return {
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
-            "cm_tokens_masked": cm_tokens * slot_gate.unsqueeze(-1),
+            "cm_tokens_masked": cm_tokens * hard_slot_mask.unsqueeze(-1),
             "cm_anchor_pos": cm_anchor_pos_internal / scale,
             "cm_anchor_normal": cm_anchor_normal,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
             "slot_gate_logits": slot_gate_logits,
-            "slot_gate": slot_gate,
+            "slot_gate": hard_slot_mask.float(),
             "slot_hard_mask": hard_slot_mask,
             "slot_nonzero_prob": slot_nonzero_prob,
+            "slot_fallback_used": all_below_threshold.squeeze(-1),
+            "slot_fallback_index": fallback_index.squeeze(-1),
             "decoder_slot_usage": decoder_slot_usage,
             "dynamic_candidate_flow": dynamic_flow / scale,
         }
