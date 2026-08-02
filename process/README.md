@@ -97,6 +97,19 @@ python -m process.ARCTIC.optimize \
 可用 `--seq s05/box_grab_01`、`--subject s05` 或 `--raw-file <path>`
 限制输入范围。
 
+生成 `correspondence_ptv3_v2` / DenseToken 使用的 Stage 3 v2：
+
+```bash
+python -m process.ARCTIC.export_stage3_v2 \
+  --stage2-root processed_data/generated/stage2/arctic_initonly_4096 \
+  --output-root processed_data/generated/stage3/arctic_initonly_4096_hand_root_v2 \
+  --num-obj-pool 4096 \
+  --num-obj-train 512 \
+  --candidate-threshold 0.05 \
+  --coordinate-frame hand_root \
+  --device cuda
+```
+
 ## Stage 3
 
 ```bash
