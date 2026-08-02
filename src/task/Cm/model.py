@@ -173,22 +173,31 @@ class CmFlowHead(nn.Module):
             nn.Linear(cm_dim // 2, 1),
         )
         nn.init.zeros_(self.slot_gate_head[-1].weight)
-        nn.init.constant_(self.slot_gate_head[-1].bias, 2.0)
+        nn.init.zeros_(self.slot_gate_head[-1].bias)
         self.hard_concrete = HardConcreteGate()
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
         # Object feature, Cm feature, relative object-to-soft-anchor position,
         # and soft-anchor hand normal.  Cm already contains the hand motion,
         # so exposing the pooled hand flow here would bypass the bottleneck.
-        self.flow_edge = nn.Sequential(
+        self.edge_backbone = nn.Sequential(
             nn.Linear(cm_dim * 2 + 6, cm_dim),
             nn.GELU(),
             nn.Linear(cm_dim, cm_dim // 2),
             nn.GELU(),
-            nn.Linear(cm_dim // 2, 4),
         )
-        # Point flow is measured in metres and normally starts close to zero.
-        nn.init.zeros_(self.flow_edge[-1].weight)
-        nn.init.zeros_(self.flow_edge[-1].bias)
+        # Keep candidate flow at zero initially, while a tiny asymmetric logit
+        # initialization lets the decoder learn slot selection immediately.
+        self.edge_logit_head = nn.Linear(cm_dim // 2, 1)
+        self.edge_flow_head = nn.Linear(cm_dim // 2, 3)
+        self.dynamic_group_logit_head = nn.Sequential(
+            nn.Linear(cm_dim, cm_dim // 2),
+            nn.GELU(),
+            nn.Linear(cm_dim // 2, 1),
+        )
+        nn.init.normal_(self.edge_logit_head.weight, std=1e-3)
+        nn.init.zeros_(self.edge_logit_head.bias)
+        nn.init.zeros_(self.edge_flow_head.weight)
+        nn.init.zeros_(self.edge_flow_head.bias)
 
     def forward(
         self,
@@ -248,22 +257,35 @@ class CmFlowHead(nn.Module):
             ],
             dim=-1,
         )
-        edge_output = self.flow_edge(edge_input)
-        all_logits = edge_output[..., 0]
-        all_flow = edge_output[..., 1:]
+        edge_features = self.edge_backbone(edge_input)
+        all_logits = self.edge_logit_head(edge_features).squeeze(-1)
+        all_flow = self.edge_flow_head(edge_features)
         dynamic_logits = all_logits[..., :self.num_dynamic_slots]
         dynamic_flow = all_flow[..., :self.num_dynamic_slots, :]
         null_logits = all_logits[..., self.null_slot_idx:self.null_slot_idx + 1]
         null_flow_internal = all_flow[..., self.null_slot_idx:self.null_slot_idx + 1, :]
         dynamic_gate = slot_gate[:, None, :]
+        active_dynamic = dynamic_gate > 0
         gated_dynamic_logits = dynamic_logits + torch.log(dynamic_gate.clamp_min(1e-12))
-        gated_dynamic_logits = gated_dynamic_logits.masked_fill(dynamic_gate == 0, -torch.inf)
-        mixture_logits = torch.cat([null_logits, gated_dynamic_logits], dim=2)
-        mixture_flow = torch.cat([null_flow_internal, dynamic_flow], dim=2)
-        mixture_weight = torch.softmax(mixture_logits, dim=2)
-        null_weight = mixture_weight[..., :1]
-        edge_weight = mixture_weight[..., 1:]
-        pred_obj_flow_internal = (mixture_weight.unsqueeze(-1) * mixture_flow).sum(dim=2)
+        gated_dynamic_logits = gated_dynamic_logits.masked_fill(~active_dynamic, -torch.inf)
+        # softmax(-inf, ..., -inf) is undefined.  The explicit fallback does
+        # not contribute flow because dynamic mass is forced to zero below.
+        has_active_dynamic = active_dynamic.any(dim=2, keepdim=True)
+        safe_dynamic_logits = torch.where(has_active_dynamic, gated_dynamic_logits, torch.zeros_like(gated_dynamic_logits))
+        dynamic_inner_weight = torch.softmax(safe_dynamic_logits, dim=2)
+
+        # First choose null vs. dynamic as a two-way mixture.  The dynamic
+        # branch logit is independent of the number of active slots, avoiding
+        # the flat 17-way softmax's implicit reward for opening more slots.
+        dynamic_group_logits = self.dynamic_group_logit_head(obj_context)
+        branch_weight = torch.softmax(torch.cat([null_logits, dynamic_group_logits], dim=2), dim=2)
+        dynamic_branch_weight = branch_weight[..., 1:2] * has_active_dynamic.float()
+        null_weight = 1.0 - dynamic_branch_weight
+        edge_weight = dynamic_inner_weight * dynamic_branch_weight
+        pred_obj_flow_internal = (
+            null_weight.unsqueeze(-1) * null_flow_internal
+            + (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2, keepdim=True)
+        ).squeeze(2)
         # Restore metres at the public model boundary; runner losses and
         # visualization therefore remain unit-consistent with cached data.
         pred_obj_flow = pred_obj_flow_internal / scale
@@ -294,6 +316,8 @@ class CmFlowHead(nn.Module):
             "decoder_null_usage": (null_weight.squeeze(-1) * obj_valid_mask.float()).sum(dim=1)
             / obj_valid_mask.sum(dim=1).clamp_min(1).float(),
             "null_candidate_flow": null_flow_internal.squeeze(2) / scale,
+            "dynamic_candidate_flow": dynamic_flow / scale,
+            "dynamic_branch_weight": dynamic_branch_weight.squeeze(-1),
         }
 
 

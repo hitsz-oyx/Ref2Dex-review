@@ -133,13 +133,14 @@ class CmActionRunner(BaseRunner):
         mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
         # 沿 batch 维求平均：得到每个 slot 在整个 batch 上的平均使用率 → [S]
         full_decoder_usage = torch.cat([decoder_null_usage[:, None], decoder_slot_usage], dim=-1)
-        decoder_slot_usage_entropy = -(
+        full_usage_entropy = -(
             full_decoder_usage.clamp_min(1e-8) * full_decoder_usage.clamp_min(1e-8).log()
-        ).sum(dim=-1).mean()
+        ).sum(dim=-1)
+        decoder_slot_usage_entropy = full_usage_entropy.mean()
         # 对 S 个 slot 的平均使用率求熵：鼓励各 slot 使用率接近均匀分布
         # 防止某些 slot 完全没被用上（collapse）
         slot_nonzero_prob = prediction["slot_nonzero_prob"]
-        slot_count_loss = slot_nonzero_prob.mean()
+        slot_count_loss = slot_nonzero_prob.sum(dim=-1).mean()
         # Only pairs that are currently active contribute.  Slot weights are
         # probability distributions across hand points, so their cosine
         # similarity measures redundant hand-region assignment.
@@ -170,6 +171,15 @@ class CmActionRunner(BaseRunner):
         null_candidate_flow_norm = (
             torch.linalg.norm(null_candidate_flow, dim=-1) * valid.float()
         ).sum() / valid_count.float()
+        dynamic_candidate_flow = prediction["dynamic_candidate_flow"]
+        dynamic_slot_std = torch.linalg.norm(dynamic_candidate_flow.std(dim=2), dim=-1)
+        dynamic_slot_std = (dynamic_slot_std * valid.float()).sum() / valid_count.float()
+        normalized_dynamic_flow = F.normalize(dynamic_candidate_flow, dim=-1, eps=1e-8)
+        dynamic_flow_similarity = normalized_dynamic_flow @ normalized_dynamic_flow.transpose(2, 3)
+        dynamic_off_diagonal = ~torch.eye(num_slots, device=dynamic_flow_similarity.device, dtype=torch.bool)
+        dynamic_pairwise_cosine = dynamic_flow_similarity[:, :, dynamic_off_diagonal].mean()
+        slot_gate_logits = prediction["slot_gate_logits"]
+        effective_branch_count = full_usage_entropy.exp().mean()
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
             "flow_smooth_l1": flow_smooth_l1,
@@ -189,10 +199,16 @@ class CmActionRunner(BaseRunner):
             "slot/sampled_active_min": sampled_active_count.min(),
             "slot/sampled_active_max": sampled_active_count.max(),
             "slot/gate_probability_mean": slot_nonzero_prob.mean(),
+            "gate/log_alpha_mean": slot_gate_logits.mean(),
+            "gate/log_alpha_min": slot_gate_logits.min(),
+            "gate/log_alpha_max": slot_gate_logits.max(),
             "slot/active_overlap": active_overlap_loss,
             "null/candidate_flow_norm": null_candidate_flow_norm,
             "null/decoder_usage": decoder_null_usage.mean(),
             "null/assignment_mass": null_assignment_mass,
+            "candidate_flow/dynamic_pairwise_cosine": dynamic_pairwise_cosine,
+            "candidate_flow/dynamic_slot_std": dynamic_slot_std,
+            "decoder/effective_branch_count": effective_branch_count,
             "valid_object_count": valid_count.float(),
         }
         metrics.update(

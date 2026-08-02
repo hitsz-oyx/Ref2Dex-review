@@ -103,7 +103,7 @@ def test_cm_flow_head_restores_metric_anchor_coordinates_after_internal_scaling(
     # A nonzero internal-centimetre decoder output must be restored to metres.
     head.eval()
     with torch.no_grad():
-        head.flow_edge[-1].bias[1:] = torch.tensor([1.0, 2.0, 3.0])
+        head.edge_flow_head.bias.copy_(torch.tensor([1.0, 2.0, 3.0]))
         head.slot_gate_head[-1].weight.zero_()
         head.slot_gate_head[-1].bias.fill_(100.0)
     output = head(
