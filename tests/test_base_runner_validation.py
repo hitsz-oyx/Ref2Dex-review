@@ -86,3 +86,29 @@ def test_step_validation_uses_the_same_stop_path() -> None:
 
     assert handled == [({"val/loss": 1.0}, 1)]
     assert runner.global_step == 1
+
+
+def test_test_loader_bundle_is_separate_from_validation() -> None:
+    runner = BaseRunner.__new__(BaseRunner)
+    train = object()
+    val = object()
+    test = object()
+    unpacked = runner._unpack_dataloader_bundle(
+        (train, val, test, {"source": "unit-test"}, {"val/": val}, {"test/": test})
+    )
+
+    assert unpacked == (
+        train, val, test, {"source": "unit-test"}, {"val/": val}, {"test/": test}
+    )
+
+
+def test_eval_mode_prefers_test_metrics_when_available() -> None:
+    runner = BaseRunner.__new__(BaseRunner)
+    runner.mode = "eval"
+    runner.test_loaders = {"test/": object()}
+    runner.test_loader = None
+    runner.is_primary = False
+    runner.evaluate_test_all = lambda: {"test/loss": 0.1}
+    runner.evaluate_all = lambda: {"val/loss": 0.2}
+
+    assert runner.run() == {"test/loss": 0.1}

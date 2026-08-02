@@ -985,7 +985,7 @@ def make_dataloaders(
         "apply_hand_perturb": bool(getattr(meta_cfg, "val_augment", False)),
         "hand_perturb_prob": float(getattr(meta_cfg, "val_hand_perturb_prob", 1.0)),
     }
-    train_loader, val_loader, metadata = make_file_split_dataloaders(
+    train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(
         data_cfg,
         seed,
         dataset_cls=CorrStaticDataset,
@@ -1089,4 +1089,6 @@ def make_dataloaders(
                 "val_loader_names": sorted(val_loaders),
             }
         )
-    return train_loader, val_loader, metadata, val_loaders
+    test_loaders = {"test/": test_loader} if test_loader is not None else {}
+    metadata["test_loader_names"] = sorted(test_loaders)
+    return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders

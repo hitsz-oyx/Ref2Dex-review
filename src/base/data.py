@@ -136,28 +136,32 @@ def make_file_split_dataloaders(
     file_pattern: str = "*.npz",
     train_dataset_kwargs: dict[str, Any] | None = None,
     val_dataset_kwargs: dict[str, Any] | None = None,
+    test_dataset_kwargs: dict[str, Any] | None = None,
     split_group_fn: Callable[[Path], str] | None = None,
     distributed: Any | None = None,
-) -> tuple[DataLoader, DataLoader | None, dict[str, Any]]:
-    """Build deterministic file-level train/validation loaders.
+) -> tuple[DataLoader, DataLoader | None, DataLoader | None, dict[str, Any]]:
+    """Build deterministic train/validation/test file loaders.
 
     Ref2Dex tasks own their sample schema and Dataset implementation.  The
     base layer only owns the shared file split, worker seeding, and DDP sampler
     policy.
 
-    中文：构造「按文件粒度」做 train/val 切分的 DataLoader。
+    中文：构造 train/val/test DataLoader。
     - 各 task 自己拥有 sample schema 和 Dataset 实现；
     - base 层只负责共享的文件切分、worker seed 注入和 DDP sampler 策略。
+    - ``test_path`` 必须显式提供，绝不从训练目录切分，避免测试集泄漏。
     """
     # 把 data_cfg 里的相对路径解析为绝对路径；root 通常是项目根，用作相对路径基准
     train_path = resolve_data_path(data_cfg.train_path, root=root)
     val_path = None if data_cfg.val_path in {None, ""} else resolve_data_path(data_cfg.val_path, root=root)
+    test_path = None if getattr(data_cfg, "test_path", None) in {None, ""} else resolve_data_path(data_cfg.test_path, root=root)
     val_split = float(data_cfg.val_split)
     # resolve_data_dir 允许把一个文件路径标准化为「它所在的目录」；默认就是恒等
     resolve_data_dir = resolve_data_dir or (lambda path: path)
     # 复制 kwargs 避免外部 dict 被原地修改
     train_dataset_kwargs = dict(train_dataset_kwargs or {})
     val_dataset_kwargs = dict(val_dataset_kwargs or {})
+    test_dataset_kwargs = dict(test_dataset_kwargs or val_dataset_kwargs)
     split_metadata: dict[str, Any] = {}
 
     def build_dataset(path, *, file_list=None, kwargs: dict[str, Any]):
@@ -204,6 +208,12 @@ def make_file_split_dataloaders(
             else None
         )
 
+    test_dataset = (
+        build_dataset(test_path, kwargs=test_dataset_kwargs)
+        if test_path is not None
+        else None
+    )
+
     # loader_seed：worker 初始化的 RNG 用；DDP 时叠加 rank 让各 rank 的随机流不冲突
     loader_seed = int(seed) + int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
     # 训练 sampler：DDP 时返回 DistributedSampler；否则按 shuffle 选 Random/Sequential
@@ -232,13 +242,29 @@ def make_file_split_dataloaders(
             sampler=make_default_eval_sampler(val_dataset, distributed=distributed),
             **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
         )
+    test_loader = None
+    if test_dataset is not None:
+        test_batch_size = (
+            getattr(data_cfg, "test_batch_size", None)
+            or getattr(data_cfg, "val_batch_size", None)
+            or data_cfg.batch_size
+        )
+        test_loader = dataloader_cls(
+            test_dataset,
+            batch_size=int(test_batch_size),
+            shuffle=False,
+            sampler=make_default_eval_sampler(test_dataset, distributed=distributed),
+            **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
+        )
 
     # 把路径、样本数等元信息返回出去，给 logger / runner 记录
     metadata = {
         "train_path": str(train_path),
         "val_path": None if val_path is None else str(val_path),
+        "test_path": None if test_path is None else str(test_path),
         "num_train_samples": len(train_dataset),
         "num_val_samples": 0 if val_dataset is None else len(val_dataset),
+        "num_test_samples": 0 if test_dataset is None else len(test_dataset),
     }
     metadata.update(split_metadata)
-    return train_loader, val_loader, metadata
+    return train_loader, val_loader, test_loader, metadata

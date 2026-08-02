@@ -242,7 +242,7 @@ def _sequence_group_key(path: Path) -> str:
 
 
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any | None = None):
-    """构造训练 / 验证 DataLoader，并为每个 val_stride 单独构造一个 view。
+    """Construct train/validation/test loaders with fixed-stride eval views.
 
     验证分多种 horizon 评估，所以同一个序列在不同 fixed_stride 下重复构造 dataset。
     """
@@ -250,11 +250,13 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
               "base_seed": int(seed), "active_only": bool(getattr(data_cfg, "active_only", True)),
               "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 10)),
               "coordinate_frame": str(meta_cfg.coordinate_frame)}
-    train_loader, val_loader, metadata = make_file_split_dataloaders(
+    train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(
         data_cfg, seed, dataset_cls=Stage4CmDataset, file_pattern="**/*.npz",
         train_dataset_kwargs={**common, "max_samples": getattr(data_cfg, "max_train_samples", None)},
         val_dataset_kwargs={**common, "fixed_stride": int(getattr(data_cfg, "val_stride", 1)),
                             "max_samples": getattr(data_cfg, "max_val_samples", None)},
+        test_dataset_kwargs={**common, "fixed_stride": int(getattr(data_cfg, "test_stride", 1)),
+                             "max_samples": getattr(data_cfg, "max_test_samples", None)},
         split_group_fn=_sequence_group_key if bool(getattr(data_cfg, "group_val_by_sequence", True)) else None,
         distributed=distributed,
     )
@@ -267,19 +269,21 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
                      "max_stride": common["max_stride"], "ds_rate": int(train_loader.dataset.ds_rate),
                      "source_fps": float(train_loader.dataset.source_fps),
                      "effective_fps": float(train_loader.dataset.effective_fps)})
-    val_loaders: dict[str, DataLoader] = {}
-    if val_loader is not None:
-        # Evaluation is deterministic and reports each fixed horizon separately.
-        # Constructing views from the held-out file list preserves the original
-        # sequence-level split without materializing pair files.
-        val_paths = val_loader.dataset.file_paths
+    def make_stride_loaders(loader: DataLoader | None, *, root_path: Any, prefix: str, max_samples: Any) -> dict[str, DataLoader]:
+        if loader is None:
+            return {}
+        # Fixed-horizon views preserve the held-out sequence file list without
+        # materializing pair files.  The same path is used only as Dataset's
+        # root; ``file_list`` is the authoritative membership.
+        held_out_paths = loader.dataset.file_paths
+        stride_loaders: dict[str, DataLoader] = {}
         for stride in tuple(getattr(data_cfg, "val_strides", (1, 2, 3, 4, 5))):
             stride = int(stride)
             if not common["min_stride"] <= stride <= common["max_stride"]:
                 continue
             dataset = Stage4CmDataset(
-                data_cfg.val_path or data_cfg.train_path, file_list=val_paths,
-                fixed_stride=stride, max_samples=getattr(data_cfg, "max_val_samples", None), **common,
+                root_path, file_list=held_out_paths, fixed_stride=stride,
+                max_samples=max_samples, **common,
             )
             loader_kwargs = {"batch_size": int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
                              "shuffle": False, "num_workers": int(getattr(data_cfg, "num_workers", 0)),
@@ -294,8 +298,19 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
                 prefetch = getattr(data_cfg, "prefetch_factor", None)
                 if prefetch is not None:
                     loader_kwargs["prefetch_factor"] = int(prefetch)
-            val_loaders[f"val/stride_{stride}/"] = DataLoader(dataset, **loader_kwargs)
-    if val_loader is not None and not val_loaders:
-        val_loaders["val/stride_1/"] = val_loader
+            stride_loaders[f"{prefix}/stride_{stride}/"] = DataLoader(dataset, **loader_kwargs)
+        if not stride_loaders:
+            stride_loaders[f"{prefix}/stride_1/"] = loader
+        return stride_loaders
+
+    val_loaders = make_stride_loaders(
+        val_loader, root_path=data_cfg.val_path or data_cfg.train_path,
+        prefix="val", max_samples=getattr(data_cfg, "max_val_samples", None),
+    )
+    test_loaders = make_stride_loaders(
+        test_loader, root_path=data_cfg.test_path,
+        prefix="test", max_samples=getattr(data_cfg, "max_test_samples", None),
+    )
     metadata["val_loader_names"] = sorted(val_loaders)
-    return train_loader, val_loader, metadata, val_loaders
+    metadata["test_loader_names"] = sorted(test_loaders)
+    return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders

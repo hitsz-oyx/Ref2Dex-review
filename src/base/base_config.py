@@ -57,9 +57,13 @@ class TaskConfig(BaseConfig):
     class data(BaseConfig):
         train_path = ""
         val_path = None
+        # ``test_path`` is intentionally explicit: test data must never be
+        # sampled from training data or used by the training loop.
+        test_path = None
         val_split = 0.1
         batch_size = 256
         val_batch_size = None
+        test_batch_size = None
         num_workers = 0
         shuffle = True
         drop_last = False

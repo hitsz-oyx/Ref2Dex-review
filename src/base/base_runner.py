@@ -166,6 +166,8 @@ class BaseRunner:
         self.train_loader = None
         self.val_loader = None
         self.val_loaders: dict[str, Any] = {}
+        self.test_loader = None
+        self.test_loaders: dict[str, Any] = {}
         self.model: torch.nn.Module | None = None
         self.optimizer: torch.optim.Optimizer | None = None
         self.scheduler: Any | None = None
@@ -203,7 +205,7 @@ class BaseRunner:
     def run(self) -> dict[str, float]:
         if self.mode == "train":
             return self.learn()
-        metrics = self.evaluate_all()
+        metrics = self.evaluate_test_all() if self._resolve_test_loaders() else self.evaluate_all()
         if self.is_primary:
             for key, value in metrics.items():
                 print(f"{key}: {value:.6g}")
@@ -395,6 +397,13 @@ class BaseRunner:
             metrics.update(self.evaluate_loader(loader, prefix=prefix))
         return metrics
 
+    def evaluate_test_all(self) -> dict[str, float]:
+        """Evaluate the held-out test set without affecting model selection."""
+        metrics: dict[str, float] = {}
+        for prefix, loader in self._resolve_test_loaders().items():
+            metrics.update(self.evaluate_loader(loader, prefix=prefix))
+        return metrics
+
     def make_dataloaders(self, data_cfg, seed: int):
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement make_dataloaders(). "
@@ -553,7 +562,8 @@ class BaseRunner:
             save_config(self.cfg, self.output_dir / "config.json")
         barrier()
         dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
-        self.train_loader, self.val_loader, self.metadata, self.val_loaders = (
+        (self.train_loader, self.val_loader, self.test_loader, self.metadata,
+         self.val_loaders, self.test_loaders) = (
             self._unpack_dataloader_bundle(dataloader_bundle)
         )
         self.configure_data(self.metadata, self.train_loader.dataset)
@@ -599,11 +609,12 @@ class BaseRunner:
 
     def _setup_eval(self, checkpoint: str | Path) -> None:
         dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
-        self.train_loader, self.val_loader, self.metadata, self.val_loaders = (
+        (self.train_loader, self.val_loader, self.test_loader, self.metadata,
+         self.val_loaders, self.test_loaders) = (
             self._unpack_dataloader_bundle(dataloader_bundle)
         )
-        if not self.val_loaders:
-            raise ValueError("No validation dataset is available. Set data.val_path or data.val_split > 0.")
+        if not self.val_loaders and not self.test_loaders:
+            raise ValueError("No evaluation dataset is available. Set data.val_path, data.val_split > 0, or data.test_path.")
         self.configure_data(self.metadata, self.train_loader.dataset)
         self.model = self.build_model(self.cfg.model).to(self.device)
         self.load(checkpoint, load_optimizer=False, map_location=self.device)
@@ -990,17 +1001,18 @@ class BaseRunner:
         slug = slug.strip("._-")
         return slug or "task"
 
-    def _unpack_dataloader_bundle(self, bundle: Any) -> tuple[Any, Any, dict[str, Any], dict[str, Any]]:
+    def _unpack_dataloader_bundle(self, bundle: Any) -> tuple[Any, Any, Any, dict[str, Any], dict[str, Any], dict[str, Any]]:
         if not isinstance(bundle, tuple):
             raise TypeError(
                 "make_dataloaders() must return a tuple of "
-                "(train_loader, val_loader, metadata) or "
-                "(train_loader, val_loader, metadata, val_loaders)."
+                "(train_loader, val_loader, metadata), "
+                "(train_loader, val_loader, metadata, val_loaders), or "
+                "(train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders)."
             )
         if len(bundle) == 3:
             train_loader, val_loader, metadata = bundle
             val_loaders = {"val/": val_loader} if val_loader is not None else {}
-            return train_loader, val_loader, metadata, val_loaders
+            return train_loader, val_loader, None, metadata, val_loaders, {}
         if len(bundle) == 4:
             train_loader, val_loader, metadata, val_loaders = bundle
             resolved_val_loaders = {
@@ -1010,10 +1022,23 @@ class BaseRunner:
             }
             if not resolved_val_loaders and val_loader is not None:
                 resolved_val_loaders = {"val/": val_loader}
-            return train_loader, val_loader, metadata, resolved_val_loaders
+            return train_loader, val_loader, None, metadata, resolved_val_loaders, {}
+        if len(bundle) == 6:
+            train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders = bundle
+            resolved_val_loaders = {
+                str(prefix): loader for prefix, loader in dict(val_loaders or {}).items() if loader is not None
+            }
+            resolved_test_loaders = {
+                str(prefix): loader for prefix, loader in dict(test_loaders or {}).items() if loader is not None
+            }
+            if not resolved_val_loaders and val_loader is not None:
+                resolved_val_loaders = {"val/": val_loader}
+            if not resolved_test_loaders and test_loader is not None:
+                resolved_test_loaders = {"test/": test_loader}
+            return train_loader, val_loader, test_loader, metadata, resolved_val_loaders, resolved_test_loaders
         raise ValueError(
             "make_dataloaders() returned an unexpected tuple length. "
-            f"Expected 3 or 4 values, got {len(bundle)}."
+            f"Expected 3, 4, or 6 values, got {len(bundle)}."
         )
 
     def _resolve_val_loaders(self) -> dict[str, Any]:
@@ -1021,6 +1046,13 @@ class BaseRunner:
             return self.val_loaders
         if self.val_loader is not None:
             return {"val/": self.val_loader}
+        return {}
+
+    def _resolve_test_loaders(self) -> dict[str, Any]:
+        if self.test_loaders:
+            return self.test_loaders
+        if self.test_loader is not None:
+            return {"test/": self.test_loader}
         return {}
 
     def _require_train_ready(self) -> None:
