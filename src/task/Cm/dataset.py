@@ -80,7 +80,7 @@ class Stage4CmDataset(Dataset):
         active_only: bool = True,
         # 当前帧到未来帧之间的最小/最大间隔，按缓存后的时间轴计数。
         min_stride: int = 1,
-        max_stride: int = 12,
+        max_stride: int = 10,
         # 验证时若指定 fixed_stride，则每个样本都使用同一个 stride，便于对比
         fixed_stride: int | None = None,
         # 可选：只取前 N 个样本，方便做小型实验
@@ -248,7 +248,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     """
     common = {"num_obj_points": int(meta_cfg.num_obj_points), "num_hand_points": int(meta_cfg.num_hand_points),
               "base_seed": int(seed), "active_only": bool(getattr(data_cfg, "active_only", True)),
-              "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 12)),
+              "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 10)),
               "coordinate_frame": str(meta_cfg.coordinate_frame)}
     train_loader, val_loader, metadata = make_file_split_dataloaders(
         data_cfg, seed, dataset_cls=Stage4CmDataset, file_pattern="**/*.npz",

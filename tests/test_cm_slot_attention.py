@@ -31,6 +31,8 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     assert head.hand_motion_encoder[0].in_features == 8 + 10
     assert output["cm_tokens"].shape == (batch_size, 4, 16)
     assert output["cm_assignment"].shape == (batch_size, 4, num_hand)
+    assert output["all_cm_assignment"].shape == (batch_size, 5, num_hand)
+    assert output["null_assignment"].shape == (batch_size, 1, num_hand)
     assert output["cm_slot_weights"].shape == (batch_size, 4, num_hand)
     assert output["slot_gate"].shape == (batch_size, 4)
     assert output["slot_nonzero_prob"].shape == (batch_size, 4)
@@ -39,7 +41,7 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     assert output["cm_anchor_pos"].shape == (batch_size, 4, 3)
     assert output["cm_anchor_normal"].shape == (batch_size, 4, 3)
     assert output["pred_obj_flow"].shape == (batch_size, num_obj, 3)
-    torch.testing.assert_close(output["cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
+    torch.testing.assert_close(output["all_cm_assignment"].sum(dim=1), torch.ones(batch_size, num_hand))
     torch.testing.assert_close(output["cm_slot_weights"].sum(dim=-1), torch.ones(batch_size, 4))
     torch.testing.assert_close(
         output["decoder_slot_usage"].sum(dim=-1) + output["decoder_null_usage"],
@@ -69,7 +71,7 @@ def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None
     repeated_output = head(**repeated_inputs)
     repeated_output_again = head(**repeated_inputs)
     for key in (
-        "cm_tokens", "cm_assignment", "cm_slot_weights", "slot_gate",
+        "cm_tokens", "cm_assignment", "all_cm_assignment", "cm_slot_weights", "slot_gate",
         "slot_nonzero_prob", "decoder_slot_usage", "decoder_null_usage", "pred_obj_flow",
     ):
         torch.testing.assert_close(repeated_output_again[key], repeated_output[key])
@@ -104,8 +106,6 @@ def test_cm_flow_head_restores_metric_anchor_coordinates_after_internal_scaling(
         head.flow_edge[-1].bias[1:] = torch.tensor([1.0, 2.0, 3.0])
         head.slot_gate_head[-1].weight.zero_()
         head.slot_gate_head[-1].bias.fill_(100.0)
-        head.null_logit_head[-1].weight.zero_()
-        head.null_logit_head[-1].bias.fill_(-100.0)
     output = head(
         z_obj=torch.randn(1, 2, 4), z_hand=torch.randn(1, 3, 4),
         dense_hand_contact=torch.rand(1, 3), obj_points=torch.randn(1, 2, 3),

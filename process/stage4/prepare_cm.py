@@ -214,8 +214,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ds-rate",
         type=int,
-        default=1,
-        help="Raw-frame subsampling before sequence caching; default keeps every GRAB frame.",
+        default=4,
+        help="Raw-frame subsampling before sequence caching; default is ds_rate=4 (30 Hz).",
     )
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument(

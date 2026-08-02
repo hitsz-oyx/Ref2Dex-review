@@ -4,15 +4,9 @@ name: cm_sequence_ds4_dynamic_slots
 
 meta:
   internal_point_flow_scale: 100.0
-  # The count penalty is ramped in after the initial expert-learning phase.
-  # Keep overlap disabled for the first run; it remains available as a small
-  # second-stage regularizer if diagnostics show duplicate active slots.
   loss_slot_count_weight: 1.0e-3
+  loss_null_zero_weight: 0.05
   loss_active_overlap_weight: 0.0
-  slot_gate_warmup_ratio: 0.1
-  slot_count_warmup_ratio: 0.1
-  null_warmup_ratio: 0.1
-  null_warmup_logit: -3.0
 
 data:
   train_path: processed_data/generated/cm_sequence_cache_ds4

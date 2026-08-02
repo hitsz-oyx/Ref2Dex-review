@@ -35,8 +35,13 @@ def _ensure_cm_runner(runner) -> CmActionRunner:
 
 def _scalar_fields(input_path: Path) -> dict[str, np.ndarray]:
     keys = ("seq_id", "subject_id", "seq_name", "object_name", "side", "coordinate_frame")
-    with np.load(input_path, allow_pickle=False) as data:
-        return {key: np.asarray(data[key]) for key in keys if key in data.files}
+    shared_path = input_path.parent / "shared.npz"
+    fields: dict[str, np.ndarray] = {}
+    with np.load(shared_path, allow_pickle=False) as shared:
+        fields.update({key: np.asarray(shared[key]) for key in keys if key in shared.files})
+    with np.load(input_path, allow_pickle=False) as hand:
+        fields.update({key: np.asarray(hand[key]) for key in keys if key in hand.files})
+    return fields
 
 
 def _predict_batch(runner: CmActionRunner, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
@@ -77,7 +82,8 @@ def extract_file(
         "raw_frame_id", "next_raw_frame_id", "stride", "selected_obj_idx", "obj_valid_mask", "obj_flow_gt",
         "pred_obj_flow", "cm_tokens", "cm_tokens_masked", "cm_anchor_pos", "cm_anchor_normal",
         "cm_assignment", "cm_slot_weights", "slot_gate", "slot_nonzero_prob",
-        "effective_slot_nonzero_prob", "decoder_slot_usage", "decoder_null_usage",
+        "null_token", "null_assignment", "null_slot_weights", "null_candidate_flow",
+        "decoder_slot_usage", "decoder_null_usage",
     )
     collected: dict[str, list[np.ndarray]] = {key: [] for key in fields}
     total_squared_error = 0.0
@@ -124,7 +130,11 @@ def main() -> None:
     runner.setup_inference(args.checkpoint)
     runner = _ensure_cm_runner(runner)
     source = Path(args.stage4_input).resolve()
-    inputs = sorted(source.glob("**/*.npz")) if source.is_dir() else [source]
+    inputs = (
+        sorted([*source.glob("**/left.npz"), *source.glob("**/right.npz")])
+        if source.is_dir()
+        else [source]
+    )
     if not inputs:
         raise FileNotFoundError(f"No Stage 4 files found at {source}")
     output_root = Path(args.output_root).resolve()
