@@ -29,6 +29,9 @@ class Config(TaskConfig):
         # ``python -m src.task.Cm.compute_flow_scale``.  They are stored in
         # config so every checkpoint/inference run can use the same scale.
         flow_target_rms_m: float | None = None
+        # Formal experiments require train-root calibration metadata; legacy
+        # and explicit scale ablations can opt out deliberately.
+        require_flow_calibration: bool = False
         geometry_input_scale: float = 1.0
         hand_flow_input_scale: float = 1.0
         object_flow_target_scale: float = 1.0

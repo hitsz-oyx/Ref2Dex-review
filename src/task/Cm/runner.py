@@ -118,15 +118,16 @@ class CmActionRunner(BaseRunner):
             for key, value in metrics.items()
             if not (key.startswith("val/stride_") or key.startswith("test/stride_"))
         }
-        for stride in (1, 5, 10):
-            prefix = f"val/stride_{stride}/flow/epe_mm"
-            if prefix in metrics:
-                keep[prefix] = metrics[prefix]
+        for split in ("val", "test"):
+            for stride in (1, 5, 10):
+                key = f"{split}/stride_{stride}/flow/epe_mm"
+                if key in metrics:
+                    keep[key] = metrics[key]
         return keep
 
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         core_keys = (
-            "loss", "flow/loss_scaled", "flow/epe_mm", "flow/norm_ratio", "lr", "grad_norm",
+            "loss", "flow/loss_scaled", "flow/epe_mm", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
             "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
         )
@@ -153,6 +154,15 @@ class CmActionRunner(BaseRunner):
             for key in core_keys
             if f"{suffix}{key}" in metrics
         }
+        epe_mm = metrics.get(f"{suffix}flow/epe_mm")
+        gt_norm_mm = metrics.get(f"{suffix}flow/gt_norm_mm")
+        pred_norm_mm = metrics.get(f"{suffix}flow/pred_norm_mm")
+        if epe_mm is not None and gt_norm_mm is not None:
+            relative_epe = epe_mm / max(gt_norm_mm, 1e-8)
+            result["epoch/flow/relative_epe"] = relative_epe
+            result["epoch/flow/zero_flow_improvement"] = 1.0 - relative_epe
+        if pred_norm_mm is not None and gt_norm_mm is not None:
+            result["epoch/flow/norm_ratio"] = pred_norm_mm / max(gt_norm_mm, 1e-8)
         if f"{suffix}grad_clipped" in metrics:
             result["epoch/optim/grad_clipped_fraction"] = metrics[f"{suffix}grad_clipped"]
         if f"{suffix}grad_norm" in metrics:
@@ -197,6 +207,24 @@ class CmActionRunner(BaseRunner):
                 "Cm config object_flow_target_scale does not match train metadata: "
                 f"{target_scale} != {metadata_scale}. Recalibrate or update the config."
             )
+        required_calibration_keys = {
+            "flow_target_rms_m",
+            "flow_target_scale",
+            "statistics_split",
+            "statistics_active_only",
+            "statistics_num_obj_points",
+            "statistics_stride_distribution",
+            "statistics_stride_weighting",
+            "statistics_point_weighting",
+        }
+        if bool(getattr(self.cfg.meta, "require_flow_calibration", False)):
+            missing = sorted(required_calibration_keys.difference(metadata))
+            if missing:
+                raise ValueError(
+                    "Missing Cm flow calibration metadata in the train root: "
+                    f"{missing}. Run src.task.Cm.compute_flow_scale or explicitly "
+                    "set meta.require_flow_calibration=false for an ablation."
+                )
         calibration_checks = {
             "statistics_split": ("train", str),
             "statistics_active_only": (bool(self.cfg.data.active_only), bool),

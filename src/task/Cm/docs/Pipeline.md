@@ -45,12 +45,14 @@ PYTHONPATH=. python -m src.task.Cm.train \
 ```
 
 启动时会检查 schema、hand-root 坐标系、object/hand 点数和 calibration metadata。
-若 `object_flow_target_scale`、stride 范围、`active_only` 或 512 点采样规则与
-metadata 不一致，训练会失败而不是静默使用错误 scale。
+正式配置的 `meta.require_flow_calibration: true` 要求 metadata 完整存在；若
+`object_flow_target_scale`、stride 范围、`active_only` 或 512 点采样规则不一致，
+训练会失败而不是静默使用错误 scale。只做 scale 消融时，才应显式关闭该字段。
 
-验证会完整计算每个固定 stride 的 EPE、GT norm、pred norm、relative EPE 和 norm
-ratio。JSONL 中保留 `val/stride_*/*`；W&B 记录汇总及 stride 1/5/10 EPE。最佳模型
-由 `val/mean_stride_epe_mm` 决定。overfit 配置没有验证集，故
+训练 step 只记录 EPE；训练 epoch 在全 epoch 点加权聚合后再计算 relative EPE、
+norm ratio 与 zero-flow improvement。验证会完整计算每个固定 stride 的同类指标。
+JSONL 中保留 `val/stride_*/*` 与 `test/stride_*/*`；W&B 对两者都记录汇总及
+stride 1/5/10 EPE。最佳模型由 `val/mean_stride_epe_mm` 决定。overfit 配置没有验证集，故
 `metric_for_best: null`，应查看 latest checkpoint 与训练曲线。
 
 评估或测试：

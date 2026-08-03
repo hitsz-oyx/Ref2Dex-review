@@ -59,8 +59,9 @@ Runner 再将预测和 GT 同乘 `object_flow_target_scale`，以米制 `flow_sm
 梯度。旧 `internal_point_flow_scale` 仅作临时兼容并会告警；新配置不得使用它。
 
 正式 scale 只能从 train split 通过 `python -m src.task.Cm.compute_flow_scale`
-计算。metadata 保存 stride、active-only、点数和权重规则；启动训练时会与 config
-交叉检查，并验证 `flow_target_rms_m * object_flow_target_scale ≈ 1`。
+计算。metadata 保存 stride、active-only、点数和权重规则；正式配置设置
+`require_flow_calibration: true`，缺失这些 metadata 会拒绝启动。启动训练还会与
+config 交叉检查，并验证 `flow_target_rms_m * object_flow_target_scale ≈ 1`。
 
 ## 评估与诊断
 

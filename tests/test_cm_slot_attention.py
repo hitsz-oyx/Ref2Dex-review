@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from src.task.Cm.model import CmFlowHead, CmFlowModel
-from src.task.Cm.runner import internal_flow_smooth_l1, scaled_flow_smooth_l1
+from src.task.Cm.runner import CmActionRunner, internal_flow_smooth_l1, scaled_flow_smooth_l1
 
 
 def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None:
@@ -199,3 +201,57 @@ def test_public_meter_output_and_scaled_loss_cancel_target_scale() -> None:
     direct_grad = torch.autograd.grad(direct, pred_scaled)[0]
     torch.testing.assert_close(indirect, direct)
     torch.testing.assert_close(indirect_grad, direct_grad)
+
+
+def test_epoch_ratios_and_test_stride_wandb_selection() -> None:
+    runner = object.__new__(CmActionRunner)
+    runner.cfg = SimpleNamespace(meta=SimpleNamespace(loss_active_overlap_weight=0.0))
+    epoch = runner.select_epoch_metrics({
+        "train_epoch/flow/epe_mm": 4.0,
+        "train_epoch/flow/gt_norm_mm": 8.0,
+        "train_epoch/flow/pred_norm_mm": 6.0,
+    })
+    assert epoch["epoch/flow/relative_epe"] == 0.5
+    assert epoch["epoch/flow/norm_ratio"] == 0.75
+    assert epoch["epoch/flow/zero_flow_improvement"] == 0.5
+    selected = runner.select_eval_metrics({
+        "val/stride_1/flow/epe_mm": 1.0,
+        "test/stride_10/flow/epe_mm": 10.0,
+        "test/stride_2/flow/epe_mm": 2.0,
+        "test/mean_stride_epe_mm": 4.0,
+    })
+    assert "val/stride_1/flow/epe_mm" in selected
+    assert "test/stride_10/flow/epe_mm" in selected
+    assert "test/stride_2/flow/epe_mm" not in selected
+
+
+def test_required_flow_calibration_metadata_is_strict() -> None:
+    runner = object.__new__(CmActionRunner)
+    runner.cfg = SimpleNamespace(
+        meta=SimpleNamespace(
+            coordinate_frame="hand_root_t", num_obj_points=512, num_hand_points=1538,
+            flow_target_rms_m=0.1, object_flow_target_scale=10.0,
+            require_flow_calibration=True,
+        ),
+        data=SimpleNamespace(active_only=True, min_stride=1, max_stride=10),
+    )
+    metadata = {
+        "coordinate_frame": "hand_root_t", "num_obj_points": 512, "num_hand_points": 1538,
+    }
+    try:
+        runner.configure_data(metadata)
+    except ValueError as exc:
+        assert "Missing Cm flow calibration metadata" in str(exc)
+    else:
+        raise AssertionError("Expected missing calibration metadata to fail.")
+    metadata.update({
+        "flow_target_rms_m": 0.1,
+        "flow_target_scale": 10.0,
+        "statistics_split": "train",
+        "statistics_active_only": True,
+        "statistics_num_obj_points": 512,
+        "statistics_stride_distribution": "uniform_1_to_10",
+        "statistics_stride_weighting": "equal_per_stride",
+        "statistics_point_weighting": "per_pair_capped_at_num_obj_points",
+    })
+    runner.configure_data(metadata)

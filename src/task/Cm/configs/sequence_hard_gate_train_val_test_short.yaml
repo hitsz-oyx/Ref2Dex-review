@@ -5,6 +5,7 @@ name: cm_hard_gate_train_val_test_short
 meta:
   flow_smooth_l1_beta: 0.005
   flow_target_rms_m: 0.07591041486549019
+  require_flow_calibration: true
   geometry_input_scale: 100.0
   hand_flow_input_scale: 20.0
   object_flow_target_scale: 13.17342293243891
