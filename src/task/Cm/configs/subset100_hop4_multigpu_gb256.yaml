@@ -38,7 +38,7 @@ train:
   log_every_steps: 20
   eval_every_epochs: 1
   save_every_epochs: 5
-  metric_for_best: val/flow_mse
+  metric_for_best: val/flow_residual_norm_mean
   lower_is_better: true
   distributed:
     enable: true

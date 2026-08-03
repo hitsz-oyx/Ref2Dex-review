@@ -4,6 +4,7 @@ name: cm_hard_gate_train_val_test_short
 
 meta:
   internal_point_flow_scale: 100.0
+  flow_smooth_l1_beta: 0.005
   loss_flow_weight: 1.0
   loss_slot_count_weight: 1.0e-3
   loss_slot_confidence_weight: 0.1
@@ -28,20 +29,20 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_hard_gate_train_val_test_short
-  device: cuda:0
+  output_dir: outputs/train/cm_hard_gate_train_val_test_vector_huber_10k
+  device: cuda:3
   lr: 1.5e-4
   amp: false
   epochs: 100
-  max_steps: 8000
+  max_steps: 10000
   log_every_steps: 100
   eval_every_epochs: 5
   save_every_steps: 1000
   save_every_epochs: 5
   # The test set is deliberately excluded from checkpoint selection.
-  metric_for_best: val/mean_stride_flow_mse
+  metric_for_best: val/mean_stride_relative_epe
   lower_is_better: true
 
 wandb:
   enable: false
-  tags: [cm, hard-gate, train-val-test, weight-straight-through, fallback]
+  tags: [cm, hard-gate, train-val-test, vector-huber, epe, fallback]

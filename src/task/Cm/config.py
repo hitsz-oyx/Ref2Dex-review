@@ -22,7 +22,9 @@ class Config(TaskConfig):
         cm_dim: int = 256
         num_cm_tokens: int = 16
         slot_iters: int = 3
-        flow_smooth_l1_beta: float = 0.01
+        # Vector Huber transition in metres; 5 mm is close to the expected
+        # point-flow noise scale while retaining EPE-like gradients above it.
+        flow_smooth_l1_beta: float = 0.005
         loss_flow_weight: float = 1.0
         loss_slot_count_weight: float = 1.0e-3
         loss_slot_confidence_weight: float = 0.1
@@ -55,7 +57,7 @@ class Config(TaskConfig):
     class train(TaskConfig.train):
         output_dir = "outputs/train/cm_action"
         amp = False
-        metric_for_best = "val/flow_mse"
+        metric_for_best = "val/mean_stride_relative_epe"
         lower_is_better = True
 
     class wandb(TaskConfig.wandb):

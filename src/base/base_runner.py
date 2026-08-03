@@ -287,7 +287,9 @@ class BaseRunner:
             if self.global_step % self.cfg.train.log_every_steps == 0:
                 logged = {
                     f"train_step/{key}": value
-                    for key, value in self._reduce_step_metrics(metrics).items()
+                    for key, value in self.select_step_metrics(
+                        self._reduce_step_metrics(metrics)
+                    ).items()
                 }
                 self._record_metrics(logged, epoch + 1)
 
@@ -299,7 +301,9 @@ class BaseRunner:
             if self._step_due(self.cfg.train.save_every_steps):
                 self.save(epoch=epoch + 1, is_best=False)
 
-        epoch_metrics = self._compute_averager_metrics(averager, prefix="train_epoch/")
+        epoch_metrics = self.select_epoch_metrics(
+            self._compute_averager_metrics(averager, prefix="train_epoch/")
+        )
         self._record_metrics(epoch_metrics, epoch + 1)
         return epoch_metrics
 
@@ -337,15 +341,22 @@ class BaseRunner:
         if "loss" not in metrics:
             metrics["loss"] = loss.detach()
         metrics["lr"] = self.optimizer.param_groups[0]["lr"]
-        should_log_grad_metrics = ((self.global_step + 1) % self.cfg.train.log_every_steps == 0)
-        if should_log_grad_metrics:
-            grad_norm_value = float(grad_norm.detach().cpu() if torch.is_tensor(grad_norm) else grad_norm)
-            metrics["grad_norm"] = grad_norm_value
-            if grad_clip_norm is not None:
-                grad_clip_norm = float(grad_clip_norm)
-                metrics["grad_clip_threshold"] = grad_clip_norm
-                metrics["grad_clip_ratio"] = grad_norm_value / max(grad_clip_norm, 1e-12)
-                metrics["grad_clipped"] = float(grad_norm_value > grad_clip_norm)
+        grad_norm_value = float(grad_norm.detach().cpu() if torch.is_tensor(grad_norm) else grad_norm)
+        metrics["grad_norm"] = grad_norm_value
+        if grad_clip_norm is not None:
+            metrics["grad_clipped"] = float(grad_norm_value > float(grad_clip_norm))
+        return metrics
+
+    def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        """Return metrics recorded at ``log_every_steps``.
+
+        Tasks may override this to keep high-frequency dashboards concise while
+        still retaining richer diagnostics in epoch-level metrics.
+        """
+        return metrics
+
+    def select_epoch_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        """Return metrics recorded once per training epoch."""
         return metrics
 
     def _autocast_dtype(self) -> torch.dtype:

@@ -185,8 +185,6 @@ class CmFlowHead(nn.Module):
             nn.Linear(cm_dim, cm_dim // 2),
             nn.GELU(),
         )
-        # Keep candidate flow at zero initially, while a tiny asymmetric logit
-        # initialization lets the decoder learn slot selection immediately.
         self.edge_logit_head = nn.Linear(cm_dim // 2, 1)
         self.edge_flow_head = nn.Linear(cm_dim // 2, 3)
         nn.init.normal_(self.edge_logit_head.weight, std=1e-3)
@@ -257,10 +255,6 @@ class CmFlowHead(nn.Module):
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
         dynamic_flow = self.edge_flow_head(edge_features)
-        # Forward routing is strictly masked, but its backward pass follows a
-        # probability-weighted soft route.  Applying straight-through here
-        # (rather than before clamp/log) keeps flow-to-gate gradients alive for
-        # currently inactive slots.
         soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
         soft_weight = torch.softmax(soft_routing_logits, dim=2)
         hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
@@ -336,7 +330,10 @@ class CmFlowModel(nn.Module):
     def num_cm_tokens(self) -> int:
         return self.head.num_cm_tokens
 
-    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def forward(
+        self,
+        batch: dict[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
         z_obj, z_hand, dense_hand_contact = self.dense_encoder(
             obj_points=batch["obj_points"],
             obj_normals=batch["obj_normals"],
