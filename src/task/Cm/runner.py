@@ -1,6 +1,7 @@
 """BaseRunner integration for CmAction temporal point-flow learning."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -82,11 +83,11 @@ class CmActionRunner(BaseRunner):
         norm_ratio = values("flow/norm_ratio")
         summary: dict[str, float] = {}
         if epe:
-            summary[f"{split}/mean_stride_epe"] = float(sum(epe) / len(epe))
+            summary[f"{split}/mean_stride_epe_mm"] = float(sum(epe) / len(epe))
         if relative_epe:
             summary[f"{split}/mean_stride_relative_epe"] = float(sum(relative_epe) / len(relative_epe))
         if p90:
-            summary[f"{split}/epe_p90"] = float(sum(p90) / len(p90))
+            summary[f"{split}/mean_stride_epe_p90_mm"] = float(sum(p90) / len(p90))
         if improvement:
             summary[f"{split}/zero_flow_improvement"] = float(sum(improvement) / len(improvement))
         if norm_ratio:
@@ -94,7 +95,7 @@ class CmActionRunner(BaseRunner):
         for stride in (1, 5, 10):
             key = f"{split}/stride_{stride}/flow/epe_mm"
             if key in metrics:
-                summary[f"{split}/stride_{stride}_epe"] = metrics[key]
+                summary[f"{split}/stride_{stride}_epe_mm"] = metrics[key]
         return summary
 
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
@@ -153,6 +154,23 @@ class CmActionRunner(BaseRunner):
             raise ValueError("Stage 4 runtime object sample count does not match Cm config.")
         if int(metadata.get("num_hand_points", self.cfg.meta.num_hand_points)) != int(self.cfg.meta.num_hand_points):
             raise ValueError("Stage 4 hand point count does not match Cm config.")
+        rms_m = self.cfg.meta.flow_target_rms_m
+        target_scale = float(self.cfg.meta.object_flow_target_scale)
+        if rms_m is not None:
+            normalized_rms = float(rms_m) * target_scale
+            if abs(normalized_rms - 1.0) > 1e-3:
+                raise ValueError(
+                    "flow_target_rms_m and object_flow_target_scale are inconsistent: "
+                    f"{rms_m} * {target_scale} = {normalized_rms}."
+                )
+        metadata_scale = metadata.get("flow_target_scale")
+        if metadata_scale is not None and not math.isclose(
+            target_scale, float(metadata_scale), rel_tol=1e-5, abs_tol=0.0
+        ):
+            raise ValueError(
+                "Cm config object_flow_target_scale does not match train metadata: "
+                f"{target_scale} != {metadata_scale}. Recalibrate or update the config."
+            )
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)

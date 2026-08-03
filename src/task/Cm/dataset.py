@@ -5,6 +5,7 @@ correspondence-motion）任务样本。
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 import multiprocessing as mp
@@ -269,6 +270,24 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
                      "max_stride": common["max_stride"], "ds_rate": int(train_loader.dataset.ds_rate),
                      "source_fps": float(train_loader.dataset.source_fps),
                      "effective_fps": float(train_loader.dataset.effective_fps)})
+    # Calibration is fitted on training data only.  Propagate it into runner
+    # metadata so a stale hand-copied config cannot silently change units.
+    calibration_path = Path(metadata["train_path"]) / "metadata.json"
+    if calibration_path.exists():
+        try:
+            calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{calibration_path} is not valid JSON.") from exc
+        if not isinstance(calibration, dict):
+            raise ValueError(f"{calibration_path} must contain a JSON object.")
+        metadata.update({
+            key: calibration[key]
+            for key in (
+                "flow_target_rms_m", "flow_target_scale", "statistics_split",
+                "statistics_num_obj_points", "statistics_point_weighting",
+            )
+            if key in calibration
+        })
     def make_stride_loaders(loader: DataLoader | None, *, root_path: Any, prefix: str, max_samples: Any) -> dict[str, DataLoader]:
         if loader is None:
             return {}

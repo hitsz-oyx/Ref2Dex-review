@@ -24,7 +24,7 @@ train:
   epochs: 500
   max_steps: 300
   log_every_steps: 25
-  metric_for_best: train_epoch/flow_residual_norm_mean
+  metric_for_best: train_epoch/flow/epe_mm
 
 wandb:
   enable: false

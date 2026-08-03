@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from src.task.Cm.model import CmFlowHead, CmFlowModel
-from src.task.Cm.runner import internal_flow_smooth_l1
+from src.task.Cm.runner import internal_flow_smooth_l1, scaled_flow_smooth_l1
 
 
 def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None:
@@ -178,3 +179,23 @@ def test_dense_token_input_stays_in_metres_and_internal_loss_scales_gradient() -
     grad_m = torch.autograd.grad(loss_m, pred_m, retain_graph=True)[0]
     grad_cm = torch.autograd.grad(loss_cm, pred_m)[0]
     torch.testing.assert_close(grad_cm, grad_m * 100.0)
+
+
+def test_public_meter_output_and_scaled_loss_cancel_target_scale() -> None:
+    scale = 20.0
+    pred_scaled = torch.tensor([[[1.2, 0.0, 0.0]]], requires_grad=True)
+    gt_m = torch.tensor([[[0.05, 0.0, 0.0]]])
+    valid = torch.ones(1, 1, dtype=torch.bool)
+    pred_m = pred_scaled / scale
+    indirect = scaled_flow_smooth_l1(
+        pred_m, gt_m, valid, beta_m=0.005, target_scale=scale,
+    )
+    direct = F.smooth_l1_loss(
+        torch.linalg.vector_norm(pred_scaled - gt_m * scale, dim=-1),
+        torch.zeros(1, 1),
+        beta=0.005 * scale,
+    )
+    indirect_grad = torch.autograd.grad(indirect, pred_scaled, retain_graph=True)[0]
+    direct_grad = torch.autograd.grad(direct, pred_scaled)[0]
+    torch.testing.assert_close(indirect, direct)
+    torch.testing.assert_close(indirect_grad, direct_grad)

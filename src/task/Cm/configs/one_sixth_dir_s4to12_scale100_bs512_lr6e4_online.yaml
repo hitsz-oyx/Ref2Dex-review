@@ -4,7 +4,9 @@ name: cm_sequence_one_sixth_dir_s4to12_scale100_bs512_lr6e4_online
 
 meta:
   dense_checkpoint: /home/wbcd/workspace/oyx_ws/Ref2Dex/src/task/Cm/densetoken_ckpt/best.pt
-  internal_point_flow_scale: 100.0
+  geometry_input_scale: 100.0
+  hand_flow_input_scale: 100.0
+  object_flow_target_scale: 100.0
 
 data:
   train_path: processed_data/generated/cm_sequence_cache_one_sixth
@@ -43,7 +45,7 @@ train:
   log_every_steps: 20
   eval_every_epochs: 1
   save_every_epochs: 1
-  metric_for_best: val/mean_stride_flow_residual_norm_mean
+  metric_for_best: val/mean_stride_epe_mm
   lower_is_better: true
   distributed:
     enable: true

@@ -24,6 +24,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-stride", type=int, default=1)
     parser.add_argument("--max-stride", type=int, default=10)
     parser.add_argument(
+        "--num-obj-points", type=int, default=512,
+        help="Maximum valid object points sampled per training pair.",
+    )
+    parser.add_argument(
         "--include-inactive", action="store_false", dest="active_only", default=True,
         help="Include non-contact current frames instead of the training default active-only filter.",
     )
@@ -57,6 +61,7 @@ def calibrate_flow_scale(
     min_stride: int,
     max_stride: int,
     active_only: bool,
+    num_obj_points: int = 512,
 ) -> dict[str, Any]:
     """Return RMS flow scale statistics over the exact stride population.
 
@@ -67,6 +72,8 @@ def calibrate_flow_scale(
     """
     if min_stride <= 0 or max_stride < min_stride:
         raise ValueError("Require 0 < min_stride <= max_stride.")
+    if num_obj_points <= 0:
+        raise ValueError("num_obj_points must be positive.")
     train_path = train_path.resolve()
     hand_paths = sorted(
         path for path in train_path.glob("**/*.npz") if path.name in {"left.npz", "right.npz"}
@@ -93,11 +100,13 @@ def calibrate_flow_scale(
             if candidate_mask.shape != obj_points.shape[:2]:
                 raise ValueError(f"{hand_path}: candidate mask shape does not match object points")
             frame_count = obj_points.shape[0]
-            for stride in range(min_stride, max_stride + 1):
-                for current in range(frame_count - stride):
-                    candidate = candidate_mask[current]
-                    if active_only and not candidate.any():
-                        continue
+            # Match Stage4CmDataset: every sampled current frame must support
+            # every configured stride, including max_stride.
+            for current in range(frame_count - max_stride):
+                candidate = candidate_mask[current]
+                if active_only and not candidate.any():
+                    continue
+                for stride in range(min_stride, max_stride + 1):
                     # A current hand-root transform is rigid, hence it leaves
                     # ||O_{t+s} - O_t|| unchanged.  Avoiding the transform
                     # makes this full calibration pass inexpensive.
@@ -105,10 +114,15 @@ def calibrate_flow_scale(
                     if active_only:
                         flow = flow[candidate]
                     squared_norm = np.einsum("ij,ij->i", flow, flow)
-                    count = int(squared_norm.size)
-                    if count == 0:
+                    available_count = int(squared_norm.size)
+                    if available_count == 0:
                         continue
-                    sum_value = float(squared_norm.sum(dtype=np.float64))
+                    # Runtime sampling is uniform without replacement among
+                    # candidates and caps each pair at num_obj_points.  Its
+                    # expected mean-square flow is the candidate mean; use
+                    # that expectation with the same effective pair weight.
+                    count = min(available_count, int(num_obj_points))
+                    sum_value = float(squared_norm.mean(dtype=np.float64)) * count
                     squared_sum += sum_value
                     point_count += count
                     pair_count += 1
@@ -146,6 +160,8 @@ def calibrate_flow_scale(
         "statistics_stride_distribution": f"uniform_{min_stride}_to_{max_stride}",
         "statistics_stride_weighting": "equal_per_stride",
         "statistics_active_only": bool(active_only),
+        "statistics_num_obj_points": int(num_obj_points),
+        "statistics_point_weighting": "per_pair_capped_at_num_obj_points",
         "statistics_num_sequences": len(sequence_ids),
         "statistics_num_hand_streams": len(hand_paths),
         "statistics_num_pairs": pair_count,
@@ -161,6 +177,7 @@ def main() -> None:
         min_stride=args.min_stride,
         max_stride=args.max_stride,
         active_only=args.active_only,
+        num_obj_points=args.num_obj_points,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     if args.dry_run:

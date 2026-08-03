@@ -3,9 +3,9 @@ _base_: src.task.Cm.config:Config
 name: cm_sequence_ds4_stride10
 
 meta:
-  # Dataset/DenseToken/output stay in metres; the trainable Cm head operates
-  # on centimetre-scale geometry and uses its matching internal loss.
-  internal_point_flow_scale: 100.0
+  geometry_input_scale: 100.0
+  hand_flow_input_scale: 100.0
+  object_flow_target_scale: 100.0
 
 data:
   train_path: processed_data/generated/cm_sequence_cache_ds4
@@ -31,7 +31,7 @@ train:
   eval_every_epochs: 2
   save_every_steps: 3000
   save_every_epochs: 2
-  metric_for_best: val/mean_stride_flow_residual_norm_mean
+  metric_for_best: val/mean_stride_epe_mm
   lower_is_better: true
 
 wandb:

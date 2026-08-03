@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from typing import Any
 
 import torch
@@ -319,15 +320,39 @@ class CmFlowModel(nn.Module):
         del condition_shape, target_shape
         super().__init__()
         meta = cfg.meta
+        legacy_scale = getattr(meta, "internal_point_flow_scale", None)
+        explicit_scales = (
+            float(meta.geometry_input_scale),
+            float(meta.hand_flow_input_scale),
+            float(meta.object_flow_target_scale),
+        )
+        if legacy_scale is not None:
+            if explicit_scales == (1.0, 1.0, 1.0):
+                warnings.warn(
+                    "meta.internal_point_flow_scale is deprecated; migrate to "
+                    "geometry_input_scale, hand_flow_input_scale, and "
+                    "object_flow_target_scale.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            else:
+                warnings.warn(
+                    "Ignoring deprecated meta.internal_point_flow_scale because "
+                    "explicit Cm scale fields are set.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                legacy_scale = None
         self.dense_encoder = FrozenDenseTokenEncoder(meta.dense_checkpoint)
         self.head = CmFlowHead(
             dense_token_dim=self.dense_encoder.token_dim,
             cm_dim=int(meta.cm_dim),
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
-            geometry_input_scale=float(meta.geometry_input_scale),
-            hand_flow_input_scale=float(meta.hand_flow_input_scale),
-            object_flow_target_scale=float(meta.object_flow_target_scale),
+            geometry_input_scale=explicit_scales[0],
+            hand_flow_input_scale=explicit_scales[1],
+            object_flow_target_scale=explicit_scales[2],
+            internal_point_flow_scale=legacy_scale,
             slot_threshold=float(meta.slot_threshold),
         )
 

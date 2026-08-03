@@ -4,10 +4,10 @@ name: cm_hard_gate_train_val_test_short
 
 meta:
   flow_smooth_l1_beta: 0.005
-  flow_target_rms_m: 0.07785101714457822
+  flow_target_rms_m: 0.07591041486549019
   geometry_input_scale: 100.0
   hand_flow_input_scale: 20.0
-  object_flow_target_scale: 12.845047331146437
+  object_flow_target_scale: 13.17342293243891
   loss_flow_weight: 1.0
   loss_slot_count_weight: 1.0e-3
   loss_slot_confidence_weight: 0.1
@@ -43,7 +43,7 @@ train:
   save_every_steps: 1000
   save_every_epochs: 5
   # The test set is deliberately excluded from checkpoint selection.
-  metric_for_best: val/mean_stride_epe
+  metric_for_best: val/mean_stride_epe_mm
   lower_is_better: true
 
 wandb:
