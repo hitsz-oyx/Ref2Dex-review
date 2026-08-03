@@ -45,3 +45,4 @@ tmp/**
 *.log
 wandb/*
 *.pt
+dataset/*/data

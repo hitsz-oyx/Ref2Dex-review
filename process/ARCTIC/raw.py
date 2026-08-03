@@ -7,9 +7,10 @@ common Stage 2 writer. It does not write a Stage 1 dataset.
 """
 import json               # 读取 parts.json（铰接物体顶/底部件标签）
 import os.path as op      # 路径拼接
+from pathlib import Path
 
 import numpy as np        # 数值计算核心库
-from typing import Optional  # 用于 max_frames: Optional[int]
+from typing import Optional, Union  # 用于 max_frames: Optional[int]
 
 # ============================================================
 # 修复 numpy 1.24+ 兼容性
@@ -134,7 +135,7 @@ def axis_angle_to_rotmat(axis_angle: torch.Tensor) -> torch.Tensor:
 
 
 
-def build_SE3(R: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+def build_SE3(R: torch.Tensor, t: Union[torch.Tensor, np.ndarray]) -> torch.Tensor:
     """
     从旋转矩阵 R 和平移向量 t 构造 4x4 SE(3) 齐次变换矩阵。
 
@@ -148,6 +149,10 @@ def build_SE3(R: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
     Returns:
         pose: (..., 4, 4) SE(3) 变换矩阵
     """
+    if not torch.is_tensor(t):
+        t = torch.as_tensor(t, dtype=R.dtype, device=R.device)
+    else:
+        t = t.to(device=R.device, dtype=R.dtype)
     batch_shape = R.shape[:-2]
     device = R.device
     # 初始化为单位 SE(3) 矩阵（齐次坐标）
@@ -651,7 +656,7 @@ class ArcticRawAdapter:
     ) -> dict:
         """Parse one sequence and return fields consumed by the Stage 2 writer."""
         # 路径解析: RAW_SEQS_DIR/s01/box_grab_01.mano.npy
-        seq_rel = mano_p.replace(RAW_SEQS_DIR + "/", "")
+        seq_rel = Path(mano_p).resolve().relative_to(Path(RAW_SEQS_DIR).resolve()).as_posix()
         seq_rel = seq_rel.replace(".mano.npy", "")
         subject, seq_name = seq_rel.split("/")
         obj_name = seq_name.split("_")[0]   # "box_grab_01" → "box"
