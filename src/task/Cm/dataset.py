@@ -284,7 +284,9 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
             key: calibration[key]
             for key in (
                 "flow_target_rms_m", "flow_target_scale", "statistics_split",
-                "statistics_num_obj_points", "statistics_point_weighting",
+                "statistics_active_only", "statistics_num_obj_points",
+                "statistics_stride_distribution", "statistics_stride_weighting",
+                "statistics_point_weighting",
             )
             if key in calibration
         })

@@ -775,8 +775,12 @@ class BaseRunner:
 
     def _save_if_best(self, metrics: dict[str, float], epoch: int) -> bool:
         key = self.cfg.train.metric_for_best
-        if key not in metrics:
+        if key is None:
             return False
+        if key not in metrics:
+            raise KeyError(
+                f"metric_for_best={key!r} is unavailable. Available metrics: {sorted(metrics)}"
+            )
         value = float(metrics[key])
         if self.best_metric is None:
             improved = True
@@ -795,6 +799,8 @@ class BaseRunner:
             return False
 
         key = self.cfg.train.metric_for_best
+        if key is None:
+            return False
         if key not in metrics:
             return False
 
@@ -841,12 +847,20 @@ class BaseRunner:
         self._last_validation_epoch = int(epoch)
         return should_stop
 
+    def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        """Return the evaluation subset sent to W&B; JSONL always keeps all metrics."""
+        return metrics
+
     def _record_metrics(self, metrics: dict[str, float], epoch: int) -> None:
         payload = {"step": self.global_step, "epoch": epoch, **metrics}
         if self.jsonl is not None:
             self.jsonl.write(payload)
         if self.wandb_run is not None:
-            self.wandb_run.log(metrics, step=self.global_step)
+            is_evaluation = any(key.startswith(("val/", "test/")) for key in metrics)
+            self.wandb_run.log(
+                self.select_eval_metrics(metrics) if is_evaluation else metrics,
+                step=self.global_step,
+            )
         if self.is_primary:
             message = " ".join(f"{key}={value:.6g}" for key, value in metrics.items())
             print(f"step={self.global_step:06d} epoch={epoch:03d} {message}")

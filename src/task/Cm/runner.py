@@ -7,7 +7,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
-from src.base import BaseRunner, RunnerOutput, TaskConfig
+from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig
 from src.task.Cm.dataset import make_dataloaders
 
 
@@ -62,10 +62,12 @@ def internal_flow_smooth_l1(
 
 class CmActionRunner(BaseRunner):
     def evaluate_all(self) -> dict[str, float]:
-        return self._summarize_stride_metrics(super().evaluate_all(), split="val")
+        detailed = super().evaluate_all()
+        return {**detailed, **self._summarize_stride_metrics(detailed, split="val")}
 
     def evaluate_test_all(self) -> dict[str, float]:
-        return self._summarize_stride_metrics(super().evaluate_test_all(), split="test")
+        detailed = super().evaluate_test_all()
+        return {**detailed, **self._summarize_stride_metrics(detailed, split="test")}
 
     @staticmethod
     def _summarize_stride_metrics(metrics: dict[str, float], *, split: str) -> dict[str, float]:
@@ -78,7 +80,6 @@ class CmActionRunner(BaseRunner):
 
         epe = values("flow/epe_mm")
         relative_epe = values("flow/relative_epe")
-        p90 = values("flow/epe_p90_mm")
         improvement = values("flow/zero_flow_improvement")
         norm_ratio = values("flow/norm_ratio")
         summary: dict[str, float] = {}
@@ -86,8 +87,6 @@ class CmActionRunner(BaseRunner):
             summary[f"{split}/mean_stride_epe_mm"] = float(sum(epe) / len(epe))
         if relative_epe:
             summary[f"{split}/mean_stride_relative_epe"] = float(sum(relative_epe) / len(relative_epe))
-        if p90:
-            summary[f"{split}/mean_stride_epe_p90_mm"] = float(sum(p90) / len(p90))
         if improvement:
             summary[f"{split}/zero_flow_improvement"] = float(sum(improvement) / len(improvement))
         if norm_ratio:
@@ -98,11 +97,38 @@ class CmActionRunner(BaseRunner):
                 summary[f"{split}/stride_{stride}_epe_mm"] = metrics[key]
         return summary
 
+    def evaluate_loader(self, loader: Any, *, prefix: str) -> dict[str, float]:
+        """Add ratios after point-weighted aggregation across one loader."""
+        metrics = super().evaluate_loader(loader, prefix=prefix)
+        epe_mm = metrics.get(f"{prefix}flow/epe_mm")
+        gt_norm_mm = metrics.get(f"{prefix}flow/gt_norm_mm")
+        pred_norm_mm = metrics.get(f"{prefix}flow/pred_norm_mm")
+        if epe_mm is not None and gt_norm_mm is not None:
+            relative_epe = epe_mm / max(gt_norm_mm, 1e-8)
+            metrics[f"{prefix}flow/relative_epe"] = relative_epe
+            metrics[f"{prefix}flow/zero_flow_improvement"] = 1.0 - relative_epe
+        if pred_norm_mm is not None and gt_norm_mm is not None:
+            metrics[f"{prefix}flow/norm_ratio"] = pred_norm_mm / max(gt_norm_mm, 1e-8)
+        return metrics
+
+    def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+        """Keep JSONL exhaustive while limiting W&B validation curves."""
+        keep = {
+            key: value
+            for key, value in metrics.items()
+            if not (key.startswith("val/stride_") or key.startswith("test/stride_"))
+        }
+        for stride in (1, 5, 10):
+            prefix = f"val/stride_{stride}/flow/epe_mm"
+            if prefix in metrics:
+                keep[prefix] = metrics[prefix]
+        return keep
+
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         core_keys = (
             "loss", "flow/loss_scaled", "flow/epe_mm", "flow/norm_ratio", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
-            "slot/effective_branch_count", "slot/top1_usage",
+            "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
         )
         aliases = {"lr": "optim/lr", "grad_norm": "optim/grad_norm"}
         return {
@@ -114,10 +140,10 @@ class CmActionRunner(BaseRunner):
     def select_epoch_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         suffix = "train_epoch/"
         core_keys = (
-            "loss", "flow/loss_scaled", "flow/epe_mm", "flow/epe_p90_mm", "flow/norm_ratio",
-            "flow/relative_epe", "flow/zero_flow_improvement",
+            "loss", "flow/loss_scaled", "flow/epe_mm", "flow/gt_norm_mm", "flow/pred_norm_mm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
-            "slot/effective_branch_count", "slot/top1_usage", "slot/assignment_entropy",
+            "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
+            "slot/assignment_entropy",
             "slot/max_probability_mean", "slot/count_loss", "slot/confidence_loss",
         )
         if float(self.cfg.meta.loss_active_overlap_weight) != 0.0:
@@ -171,6 +197,22 @@ class CmActionRunner(BaseRunner):
                 "Cm config object_flow_target_scale does not match train metadata: "
                 f"{target_scale} != {metadata_scale}. Recalibrate or update the config."
             )
+        calibration_checks = {
+            "statistics_split": ("train", str),
+            "statistics_active_only": (bool(self.cfg.data.active_only), bool),
+            "statistics_num_obj_points": (int(self.cfg.meta.num_obj_points), int),
+            "statistics_stride_distribution": (
+                f"uniform_{int(self.cfg.data.min_stride)}_to_{int(self.cfg.data.max_stride)}", str,
+            ),
+            "statistics_stride_weighting": ("equal_per_stride", str),
+            "statistics_point_weighting": ("per_pair_capped_at_num_obj_points", str),
+        }
+        for key, (expected, cast) in calibration_checks.items():
+            if key in metadata and cast(metadata[key]) != expected:
+                raise ValueError(
+                    f"Cm train calibration {key}={metadata[key]!r} does not match "
+                    f"the current training setting {expected!r}. Recalibrate first."
+                )
 
     def build_model(self, model_cfg: Any) -> torch.nn.Module:
         return self.build_model_from_config(model_cfg, condition_shape=None, target_shape=None)
@@ -181,7 +223,6 @@ class CmActionRunner(BaseRunner):
         batch: dict[str, torch.Tensor],
         mode: str = "train",
     ) -> RunnerOutput:
-        del mode
         prediction = model(batch)
         valid = batch["obj_valid_mask"].bool()
         valid_count = valid.sum()
@@ -204,13 +245,9 @@ class CmActionRunner(BaseRunner):
         residual_norm_map = torch.linalg.norm(pred_flow - gt_flow, dim=-1)
         gt_norm_map = torch.linalg.norm(gt_flow, dim=-1)
         pred_norm_map = torch.linalg.norm(pred_flow, dim=-1)
-        flow_epe_mean_m = (residual_norm_map * valid.float()).sum() / valid_count.float()
-        flow_epe_p90_m = torch.quantile(residual_norm_map[valid], 0.9)
-        gt_norm_mean = (gt_norm_map * valid.float()).sum() / valid_count.float()
-        pred_norm_mean = (pred_norm_map * valid.float()).sum() / valid_count.float()
-        flow_norm_ratio = pred_norm_mean / gt_norm_mean.clamp_min(1e-8)
-        flow_relative_epe = flow_epe_mean_m / gt_norm_mean.clamp_min(1e-8)
-        zero_flow_improvement = 1.0 - flow_relative_epe
+        residual_sum = (residual_norm_map * valid.float()).sum()
+        gt_norm_sum = (gt_norm_map * valid.float()).sum()
+        pred_norm_sum = (pred_norm_map * valid.float()).sum()
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
@@ -218,7 +255,7 @@ class CmActionRunner(BaseRunner):
         cm_slot_weights = prediction["cm_slot_weights"]
         # cm_slot_weights: [B, S, D]  S = num_slots, D = slot 隐维度
         num_slots = cm_slot_weights.shape[1]
-        if num_slots > 1:
+        if num_slots > 1 and float(self.cfg.meta.loss_active_overlap_weight) != 0.0:
             # 多个 slot 才有「去相关」意义；= 1 时强行算会得到 mean([1.0])=1.0，物理上无意义
             normalized_weights = torch.nn.functional.normalize(cm_slot_weights, dim=-1, eps=1e-8)
             # 沿 D 维做 L2 归一化：每个 slot 向量变成单位向量，让后续内积 = cosine 相似度
@@ -233,9 +270,6 @@ class CmActionRunner(BaseRunner):
             # 用 bool mask 沿最后一维挑掉对角线 → [B, S*(S-1)]，再求平均 → 标量
             # ∈ [-1, 1]：当前只作为 metric 监控 slot 是否塌缩（同向 → 接近 1 / 反向 → 接近 -1），
             # 并没有被加到 total_loss 里（total_loss 现在只有 flow_smooth_l1 一项）
-        else:
-            # 单 slot 占位：返 0 让下游代码不必做分支
-            slot_weight_overlap = cm_slot_weights.new_zeros(())
         decoder_slot_usage = prediction["decoder_slot_usage"]
         # decoder_slot_usage: [B, S]  每个样本里每个 slot 被 decoder 实际使用到的程度（例如被分配到的 token 数 / 总数）
         mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
@@ -272,20 +306,19 @@ class CmActionRunner(BaseRunner):
         sampled_active_count = prediction["slot_hard_mask"].sum(dim=-1).float()
         fallback_used = prediction["slot_fallback_used"]
         effective_branch_count = full_usage_entropy.exp().mean()
-        metrics: dict[str, torch.Tensor] = {
+        metrics: dict[str, torch.Tensor | MetricStat] = {
             "loss": total_loss,
             "flow/loss_scaled": flow_smooth_l1,
-            "flow/epe_mm": flow_epe_mean_m * 1000.0,
-            "flow/epe_p90_mm": flow_epe_p90_m * 1000.0,
-            "flow/norm_ratio": flow_norm_ratio,
-            "flow/relative_epe": flow_relative_epe,
-            "flow/zero_flow_improvement": zero_flow_improvement,
+            "flow/epe_mm": MetricStat(float((residual_sum * 1000.0).detach()), float(valid_count.detach())),
+            "flow/gt_norm_mm": MetricStat(float((gt_norm_sum * 1000.0).detach()), float(valid_count.detach())),
+            "flow/pred_norm_mm": MetricStat(float((pred_norm_sum * 1000.0).detach()), float(valid_count.detach())),
             "slot/expected_active_mean": expected_active_count.mean(),
             "slot/hard_active_mean": sampled_active_count.mean(),
             "slot/fallback_ratio": fallback_used.float().mean(),
             "slot/max_probability_mean": max_slot_probability.mean(),
             "slot/effective_branch_count": effective_branch_count,
-            "slot/top1_usage": mean_decoder_slot_usage.max(),
+            "slot/global_top1_usage": mean_decoder_slot_usage.max(),
+            "slot/per_sample_top1_usage": decoder_slot_usage.max(dim=-1).values.mean(),
             "slot/assignment_entropy": slot_assignment_entropy,
             "slot/count_loss": slot_count_loss,
             "slot/confidence_loss": confidence_loss,

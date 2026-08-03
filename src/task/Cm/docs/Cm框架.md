@@ -1,152 +1,81 @@
-# CmAction 框架
+# CmAction 当前框架
 
-## 1. 问题定义
+## 问题与信息边界
 
-CmAction 的目标是在不访问未来物体几何的条件下，从当前的手—物交互状态和手部运动中提取一组紧凑的动作表征 `C_m`，并用它预测物体表面点在短时间后的位移。
-
-对一个时间对 `(t, t+Δ)`，模型输入为当前物体 `O_t`、当前手 `H_t`、手部位移 `ΔH_t` 和 wrist 的相对位姿；监督目标为物体点流 `F_t^o`。因此学习问题可以写为：
+CmAction 从当前手—物状态与**未来手的相对运动**预测当前物体采样点的短时点流。一个样本以当前帧 `t` 的 hand-root 坐标系表示：
 
 ```text
-(O_t, H_t, ΔH_t, ΔT_wrist)  →  C_m  →  F̂_t^o
+(O_t, H_t, ΔH_t) → C_m → F̂_obj,t
 ```
 
-其中 `C_m` 不是单个全局向量，而是 `K` 个手部动作 slot。当前默认 `K=16`，每个 slot 的维度为 256。设计意图是让这些 slot 在手表面上形成可解释的软区域，并把局部接触、手指运动和整体 wrist 运动压缩为对物体运动有用的动作信息。
+其中 `ΔH_t = H_{t+s}^{hand_t} - H_t^{hand_t}`，而监督为
+`F_obj,t = O_{t+s}^{hand_t} - O_t^{hand_t}`。未来物体点只用于在 Dataset
+中构造 `obj_flow_gt`，绝不进入 DenseToken 或 Cm 模型。当前实现也**不输入**
+`wrist_delta`、未来 hand token 或未来 object token。
 
-本阶段只研究 hand-side 的 `C_m`，不包含 object-side effect token `C_p`。
+缓存采用一份 `shared.npz`（物体状态）及每只手一份 `left.npz` / `right.npz`
+（手状态）。训练按运行时 stride 采样；候选物点始终来自当前帧的
+`obj_candidate_mask_5cm`，最多 512 点。`active_only=true` 仅过滤候选为空的
+current frame。
 
-## 2. 数据表示与信息边界
+## 模型
 
-Stage 4 直接由原始 GRAB 序列生成。每个样本对应一个当前帧和一个未来帧，所有几何均表示在当前时刻的 hand-root 坐标系中。若 `T_{world←hand,t}` 表示当前手根到世界坐标的刚体变换，则：
+冻结 DenseToken/PTv3 只编码当前 `(O_t, H_t)`，输出 object token、hand token
+及 hand contact 概率。它固定为 `eval/no_grad`，Cm checkpoint 不保存其权重。
+
+每个手点的 Cm 输入是：
 
 ```text
-x_t^h       = R_tᵀ (x_t^world - p_t)
-x_{t+Δ}^{h} = R_tᵀ (x_{t+Δ}^world - p_t)
-F_t^o       = x_{t+Δ}^{h} - x_t^h
-ΔH_t        = H_{t+Δ}^{h} - H_t^{h}
+[z_hand, hand_position × geometry_input_scale,
+ hand_normal, hand_flow × hand_flow_input_scale, dense_hand_contact]
 ```
 
-这样，手流和物体流在同一参考系内，既保留手指关节运动，也保留 wrist 的整体运动。`wrist_delta` 另外保存 `T_{hand_t←hand_{t+Δ}}`，使模型可以显式使用 wrist 的 SE(3) 变化。
+因此 hand motion MLP 的输入维度为 `dense_token_dim + 10`。Slot Attention 将
+1538 个手点聚为 `K=16` 个 256 维 `C_m` slot，并由同一组 slot weights 产生
+soft hand anchor 位置与法向。
 
-一个 Stage 4 文件保存一条序列、一个手侧。训练时主要使用：
+每个 slot 通过 Hard-Concrete 的 nonzero probability 做 hard gate：训练时使用
+概率参与 soft routing，评估时只保留超过 `slot_threshold` 的 slot；若全部低于
+阈值，选择 logit 最大的一个 slot 作为 deterministic fallback。因此这是
+**hard-gate Slot Attention**，不是 null-expert、Top-K anchor 或 activity head。
 
-| 字段 | 含义 |
+object decoder 对每个 object point 与每个保留 slot 构造
+`[object_context, cm_token, object_to_anchor, anchor_normal]`，输出候选 flow 与
+routing logit，再对 slot 加权求和。无效 object 位置的输出强制为零。
+
+## 三个 scale 与训练目标
+
+三个 scale 职责独立：
+
+| 字段 | 用途 |
 | --- | --- |
-| `obj_points`, `obj_normals` | 当前物体的 4096 个稳定表面点及法向 | 
-| `hand_points`, `hand_normals` | 当前手的 1538 个 MANO face-center 点及法向 |
-| `hand_flow`, `wrist_delta` | 当前到未来的手部运动信息 |
-| `obj_flow_gt` | 物体点流监督 |
-| `obj_candidate_mask_5cm` | 当前帧距手小于 5cm 的物体候选点 |
+| `geometry_input_scale` | Cm head 内的 object/hand 坐标输入缩放 |
+| `hand_flow_input_scale` | Cm head 内的 hand flow 输入缩放 |
+| `object_flow_target_scale` | flow decoder target/loss 归一化 |
 
-训练和模型前向**不读取未来物体点**。`obj_flow_gt` 只由数据生成脚本计算，并只在 loss、评估和可视化中使用。因而模型不能通过未来物体位姿直接恢复目标答案。
+模型只暴露米制预测：`pred_obj_flow = pred_obj_flow_scaled / object_flow_target_scale`。
+Runner 再将预测和 GT 同乘 `object_flow_target_scale`，以米制 `flow_smooth_l1_beta`
+对应的 scaled vector Huber loss 训练。该乘除位于同一计算图，故不会缩小 decoder
+梯度。旧 `internal_point_flow_scale` 仅作临时兼容并会告警；新配置不得使用它。
 
-Stage 4 schema 1.1 还可选保存 `hand_root_pose_world` 与 `next_hand_root_pose_world`。它们只用于可视化中的 hand/world 坐标切换，不参与模型输入、监督或训练。
+正式 scale 只能从 train split 通过 `python -m src.task.Cm.compute_flow_scale`
+计算。metadata 保存 stride、active-only、点数和权重规则；启动训练时会与 config
+交叉检查，并验证 `flow_target_rms_m * object_flow_target_scale ≈ 1`。
 
-## 3. 冻结的当前交互编码器
+## 评估与诊断
 
-CmAction 复用已经训练好的 `correspondence_ptv3_v2` dense-token 模型。该编码器以当前 `(O_t, H_t)` 为输入，输出：
+主质量指标是点加权 EPE：`flow/epe_mm`。每个 validation/test stride 先聚合所有
+有效点的 residual、GT norm 与 prediction norm，再计算 `relative_epe` 和
+`norm_ratio`；因此结果不依赖 batch 划分。checkpoint 选择使用
+`val/mean_stride_epe_mm`。
 
-```text
-Z_t^o ∈ R^(N_o×D)     当前物体点 token
-Z_t^h ∈ R^(N_h×D)     当前手点 token
-c_t^h ∈ [0,1]^(N_h)  当前手点的冻结 contact 概率
-```
+每个 stride 的完整指标写入 JSONL；W&B 仅显示汇总和 stride 1/5/10 的 EPE，避免
+曲线过多。P90 不再作为指标，因为 batch P90 的平均不是真实全局分位数。
 
-其中运行时从 5cm 候选中稳定采样 `N_o=512` 个物体点，手点数为 `N_h=1538`。该编码器在 Cm 训练中保持 `eval` 和 `no_grad`：Cm checkpoint 只保存新增的 Slot Attention 与 flow decoder 参数，不重复保存 dense encoder 权重。
+硬门控诊断包括 `slot/expected_active_mean`、`slot/hard_active_mean`、
+`slot/fallback_ratio`、`slot/effective_branch_count`、
+`slot/global_top1_usage` 与 `slot/per_sample_top1_usage`。这些不是额外监督；唯一
+的辅助损失是可选 L0 风格 slot count、置信度和 active-overlap 项。
 
-冻结的编码器提供当前接触状态与局部几何语义；时序预测能力则由后续 `C_m` 分支学习。
-
-## 4. 从手部动作场到 C_m
-
-对每个手点 `j`，先构造完整的局部动作描述：
-
-```text
-u_j = φ_h([z_j^h, y_j, n_j, Δy_j, c_j^h, vec(ΔT_wrist)])
-```
-
-这里 `y_j`、`n_j`、`Δy_j` 分别是手点位置、法向和手流；`c_j^h` 是冻结 contact 概率；`vec(ΔT_wrist)` 取相对变换前 3 行 4 列并复制到所有手点。拼接输入维度为 `D+22`，经 pointwise MLP 映射到 256 维动作特征 `u_j`。
-
-随后 Slot Attention 在所有手点上执行 3 次迭代。对于 slot `k` 和手点 `j`，模型先得到归属概率：
-
-```text
-A_kj = softmax_k(q_kᵀ key(u_j))
-```
-
-`A` 在 slot 维度归一化，因此每一个手点的概率和为 1。为形成每个 slot 的聚合权重，再定义：
-
-```text
-W_kj = A_kj / Σ_j A_kj
-```
-
-`W` 在手点维度归一化。Slot Attention 使用 `W` 汇聚特征并更新 slot，最终得到：
-
-```text
-C_m = {c_1, …, c_K},   c_k ∈ R^256
-```
-
-同一组 `W` 还将 slot 投影回手表面：
-
-```text
-m_k       = Σ_j W_kj y_j                 soft anchor 位置
-v_k       = Σ_j W_kj Δy_j                slot 平均手流
-n_k       = Normalize(Σ_j W_kj n_j)      slot 平均法向
-```
-
-因此每个 slot 同时具有 token 表征、软空间锚点和局部运动摘要。这里没有 hard Top-K anchor、activity head 或 activity/diversity loss；slot 的分化完全由下游 object-flow 监督驱动。
-
-## 5. Object-flow 解码器
-
-物体分支先对每个当前物体点构造局部上下文：
-
-```text
-r_i = φ_o([z_i^o, x_i, n_i])
-```
-
-随后将每个物体点与每个动作 slot 配对。第 `i` 个物体点到第 `k` 个 slot 的输入包括：
-
-```text
-[r_i, c_k, x_i - m_k, v_k, n_k]
-```
-
-flow-edge MLP 为每条物体点—slot 边输出一个标量 logit `e_ik` 与一个候选位移 `f_ik`。在 slot 维度归一化后：
-
-```text
-α_ik = softmax_k(e_ik)
-F̂_i^o = Σ_k α_ik f_ik
-```
-
-最后使用 object valid mask 将无候选的占位点置零。该结构保证 object token 只在手侧信息被压缩成 `C_m` 后才进入解码器；不存在从 object side 回流到 Slot Attention 的捷径。
-
-## 6. 训练目标与评估
-
-训练仅对 valid object point 使用 masked Smooth-L1：
-
-```text
-L_flow = (1 / Σ_i mask_i) Σ_i mask_i · SmoothL1(F̂_i^o, F_i^{o*})
-```
-
-优化器只更新 hand motion MLP、Slot Attention、object context MLP 和 flow-edge decoder。常规设置使用 AdamW、余弦学习率、3% warmup 和梯度裁剪；验证按 sequence 划分，而不是把同一条序列的不同时间对随机分到训练与验证中。
-
-主评估量为 masked `flow_mse`、`flow_mae`、预测/GT flow norm。由于有效 object point 的数目及运动幅度随样本变化，这些标量应与可视化和分组分析一起解释，而不宜作为唯一结论。
-
-## 7. 可解释性诊断
-
-CmAction 不把低 loss 自动等同于获得了动态动作表征。训练过程额外记录以下不参与反传的诊断量：
-
-| 指标 | 含义 |
-| --- | --- |
-| `slot_assignment_entropy` | 一个手点在 16 个 slot 间的平均归属熵；过高可能表示 slot 未分化 |
-| `slot_weight_overlap` | 不同 `W_k` 的余弦重叠；过高可能表示多个 slot 聚合相同区域 |
-| `decoder_slot_usage/slot_XX` | decoder 对每个 slot 的平均注意力 `q_k` |
-| `decoder_slot_usage_entropy/max` | decoder 是否只依赖极少数 slot |
-
-可视化中，`S` 显示每个手点的 `argmax_k A_kj` 与 soft anchor，用于观察同一 MANO 点是否随动作和接触发生 slot 重分配。`--assignment-report` 可以在整条序列上统计重分配比例与 decoder usage。
-
-此外，可视化的 fixed-stride chunk 预览从当前 pair 开始，按同一 stride 浏览不超过 12 帧范围内的完整 chunk。每个 chunk 都用该 chunk 的 GT current object state 独立推理，不会把前一段预测送入下一段，因此显示的是逐段 teacher-forced 输出而非自回归漂移。
-
-## 8. 当前框架的结论边界
-
-当前架构能够检验两件事：第一，手部动作信息经 `K=16` 个 slot 压缩后能否支持短时物体点流预测；第二，这些 slot 是否在手表面形成稳定且被 decoder 实际使用的分组。
-
-它尚不能仅凭 flow 指标证明 slot 就是高层动作 primitive。若分配长期固定在 MANO 的相同解剖区域，模型仍可能依靠 slot 内 feature 预测物体流。后续研究应结合跨动作的 assignment 变化、接触区域、decoder usage 和消融实验，区分动态 functional grouping 与固定 anatomical segmentation。
-
-`C_p` 的后续设计应以当前 `C_m` 为输入，通过 correspondence 投影到 object side，再压缩为物体效应表征；不应让未来物体几何反向成为 `C_m` 的输入。
+Cm 仍只定义 hand-side 原因表征 `C_m`。未来的 `C_p` 应由 `C_m` 通过当前
+correspondence 投影到 object side 形成，不能用未来物体几何反向构造 `C_m`。

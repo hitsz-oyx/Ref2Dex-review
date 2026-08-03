@@ -1,8 +1,8 @@
 """Calibrate one rotation-invariant point-flow scale from Cm training data.
 
 The calibration deliberately reads *only* the train split.  It enumerates
-every legal current-frame/stride pair and only current-frame 5cm candidates,
-matching the target population used by ``Stage4CmDataset(active_only=True)``.
+every legal current-frame/stride pair and always uses current-frame 5cm
+candidates, matching ``Stage4CmDataset`` sampling.
 """
 from __future__ import annotations
 
@@ -111,8 +111,10 @@ def calibrate_flow_scale(
                     # ||O_{t+s} - O_t|| unchanged.  Avoiding the transform
                     # makes this full calibration pass inexpensive.
                     flow = obj_points[current + stride] - obj_points[current]
-                    if active_only:
-                        flow = flow[candidate]
+                    # ``active_only`` determines whether an empty candidate
+                    # frame is retained; it never changes the runtime point
+                    # sampler, which always draws from 5cm candidates.
+                    flow = flow[candidate]
                     squared_norm = np.einsum("ij,ij->i", flow, flow)
                     available_count = int(squared_norm.size)
                     if available_count == 0:
