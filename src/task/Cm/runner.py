@@ -10,23 +10,23 @@ from src.base import BaseRunner, RunnerOutput, TaskConfig
 from src.task.Cm.dataset import make_dataloaders
 
 
-def internal_flow_smooth_l1(
+def scaled_flow_smooth_l1(
     pred_flow_m: torch.Tensor,
     gt_flow_m: torch.Tensor,
     valid_mask: torch.Tensor,
     *,
     beta_m: float,
-    internal_scale: float,
+    target_scale: float,
 ) -> torch.Tensor:
-    """Compute vector Huber loss in Cm-head internal units.
+    """Compute vector Huber loss in normalized object-flow target units.
 
-    Public Cm inputs, predictions, and metrics remain metres.  Multiplying
-    both endpoints and the Huber transition by the internal scale removes the
-    reciprocal scale factor from the decoder's gradient.
+    Public predictions and metrics remain metres.  Scaling both endpoints and
+    the Huber transition restores the FlowHead's normalized target space
+    without shrinking the gradient through its metres-valued public output.
     """
-    scale = float(internal_scale)
+    scale = float(target_scale)
     if scale <= 0.0:
-        raise ValueError("internal_point_flow_scale must be positive.")
+        raise ValueError("object_flow_target_scale must be positive.")
     valid_count = valid_mask.sum()
     residual_norm_internal = torch.linalg.vector_norm(
         (pred_flow_m - gt_flow_m) * scale,
@@ -39,6 +39,24 @@ def internal_flow_smooth_l1(
         reduction="none",
     )
     return (smooth_l1_map * valid_mask.float()).sum() / valid_count.float()
+
+
+def internal_flow_smooth_l1(
+    pred_flow_m: torch.Tensor,
+    gt_flow_m: torch.Tensor,
+    valid_mask: torch.Tensor,
+    *,
+    beta_m: float,
+    internal_scale: float,
+) -> torch.Tensor:
+    """Compatibility alias for older callers using the former argument name."""
+    return scaled_flow_smooth_l1(
+        pred_flow_m,
+        gt_flow_m,
+        valid_mask,
+        beta_m=beta_m,
+        target_scale=internal_scale,
+    )
 
 
 class CmActionRunner(BaseRunner):
@@ -57,9 +75,9 @@ class CmActionRunner(BaseRunner):
                 if key.startswith(f"{split}/stride_") and key.endswith(f"/{name}")
             ]
 
-        epe = values("flow/epe_mean")
+        epe = values("flow/epe_mm")
         relative_epe = values("flow/relative_epe")
-        p90 = values("flow/epe_p90")
+        p90 = values("flow/epe_p90_mm")
         improvement = values("flow/zero_flow_improvement")
         norm_ratio = values("flow/norm_ratio")
         summary: dict[str, float] = {}
@@ -74,14 +92,14 @@ class CmActionRunner(BaseRunner):
         if norm_ratio:
             summary[f"{split}/norm_ratio"] = float(sum(norm_ratio) / len(norm_ratio))
         for stride in (1, 5, 10):
-            key = f"{split}/stride_{stride}/flow/epe_mean"
+            key = f"{split}/stride_{stride}/flow/epe_mm"
             if key in metrics:
                 summary[f"{split}/stride_{stride}_epe"] = metrics[key]
         return summary
 
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         core_keys = (
-            "loss", "flow/loss", "flow/epe_mean", "flow/norm_ratio", "lr", "grad_norm",
+            "loss", "flow/loss_scaled", "flow/epe_mm", "flow/norm_ratio", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
             "slot/effective_branch_count", "slot/top1_usage",
         )
@@ -95,7 +113,7 @@ class CmActionRunner(BaseRunner):
     def select_epoch_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         suffix = "train_epoch/"
         core_keys = (
-            "loss", "flow/loss", "flow/epe_mean", "flow/epe_p90", "flow/norm_ratio",
+            "loss", "flow/loss_scaled", "flow/epe_mm", "flow/epe_p90_mm", "flow/norm_ratio",
             "flow/relative_epe", "flow/zero_flow_improvement",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
             "slot/effective_branch_count", "slot/top1_usage", "slot/assignment_entropy",
@@ -156,24 +174,24 @@ class CmActionRunner(BaseRunner):
             )
         pred_flow = prediction["pred_obj_flow"]
         gt_flow = batch["obj_flow_gt"].float()
-        flow_smooth_l1 = internal_flow_smooth_l1(
+        flow_smooth_l1 = scaled_flow_smooth_l1(
             pred_flow,
             gt_flow,
             valid,
             beta_m=float(self.cfg.meta.flow_smooth_l1_beta),
-            internal_scale=float(self.cfg.meta.internal_point_flow_scale),
+            target_scale=float(self.cfg.meta.object_flow_target_scale),
         )
         # EPE is invariant to an orthogonal change of xyz axes, unlike
         # component-wise MSE/MAE.  It is the sole flow-quality metric.
         residual_norm_map = torch.linalg.norm(pred_flow - gt_flow, dim=-1)
         gt_norm_map = torch.linalg.norm(gt_flow, dim=-1)
         pred_norm_map = torch.linalg.norm(pred_flow, dim=-1)
-        flow_epe_mean = (residual_norm_map * valid.float()).sum() / valid_count.float()
-        flow_epe_p90 = torch.quantile(residual_norm_map[valid], 0.9)
+        flow_epe_mean_m = (residual_norm_map * valid.float()).sum() / valid_count.float()
+        flow_epe_p90_m = torch.quantile(residual_norm_map[valid], 0.9)
         gt_norm_mean = (gt_norm_map * valid.float()).sum() / valid_count.float()
         pred_norm_mean = (pred_norm_map * valid.float()).sum() / valid_count.float()
         flow_norm_ratio = pred_norm_mean / gt_norm_mean.clamp_min(1e-8)
-        flow_relative_epe = flow_epe_mean / gt_norm_mean.clamp_min(1e-8)
+        flow_relative_epe = flow_epe_mean_m / gt_norm_mean.clamp_min(1e-8)
         zero_flow_improvement = 1.0 - flow_relative_epe
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
@@ -238,9 +256,9 @@ class CmActionRunner(BaseRunner):
         effective_branch_count = full_usage_entropy.exp().mean()
         metrics: dict[str, torch.Tensor] = {
             "loss": total_loss,
-            "flow/loss": flow_smooth_l1,
-            "flow/epe_mean": flow_epe_mean,
-            "flow/epe_p90": flow_epe_p90,
+            "flow/loss_scaled": flow_smooth_l1,
+            "flow/epe_mm": flow_epe_mean_m * 1000.0,
+            "flow/epe_p90_mm": flow_epe_p90_m * 1000.0,
             "flow/norm_ratio": flow_norm_ratio,
             "flow/relative_epe": flow_relative_epe,
             "flow/zero_flow_improvement": zero_flow_improvement,

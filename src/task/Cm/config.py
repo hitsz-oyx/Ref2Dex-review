@@ -25,6 +25,13 @@ class Config(TaskConfig):
         # Vector Huber transition in metres; 5 mm is close to the expected
         # point-flow noise scale while retaining EPE-like gradients above it.
         flow_smooth_l1_beta: float = 0.005
+        # Calibration values are computed from the train split only by
+        # ``python -m src.task.Cm.compute_flow_scale``.  They are stored in
+        # config so every checkpoint/inference run can use the same scale.
+        flow_target_rms_m: float | None = None
+        geometry_input_scale: float = 1.0
+        hand_flow_input_scale: float = 1.0
+        object_flow_target_scale: float = 1.0
         loss_flow_weight: float = 1.0
         loss_slot_count_weight: float = 1.0e-3
         loss_slot_confidence_weight: float = 0.1
@@ -32,10 +39,6 @@ class Config(TaskConfig):
         # Hard-Concrete's analytic nonzero probability is about 0.83 at a
         # zero log-alpha, so 0.85 makes the fallback path meaningful at init.
         slot_threshold: float = 0.85
-        # The frozen dense encoder and dataset stay in metres.  This scales
-        # only the trainable Cm head's geometric / flow coordinates, then
-        # converts its flow output back to metres before loss computation.
-        internal_point_flow_scale: float = 1.0
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"

@@ -141,7 +141,12 @@ class CmFlowHead(nn.Module):
         cm_dim: int = 256,
         num_cm_tokens: int = 16,
         num_slot_iters: int = 3,
-        internal_point_flow_scale: float = 1.0,
+        geometry_input_scale: float = 1.0,
+        hand_flow_input_scale: float = 1.0,
+        object_flow_target_scale: float = 1.0,
+        # Legacy test/checkpoint construction alias.  New configs must set
+        # the three separate scales above.
+        internal_point_flow_scale: float | None = None,
         slot_threshold: float = 0.5,
     ) -> None:
         super().__init__()
@@ -150,10 +155,17 @@ class CmFlowHead(nn.Module):
         self.num_cm_tokens = int(num_cm_tokens)
         self.num_dynamic_slots = int(num_cm_tokens)
         self.num_slot_iters = int(num_slot_iters)
-        self.internal_point_flow_scale = float(internal_point_flow_scale)
+        if internal_point_flow_scale is not None:
+            legacy_scale = float(internal_point_flow_scale)
+            if (geometry_input_scale, hand_flow_input_scale, object_flow_target_scale) != (1.0, 1.0, 1.0):
+                raise ValueError("Use either internal_point_flow_scale or the three explicit scales, not both.")
+            geometry_input_scale = hand_flow_input_scale = object_flow_target_scale = legacy_scale
+        self.geometry_input_scale = float(geometry_input_scale)
+        self.hand_flow_input_scale = float(hand_flow_input_scale)
+        self.object_flow_target_scale = float(object_flow_target_scale)
         self.slot_threshold = float(slot_threshold)
-        if self.internal_point_flow_scale <= 0.0:
-            raise ValueError("internal_point_flow_scale must be positive.")
+        if min(self.geometry_input_scale, self.hand_flow_input_scale, self.object_flow_target_scale) <= 0.0:
+            raise ValueError("Cm input and target scales must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
         # and frozen dense contact prior.  The dataset uses hand-root poses
         # only to form this current-frame representation; wrist pose/delta is
@@ -205,13 +217,12 @@ class CmFlowHead(nn.Module):
         hand_flow: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
-        # The pretrained dense encoder deliberately remains in metres.  Only
-        # the trainable Cm geometry / motion path works in the configurable
-        # internal unit (e.g. centimetres for scale=100).
-        scale = self.internal_point_flow_scale
-        obj_points_internal = obj_points * scale
-        hand_points_internal = hand_points * scale
-        hand_flow_internal = hand_flow * scale
+        # The frozen dense encoder stays in metres.  The trainable head uses
+        # independent geometry, hand-flow, and object-target scales.
+        geometry_scale = self.geometry_input_scale
+        obj_points_internal = obj_points * geometry_scale
+        hand_points_internal = hand_points * geometry_scale
+        hand_flow_internal = hand_flow * self.hand_flow_input_scale
         hand_input = torch.cat(
             [
                 z_hand,
@@ -254,16 +265,16 @@ class CmFlowHead(nn.Module):
         )
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
-        dynamic_flow = self.edge_flow_head(edge_features)
+        dynamic_flow_scaled = self.edge_flow_head(edge_features)
         soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
         soft_weight = torch.softmax(soft_routing_logits, dim=2)
         hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
         hard_weight = torch.softmax(hard_routing_logits, dim=2)
         edge_weight = soft_weight + (hard_weight - soft_weight).detach()
-        pred_obj_flow_internal = (edge_weight.unsqueeze(-1) * dynamic_flow).sum(dim=2)
-        # Restore metres at the public model boundary; runner losses and
-        # visualization therefore remain unit-consistent with cached data.
-        pred_obj_flow = pred_obj_flow_internal / scale
+        pred_obj_flow_scaled = (edge_weight.unsqueeze(-1) * dynamic_flow_scaled).sum(dim=2)
+        # The only public output remains metres.  The runner multiplies it by
+        # ``object_flow_target_scale`` inside the loss, preserving gradients.
+        pred_obj_flow = pred_obj_flow_scaled / self.object_flow_target_scale
         pred_obj_flow = pred_obj_flow * obj_valid_mask.unsqueeze(-1).float()
         # q_k: mean decoder attention paid to each slot by valid object points.
         # This is a diagnostic only; it neither gates slots nor changes flow.
@@ -274,7 +285,7 @@ class CmFlowHead(nn.Module):
             "pred_obj_flow": pred_obj_flow,
             "cm_tokens": cm_tokens,
             "cm_tokens_masked": cm_tokens * hard_slot_mask.unsqueeze(-1),
-            "cm_anchor_pos": cm_anchor_pos_internal / scale,
+            "cm_anchor_pos": cm_anchor_pos_internal / geometry_scale,
             "cm_anchor_normal": cm_anchor_normal,
             "cm_assignment": cm_assignment,
             "cm_slot_weights": cm_slot_weights,
@@ -285,7 +296,7 @@ class CmFlowHead(nn.Module):
             "slot_fallback_used": all_below_threshold.squeeze(-1),
             "slot_fallback_index": fallback_index.squeeze(-1),
             "decoder_slot_usage": decoder_slot_usage,
-            "dynamic_candidate_flow": dynamic_flow / scale,
+            "dynamic_candidate_flow": dynamic_flow_scaled / self.object_flow_target_scale,
         }
 
 
@@ -314,7 +325,9 @@ class CmFlowModel(nn.Module):
             cm_dim=int(meta.cm_dim),
             num_cm_tokens=int(meta.num_cm_tokens),
             num_slot_iters=int(meta.slot_iters),
-            internal_point_flow_scale=float(meta.internal_point_flow_scale),
+            geometry_input_scale=float(meta.geometry_input_scale),
+            hand_flow_input_scale=float(meta.hand_flow_input_scale),
+            object_flow_target_scale=float(meta.object_flow_target_scale),
             slot_threshold=float(meta.slot_threshold),
         )
 
