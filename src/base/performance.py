@@ -185,19 +185,22 @@ class PerformanceMonitor:
                 self._reset_window()
             return None
 
+        should_log = global_step % self.log_every_steps == 0
+        # 窗口最后一步必须先等待 CUDA 完成，再算 step_seconds。
+        # 否则当前 step 末尾排队的 GPU 工作（loss.backward / scaler.step /
+        # optimizer.step）尚未结算，``perf_counter() - step_start_seconds``
+        # 漏记的尾部时间会同时拖慢训练（同步阻塞）又不在 perf/* 里出现。
+        if should_log and self.device.type == "cuda":
+            torch.cuda.synchronize(self.device)
+
         step_seconds = max(perf_counter() - step_start_seconds, 1e-8)
         self._window_steps += 1
         self._window_samples += int(batch_size)
         self._window_data_wait_seconds += data_wait_seconds
         self._window_step_seconds += step_seconds
 
-        should_log = global_step % self.log_every_steps == 0
         if not should_log:
             return None
-
-        # 每个日志窗口只同步一次，使窗口内累计的 step_seconds 包含真正完成的 CUDA 执行。
-        if self.device.type == "cuda":
-            torch.cuda.synchronize(self.device)
 
         elapsed_seconds = max(self._window_step_seconds, 1e-8)
         num_steps = max(self._window_steps, 1)

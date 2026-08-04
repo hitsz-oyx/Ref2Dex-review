@@ -4,9 +4,11 @@ import tempfile
 import time
 import unittest
 from time import perf_counter
+from unittest import mock
 
 import torch
 
+from src.base import performance as performance_module
 from src.base.performance import PerformanceMonitor
 
 
@@ -74,7 +76,8 @@ class PerformanceMonitorTests(unittest.TestCase):
                 f"warmup step {step} should not return metrics",
             )
 
-        # 窗口前 3 步（step 3, 5, 6）也不触发 log，step 4 才触发
+        # 窗口前 3 步（step 3）不触发 log；窗口内已经有 step 3 一次非 log 步 + step 4 一次 log 步，
+        # 所以当 step 4 返回指标时，窗口内累计 2 步（_window_steps == 2）。
         result = monitor.observe_step(
             global_step=3,
             batch_size=4,
@@ -101,12 +104,12 @@ class PerformanceMonitorTests(unittest.TestCase):
                 "perf/eta_hours",
             },
         )
-        # 窗口内 1 步，所以 num_steps=1，data_wait_ms ≈ 5ms
+        # 窗口内 2 步（step 3 + step 4），所以 num_steps=2，data_wait_ms ≈ 5ms
         self.assertGreater(result["perf/step_ms"], 0.0)
         self.assertAlmostEqual(result["perf/data_wait_ms"], 5.0, delta=4.0)
         self.assertGreaterEqual(result["perf/data_wait_ratio"], 0.0)
         self.assertLessEqual(result["perf/data_wait_ratio"], 1.0)
-        # 4 样本 / 5ms ≈ 800 samples/s，world_size=1
+        # 窗口内 8 样本（4 + 4）累加，world_size=1
         self.assertGreater(result["perf/samples_per_s"], 0.0)
         # eta_hours 应当非负
         self.assertGreaterEqual(result["perf/eta_hours"], 0.0)
@@ -184,6 +187,54 @@ class PerformanceMonitorTests(unittest.TestCase):
     def test_world_size_normalized_to_at_least_one(self) -> None:
         monitor = self._make_monitor(mode="light", world_size=0)
         self.assertEqual(monitor.world_size, 1)
+
+    # 7. CUDA 计时顺序：窗口最后一步必须先 cuda.synchronize 再算 step_seconds，
+    #    这样尾部尚未结算的 GPU 工作（loss.backward / scaler.step / optimizer.step）
+    #    才会进入 perf/*；否则既拖慢训练又不在指标里出现。
+    def test_cuda_synchronize_runs_before_step_seconds_calc(self) -> None:
+        # 用 mock 包装 device 让 device.type == "cuda"，并记录 synchronize / perf_counter
+        # 调用顺序；这样不依赖真实 GPU 也能验证调用时序。
+        call_log: list[str] = []
+        mock_device = mock.MagicMock()
+        mock_device.type = "cuda"
+
+        monitor = self._make_monitor(
+            mode="light", world_size=1, log_every_steps=1, warmup_steps=0,
+        )
+        monitor.device = mock_device
+
+        # 替换 synchronize 和 perf_counter，记录调用时间点
+        with mock.patch.object(
+            torch.cuda, "synchronize", side_effect=lambda *a, **k: call_log.append("cuda.synchronize"),
+        ), mock.patch.object(
+            performance_module, "perf_counter", side_effect=lambda: call_log.append("perf_counter") or 0.0,
+        ):
+            monitor.observe_step(
+                global_step=1,
+                batch_size=4,
+                data_wait_seconds=0.001,
+                step_start_seconds=0.0,
+            )
+
+        # 关键断言：synchronize 必须在所有 perf_counter 之前
+        # 找到所有 cuda.synchronize / perf_counter 的位置
+        sync_indices = [
+            i for i, name in enumerate(call_log) if name == "cuda.synchronize"
+        ]
+        perf_indices = [
+            i for i, name in enumerate(call_log) if name == "perf_counter"
+        ]
+        self.assertGreater(
+            len(sync_indices), 0, "expected at least one cuda.synchronize call"
+        )
+        self.assertGreater(
+            len(perf_indices), 0, "expected at least one perf_counter call"
+        )
+        # 第一个 sync 必须早于第一个 perf_counter
+        self.assertLess(
+            sync_indices[0], perf_indices[0],
+            f"cuda.synchronize must run before perf_counter; got order: {call_log}",
+        )
 
 
 if __name__ == "__main__":

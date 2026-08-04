@@ -39,7 +39,7 @@ train:
   warmup_steps: 0
   epochs: 100
   max_steps: 80000
-  amp: true
+  amp: false
   grad_clip_norm: 1.0
   log_every_steps: 100
   eval_every_epochs: 5
@@ -47,6 +47,8 @@ train:
   save_every_epochs: 5
   metric_for_best: val/mean_stride_epe_mm
   lower_is_better: true
+  distributed:
+    find_unused_parameters: true
 
 wandb:
   enable: false

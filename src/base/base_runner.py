@@ -4,6 +4,7 @@ import copy
 import json
 import re
 import time
+import traceback
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -223,6 +224,13 @@ class BaseRunner:
             self.performance.start()
         try:
             return self._learn_impl()
+        except BaseException:
+            # ``train.log`` is the durable, user-facing run record.  stdout
+            # may be redirected by W&B or an external launcher, so persist an
+            # unhandled training traceback here before propagating the error.
+            if self.is_primary:
+                self._log_line("Training failed:\n" + traceback.format_exc())
+            raise
         finally:
             if self.performance is not None:
                 self.performance.stop()
