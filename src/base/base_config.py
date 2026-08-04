@@ -118,7 +118,10 @@ class TaskConfig(BaseConfig):
         compile = False
 
         # ========== 日志和评估 ==========
-        log_every_steps = 1
+        # 默认 100 步一记，与 PerformanceMonitor 在每窗口只同步一次 CUDA 的策略匹配；
+        # 设为 1 会让 light 模式每步都强制 ``cuda.synchronize``，破坏异步执行。
+        # 任务 yaml 可显式覆盖（小样本 overfit 调试时可设为 1）。
+        log_every_steps = 100
         eval_every_steps = None
         eval_every_epochs = 1
 

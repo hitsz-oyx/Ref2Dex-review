@@ -296,6 +296,10 @@ class BaseRunner:
         loader_iterator = iter(self.train_loader)
 
         while self.global_step < self.total_steps:
+            # 整个 step 起点；PerformanceMonitor 用它计算 ``step_seconds``，不依赖
+            # 墙上时间差，所以验证、checkpoint 保存、日志写入都不会污染吞吐估计。
+            step_start = time.perf_counter()
+
             data_wait_start = time.perf_counter()
             try:
                 with self._performance_section("data_wait"):
@@ -323,6 +327,7 @@ class BaseRunner:
                     global_step=self.global_step,
                     batch_size=batch_size,
                     data_wait_seconds=data_wait_seconds,
+                    step_start_seconds=step_start,
                 )
 
             if self.global_step % self.cfg.train.log_every_steps == 0:
@@ -643,6 +648,7 @@ class BaseRunner:
             profile_wait_steps=int(self.cfg.performance.profile_wait_steps),
             profile_warmup_steps=int(self.cfg.performance.profile_warmup_steps),
             profile_active_steps=int(self.cfg.performance.profile_active_steps),
+            world_size=int(getattr(self.distributed, "world_size", 1)),
             is_primary=self.is_primary,
         )
         self.metadata.setdefault("run_name", self.run_name)
