@@ -35,6 +35,7 @@ from .distributed import (
     wrap_model_for_distributed,
 )
 from .metrics import MetricAverager, MetricStat
+from .performance import PerformanceMonitor
 from .utils import (
     JsonlLogger,
     format_seconds,
@@ -83,6 +84,7 @@ __all__ = [
     "JsonlLogger",
     "MetricAverager",
     "MetricStat",
+    "PerformanceMonitor",
     "format_seconds",
     "import_from_path",
     "resolve_device",

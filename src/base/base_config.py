@@ -145,6 +145,24 @@ class TaskConfig(BaseConfig):
             broadcast_buffers = False
             find_unused_parameters = False
 
+    class performance(BaseConfig):
+        # ``off``：完全关闭，不记录 perf/* 也不启动 profiler。
+        # ``light``：长期轻量统计，记录 step_ms / data_wait_ms / data_wait_ratio
+        #           / samples_per_s / eta_hours。
+        # ``profile``：在 light 之上叠加 ``torch.profiler`` 短期采集并写
+        #              TensorBoard trace 到 ``<output_dir>/profiler/``。
+        mode = "light"
+
+        # 前 N 步不参与 throughput / ETA 估计，避免把 CUDA 初始化、worker
+        # 启动和文件冷缓存算进正常吞吐。
+        warmup_steps = 20
+
+        # torch.profiler 的 schedule(wait / warmup / active) 参数。
+        # 仅 ``mode == "profile"`` 时生效。
+        profile_wait_steps = 5
+        profile_warmup_steps = 5
+        profile_active_steps = 10
+
     class wandb(BaseConfig):
         enable = True
         project = "sl-framework"

@@ -27,6 +27,7 @@ from .distributed import (
     wrap_model_for_distributed,
 )
 from .metrics import MetricAverager, MetricStat
+from .performance import PerformanceMonitor
 from .schedulers import CosineRestartScheduler, cosine_schedule, linear_schedule
 from .utils import (
     JsonlLogger,
@@ -191,6 +192,8 @@ class BaseRunner:
         self.evals_without_improvement = 0
         self._early_stopping_triggered = False
         self._last_validation_epoch: int | None = None
+        # PerformanceMonitor 由 ``_setup_train`` 负责创建；eval 模式保持 None。
+        self.performance: PerformanceMonitor | None = None
 
         if build_data:
             if mode == "train":
@@ -214,6 +217,17 @@ class BaseRunner:
         return metrics
 
     def learn(self) -> dict[str, float]:
+        self._require_train_ready()
+        # Profiler 只在 train 模式启动；用 try/finally 保证异常也能 stop。
+        if self.performance is not None:
+            self.performance.start()
+        try:
+            return self._learn_impl()
+        finally:
+            if self.performance is not None:
+                self.performance.stop()
+
+    def _learn_impl(self) -> dict[str, float]:
         self._require_train_ready()
         start_time = time.time()
         last_metrics: dict[str, float] = {}
@@ -278,13 +292,38 @@ class BaseRunner:
         self._set_train_epoch(epoch)
         self.train_mode()
         averager = MetricAverager()
-        for batch in self.train_loader:
-            if self.global_step >= self.total_steps:
+        # 显式持有 iterator，以便单独计时 ``next()`` 等待 DataLoader 的耗时。
+        loader_iterator = iter(self.train_loader)
+
+        while self.global_step < self.total_steps:
+            data_wait_start = time.perf_counter()
+            try:
+                with self._performance_section("data_wait"):
+                    batch = next(loader_iterator)
+            except StopIteration:
                 break
-            batch = self.prepare_batch(batch)
-            metrics = self.train_step(batch)
-            averager.update(metrics, n=self.batch_size(batch))
+            data_wait_seconds = time.perf_counter() - data_wait_start
+
+            with self._performance_section("host_to_device"):
+                batch = self.prepare_batch(batch)
+
+            batch_size = self.batch_size(batch)
+
+            with self._performance_section("train_step"):
+                metrics = self.train_step(batch)
+
+            averager.update(metrics, n=batch_size)
             self.global_step += 1
+
+            # 把每步 data_wait 数据喂给 monitor；轻量模式只在每 log_every_steps
+            # 返回一次 ``perf/*`` 指标，profile 模式则同步推进 profiler.step()。
+            performance_metrics: dict[str, float] | None = None
+            if self.performance is not None:
+                performance_metrics = self.performance.observe_step(
+                    global_step=self.global_step,
+                    batch_size=batch_size,
+                    data_wait_seconds=data_wait_seconds,
+                )
 
             if self.global_step % self.cfg.train.log_every_steps == 0:
                 logged = {
@@ -293,6 +332,8 @@ class BaseRunner:
                         self._reduce_step_metrics(metrics)
                     ).items()
                 }
+                if performance_metrics is not None:
+                    logged.update(performance_metrics)
                 self._record_metrics(logged, epoch + 1)
 
             if self.val_loaders and self._step_due(self.cfg.train.eval_every_steps):
@@ -322,22 +363,28 @@ class BaseRunner:
             if self.cfg.train.amp and self.device.type == "cuda"
             else nullcontext()
         )
-        with autocast_ctx:
-            output = self.step(self.model, batch, mode="train")
-            loss = output.loss
+        # profile 模式下 ``record_function`` 才会真正压栈；light/off 退化为
+        # ``nullcontext()``，不影响正常训练。
+        with self._performance_section("forward_and_loss"):
+            with autocast_ctx:
+                output = self.step(self.model, batch, mode="train")
+                loss = output.loss
 
-        self.scaler.scale(loss).backward()
-        self.scaler.unscale_(self.optimizer)
-        grad_clip_norm = self.cfg.train.grad_clip_norm
-        grad_norm = (
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
-            if grad_clip_norm is not None
-            else compute_grad_norm(self.model.parameters())
-        )
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        if self.scheduler is not None:
-            self.scheduler.step()
+        with self._performance_section("backward"):
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
+
+        with self._performance_section("optimizer"):
+            grad_clip_norm = self.cfg.train.grad_clip_norm
+            grad_norm = (
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), grad_clip_norm)
+                if grad_clip_norm is not None
+                else compute_grad_norm(self.model.parameters())
+            )
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            if self.scheduler is not None:
+                self.scheduler.step()
 
         metrics = dict(output.metrics)
         if "loss" not in metrics:
@@ -584,6 +631,19 @@ class BaseRunner:
             float(self.resolved_warmup_steps) / float(self.total_steps)
             if self.total_steps > 0
             else 0.0
+        )
+        # ``total_steps`` 必须先解析完，PerformanceMonitor 才算得出 ETA。
+        self.performance = PerformanceMonitor(
+            mode=str(self.cfg.performance.mode),
+            device=self.device,
+            output_dir=self.output_dir,
+            total_steps=self.total_steps,
+            log_every_steps=int(self.cfg.train.log_every_steps),
+            warmup_steps=int(self.cfg.performance.warmup_steps),
+            profile_wait_steps=int(self.cfg.performance.profile_wait_steps),
+            profile_warmup_steps=int(self.cfg.performance.profile_warmup_steps),
+            profile_active_steps=int(self.cfg.performance.profile_active_steps),
+            is_primary=self.is_primary,
         )
         self.metadata.setdefault("run_name", self.run_name)
         self.metadata.setdefault("description", str(getattr(self.cfg.train, "description", "") or ""))
@@ -849,6 +909,17 @@ class BaseRunner:
         self._save_if_best(metrics, epoch)
         self._last_validation_epoch = int(epoch)
         return should_stop
+
+    def _performance_section(self, name: str):
+        """Wrap a training phase as a profiler range.
+
+        训练中（``self.performance`` 已创建）才产出 ``record_function``；
+        其它场景（eval 模式、子类未走 ``_setup_train`` 等）退化为
+        ``nullcontext()``，对正常路径无开销。
+        """
+        if self.performance is None:
+            return nullcontext()
+        return self.performance.section(name)
 
     def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         """Return the evaluation subset sent to W&B; JSONL always keeps all metrics."""
