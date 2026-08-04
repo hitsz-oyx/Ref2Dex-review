@@ -20,7 +20,6 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_sequence_small30_stride12
   lr: 1.5e-4
   amp: false
   # Triple both data and optimizer steps to retain the previous ~11 epochs of

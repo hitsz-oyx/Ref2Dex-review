@@ -69,7 +69,6 @@ class Config(TaskConfig):
         train_strides = None
 
     class train(TaskConfig.train):
-        output_dir = "outputs/train/cm_action"
         amp = False
         metric_for_best = "val/mean_stride_epe_mm"
         lower_is_better = True

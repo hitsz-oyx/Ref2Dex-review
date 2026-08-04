@@ -18,7 +18,6 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_sequence_small10h_stride12
   lr: 1.5e-4
   amp: false
   # Measured on GPU 1 in FP32: about 4 s/step, so 8k steps targets 9--10 h.

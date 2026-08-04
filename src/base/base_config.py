@@ -80,7 +80,12 @@ class TaskConfig(BaseConfig):
 
     class train(BaseConfig):
         # ========== 路径和随机种子 ==========
-        output_dir = "outputs/train"
+        # Run directories are always resolved as
+        # ``outputs/<task>/<task>_<timestamp>/`` by BaseRunner.  This legacy
+        # field is retained only so old configs can still be parsed.
+        output_dir = ""
+        # Human-readable context belongs in metadata, never in the path.
+        description = ""
         seed = 42
         overfit_mode = False
 

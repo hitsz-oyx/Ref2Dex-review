@@ -175,8 +175,6 @@ class OverfitModeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="runner_overfit_") as tmpdir:
             cfg = TaskConfig()
             cfg.wandb.enable = False
-            cfg.train.output_dir = tmpdir
-            setattr(cfg.train, "_explicit_output_dir", True)
             cfg.train.overfit_mode = True
             cfg.data.shuffle = True
             cfg.data.drop_last = True
@@ -194,7 +192,12 @@ class OverfitModeTests(unittest.TestCase):
             cfg.train.weight_decay = 1e-5
             cfg.data.shuffle = True
 
-            DummyRunner(cfg, mode="train", build_data=True)
+            with mock.patch.object(
+                DummyRunner,
+                "_resolve_run_identity",
+                return_value=("task_20260804_120000", Path(tmpdir)),
+            ):
+                DummyRunner(cfg, mode="train", build_data=True)
 
             self.assertTrue(cfg.data.shuffle)
             self.assertFalse(cfg.data.drop_last)
@@ -216,6 +219,7 @@ class OverfitModeTests(unittest.TestCase):
             self.assertAlmostEqual(saved["train"]["weight_decay"], 1e-5)
             self.assertIsNone(saved["train"]["scheduler"])
             self.assertTrue(saved["meta"]["child_hook_saw_base"])
+            self.assertIn("train_setup", (Path(tmpdir) / "train.log").read_text(encoding="utf-8"))
 
     def test_correspondence_overfit_hook_respects_explicit_overrides(self) -> None:
         cfg = _corr_cfg(mode="bin")

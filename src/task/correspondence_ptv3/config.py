@@ -342,8 +342,7 @@ class Config(TaskConfig):
     class train(TaskConfig.train):
         """训练流程相关配置（优化器、学习率、保存策略等）。"""
 
-        # 训练输出目录：检查点、配置、日志等都保存在这里。
-        output_dir: str = "outputs/train/correspondence_ptv3"
+        # 输出目录由 BaseRunner 统一生成：outputs/<task>/<task>_<timestamp>/。
         # 随机种子，保证可复现性。
         seed: int = 42
         # 训练设备：auto/cpu/cuda/cuda:0 等。

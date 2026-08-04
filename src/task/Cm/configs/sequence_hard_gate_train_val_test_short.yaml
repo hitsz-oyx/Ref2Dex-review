@@ -38,7 +38,6 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_hard_gate_train_val_test_vector_huber_10k
   device: cuda:3
   lr: 1.5e-4
   amp: false

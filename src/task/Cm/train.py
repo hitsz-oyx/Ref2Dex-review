@@ -20,7 +20,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="Python config reference or YAML path.")
     parser.add_argument("--set", action="append", default=[], help="Override config with dotted key=value syntax.")
     parser.add_argument("--data", default=None, help="Optional override for data.train_path.")
-    parser.add_argument("--output-dir", default=None, help="Optional override for train.output_dir.")
     parser.add_argument("--device", default=None, help="Optional override for train.device.")
     parser.add_argument("--distributed", action="store_true", help="Enable distributed training logic.")
     parser.add_argument("--local-rank", "--local_rank", default=None, type=int, help=argparse.SUPPRESS)
@@ -45,9 +44,6 @@ def main() -> None:
     if args.data is not None:
         cfg.data.train_path = args.data
         override_keys.add("data.train_path")
-    if args.output_dir is not None:
-        cfg.train.output_dir = args.output_dir
-        override_keys.add("train.output_dir")
     if args.device is not None:
         cfg.train.device = args.device
         override_keys.add("train.device")
@@ -57,7 +53,6 @@ def main() -> None:
     setattr(cfg, "_explicit_override_keys", set(override_keys))
     setattr(cfg, "_explicit_name", "name" in override_keys)
     setattr(cfg.wandb, "_explicit_name", "wandb.name" in override_keys)
-    setattr(cfg.train, "_explicit_output_dir", bool(args.output_dir is not None or "train.output_dir" in override_keys))
     if not str(cfg.data.train_path).strip() and not str(getattr(cfg.data, "root", "")).strip():
         raise ValueError("Set data.train_path, or data.root together with split files.")
     try:

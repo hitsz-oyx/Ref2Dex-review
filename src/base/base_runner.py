@@ -208,7 +208,7 @@ class BaseRunner:
         metrics = self.evaluate_test_all() if self._resolve_test_loaders() else self.evaluate_all()
         if self.is_primary:
             for key, value in metrics.items():
-                print(f"{key}: {value:.6g}")
+                self._log_line(f"{key}: {value:.6g}")
         return metrics
 
     def learn(self) -> dict[str, float]:
@@ -261,10 +261,10 @@ class BaseRunner:
         elapsed = format_seconds(time.time() - start_time)
         if self._early_stopping_triggered:
             if self.is_primary:
-                print(f"Training early stopped at step {self.global_step} in {elapsed}.")
+                self._log_line(f"Training early stopped at step {self.global_step} in {elapsed}.")
         else:
             if self.is_primary:
-                print(f"Training finished at step {self.global_step} in {elapsed}.")
+                self._log_line(f"Training finished at step {self.global_step} in {elapsed}.")
         if self.wandb_run is not None:
             self.wandb_run.finish()
         return last_metrics
@@ -535,7 +535,7 @@ class BaseRunner:
         )
         self._load_checkpoint_payload(checkpoint, load_optimizer=load_optimizer)
         if self.is_primary:
-            print(f"Loaded checkpoint from {ckpt_path} at step {self.global_step}.")
+            self._log_line(f"Loaded checkpoint from {ckpt_path} at step {self.global_step}.")
         return checkpoint
 
     resume = load
@@ -586,6 +586,7 @@ class BaseRunner:
             else 0.0
         )
         self.metadata.setdefault("run_name", self.run_name)
+        self.metadata.setdefault("description", str(getattr(self.cfg.train, "description", "") or ""))
         self.metadata.update(
             {
                 "total_steps": int(self.total_steps),
@@ -643,7 +644,7 @@ class BaseRunner:
             if self.scheduler.is_compatible_state_dict(scheduler_state):
                 self.scheduler.load_state_dict(scheduler_state)
                 if self.is_primary:
-                    print(
+                    self._log_line(
                         "Resumed cosine_restart phase "
                         f"at global_step={self.global_step} "
                         f"phase_step={self.scheduler.completed_steps}/{self.scheduler.total_steps}."
@@ -660,7 +661,7 @@ class BaseRunner:
                 # at its own base learning rate, not an old LambdaLR state.
                 self.scheduler.restart()
                 if self.is_primary:
-                    print(
+                    self._log_line(
                         "Started cosine_restart phase "
                         f"at global_step={self.global_step} "
                         f"phase_steps={self.scheduler.total_steps} "
@@ -828,7 +829,7 @@ class BaseRunner:
         if self.epochs_without_improvement >= patience or self.evals_without_improvement >= patience:
             self._early_stopping_triggered = True
             if self.is_primary:
-                print(
+                self._log_line(
                     f"Early stopping triggered at epoch {epoch} "
                     f"({self.epochs_without_improvement} epochs, {self.evals_without_improvement} evals without improvement)."
                 )
@@ -863,7 +864,7 @@ class BaseRunner:
             )
         if self.is_primary:
             message = " ".join(f"{key}={value:.6g}" for key, value in metrics.items())
-            print(f"step={self.global_step:06d} epoch={epoch:03d} {message}")
+            self._log_line(f"step={self.global_step:06d} epoch={epoch:03d} {message}")
 
     def _build_wandb_run(self) -> Any | None:
         if not self.cfg.wandb.enable or not self.is_primary:
@@ -958,7 +959,7 @@ class BaseRunner:
         per_device_batch = int(self.cfg.data.batch_size)
         global_batch = per_device_batch * self.distributed.world_size
         val_batch = int(getattr(self.cfg.data, "val_batch_size", None) or per_device_batch)
-        print(
+        self._log_line(
             "train_setup "
             f"run_name={self.run_name} "
             f"device={self.device} world_size={self.distributed.world_size} "
@@ -973,6 +974,20 @@ class BaseRunner:
             f"output_dir={self.output_dir}"
         )
 
+    def _log_line(self, message: str) -> None:
+        """Print a runner message and persist it inside the current training run.
+
+        Evaluation intentionally remains side-effect free.  A training run writes
+        its human-readable log beside ``metadata.json`` and ``metrics.jsonl`` as
+        ``train.log``; no log directories are pre-created.
+        """
+        print(message)
+        if self.mode != "train" or not self.is_primary:
+            return
+        log_path = self.output_dir / "train.log"
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{message}\n")
+
     def _resolve_run_identity(self) -> tuple[str, Path]:
         if self.mode != "train":
             run_name = self._slugify(
@@ -980,29 +995,23 @@ class BaseRunner:
             )
             return run_name, Path(self.cfg.train.output_dir)
 
-        explicit_output_dir = bool(getattr(self.cfg.train, "_explicit_output_dir", False))
-        explicit_cfg_name = bool(getattr(self.cfg, "_explicit_name", False))
-        explicit_wandb_name = bool(getattr(self.cfg.wandb, "_explicit_name", False))
-
         task_slug = self._task_slug()
-        if explicit_wandb_name and str(getattr(self.cfg.wandb, "name", "")).strip():
-            run_name = self._slugify(str(self.cfg.wandb.name))
-        elif explicit_cfg_name and str(getattr(self.cfg, "name", "")).strip():
-            run_name = self._slugify(str(self.cfg.name))
-        else:
-            run_name = f"{task_slug}_{self._shared_timestamp()}"
+        resume = getattr(self.cfg.train, "resume", None)
+        if resume not in {None, "", "auto"}:
+            checkpoint = Path(resume)
+            if checkpoint.parent.name == "checkpoints":
+                output_dir = checkpoint.parent.parent
+                run_name = output_dir.name
+                if not run_name.startswith(f"{task_slug}_"):
+                    raise ValueError(
+                        f"Resume directory {output_dir} must use the {task_slug}_<timestamp> naming convention."
+                    )
+                self.cfg.wandb.name = run_name
+                return run_name, output_dir
 
-        output_value = str(getattr(self.cfg.train, "output_dir", "") or "").strip()
-        output_root = Path(output_value) if output_value else Path("outputs/train")
-        if not explicit_output_dir and output_root.name == task_slug:
-            output_root = output_root.parent
-        if getattr(self.cfg.train, "resume", None) is not None and not explicit_output_dir:
-            output_dir = Path(output_value) if output_value else output_root / run_name
-        else:
-            output_dir = output_root if explicit_output_dir else output_root / run_name
-
-        if not explicit_wandb_name:
-            self.cfg.wandb.name = run_name
+        run_name = f"{task_slug}_{self._shared_timestamp()}"
+        output_dir = Path("outputs") / task_slug / run_name
+        self.cfg.wandb.name = run_name
         return run_name, output_dir
 
     def _task_slug(self) -> str:

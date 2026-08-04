@@ -60,8 +60,6 @@ def parse_args() -> argparse.Namespace:
     )
     # 快速覆盖训练数据路径，等价于 `--set data.train_path=...`。
     parser.add_argument("--data", default=None, help="Optional override for data.train_path.")
-    # 快速覆盖输出目录，等价于 `--set train.output_dir=...`。
-    parser.add_argument("--output-dir", default=None, help="Optional override for train.output_dir.")
     # 快速覆盖训练设备，例如 cpu / cuda:0。
     parser.add_argument("--device", default=None, help="Optional override for train.device.")
     # 显式打开分布式训练开关；实际多卡仍需要用 torchrun 启动多进程。
@@ -103,9 +101,6 @@ def main() -> None:
     if args.data is not None:
         cfg.data.train_path = args.data
         override_keys.add("data.train_path")
-    if args.output_dir is not None:
-        cfg.train.output_dir = args.output_dir
-        override_keys.add("train.output_dir")
     if args.device is not None:
         cfg.train.device = args.device
         override_keys.add("train.device")
@@ -115,11 +110,6 @@ def main() -> None:
     setattr(cfg, "_explicit_override_keys", set(override_keys))
     setattr(cfg, "_explicit_name", "name" in override_keys)
     setattr(cfg.wandb, "_explicit_name", "wandb.name" in override_keys)
-    setattr(
-        cfg.train,
-        "_explicit_output_dir",
-        bool(args.output_dir is not None or "train.output_dir" in override_keys),
-    )
 
     # 第四步：安全检查——train_path 必须非空，否则数据集无法加载。
     if not str(cfg.data.train_path).strip():

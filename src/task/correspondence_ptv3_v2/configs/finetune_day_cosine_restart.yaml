@@ -32,7 +32,6 @@ data:
 
 train:
   resume: outputs/train/correspondence_ptv3_v2_lr5e-5_resume2ep_20260715_080418/checkpoints/epoch_000021.pt
-  output_dir: outputs/train/correspondence_ptv3_v2_finetune_day_cosine_restart
   max_steps: 154670
   epochs: 250
   lr: 5.0e-5

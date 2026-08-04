@@ -33,7 +33,6 @@ data:
   persistent_workers: true
 
 train:
-  output_dir: outputs/train/cm_slot_sweep_no_gate
   device: cuda:1
   seed: 42
   optimizer: adamw
