@@ -149,6 +149,8 @@ class CmFlowHead(nn.Module):
         # the three separate scales above.
         internal_point_flow_scale: float | None = None,
         slot_threshold: float = 0.5,
+        use_slot_gate: bool = True,
+        use_time_condition: bool = False,
     ) -> None:
         super().__init__()
         self.dense_token_dim = int(dense_token_dim)
@@ -165,6 +167,8 @@ class CmFlowHead(nn.Module):
         self.hand_flow_input_scale = float(hand_flow_input_scale)
         self.object_flow_target_scale = float(object_flow_target_scale)
         self.slot_threshold = float(slot_threshold)
+        self.use_slot_gate = bool(use_slot_gate)
+        self.use_time_condition = bool(use_time_condition)
         if min(self.geometry_input_scale, self.hand_flow_input_scale, self.object_flow_target_scale) <= 0.0:
             raise ValueError("Cm input and target scales must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
@@ -189,6 +193,7 @@ class CmFlowHead(nn.Module):
         nn.init.zeros_(self.slot_gate_head[-1].bias)
         self.hard_concrete = HardConcreteGate()
         self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
+        self.time_condition_encoder = _mlp(1, cm_dim, cm_dim) if self.use_time_condition else None
         # Object feature, Cm feature, relative object-to-soft-anchor position,
         # and soft-anchor hand normal.  Cm already contains the hand motion,
         # so exposing the pooled hand flow here would bypass the bottleneck.
@@ -217,6 +222,7 @@ class CmFlowHead(nn.Module):
         hand_normals: torch.Tensor,
         hand_flow: torch.Tensor,
         obj_valid_mask: torch.Tensor,
+        delta_time_s: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         # The frozen dense encoder stays in metres.  The trainable head uses
         # independent geometry, hand-flow, and object-target scales.
@@ -236,20 +242,40 @@ class CmFlowHead(nn.Module):
         )
         u_hand = self.hand_motion_encoder(hand_input)
         cm_tokens, cm_assignment, cm_slot_weights = self.slot_attention(u_hand)
-        slot_gate_logits = self.slot_gate_head(cm_tokens).squeeze(-1)
-        slot_nonzero_prob = self.hard_concrete.nonzero_probability(slot_gate_logits)
-        hard_slot_mask = slot_nonzero_prob >= self.slot_threshold
-        all_below_threshold = ~hard_slot_mask.any(dim=-1, keepdim=True)
-        selection_score = slot_gate_logits
-        if self.training:
-            selection_score = selection_score + 1e-3 * torch.randn_like(selection_score)
-        fallback_index = selection_score.argmax(dim=-1, keepdim=True)
-        fallback_mask = torch.zeros_like(slot_nonzero_prob).scatter_(1, fallback_index, 1.0).bool()
-        hard_slot_mask = torch.where(all_below_threshold, fallback_mask, hard_slot_mask)
+        if self.time_condition_encoder is not None:
+            if delta_time_s is None:
+                raise ValueError("delta_time_s is required when use_time_condition=true.")
+            time_context = self.time_condition_encoder(
+                delta_time_s.to(dtype=cm_tokens.dtype).reshape(-1, 1)
+            )
+            cm_tokens = cm_tokens + time_context.unsqueeze(1)
+        else:
+            time_context = None
+        if self.use_slot_gate:
+            slot_gate_logits = self.slot_gate_head(cm_tokens).squeeze(-1)
+            slot_nonzero_prob = self.hard_concrete.nonzero_probability(slot_gate_logits)
+            hard_slot_mask = slot_nonzero_prob >= self.slot_threshold
+            all_below_threshold = ~hard_slot_mask.any(dim=-1, keepdim=True)
+            selection_score = slot_gate_logits
+            if self.training:
+                selection_score = selection_score + 1e-3 * torch.randn_like(selection_score)
+            fallback_index = selection_score.argmax(dim=-1, keepdim=True)
+            fallback_mask = torch.zeros_like(slot_nonzero_prob).scatter_(1, fallback_index, 1.0).bool()
+            hard_slot_mask = torch.where(all_below_threshold, fallback_mask, hard_slot_mask)
+        else:
+            # Pure Slot Attention ablation: every configured slot participates
+            # in the decoder's ordinary softmax, with no gate or L0 pressure.
+            slot_gate_logits = cm_tokens.new_zeros(cm_tokens.shape[:2])
+            slot_nonzero_prob = torch.ones_like(slot_gate_logits)
+            hard_slot_mask = torch.ones_like(slot_gate_logits, dtype=torch.bool)
+            all_below_threshold = torch.zeros_like(slot_gate_logits[:, :1], dtype=torch.bool)
+            fallback_index = torch.zeros_like(slot_gate_logits[:, :1], dtype=torch.long)
 
         obj_context = self.object_context_encoder(
             torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
         )
+        if time_context is not None:
+            obj_context = obj_context + time_context.unsqueeze(1)
         cm_anchor_pos_internal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points_internal)
         cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
         cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
@@ -267,11 +293,14 @@ class CmFlowHead(nn.Module):
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
         dynamic_flow_scaled = self.edge_flow_head(edge_features)
-        soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
-        soft_weight = torch.softmax(soft_routing_logits, dim=2)
-        hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
-        hard_weight = torch.softmax(hard_routing_logits, dim=2)
-        edge_weight = soft_weight + (hard_weight - soft_weight).detach()
+        if self.use_slot_gate:
+            soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
+            soft_weight = torch.softmax(soft_routing_logits, dim=2)
+            hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
+            hard_weight = torch.softmax(hard_routing_logits, dim=2)
+            edge_weight = soft_weight + (hard_weight - soft_weight).detach()
+        else:
+            edge_weight = torch.softmax(dynamic_logits, dim=2)
         pred_obj_flow_scaled = (edge_weight.unsqueeze(-1) * dynamic_flow_scaled).sum(dim=2)
         # The only public output remains metres.  The runner multiplies it by
         # ``object_flow_target_scale`` inside the loss, preserving gradients.
@@ -354,6 +383,8 @@ class CmFlowModel(nn.Module):
             object_flow_target_scale=explicit_scales[2],
             internal_point_flow_scale=legacy_scale,
             slot_threshold=float(meta.slot_threshold),
+            use_slot_gate=bool(getattr(meta, "use_slot_gate", True)),
+            use_time_condition=bool(getattr(meta, "use_time_condition", False)),
         )
 
     @property
@@ -389,6 +420,7 @@ class CmFlowModel(nn.Module):
             hand_normals=batch["hand_normals"],
             hand_flow=batch["hand_flow"],
             obj_valid_mask=batch["obj_valid_mask"],
+            delta_time_s=batch.get("delta_time_s"),
         )
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:

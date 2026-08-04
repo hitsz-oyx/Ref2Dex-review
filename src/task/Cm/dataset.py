@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 import multiprocessing as mp
 
 import numpy as np
@@ -86,6 +86,12 @@ class Stage4CmDataset(Dataset):
         fixed_stride: int | None = None,
         # 可选：只取前 N 个样本，方便做小型实验
         max_samples: int | None = None,
+        # Optional diagnostic filter on the mean candidate-point endpoint
+        # motion.  It is deliberately off for normal training: static object
+        # pairs are valid supervision, but they make tiny overfit studies
+        # uninformative.
+        min_object_flow_norm: float = 0.0,
+        train_strides: Sequence[int] | None = None,
         coordinate_frame: str = "hand_root_t",
     ) -> None:
         if min_stride <= 0 or max_stride < min_stride:
@@ -105,6 +111,15 @@ class Stage4CmDataset(Dataset):
         self.min_stride, self.max_stride = int(min_stride), int(max_stride)
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
         self.coordinate_frame = str(coordinate_frame)
+        self.min_object_flow_norm = float(min_object_flow_norm)
+        if self.min_object_flow_norm < 0.0:
+            raise ValueError("min_object_flow_norm must be non-negative.")
+        self.train_strides = None if train_strides is None else tuple(sorted({int(value) for value in train_strides}))
+        if self.train_strides is not None and (
+            not self.train_strides
+            or any(value < self.min_stride or value > self.max_stride for value in self.train_strides)
+        ):
+            raise ValueError("train_strides must be a non-empty subset of [min_stride, max_stride].")
         # Collect hand-side files; their sibling shared.npz is merged on load.
         self.file_paths = (sorted(Path(path) for path in file_list) if file_list is not None else
                            (sorted(self.data_path.glob("**/*.npz")) if self.data_path.is_dir() else [self.data_path]))
@@ -156,11 +171,27 @@ class Stage4CmDataset(Dataset):
                 elif (self.ds_rate, self.source_fps) != (ds_rate, source_fps):
                     raise ValueError("All Cm cache files in one Dataset must use the same ds_rate and source_fps")
                 candidate = np.asarray(hand["obj_candidate_mask_5cm"], dtype=bool)
+                filter_stride = self.fixed_stride if self.fixed_stride is not None else self.max_stride
                 for current in range(0, frame_count - self.max_stride):
                     if not self.active_only or candidate[current].any():
+                        if self.min_object_flow_norm > 0.0:
+                            candidate_now = candidate[current]
+                            flow_norm = np.linalg.norm(
+                                shared["obj_points_world"][current + filter_stride, candidate_now]
+                                - shared["obj_points_world"][current, candidate_now],
+                                axis=-1,
+                            ).mean() if candidate_now.any() else 0.0
+                            if float(flow_norm) < self.min_object_flow_norm:
+                                continue
                         self._samples.append((path, current))
         if max_samples is not None and int(max_samples) > 0:
             self._samples = self._samples[:int(max_samples)]
+        if self.train_strides is not None:
+            self._samples = [
+                (path, current, stride)
+                for path, current in self._samples
+                for stride in self.train_strides
+            ]
         if not self._samples:
             raise ValueError("No active frames with the configured maximum future stride.")
 
@@ -193,11 +224,13 @@ class Stage4CmDataset(Dataset):
 
     def sample_location(self, index: int) -> tuple[Path, int]:
         """返回样本 (npz 路径, 当前帧在文件内索引)，便于评估脚本按位置读取。"""
-        return self._samples[index]
+        location = self._samples[index]
+        return location[:2]
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         # 1) 读出当前帧 raw_frame_id，作为采样的稳定随机源
-        path, current = self._samples[index]
+        location = self._samples[index]
+        path, current = location[:2]
         data = self._load_file(path)
         raw_frame = int(data["raw_frame_id"][current])
         # 用稳定 hash 派生两个独立随机流：stride 选择 + 物点采样
@@ -206,8 +239,10 @@ class Stage4CmDataset(Dataset):
         stride_seed = stable_frame_seed(**seed_args, namespace="cm-stride")
         object_seed = stable_frame_seed(**seed_args, namespace="cm-object-sampling")
         # 验证模式走 fixed_stride；训练模式从 [min_stride, max_stride] 闭区间随机
-        stride = self.fixed_stride if self.fixed_stride is not None else int(
-            np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1)
+        stride = (
+            int(location[2]) if len(location) == 3 else
+            self.fixed_stride if self.fixed_stride is not None else
+            int(np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1))
         )
         future = current + stride
         # 当前帧手根位姿作为世界->hand_root_t 的变换源
@@ -234,6 +269,7 @@ class Stage4CmDataset(Dataset):
             "obj_valid_mask": torch.from_numpy(valid), "selected_obj_idx": torch.from_numpy(selected_idx.astype(np.int64)),
             "raw_frame_id": torch.tensor(raw_frame), "next_raw_frame_id": torch.tensor(int(data["raw_frame_id"][future])),
             "stride": torch.tensor(stride),
+            "delta_time_s": torch.tensor(float(stride) / float(self.effective_fps), dtype=torch.float32),
         }
 
 
@@ -250,10 +286,15 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     common = {"num_obj_points": int(meta_cfg.num_obj_points), "num_hand_points": int(meta_cfg.num_hand_points),
               "base_seed": int(seed), "active_only": bool(getattr(data_cfg, "active_only", True)),
               "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 10)),
-              "coordinate_frame": str(meta_cfg.coordinate_frame)}
+              "coordinate_frame": str(meta_cfg.coordinate_frame),
+              "min_object_flow_norm": float(getattr(data_cfg, "min_object_flow_norm", 0.0))}
     train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(
         data_cfg, seed, dataset_cls=Stage4CmDataset, file_pattern="**/*.npz",
-        train_dataset_kwargs={**common, "max_samples": getattr(data_cfg, "max_train_samples", None)},
+        train_dataset_kwargs={
+            **common,
+            "max_samples": getattr(data_cfg, "max_train_samples", None),
+            "train_strides": getattr(data_cfg, "train_strides", None),
+        },
         val_dataset_kwargs={**common, "fixed_stride": int(getattr(data_cfg, "val_stride", 1)),
                             "max_samples": getattr(data_cfg, "max_val_samples", None)},
         test_dataset_kwargs={**common, "fixed_stride": int(getattr(data_cfg, "test_stride", 1)),

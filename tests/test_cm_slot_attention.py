@@ -136,6 +136,50 @@ def test_slot_gate_fallback_keeps_one_dynamic_slot_active() -> None:
     torch.testing.assert_close(output["pred_obj_flow"], torch.zeros_like(output["pred_obj_flow"]))
 
 
+def test_no_gate_routes_through_every_configured_slot() -> None:
+    torch.manual_seed(17)
+    head = CmFlowHead(
+        dense_token_dim=4, cm_dim=8, num_cm_tokens=4, num_slot_iters=1,
+        use_slot_gate=False,
+    )
+    head.eval()
+    output = head(
+        z_obj=torch.randn(2, 3, 4), z_hand=torch.randn(2, 5, 4),
+        dense_hand_contact=torch.rand(2, 5), obj_points=torch.randn(2, 3, 3),
+        obj_normals=torch.randn(2, 3, 3), hand_points=torch.randn(2, 5, 3),
+        hand_normals=torch.randn(2, 5, 3), hand_flow=torch.randn(2, 5, 3),
+        obj_valid_mask=torch.ones(2, 3, dtype=torch.bool),
+    )
+    torch.testing.assert_close(output["slot_nonzero_prob"], torch.ones(2, 4))
+    torch.testing.assert_close(output["slot_hard_mask"], torch.ones(2, 4, dtype=torch.bool))
+    torch.testing.assert_close(output["slot_fallback_used"], torch.zeros(2, dtype=torch.bool))
+    torch.testing.assert_close(output["decoder_slot_usage"].sum(dim=-1), torch.ones(2))
+
+
+def test_time_condition_requires_and_uses_physical_seconds() -> None:
+    torch.manual_seed(19)
+    head = CmFlowHead(
+        dense_token_dim=4, cm_dim=8, num_cm_tokens=1, num_slot_iters=1,
+        use_slot_gate=False, use_time_condition=True,
+    )
+    inputs = dict(
+        z_obj=torch.randn(1, 3, 4), z_hand=torch.randn(1, 5, 4),
+        dense_hand_contact=torch.rand(1, 5), obj_points=torch.randn(1, 3, 3),
+        obj_normals=torch.randn(1, 3, 3), hand_points=torch.randn(1, 5, 3),
+        hand_normals=torch.randn(1, 5, 3), hand_flow=torch.randn(1, 5, 3),
+        obj_valid_mask=torch.ones(1, 3, dtype=torch.bool),
+    )
+    try:
+        head(**inputs)
+    except ValueError as error:
+        assert "delta_time_s is required" in str(error)
+    else:
+        raise AssertionError("Time-conditioned head accepted a missing time interval.")
+    short = head(**inputs, delta_time_s=torch.tensor([1.0 / 30.0]))
+    long = head(**inputs, delta_time_s=torch.tensor([10.0 / 30.0]))
+    assert not torch.allclose(short["cm_tokens"], long["cm_tokens"])
+
+
 def test_dense_token_input_stays_in_metres_and_internal_loss_scales_gradient() -> None:
     class CapturingDense(nn.Module):
         def __init__(self) -> None:

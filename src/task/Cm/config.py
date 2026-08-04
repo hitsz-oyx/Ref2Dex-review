@@ -39,6 +39,13 @@ class Config(TaskConfig):
         loss_slot_count_weight: float = 1.0e-3
         loss_slot_confidence_weight: float = 0.1
         loss_active_overlap_weight: float = 0.0
+        # Ablations can route through every Slot Attention output directly.
+        # Keep the default enabled so existing hard-gate checkpoints retain
+        # their exact behaviour.
+        use_slot_gate: bool = True
+        # Condition on the physical endpoint interval in seconds.  Disabled
+        # by default to preserve existing checkpoints and experiments.
+        use_time_condition: bool = False
         # Hard-Concrete's analytic nonzero probability is about 0.83 at a
         # zero log-alpha, so 0.85 makes the fallback path meaningful at init.
         slot_threshold: float = 0.85
@@ -59,6 +66,7 @@ class Config(TaskConfig):
         val_strides = tuple(range(1, 11))
         max_train_samples = None
         max_val_samples = None
+        train_strides = None
 
     class train(TaskConfig.train):
         output_dir = "outputs/train/cm_action"
