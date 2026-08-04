@@ -64,6 +64,9 @@ class TaskConfig(BaseConfig):
         # the one physical data directory and each text file lists paths
         # relative to it; files are never copied into train/val/test folders.
         root = ""
+        # Canonical split interface.  The JSON file names the train/val/test
+        # text lists, keeping one auditable split source per experiment.
+        split_json_path = None
         train_split = None
         val_split_path = None
         test_split = None

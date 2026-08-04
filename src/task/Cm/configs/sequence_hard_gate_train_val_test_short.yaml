@@ -19,13 +19,10 @@ data:
   # These roots have disjoint complete sequences.  Do not use ``val_split``
   # when explicit held-out directories are supplied.
   root: data/processed_data/stage4/data
-  train_split: data/processed_data/stage4/splits/sequence_split_v1/train.txt
-  val_split_path: data/processed_data/stage4/splits/sequence_split_v1/val.txt
-  test_split: data/processed_data/stage4/splits/sequence_split_v1/test.txt
+  split_json_path: data/processed_data/stage4/splits/sequence_split_v1/split.json
   train_path: ""
   val_path: null
   test_path: null
-  val_split: 0.0
   val_split: 0.0
   active_only: true
   min_stride: 1

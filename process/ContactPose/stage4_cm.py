@@ -23,11 +23,12 @@ from process.common.stage4_cm import (
     build_hand_sequence,
     build_shared_sequence,
     resolve_device,
+    write_manifest,
     write_meta,
 )
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "cm_sequence_cache_contactpose"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "data" / "contactpose"
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,7 @@ def main() -> None:
             "note": "hand_root_pose_world is identity because ContactPose is exported in hand-root coordinates",
         },
     )
+    write_manifest(output_root)
     print(f"[stage4-contactpose] summary: {stats}")
     if stats["failed"]:
         raise SystemExit(1)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import time
 from pathlib import Path
@@ -164,3 +165,34 @@ def write_meta(
         payload.update(extra)
     with (output_root / "meta.json").open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
+
+
+def write_manifest(output_root: Path) -> None:
+    """Write an inventory of all currently complete hand streams in a cache."""
+    output_root = output_root.resolve()
+    fields = ("relative_path", "dataset", "subject", "sequence", "side", "object", "num_frames", "status")
+    rows: list[dict[str, Any]] = []
+    for hand_path in sorted(output_root.glob("*/*/*.npz")):
+        if hand_path.name not in {"left.npz", "right.npz"}:
+            continue
+        shared_path = hand_path.parent / "shared.npz"
+        if not shared_path.exists():
+            continue
+        try:
+            with np.load(shared_path, allow_pickle=False) as shared, np.load(hand_path, allow_pickle=False) as hand:
+                rows.append({
+                    "relative_path": hand_path.relative_to(output_root).as_posix(),
+                    "dataset": str(np.asarray(shared["dataset_name"]).item()),
+                    "subject": str(np.asarray(shared["subject_id"]).item()),
+                    "sequence": str(np.asarray(shared["seq_name"]).item()),
+                    "side": str(np.asarray(hand["side"]).item()),
+                    "object": str(np.asarray(shared["object_name"]).item()),
+                    "num_frames": int(np.asarray(hand["hand_points_world"]).shape[0]),
+                    "status": "ok",
+                })
+        except (KeyError, OSError, ValueError):
+            continue
+    with (output_root / "manifest.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)

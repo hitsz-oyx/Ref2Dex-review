@@ -25,10 +25,11 @@ from process.GRAB.raw import (
     load_manifest_seq_paths,
     resolve_grab_sequence_root,
 )
+from process.common.stage4_cm import write_manifest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "cm_sequence_cache"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "data" / "grab"
 SHARED_SCHEMA_NAME = "ref2dex_cm_sequence_shared"
 HAND_SCHEMA_NAME = "ref2dex_cm_sequence_hand"
 SCHEMA_VERSION = "3.0.0"
@@ -324,6 +325,7 @@ def main() -> None:
             traceback.print_exc()
 
     _write_meta(output_root, args, stats)
+    write_manifest(output_root)
     print(f"[stage4] summary: {stats}")
     if stats["failed"]:
         raise SystemExit(1)

@@ -60,8 +60,12 @@ stride 1/5/10 EPE。最佳模型由 `val/mean_stride_epe_mm` 决定。overfit �
 ```bash
 PYTHONPATH=. python -m src.task.Cm.eval \
   --checkpoint outputs/train/<run>/checkpoints/best.pt \
+  --split val \
   --device cuda
 ```
+
+Use `--split test` only for the final held-out evaluation; the evaluator never
+selects the test split implicitly.
 
 ## 当前模型接口
 

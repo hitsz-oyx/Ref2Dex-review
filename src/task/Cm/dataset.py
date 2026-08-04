@@ -278,6 +278,31 @@ def _sequence_group_key(path: Path) -> str:
     return path.parent.as_posix()
 
 
+def _ensure_sequence_disjoint_splits(
+    train_files: Sequence[Path],
+    val_files: Sequence[Path],
+    test_files: Sequence[Path],
+) -> None:
+    """Keep the two hand streams of a Cm sequence in one split."""
+    named_sets = {
+        "train": {path.resolve().parent for path in train_files},
+        "val": {path.resolve().parent for path in val_files},
+        "test": {path.resolve().parent for path in test_files},
+    }
+    overlaps = {
+        "train_val": named_sets["train"] & named_sets["val"],
+        "train_test": named_sets["train"] & named_sets["test"],
+        "val_test": named_sets["val"] & named_sets["test"],
+    }
+    invalid = {name: paths for name, paths in overlaps.items() if paths}
+    if invalid:
+        details = {
+            name: [str(path) for path in sorted(paths)[:5]]
+            for name, paths in invalid.items()
+        }
+        raise ValueError(f"Cm sequence splits overlap: {details}")
+
+
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any | None = None):
     """Construct train/validation/test loaders with fixed-stride eval views.
 
@@ -301,6 +326,11 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
                              "max_samples": getattr(data_cfg, "max_test_samples", None)},
         split_group_fn=_sequence_group_key if bool(getattr(data_cfg, "group_val_by_sequence", True)) else None,
         distributed=distributed,
+    )
+    _ensure_sequence_disjoint_splits(
+        train_loader.dataset.file_paths,
+        [] if val_loader is None else val_loader.dataset.file_paths,
+        [] if test_loader is None else test_loader.dataset.file_paths,
     )
     # Read shared metadata through the Dataset merger rather than side NPZ alone.
     first = train_loader.dataset.file_paths[0]

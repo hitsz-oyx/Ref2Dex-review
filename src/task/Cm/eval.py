@@ -18,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", default=None, help="Optional config override.")
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--split", required=True, choices=("val", "test"), help="Evaluation split.")
     parser.add_argument("--distributed", action="store_true")
     parser.add_argument("--local-rank", "--local_rank", default=None, type=int, help=argparse.SUPPRESS)
     return parser.parse_args()
@@ -34,7 +35,11 @@ def main() -> None:
     if args.distributed:
         cfg.train.distributed.enable = True
     try:
-        CmActionRunner(cfg, mode="eval", checkpoint=args.checkpoint).run()
+        runner = CmActionRunner(cfg, mode="eval", checkpoint=args.checkpoint)
+        metrics = runner.evaluate_all() if args.split == "val" else runner.evaluate_test_all()
+        if runner.is_primary:
+            for key, value in metrics.items():
+                print(f"{key}: {value:.6g}")
     finally:
         cleanup_distributed()
     if int(os.environ.get("RANK", "0")) == 0:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import random
+import json
 from typing import Any, Callable, Sequence, TypeVar
 
 import numpy as np
@@ -12,6 +13,31 @@ from .distributed import make_default_eval_sampler, make_default_train_sampler
 
 
 T = TypeVar("T")
+
+
+def ensure_disjoint_splits(
+    train_files: Sequence[Path],
+    val_files: Sequence[Path],
+    test_files: Sequence[Path],
+) -> None:
+    """Reject file-level leakage between explicitly supplied split lists."""
+    named_sets = {
+        "train": {path.resolve() for path in train_files},
+        "val": {path.resolve() for path in val_files},
+        "test": {path.resolve() for path in test_files},
+    }
+    overlaps = {
+        "train_val": named_sets["train"] & named_sets["val"],
+        "train_test": named_sets["train"] & named_sets["test"],
+        "val_test": named_sets["val"] & named_sets["test"],
+    }
+    invalid = {name: paths for name, paths in overlaps.items() if paths}
+    if invalid:
+        details = {
+            name: [str(path) for path in sorted(paths)[:5]]
+            for name, paths in invalid.items()
+        }
+        raise ValueError(f"Data splits overlap: {details}")
 
 
 def split_items(items: list[Any], val_split: float, seed: int) -> tuple[list[Any], list[Any]]:
@@ -125,6 +151,33 @@ def resolve_data_path(path: str | Path, root: str | Path | None = None) -> Path:
     return raw
 
 
+def read_split_json(path: str | Path, *, root: str | Path | None = None) -> tuple[Path, Path, Path | None, Path | None]:
+    """Read the canonical split descriptor and resolve its three list paths."""
+    json_path = resolve_data_path(path, root=root).resolve()
+    try:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Split descriptor {json_path} is not valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Split descriptor {json_path} must contain a JSON object.")
+
+    def resolve_entry(key: str, *, required: bool) -> Path | None:
+        value = payload.get(key)
+        if value in {None, ""}:
+            if required:
+                raise ValueError(f"Split descriptor {json_path} is missing required key {key!r}.")
+            return None
+        candidate = Path(str(value))
+        return candidate if candidate.is_absolute() else (json_path.parent / candidate)
+
+    return (
+        json_path,
+        resolve_entry("train_split", required=True),
+        resolve_entry("val_split", required=False),
+        resolve_entry("test_split", required=False),
+    )
+
+
 def make_file_split_dataloaders(
     data_cfg: Any,
     seed: int,
@@ -161,11 +214,20 @@ def make_file_split_dataloaders(
         return paths
 
     split_root = str(getattr(data_cfg, "root", "") or "").strip()
-    explicit_splits = (
+    split_json_path = getattr(data_cfg, "split_json_path", None)
+    direct_splits = (
         getattr(data_cfg, "train_split", None),
         getattr(data_cfg, "val_split_path", None),
         getattr(data_cfg, "test_split", None),
     )
+    if split_json_path not in {None, ""} and any(value not in {None, ""} for value in direct_splits):
+        raise ValueError("Set either data.split_json_path or direct split paths, not both.")
+    if split_json_path not in {None, ""}:
+        descriptor_path, train_split, val_split_path, test_split = read_split_json(split_json_path, root=root)
+        explicit_splits = (train_split, val_split_path, test_split)
+    else:
+        descriptor_path = None
+        explicit_splits = direct_splits
     use_explicit_splits = any(value not in {None, ""} for value in explicit_splits)
     if use_explicit_splits and not split_root:
         raise ValueError("data.root is required when using split files.")
@@ -197,11 +259,12 @@ def make_file_split_dataloaders(
         train_files = read_split_file(train_split, data_root=data_dir)
         val_files = [] if val_split_path in {None, ""} else read_split_file(val_split_path, data_root=data_dir)
         test_files = [] if test_split in {None, ""} else read_split_file(test_split, data_root=data_dir)
+        ensure_disjoint_splits(train_files, val_files, test_files)
         train_dataset = build_dataset(data_dir, file_list=train_files, kwargs=train_dataset_kwargs)
         val_dataset = build_dataset(data_dir, file_list=val_files, kwargs=val_dataset_kwargs) if val_files else None
         test_dataset = build_dataset(data_dir, file_list=test_files, kwargs=test_dataset_kwargs) if test_files else None
         test_path = None
-        split_metadata = {"split_root": str(data_dir), "train_split": str(train_split), "val_split": None if val_split_path in {None, ""} else str(val_split_path), "test_split": None if test_split in {None, ""} else str(test_split)}
+        split_metadata = {"split_root": str(data_dir), "split_json_path": None if descriptor_path is None else str(descriptor_path), "train_split": str(train_split), "val_split": None if val_split_path in {None, ""} else str(val_split_path), "test_split": None if test_split in {None, ""} else str(test_split)}
     elif val_path is not None:
         # 显式给了 val_path：train / val 各走各的目录，直接各自构造
         train_dataset = build_dataset(train_path, kwargs=train_dataset_kwargs)

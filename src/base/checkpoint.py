@@ -37,7 +37,7 @@ class CheckpointManager:
         is_best: bool = False,
     ) -> Path:
         raw_model = unwrap_model(model)
-        ckpt_path = self.root / format_epoch_checkpoint_file(epoch)
+        ckpt_path = self.root / format_step_checkpoint_file(step, epoch)
         payload = {
             "step": step,
             "epoch": epoch,
@@ -138,8 +138,16 @@ def format_epoch_checkpoint_file(epoch: int) -> str:
     return f"{format_epoch_checkpoint_dir(epoch)}{CHECKPOINT_SUFFIX}"
 
 
+def format_step_checkpoint_file(step: int, epoch: int) -> str:
+    return f"step_{int(step):09d}_epoch_{int(epoch):06d}{CHECKPOINT_SUFFIX}"
+
+
 def checkpoint_sort_key(path: Path) -> tuple[int, int] | None:
     stem = path.stem
+    if stem.startswith("step_") and "_epoch_" in stem:
+        step_text, epoch_text = stem[len("step_"):].split("_epoch_", 1)
+        if step_text.isdigit() and epoch_text.isdigit():
+            return (1, int(step_text))
     if stem.startswith(EPOCH_PREFIX):
         suffix = stem[len(EPOCH_PREFIX) :]
         if suffix.isdigit():

@@ -205,7 +205,9 @@ class BaseRunner:
     def run(self) -> dict[str, float]:
         if self.mode == "train":
             return self.learn()
-        metrics = self.evaluate_test_all() if self._resolve_test_loaders() else self.evaluate_all()
+        # Evaluation defaults to validation.  A command-line entrypoint must
+        # opt into the held-out test split explicitly.
+        metrics = self.evaluate_all()
         if self.is_primary:
             for key, value in metrics.items():
                 self._log_line(f"{key}: {value:.6g}")
@@ -569,8 +571,6 @@ class BaseRunner:
 
     def _setup_train(self) -> None:
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        if self.is_primary:
-            save_config(self.cfg, self.output_dir / "config.json")
         barrier()
         dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
         (self.train_loader, self.val_loader, self.test_loader, self.metadata,
@@ -601,6 +601,8 @@ class BaseRunner:
                     "min_lr": float(self._resolve_min_lr()),
                 }
             )
+        if self.is_primary:
+            save_config(self.cfg, self.output_dir / "config.json")
         self._write_metadata()
         self.model = self.build_model(self.cfg.model).to(self.device)
         if self.cfg.train.compile:
@@ -1002,14 +1004,15 @@ class BaseRunner:
             if checkpoint.parent.name == "checkpoints":
                 output_dir = checkpoint.parent.parent
                 run_name = output_dir.name
-                if not run_name.startswith(f"{task_slug}_"):
+                if output_dir.parent.name != task_slug:
                     raise ValueError(
-                        f"Resume directory {output_dir} must use the {task_slug}_<timestamp> naming convention."
+                        f"Resume directory {output_dir} must be under outputs/{task_slug}/."
                     )
                 self.cfg.wandb.name = run_name
                 return run_name, output_dir
 
-        run_name = f"{task_slug}_{self._shared_timestamp()}"
+        experiment_slug = self._slugify(str(getattr(self.cfg, "name", task_slug) or task_slug)).lower()
+        run_name = f"{experiment_slug}_{self._shared_timestamp()}"
         output_dir = Path("outputs") / task_slug / run_name
         self.cfg.wandb.name = run_name
         return run_name, output_dir
@@ -1018,8 +1021,8 @@ class BaseRunner:
         runner_class = str(getattr(self.cfg, "runner_class", "") or "").strip()
         parts = runner_class.split(".")
         if len(parts) >= 3 and parts[0] == "src" and parts[1] == "task":
-            return self._slugify(parts[2])
-        return self._slugify(str(getattr(self.cfg, "name", "task") or "task"))
+            return self._slugify(parts[2]).lower()
+        return self._slugify(str(getattr(self.cfg, "name", "task") or "task")).lower()
 
     def _shared_timestamp(self) -> str:
         stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime()) if self.is_primary else None
