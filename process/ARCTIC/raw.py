@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ARCTIC raw-data adapter used by :mod:`process.ARCTIC.optimize`.
+"""ARCTIC raw-data adapter used by :mod:`process.ARCTIC.stage2_optimize`.
 
 It parses raw ARCTIC MANO/object trajectories, reconstructs hand geometry,
 samples articulated object surfaces, and returns in-memory fields for the

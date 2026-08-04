@@ -13,9 +13,9 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STAGE2_ROOT = ROOT / "processed_data" / "generated" / "stage2" / "grab_initonly_4096"
+DEFAULT_STAGE2_ROOT = ROOT / "data" / "processed_data" / "stage2" / "grab_initonly_4096"
 DEFAULT_OUTPUT_ROOT = (
-    ROOT / "processed_data" / "generated" / "stage3" / "grab_initonly_4096_v2"
+    ROOT / "data" / "processed_data" / "stage3" / "grab_initonly_4096_v2"
 )
 SCHEMA_NAME = "train_corr_static_v2"
 SCHEMA_VERSION = "2.0.0"

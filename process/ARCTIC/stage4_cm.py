@@ -7,9 +7,9 @@ from pathlib import Path
 
 import numpy as np
 
-from process.ARCTIC.optimize import RAW_SEQS_DIR
+from process.ARCTIC.stage2_optimize import RAW_SEQS_DIR
 from process.ARCTIC.raw import ArcticRawAdapter, DATA_ROOT, MANO_MODEL_DIR
-from process.stage4.cm_sequence_common import (
+from process.common.stage4_cm import (
     ROOT,
     build_hand_sequence,
     build_shared_sequence,
@@ -18,7 +18,7 @@ from process.stage4.cm_sequence_common import (
 )
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "cm_sequence_cache_arctic"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "cm_sequence_cache_arctic"
 SOURCE_FPS = 30.0
 
 

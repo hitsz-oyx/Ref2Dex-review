@@ -151,6 +151,24 @@ def make_file_split_dataloaders(
     - base 层只负责共享的文件切分、worker seed 注入和 DDP sampler 策略。
     - ``test_path`` 必须显式提供，绝不从训练目录切分，避免测试集泄漏。
     """
+    def read_split_file(value: str | Path, *, data_root: Path) -> list[Path]:
+        split_path = resolve_data_path(value, root=root)
+        entries = [line.strip() for line in split_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        paths = [data_root / entry for entry in entries]
+        missing = [str(path) for path in paths if not path.is_file()]
+        if missing:
+            raise FileNotFoundError(f"{split_path} references missing files: {missing[:3]}")
+        return paths
+
+    split_root = str(getattr(data_cfg, "root", "") or "").strip()
+    explicit_splits = (
+        getattr(data_cfg, "train_split", None),
+        getattr(data_cfg, "val_split_path", None),
+        getattr(data_cfg, "test_split", None),
+    )
+    use_explicit_splits = any(value not in {None, ""} for value in explicit_splits)
+    if use_explicit_splits and not split_root:
+        raise ValueError("data.root is required when using split files.")
     # 把 data_cfg 里的相对路径解析为绝对路径；root 通常是项目根，用作相对路径基准
     train_path = resolve_data_path(data_cfg.train_path, root=root)
     val_path = None if data_cfg.val_path in {None, ""} else resolve_data_path(data_cfg.val_path, root=root)
@@ -171,7 +189,20 @@ def make_file_split_dataloaders(
             payload["file_list"] = file_list
         return dataset_cls(path, **payload)
 
-    if val_path is not None:
+    if use_explicit_splits:
+        data_dir = resolve_data_path(split_root, root=root)
+        train_split, val_split_path, test_split = explicit_splits
+        if train_split in {None, ""}:
+            raise ValueError("data.train_split is required when using split files.")
+        train_files = read_split_file(train_split, data_root=data_dir)
+        val_files = [] if val_split_path in {None, ""} else read_split_file(val_split_path, data_root=data_dir)
+        test_files = [] if test_split in {None, ""} else read_split_file(test_split, data_root=data_dir)
+        train_dataset = build_dataset(data_dir, file_list=train_files, kwargs=train_dataset_kwargs)
+        val_dataset = build_dataset(data_dir, file_list=val_files, kwargs=val_dataset_kwargs) if val_files else None
+        test_dataset = build_dataset(data_dir, file_list=test_files, kwargs=test_dataset_kwargs) if test_files else None
+        test_path = None
+        split_metadata = {"split_root": str(data_dir), "train_split": str(train_split), "val_split": None if val_split_path in {None, ""} else str(val_split_path), "test_split": None if test_split in {None, ""} else str(test_split)}
+    elif val_path is not None:
         # 显式给了 val_path：train / val 各走各的目录，直接各自构造
         train_dataset = build_dataset(train_path, kwargs=train_dataset_kwargs)
         val_dataset = build_dataset(val_path, kwargs=val_dataset_kwargs)
@@ -208,7 +239,7 @@ def make_file_split_dataloaders(
             else None
         )
 
-    test_dataset = (
+    test_dataset = test_dataset if use_explicit_splits else (
         build_dataset(test_path, kwargs=test_dataset_kwargs)
         if test_path is not None
         else None
@@ -259,7 +290,7 @@ def make_file_split_dataloaders(
 
     # 把路径、样本数等元信息返回出去，给 logger / runner 记录
     metadata = {
-        "train_path": str(train_path),
+        "train_path": str(data_dir) if use_explicit_splits else str(train_path),
         "val_path": None if val_path is None else str(val_path),
         "test_path": None if test_path is None else str(test_path),
         "num_train_samples": len(train_dataset),

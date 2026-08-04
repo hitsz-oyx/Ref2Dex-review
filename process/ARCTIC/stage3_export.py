@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from process.stage3.prepare_corr_static import (
+from process.common.stage3_corr import (
     _load_stage2,
     _resolve_device,
     _resolve_files,
@@ -16,8 +16,8 @@ from process.stage3.prepare_corr_static import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_STAGE2_ROOT = ROOT / "processed_data" / "generated" / "stage2" / "arctic_initonly_4096"
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage3" / "arctic_initonly_4096_hand_root_v2"
+DEFAULT_STAGE2_ROOT = ROOT / "data" / "processed_data" / "stage2" / "arctic_initonly_4096"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage3" / "arctic_initonly_4096_hand_root_v2"
 
 
 def parse_args() -> argparse.Namespace:

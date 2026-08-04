@@ -82,7 +82,7 @@ import torch
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = (
-    ROOT / "processed_data" / "generated" / "stage2" / "grab_geneoh_4096"
+    ROOT / "data" / "processed_data" / "stage2" / "grab_geneoh_4096"
 )
 # GeneOH-Diffusion 仓库根（与 Ref2Dex 平级，默认在 ~/test_ws/GeneOH-Diffusion）
 DEFAULT_GENEOH_ROOT = ROOT.parent / "GeneOH-Diffusion"

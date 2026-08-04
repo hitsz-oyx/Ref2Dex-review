@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""GRAB raw-data adapter used by :mod:`process.GRAB.optimize`.
+"""GRAB raw-data adapter used by :mod:`process.GRAB.stage2_optimize`.
 
 It parses raw GRAB sequences, reconstructs MANO geometry, samples the object
 surface, and returns in-memory fields for the common Stage 2 writer. It does

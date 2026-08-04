@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from process.stage3 import prepare_corr_static as stage3_mod  # noqa: E402
-from process.stage3.prepare_corr_static import (  # noqa: E402
+from process.common import stage3_corr as stage3_mod  # noqa: E402
+from process.common.stage3_corr import (  # noqa: E402
     _normals_world_to_hand_root,
     _points_world_to_hand_root,
 )

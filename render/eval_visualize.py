@@ -6,7 +6,7 @@ Open3D 窗口中。
 运行示例:
     PYTHONPATH=. python render/eval_visualize.py \\
         --checkpoint outputs/train/<run>/checkpoints/latest.pt \\
-        --input    processed_data/generated/stage3/<dataset>/<seq>_<side>.npz
+        --input    data/processed_data/stage3/<dataset>/<seq>_<side>.npz
 
 按键说明
 --------
@@ -94,12 +94,12 @@ CLI 示例
 # 默认打开
 PYTHONPATH=. python render/eval_visualize.py \\
     --checkpoint outputs/train/<run>/checkpoints/latest.pt \\
-    --input    processed_data/generated/stage3/.../bowl_pass_1_right.npz
+    --input    data/processed_data/stage3/.../bowl_pass_1_right.npz
 
 # 指定 GPU、并从第 5 帧、epoch 3 开始
 PYTHONPATH=. python render/eval_visualize.py \\
     --checkpoint outputs/train/<run>/checkpoints/latest.pt \\
-    --input    processed_data/generated/stage3/.../bowl_pass_1_right.npz \\
+    --input    data/processed_data/stage3/.../bowl_pass_1_right.npz \\
     --device cuda --frame 5 --epoch 3
 
 # 仅作数据检查 + 单次推理（不开窗口）

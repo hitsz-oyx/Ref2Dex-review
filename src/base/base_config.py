@@ -60,6 +60,13 @@ class TaskConfig(BaseConfig):
         # ``test_path`` is intentionally explicit: test data must never be
         # sampled from training data or used by the training loop.
         test_path = None
+        # Optional split-file interface.  When any split is set, ``root`` is
+        # the one physical data directory and each text file lists paths
+        # relative to it; files are never copied into train/val/test folders.
+        root = ""
+        train_split = None
+        val_split_path = None
+        test_split = None
         val_split = 0.1
         batch_size = 256
         val_batch_size = None

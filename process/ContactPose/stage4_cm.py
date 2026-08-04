@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from process.ARCTIC.raw import assign_hand_semantics, compute_canonical_hand_surface
-from process.ContactPose.export_stage3_v2 import (
+from process.ContactPose.stage3_export import (
     DEFAULT_CONTACTPOSE_ROOT,
     DEFAULT_MANO_PATH,
     HAND_SIDES,
@@ -18,7 +18,7 @@ from process.ContactPose.export_stage3_v2 import (
     _build_hand_sequence,
     _enumerate_sequences,
 )
-from process.stage4.cm_sequence_common import (
+from process.common.stage4_cm import (
     ROOT,
     build_hand_sequence,
     build_shared_sequence,
@@ -27,7 +27,7 @@ from process.stage4.cm_sequence_common import (
 )
 
 
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "cm_sequence_cache_contactpose"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "cm_sequence_cache_contactpose"
 
 
 @dataclass(frozen=True)

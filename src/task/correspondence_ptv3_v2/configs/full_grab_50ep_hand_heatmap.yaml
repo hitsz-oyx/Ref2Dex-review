@@ -6,7 +6,7 @@ _base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
 name: correspondence_ptv3_v2_full_grab_50ep_hand_heatmap
 
 data:
-  train_path: processed_data/generated/stage3/grab_initonly_4096_ds4
+  train_path: data/processed_data/stage3/grab_initonly_4096_ds4
   batch_size: 64
   val_batch_size: 32
   num_workers: 4

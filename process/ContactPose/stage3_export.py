@@ -30,7 +30,7 @@ from smplx import MANO
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONTACTPOSE_ROOT = Path("/mnt/ugreen_nas/storage/Ref2Dex_storage/ContactPose")
 DEFAULT_MANO_PATH = Path("/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano")
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage3" / "contactpose_use_stage3_v2"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage3" / "contactpose_use_stage3_v2"
 SCHEMA_NAME = "train_corr_static_v2"
 SCHEMA_VERSION = "2.0.0"
 HAND_SIDES = ("left", "right")

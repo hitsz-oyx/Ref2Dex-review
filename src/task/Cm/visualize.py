@@ -287,7 +287,7 @@ class InteractiveFlowViewer:
         if "hand_root_pose_world" not in data:
             raise ValueError(
                 "This Stage 4 file has no hand_root_pose_world field. Regenerate it with "
-                "process/stage4/prepare_cm.py schema 1.1+ to enable world coordinates."
+                "process/GRAB/stage4_cm.py schema 1.1+ to enable world coordinates."
             )
         pose = np.asarray(data["hand_root_pose_world"][raw_pair_idx], dtype=np.float64)
         if pose.shape != (4, 4):

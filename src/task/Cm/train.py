@@ -58,8 +58,8 @@ def main() -> None:
     setattr(cfg, "_explicit_name", "name" in override_keys)
     setattr(cfg.wandb, "_explicit_name", "wandb.name" in override_keys)
     setattr(cfg.train, "_explicit_output_dir", bool(args.output_dir is not None or "train.output_dir" in override_keys))
-    if not str(cfg.data.train_path).strip():
-        raise ValueError("data.train_path is empty. Pass --data or set data.train_path.")
+    if not str(cfg.data.train_path).strip() and not str(getattr(cfg.data, "root", "")).strip():
+        raise ValueError("Set data.train_path, or data.root together with split files.")
     try:
         CmActionRunner(cfg, mode="train").run()
     finally:

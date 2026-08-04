@@ -365,12 +365,13 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
             stride_loaders[f"{prefix}/stride_1/"] = loader
         return stride_loaders
 
+    split_root = getattr(data_cfg, "root", None)
     val_loaders = make_stride_loaders(
-        val_loader, root_path=data_cfg.val_path or data_cfg.train_path,
+        val_loader, root_path=data_cfg.val_path or data_cfg.train_path or split_root,
         prefix="val", max_samples=getattr(data_cfg, "max_val_samples", None),
     )
     test_loaders = make_stride_loaders(
-        test_loader, root_path=data_cfg.test_path,
+        test_loader, root_path=data_cfg.test_path or split_root,
         prefix="test", max_samples=getattr(data_cfg, "max_test_samples", None),
     )
     metadata["val_loader_names"] = sorted(val_loaders)

@@ -26,7 +26,7 @@ test 不参与 checkpoint 选择。
 ```bash
 conda activate graspenv
 python -m src.task.Cm.compute_flow_scale \
-  --train-path processed_data/generated/cm_sequence_hard_gate_val20_split/train \
+  --train-path data/processed_data/stage4/cm_sequence_hard_gate_val20_split/train \
   --min-stride 1 --max-stride 10 --num-obj-points 512
 ```
 

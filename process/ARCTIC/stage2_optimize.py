@@ -16,7 +16,7 @@ from process.ARCTIC.raw import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "stage2" / "arctic_initonly_4096"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage2" / "arctic_initonly_4096"
 
 
 def _resolve_sequences(args: argparse.Namespace) -> list[str]:

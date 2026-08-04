@@ -21,7 +21,7 @@ meta:
   val_obj_perturb_prob: 1.0
 
 data:
-  train_path: processed_data/generated/stage3/grab_initonly_4096_ds4
+  train_path: data/processed_data/stage3/grab_initonly_4096_ds4
   batch_size: 64
   val_batch_size: 32
   num_workers: 4

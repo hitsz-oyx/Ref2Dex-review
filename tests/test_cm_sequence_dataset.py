@@ -8,7 +8,7 @@ from torch.utils.data import SequentialSampler
 
 from src.base.distributed import DistributedState, make_default_eval_sampler
 from src.task.Cm.dataset import Stage4CmDataset
-from process.stage4.prepare_cm import build_hand_sequence, build_shared_sequence
+from process.GRAB.stage4_cm import build_hand_sequence, build_shared_sequence
 
 
 def test_runtime_stride_uses_current_hand_frame_and_epoch_seed() -> None:

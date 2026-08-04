@@ -28,7 +28,7 @@ from process.GRAB.raw import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT_ROOT = ROOT / "processed_data" / "generated" / "cm_sequence_cache"
+DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage4" / "cm_sequence_cache"
 SHARED_SCHEMA_NAME = "ref2dex_cm_sequence_shared"
 HAND_SCHEMA_NAME = "ref2dex_cm_sequence_hand"
 SCHEMA_VERSION = "3.0.0"

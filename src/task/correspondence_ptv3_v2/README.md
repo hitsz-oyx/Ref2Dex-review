@@ -22,7 +22,7 @@
 
 ## 数据要求
 
-输入是由 process/stage3/prepare_corr_static.py 生成的 Stage 3 v2 npz。当前默认要求 coordinate_frame 为 hand_root；训练会拒绝与配置不一致的数据。新 schema 只保留 v2 所需字段，不兼容旧 correspondence_ptv3 或旧 render 脚本；已有包含这些最小字段的旧 v2 数据仍可读取。
+输入是由 process/common/stage3_corr.py 生成的 Stage 3 v2 npz。当前默认要求 coordinate_frame 为 hand_root；训练会拒绝与配置不一致的数据。新 schema 只保留 v2 所需字段，不兼容旧 correspondence_ptv3 或旧 render 脚本；已有包含这些最小字段的旧 v2 数据仍可读取。
 
 典型数据规格：
 

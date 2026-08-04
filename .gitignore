@@ -4,7 +4,11 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
-/processed_data/*
+# Local dataset assets: raw downloads, generated samples, split manifests,
+# and shared models (for example MANO) are machine-local and must not be
+# committed.  The repository keeps only the code and documentation that
+# describe how to create and consume them.
+/data/
 /preprocess/processed_arctic/
 /preprocess/processed_grab/
 /render/assets/

@@ -20,6 +20,6 @@
 
 ```bash
 python -m src.task.correspondence_ptv3.train \
-  --data processed_data/generated/stage3/... \
+  --data data/processed_data/stage3/... \
   --output-dir outputs/train/correspondence_ptv3
 ```

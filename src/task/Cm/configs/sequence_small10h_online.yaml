@@ -5,7 +5,7 @@ name: cm_sequence_small10h_stride12
 data:
   # 10 raw GRAB sequences x 160 contiguous original frames.  One sequence is
   # held out at the sequence level, so no temporal neighbours cross the split.
-  train_path: processed_data/generated/cm_sequence_small10h
+  train_path: data/processed_data/stage4/cm_sequence_small10h
   active_only: true
   min_stride: 1
   max_stride: 12

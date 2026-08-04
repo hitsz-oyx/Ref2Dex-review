@@ -4,7 +4,7 @@
 用法：
     # 导出 epoch 3 实际采样的物体点
     python -m tools.stage3_npz_to_ply \
-        --input processed_data/generated/stage3/<variant>/s1/bowl_pass_1_right.npz \
+        --input data/processed_data/stage3/<variant>/s1/bowl_pass_1_right.npz \
         --object-view sampled --epoch 3 --frame-start 0 --frame-end 9
 
     # 默认 frame-start=0, frame-end=9
