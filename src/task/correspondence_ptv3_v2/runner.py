@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 import torch
 
 from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, set_config_default_if_not_explicit
@@ -33,6 +34,14 @@ _TARGET_STRENGTH_BINS: tuple[tuple[float, float, str], ...] = (
 class CorrespondencePTV3V2Runner(BaseRunner):
     _CONTACT_POSITIVE_EPS = 1e-4
     _CONTACT_SAMPLE_CHUNK = 64
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Lazily-built MANO layer cache. Only populated when MANO forward
+        # is actually needed (i.e. the batch has hand MANO parameters and
+        # cfg.meta.use_mano_reconstruction is True).
+        self._mano_cache = None
+        self._mano_cache_root_face = None
 
     @classmethod
     def configure_overfit_mode(
@@ -107,8 +116,13 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         if not isinstance(batch, dict):
             return super().prepare_batch(batch)
 
+        # Pull the side hint out of the batch BEFORE super().prepare_batch
+        # so we can hand the GPU-side MANO forward the right layer.
+        mano_side = batch.pop("__mano_side__", None)
         contact_seed = batch.pop("contact_seed", None)
         batch = super().prepare_batch(batch)
+        if mano_side is not None and self._should_reconstruct_mano(batch):
+            self._reconstruct_hand_from_mano(batch, side=str(mano_side))
         if contact_seed is None:
             return batch
 
@@ -119,6 +133,168 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         with torch.no_grad():
             self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
         return batch
+
+    # ---------- MANO reconstruction on the GPU ----------
+
+    def _should_reconstruct_mano(self, batch: dict[str, torch.Tensor]) -> bool:
+        if not bool(getattr(self.cfg.meta, "use_mano_reconstruction", False)):
+            return False
+        has_mano = batch.get("has_mano")
+        if has_mano is None:
+            return False
+        if torch.is_tensor(has_mano):
+            # DataLoader stacks the per-sample booleans into a (B,) tensor.
+            # Reconstruction is only triggered if every sample in the
+            # batch carries MANO parameters; mixed batches fall back to
+            # the legacy hand_points for safety.
+            if has_mano.numel() == 0:
+                return False
+            if not bool(has_mano.all().item()):
+                return False
+        elif not bool(has_mano):
+            return False
+        required = ("mano_global_orient", "mano_transl", "mano_pose", "mano_betas")
+        return all(batch.get(k) is not None for k in required)
+
+    def _get_mano_cache(self, device: torch.device):
+        if self._mano_cache is None:
+            from src.task.correspondence_ptv3_v2.mano_recon import MANOLayerCache
+            self._mano_cache = MANOLayerCache(
+                model_dir=str(self.cfg.meta.mano_model_dir),
+                device=device,
+            )
+        return self._mano_cache
+
+    def _lookup_mano_descriptor(self, side: str) -> tuple[bool, int, bool]:
+        """Return (use_pca, num_pca_comps, flat_hand_mean) for the side.
+
+        Looks at the active train dataset's descriptive fields first;
+        falls back to GRAB-style defaults (PCA24, flat_hand_mean=True)
+        so a misconfigured pipeline still produces a valid forward pass.
+        """
+        train_ds = getattr(self, "train_dataset", None) or getattr(self, "dataset", None)
+        for candidate in (train_ds, getattr(self, "val_dataset", None)):
+            use_pca = getattr(candidate, "mano_use_pca", None)
+            num_pca_comps = getattr(candidate, "mano_num_pca_comps", None)
+            flat_hand_mean = getattr(candidate, "mano_flat_hand_mean", None)
+            if use_pca is not None:
+                return bool(use_pca), int(num_pca_comps or 24), bool(flat_hand_mean)
+        # GRAB-style fallback.
+        del side
+        return True, 24, True
+
+    def _reconstruct_hand_from_mano(
+        self,
+        batch: dict[str, torch.Tensor],
+        *,
+        side: str,
+    ) -> None:
+        """Re-build hand_points / hand_normals from MANO forward on the GPU.
+
+        Only called for batches that carry MANO parameters. The
+        preprocessor's hand_points (already used as GT and as the
+        ``hand_min_dist`` cache) is left untouched; this method replaces
+        the *input* hand points/normals the same way
+        ``perturb_object_geometry`` replaces the input obj geometry.
+        """
+        from src.task.correspondence_ptv3_v2.mano_recon import (
+            derive_face_center_points_and_normals,
+            reconstruct_hand_points,
+        )
+
+        device = batch["points"].device
+        cache = self._get_mano_cache(device)
+
+        global_orient = batch["mano_global_orient"].to(device=device, dtype=torch.float32)
+        transl = batch["mano_transl"].to(device=device, dtype=torch.float32)
+        hand_pose = batch["mano_pose"].to(device=device, dtype=torch.float32)
+        betas = batch["mano_betas"].to(device=device, dtype=torch.float32)
+        v_template = batch.get("mano_v_template")
+        if v_template is not None:
+            v_template = v_template.to(device=device, dtype=torch.float32).cpu().numpy()
+
+        # Subject-aware MANO config selection. We trust the npz's
+        # descriptive fields (carried on the train dataset) over the cfg
+        # defaults so a mixed-dataset batch (e.g. ARCTIC + GRAB) can
+        # never desync. The values are read once in
+        # ``CorrStaticDatasetV2.__init__``.
+        use_pca, num_pca_comps, flat_hand_mean = self._lookup_mano_descriptor(side)
+        # PCA-space hand perturbation. The std is in pose-coefficient
+        # units; for axis-angle the same std produces a similar visual
+        # effect (per-joint angular jitter).
+        apply_hand_perturb = bool(getattr(self.cfg.meta, "apply_hand_perturb", False))
+        hand_pca_std = float(getattr(self.cfg.meta, "hand_pca_std", 0.0))
+        if apply_hand_perturb and hand_pca_std > 0:
+            noise = torch.randn_like(hand_pose) * hand_pca_std
+            hand_pose = hand_pose + noise
+
+        # Reuse a single MANO layer per (side, use_pca, num_pca_comps,
+        # flat_hand_mean, v_template) tuple. The v_template is per-subject
+        # in GRAB, so the cache naturally grows up to ~10 entries.
+        layer, _cfg = cache.get_or_build_for_v_template(
+            side=side,
+            use_pca=use_pca,
+            num_pca_comps=num_pca_comps,
+            flat_hand_mean=flat_hand_mean,
+            v_template=v_template,
+        )
+
+        vertices = reconstruct_hand_points(
+            layer,
+            global_orient=global_orient,
+            hand_pose=hand_pose,
+            transl=transl,
+            betas=betas,
+        )                                                                  # (B, 778, 3)
+
+        # smplx.MANO.faces is a CPU numpy array; cache it on the device.
+        if self._mano_cache_root_face is None or self._mano_cache_root_face.device != device:
+            self._mano_cache_root_face = torch.as_tensor(
+                np.asarray(layer.faces).astype(np.int64), dtype=torch.long, device=device
+            )
+        face_centers, face_normals = derive_face_center_points_and_normals(
+            vertices, self._mano_cache_root_face
+        )                                                                  # (B, 1538, 3)
+
+        # The MANO forward output `vertices` lives in the **world** frame
+        # (smplx applies global_orient + transl internally). To splice
+        # the rebuilt hand into the batch we must bring the face
+        # centers back to the stored ``hand_root`` frame, exactly the
+        # inverse of ``_points_world_to_hand_root`` in
+        # ``process/common/stage3_corr.py``:
+        #     hand_root_point = R_inv @ (world_point - t)
+        # where (R, t) is ``hand_root_pose_world``. ``hand_root_pose`` is
+        # optional in v2.0; if absent we assume identity (i.e. the npz
+        # was built with world-frame points, which matches the v2.0
+        # legacy "object" frame convention).
+        hand_root_pose = batch.get("hand_root_pose_world")
+        if hand_root_pose is None:
+            hand_root_points = face_centers
+            hand_root_normals = face_normals
+        else:
+            R = hand_root_pose[:, :3, :3]
+            t = hand_root_pose[:, :3, 3]
+            R_inv = R.transpose(-1, -2)
+            hand_root_points = torch.einsum(
+                "bij,bnj->bni", R_inv, face_centers - t[:, None, :]
+            )
+            hand_root_normals = torch.einsum("bij,bnj->bni", R_inv, face_normals)
+
+        # Splice the rebuilt hand points into the input batch.
+        num_hand_points_tensor = batch["num_hand_points"]
+        if num_hand_points_tensor.numel() > 1:
+            num_hand_points = int(num_hand_points_tensor.flatten()[0].item())
+        else:
+            num_hand_points = int(num_hand_points_tensor.item())
+        if hand_root_points.shape[1] != num_hand_points:
+            raise RuntimeError(
+                f"MANO forward produced {hand_root_points.shape[1]} face centers "
+                f"but the dataset expects {num_hand_points} hand points. "
+                f"This usually means the npz is in an older convention."
+            )
+        offset = batch["points"].shape[1] - num_hand_points
+        batch["points"][:, offset:] = hand_root_points.to(batch["points"].dtype)
+        batch["normals"][:, offset:] = hand_root_normals.to(batch["normals"].dtype)
 
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
         preds = model(batch)

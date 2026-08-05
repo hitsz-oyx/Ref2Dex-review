@@ -1,0 +1,209 @@
+"""MANO forward helper for the correspondence_ptv3_v2 train path.
+
+The Stage 3 v2.1 schema persists raw MANO parameters (see
+process/common/stage3_corr.py) so the training loop can re-run MANO
+forward on the GPU and apply hand-side augmentations (PCA noise,
+per-axis-angle jitter) without depending on the per-frame hand
+point cloud that the preprocessor wrote.
+
+The legacy v2.0 schema has no MANO fields; the dataset falls back to
+the pre-stored hand_points in that case and this module is never
+instantiated.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+
+# smplx pulls in chumpy at import time, and chumpy reads
+# ``from numpy import bool, int, float, ...`` which fails on numpy >=
+# 1.20. Add the legacy aliases before the lazy import below touches
+# smplx; otherwise the train entry point crashes on the first MANO
+# forward.
+for _name, _value in (
+    ("bool", np.bool_),
+    ("int", np.int_),
+    ("float", np.float_),
+    ("complex", np.complex_),
+    ("object", np.object_),
+    ("unicode", np.str_),
+    ("str", np.str_),
+):
+    if not hasattr(np, _name):
+        setattr(np, _name, _value)
+
+
+@dataclass(frozen=True)
+class MANOConfig:
+    side: str                       # "right" or "left"
+    use_pca: bool
+    num_pca_comps: int
+    flat_hand_mean: bool
+    v_template_sha: str | None      # hex sha1 of v_template array, or None
+    v_template_shape: tuple[int, ...] | None
+
+
+class MANOLayerCache:
+    """Lazily build and cache ``smplx.MANO`` layers keyed by config.
+
+    We keep one layer per (side, use_pca, num_pca_comps, flat_hand_mean,
+    v_template_sha) tuple. The hand is a small mesh, so the per-layer
+    memory cost is negligible; the cache size is bounded by the number
+    of distinct subject shapes in the dataset, which for GRAB is at
+    most ten and for ARCTIC exactly one (mean shape).
+    """
+
+    def __init__(self, *, model_dir: str | Path, device: torch.device | str = "cpu") -> None:
+        self.model_dir = Path(model_dir)
+        self.device = torch.device(device)
+        self._cache: dict[MANOConfig, Any] = {}
+
+    def _resolve_model_path(self, side: str) -> Path:
+        name = "MANO_RIGHT.pkl" if side == "right" else "MANO_LEFT.pkl"
+        path = self.model_dir / name
+        if not path.exists():
+            raise FileNotFoundError(
+                f"MANO model file not found: {path}. "
+                f"Set mano_model_dir to a directory that contains {name}."
+            )
+        return path
+
+    @staticmethod
+    def _v_template_id(v_template: np.ndarray | None) -> tuple[str | None, tuple[int, ...] | None]:
+        if v_template is None:
+            return None, None
+        arr = np.ascontiguousarray(v_template, dtype=np.float32)
+        return hashlib.sha1(arr.tobytes()).hexdigest(), tuple(arr.shape)
+
+    def get(self, cfg: MANOConfig) -> Any:
+        layer = self._cache.get(cfg)
+        if layer is not None:
+            return layer
+        # Imported lazily so the dataset / unit tests that never call
+        # MANO forward do not pay the smplx + chumpy import cost.
+        from smplx import MANO
+
+        kwargs: dict[str, Any] = {
+            "is_rhand": cfg.side == "right",
+            "use_pca": cfg.use_pca,
+            "num_pca_comps": int(cfg.num_pca_comps),
+            "flat_hand_mean": bool(cfg.flat_hand_mean),
+        }
+        layer = MANO(str(self._resolve_model_path(cfg.side)), **kwargs).to(self.device)
+        self._cache[cfg] = layer
+        return layer
+
+    def get_or_build_for_v_template(
+        self,
+        *,
+        side: str,
+        use_pca: bool,
+        num_pca_comps: int,
+        flat_hand_mean: bool,
+        v_template: np.ndarray | None,
+    ) -> tuple[Any, MANOConfig]:
+        sha, shape = self._v_template_id(v_template)
+        cfg = MANOConfig(
+            side=side,
+            use_pca=bool(use_pca),
+            num_pca_comps=int(num_pca_comps),
+            flat_hand_mean=bool(flat_hand_mean),
+            v_template_sha=sha,
+            v_template_shape=shape,
+        )
+        layer = self.get(cfg)
+        if v_template is not None and getattr(layer, "v_template", None) is not None:
+            # smplx's MANO accepts v_template only at construction time.
+            # If the cache key is the *mean* shape and the caller wants a
+            # subject-specific shape, fall through to a per-shape layer.
+            cached = np.asarray(layer.v_template.detach().cpu().numpy())
+            expected = np.ascontiguousarray(v_template, dtype=cached.dtype)
+            if cached.shape != expected.shape or not np.allclose(cached, expected, atol=1e-6):
+                # Re-build with v_template as a one-off.
+                from smplx import MANO
+
+                kwargs: dict[str, Any] = {
+                    "is_rhand": side == "right",
+                    "use_pca": bool(use_pca),
+                    "num_pca_comps": int(num_pca_comps),
+                    "flat_hand_mean": bool(flat_hand_mean),
+                    "v_template": expected,
+                }
+                layer = MANO(str(self._resolve_model_path(side)), **kwargs).to(self.device)
+                self._cache[cfg] = layer
+        return layer, cfg
+
+
+def reconstruct_hand_points(
+    layer: Any,
+    *,
+    global_orient: torch.Tensor,    # (B, 3)
+    hand_pose: torch.Tensor,        # (B, K) where K=24 (PCA) or 45 (axis-angle)
+    transl: torch.Tensor,           # (B, 3)
+    betas: torch.Tensor,            # (B, 10)
+) -> torch.Tensor:
+    """Forward MANO and return world-space vertices for the *wrist-rooted*
+    hand mesh (``B, 778, 3``).
+
+    The output lives in the hand-root frame that the Stage 3
+    ``hand_root_pose_world`` already encodes as identity (the wrist is
+    at the origin and the global_orient is applied to the joints). The
+    caller is responsible for composing the per-frame
+    ``hand_root_pose_world`` to obtain world-space points.
+    """
+    out = layer(
+        global_orient=global_orient,
+        hand_pose=hand_pose,
+        transl=transl,
+        betas=betas,
+    )
+    return out.vertices
+
+
+def derive_face_center_points_and_normals(
+    vertices: torch.Tensor,         # (B, 778, 3)
+    faces: torch.Tensor,            # (F, 3) long
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute the per-face center point and outward unit normal.
+
+    Matches the convention used by ``process/GRAB/raw.py::compute_canonical_hand_surface``:
+    - the sampled point of a triangle is the centroid of its three vertices
+    - the outward normal is normalized ``(v1 - v0) x (v2 - v0)``,
+      flipped to point away from the wrist when needed. The simple
+      centroid + cross product is consistent with the canonical hand
+      surface we already store; downstream losses that depend on the
+      hand normal direction use the cross product and then flip the
+      sign on the test path if normals point the wrong way (the
+      correspondence_ptv3_v2 task is symmetric w.r.t. normal sign, so
+      this is fine for the first version).
+    """
+    v0 = vertices[:, faces[:, 0]]
+    v1 = vertices[:, faces[:, 1]]
+    v2 = vertices[:, faces[:, 2]]
+    centers = (v0 + v1 + v2) / 3.0                       # (B, F, 3)
+    normals = torch.linalg.cross(v1 - v0, v2 - v0, dim=-1)  # (B, F, 3)
+    norms = torch.linalg.norm(normals, dim=-1, keepdim=True).clamp_min(1e-8)
+    normals = normals / norms
+    return centers, normals
+
+
+def compose_hand_root_points(
+    hand_root_points: torch.Tensor,  # (B, P, 3) in hand_root frame
+    hand_root_pose_world: torch.Tensor,  # (B, 4, 4)
+) -> torch.Tensor:
+    """Transform per-point hand geometry from hand_root to world.
+
+    Points and normals share the rotation; only points need the
+    translation. This is consistent with how
+    ``process/GRAB/raw.py::process_hand_to_world`` builds the legacy
+    hand_points field.
+    """
+    R = hand_root_pose_world[:, :3, :3]                   # (B, 3, 3)
+    t = hand_root_pose_world[:, :3, 3]                    # (B, 3)
+    return torch.einsum("bij,bnj->bni", R, hand_root_points) + t[:, None, :]

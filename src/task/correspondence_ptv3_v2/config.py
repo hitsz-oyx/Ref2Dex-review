@@ -74,6 +74,18 @@ class Config(TaskConfig):
         apply_obj_perturb: bool = True
         val_obj_perturb_prob: float = 1.0
 
+        # v2.1: hand-side MANO reconstruction on the GPU. When the Stage 3
+        # npz carries the mano_* fields, the runner rebuilds the hand
+        # geometry from MANO forward and optionally applies a PCA-space
+        # perturbation before concatenating with the (already perturbed)
+        # object points. If the npz is v2.0 (no mano_* fields), the
+        # pre-stored hand_points / hand_normals are used and these flags
+        # are no-ops.
+        mano_model_dir: str = str(ROOT / "data" / "raw_data" / "ARCTIC" / "body_models" / "mano")
+        use_mano_reconstruction: bool = True
+        apply_hand_perturb: bool = False
+        hand_pca_std: float = 0.5            # std on hand_pose (PCA or axis-angle) per comp
+
         loss_cross_edge_weight: float = 1.0
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
         # it cannot dominate the random128 objective.

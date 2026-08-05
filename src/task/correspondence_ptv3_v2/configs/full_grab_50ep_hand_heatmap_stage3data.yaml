@@ -2,8 +2,23 @@ _base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
 
 name: correspondence_ptv3_v2_full_grab_50ep_hand_heatmap_stage3data
 
+# Training data path: this config requires the Stage 3 v2.1 schema with
+# the new mano_* fields (see process/common/stage3_corr.py and
+# tests/test_stage3_mano_reconstruction.py). Run stage 2 + stage 3
+# with the current code first:
+#   python -m process.GRAB.stage2_optimize \
+#       --grab-root /path/to/GRAB_root \
+#       --output-root /path/to/stage2/GRAB_initonly_4096_ds4_v21 \
+#       --overwrite --obj-unit m
+#   python -m process.common.stage3_corr \
+#       --stage2-root /path/to/stage2/GRAB_initonly_4096_ds4_v21 \
+#       --output-root /path/to/stage3/GRAB_initonly_4096_ds4_v21 \
+#       --overwrite
+# The legacy v2.0 path is also still supported (the runner falls back
+# to the pre-stored hand_points when mano_* fields are absent).
+
 data:
-  train_path: data/processed_data/stage3/data/GRAB/initonly_4096_ds4
+  train_path: data/processed_data/stage3/data/GRAB/initonly_4096_ds4_v21
   batch_size: 64
   val_batch_size: 32
   num_workers: 4

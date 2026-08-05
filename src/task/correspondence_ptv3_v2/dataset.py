@@ -29,9 +29,15 @@ class CorrStaticDatasetV2(Dataset):
         "hand_points",
         "hand_normals",
         "hand_to_obj_min_dist",
-        "obj_candidate_mask_5cm",
         "coordinate_frame",
     }
+    # obj_candidate_mask_5cm is optional in v2.1+ (5cm gating was removed in
+    # favor of proxy-distance top-k sampling). Old v2.0 data still carries it;
+    # if it is missing we fall back to a uniform all-True pool mask.
+    OPTIONAL_FIELDS = {"obj_candidate_mask_5cm", "mano_global_orient", "mano_transl",
+                       "mano_pose", "mano_betas", "mano_v_template",
+                       "mano_use_pca", "mano_num_pca_comps", "mano_flat_hand_mean",
+                       "mano_pose_repr"}
 
     def __init__(
         self,
@@ -132,6 +138,24 @@ class CorrStaticDatasetV2(Dataset):
                 f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
             )
         self.coordinate_frame = actual_frame
+        # Read the MANO descriptive fields once. These are dataset-wide
+        # (per-npz, not per-frame) and are needed by the runner to
+        # build the correct smplx.MANO layer. Falls back to the
+        # GRAB-style defaults if absent (legacy v2.0 data).
+        self.mano_use_pca: bool = True
+        self.mano_num_pca_comps: int = 24
+        self.mano_flat_hand_mean: bool = True
+        self.mano_pose_repr: str = "pca"
+        if self.file_paths:
+            with np.load(self.file_paths[0], allow_pickle=False) as data:
+                if "mano_use_pca" in data.files:
+                    self.mano_use_pca = bool(np.asarray(data["mano_use_pca"]).item())
+                if "mano_num_pca_comps" in data.files:
+                    self.mano_num_pca_comps = int(np.asarray(data["mano_num_pca_comps"]).item())
+                if "mano_flat_hand_mean" in data.files:
+                    self.mano_flat_hand_mean = bool(np.asarray(data["mano_flat_hand_mean"]).item())
+                if "mano_pose_repr" in data.files:
+                    self.mano_pose_repr = str(np.asarray(data["mano_pose_repr"]).item())
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
@@ -185,8 +209,16 @@ class CorrStaticDatasetV2(Dataset):
             raw_frame_id=raw_frame_id,
             epoch=epoch,
         )
+        # In v2.1+ the 5 cm candidate mask is no longer precomputed; we
+        # fall back to the full object pool (sample_object_indices will
+        # then do its own pool-uniform sampling with no proximity bias).
+        candidate_mask = data.get("obj_candidate_mask_5cm")
+        if candidate_mask is None:
+            candidate_mask = np.ones(
+                (int(data["obj_points"].shape[1]),), dtype=bool
+            )
         selected_idx, obj_valid = sample_object_indices(
-            data["obj_candidate_mask_5cm"][frame_idx],
+            candidate_mask[frame_idx],
             num_samples=self.num_obj_points,
             seed=sample_seed,
         )
@@ -259,7 +291,10 @@ class CorrStaticDatasetV2(Dataset):
             axis=0,
         )
 
-        return {
+        # v2.1+: pass MANO parameters through so the runner can re-run
+        # MANO forward on the GPU and apply hand PCA perturbations.
+        has_mano = "mano_pose" in data and "mano_global_orient" in data
+        result: dict[str, torch.Tensor] = {
             "points": torch.from_numpy(input_points).float(),
             "normals": torch.from_numpy(input_normals).float(),
             "gt_points": torch.from_numpy(gt_points).float(),
@@ -272,7 +307,41 @@ class CorrStaticDatasetV2(Dataset):
             "contact_seed": torch.tensor(contact_seed, dtype=torch.long),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
+            "has_mano": torch.tensor(has_mano, dtype=torch.bool),
         }
+        if has_mano:
+            # "side" is the only non-Tensor key in the batch; the runner
+            # pulls it before super().prepare_batch so it is safe to be
+            # a plain string here.
+            result["__mano_side__"] = side
+            result["mano_global_orient"] = torch.from_numpy(
+                np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)
+            ).float()
+            result["mano_transl"] = torch.from_numpy(
+                np.asarray(data["mano_transl"][frame_idx], dtype=np.float32)
+            ).float()
+            result["mano_pose"] = torch.from_numpy(
+                np.asarray(data["mano_pose"][frame_idx], dtype=np.float32)
+            ).float()
+            result["mano_betas"] = torch.from_numpy(
+                np.asarray(data["mano_betas"][frame_idx], dtype=np.float32)
+            ).float()
+            # mano_v_template is per-subject (shape (778, 3)); we ship
+            # the subject-specific template so the runner builds a
+            # subject-aware MANO layer on first sight.
+            v_template = data.get("mano_v_template")
+            if v_template is not None:
+                result["mano_v_template"] = torch.from_numpy(
+                    np.asarray(v_template, dtype=np.float32)
+                ).float()
+            # hand_root_pose_world (T, 4, 4) is needed to bring the
+            # MANO forward output from world back to the hand_root
+            # frame the rest of the pipeline expects.
+            if "hand_root_pose" in data:
+                result["hand_root_pose_world"] = torch.from_numpy(
+                    np.asarray(data["hand_root_pose"][frame_idx], dtype=np.float32)
+                ).float()
+        return result
 
 
 def _resolve_hand_to_obj_min_dist(

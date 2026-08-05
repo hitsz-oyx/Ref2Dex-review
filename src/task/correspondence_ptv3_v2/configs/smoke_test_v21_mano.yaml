@@ -1,0 +1,46 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: smoke_test_v21_mano
+
+data:
+  # Tiny subset (one subject, one sequence) for a training smoke test.
+  train_path: /tmp/stage3_test_grab
+  val_path: /tmp/stage3_test_grab
+  batch_size: 4
+  val_batch_size: 4
+  num_workers: 0
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: false
+  prefetch_factor: 2
+  blacklist_path: null
+
+train:
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.0
+  warmup_steps: 0
+  epochs: 1
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 1
+  diagnostic_every_steps: 1
+  eval_every_epochs: 1
+  save_every_epochs: 1
+  max_to_keep: 1
+  metric_for_best: val_clean/cross_edge_random_qfl
+  lower_is_better: true
+  distributed:
+    enable: false
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: false
+  project: ref2dex
+  mode: disabled
+  tags: [correspondence, ptv3, v2, smoke-test, mano-v21]

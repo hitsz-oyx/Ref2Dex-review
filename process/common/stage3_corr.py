@@ -248,6 +248,15 @@ def build_stage3_sequence(
         "obj_candidate_mask_5cm": candidate_mask,
         "coordinate_frame": np.asarray(coordinate_frame),
     }
+    # The hand_root pose (T, 4, 4) takes world-space geometry to the
+    # wrist frame. Stage 3 uses it once at build time to fold world
+    # points into hand_root; we also persist it so the train side can
+    # re-run MANO forward and bring the world-space vertices back into
+    # the stored hand_root frame for the cross-dataset path.
+    if "hand_root_pose" in payload:
+        out["hand_root_pose"] = _require_array(
+            payload, "hand_root_pose", ndim=3, dtype=np.float32
+        )
     # ---- MANO cross-dataset fields (docs/指导.md) ----
     # We forward the raw MANO parameters and the descriptive configuration
     # unchanged from stage 2. v_template is per-subject (frame-invariant)
