@@ -823,6 +823,45 @@ class ArcticRawAdapter:
         # Minimal in-memory source schema consumed by process.common.stage2.
         seq_id = f"{subject}/{seq_name}"
 
+        # ---- MANO config (per docs/指导.md cross-dataset compatibility) ----
+        # ARCTIC is fixed: 15-joint axis-angle (45 dims), use_pca=False,
+        # flat_hand_mean=False (changing this introduces cm-scale fingertip
+        # errors per the ARCTIC preprocess docstring). v_template defaults
+        # to the mean MANO template since ARCTIC does not ship a per-subject
+        # subject-specific v_template like GRAB does.
+        mano_use_pca = False
+        mano_num_pca_comps = 45
+        mano_flat_hand_mean = False
+        mano_pose_repr = "axis_angle"
+        # Per-side MANO layers each carry their own canonical v_template
+        # (the left/right template is mirrored at the body-model level, not
+        # re-mirrored at runtime). Persist them separately so train-time
+        # MANO forward can rebuild each hand with the correct template.
+        v_template_r = (
+            self.mano_r.v_template.detach().cpu().numpy().astype(np.float32).copy()
+        )
+        v_template_l = (
+            self.mano_l.v_template.detach().cpu().numpy().astype(np.float32).copy()
+        )
+
+        def _to_numpy(arr: torch.Tensor) -> np.ndarray:
+            return arr.detach().cpu().numpy().astype(np.float32).copy()
+
+        right_mano = {
+            "mano_global_orient": _to_numpy(rot_r),
+            "mano_transl": _to_numpy(trans_r),
+            "mano_pose": _to_numpy(pose_r),
+            "mano_betas": _to_numpy(shape_r) if shape_r.ndim == 1 else _to_numpy(shape_r[:1]),
+            "mano_v_template": v_template_r,
+        }
+        left_mano = {
+            "mano_global_orient": _to_numpy(rot_l),
+            "mano_transl": _to_numpy(trans_l),
+            "mano_pose": _to_numpy(pose_l),
+            "mano_betas": _to_numpy(shape_l) if shape_l.ndim == 1 else _to_numpy(shape_l[:1]),
+            "mano_v_template": v_template_l,
+        }
+
         output = {
             "seq_id": seq_id,
             "dataset_name": "arctic",
@@ -853,4 +892,15 @@ class ArcticRawAdapter:
             "left_hand_min_dist_to_obj": left_min_dist,
             "left_hand_root_pose": left_hand_root_pose,
         }
+        for key, value in right_mano.items():
+            output[f"right_{key}"] = value
+        for key, value in left_mano.items():
+            output[f"left_{key}"] = value
+        # Static MANO config (per docs/指导.md, these fields are dataset-wide
+        # so we duplicate them across both hands for symmetry with GRAB).
+        for side_prefix in ("right_", "left_"):
+            output[f"{side_prefix}mano_use_pca"] = bool(mano_use_pca)
+            output[f"{side_prefix}mano_num_pca_comps"] = int(mano_num_pca_comps)
+            output[f"{side_prefix}mano_flat_hand_mean"] = bool(mano_flat_hand_mean)
+            output[f"{side_prefix}mano_pose_repr"] = str(mano_pose_repr)
         return output

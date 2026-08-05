@@ -134,6 +134,48 @@ def pack_stage2_hand(
     }
     if hand_root_pose is not None:
         payload["hand_root_pose"] = hand_root_pose[keep]
+
+    # ---- MANO fields (cross-dataset compatibility, docs/指导.md) ----
+    # Forward raw MANO parameters + descriptive config so stage 3 can write
+    # them to the npz and the train side can re-run MANO forward / perturb
+    # in PCA space. All fields are optional at this layer; missing fields
+    # simply mean the upstream adapter did not produce them.
+    #
+    # Per-subject assets (mano_betas when stored as a single vector, and
+    # mano_v_template) are NOT indexed by the per-frame `keep` mask because
+    # they are frame-invariant.
+    per_subject_keys = {"mano_v_template"}
+    for mano_key in (
+        "mano_global_orient",
+        "mano_transl",
+        "mano_pose",
+        "mano_betas",
+    ):
+        source_key = f"{side}_{mano_key}"
+        if source_key not in source or source[source_key] is None:
+            continue
+        value = _as_array(source, source_key).astype(np.float32)
+        # ARCTIC stores betas as (10,), GRAB stores as (T, 10). Only slice
+        # with `keep` when the leading dim matches the frame count.
+        if value.shape[0] == int(keep.shape[0]):
+            value = value[keep]
+        payload[mano_key] = value
+    # Configuration booleans / ints / strings are frame-invariant; pass
+    # through as-is when the upstream adapter emitted them.
+    for cfg_key, caster in (
+        ("mano_use_pca", bool),
+        ("mano_num_pca_comps", int),
+        ("mano_flat_hand_mean", bool),
+        ("mano_pose_repr", str),
+    ):
+        source_key = f"{side}_{cfg_key}"
+        if source_key in source and source[source_key] is not None:
+            payload[cfg_key] = caster(source[source_key])
+    # v_template is a per-subject asset, NOT per-frame. It must NOT be
+    # indexed by `keep` (which is a per-frame mask).
+    vtemp_key = f"{side}_mano_v_template"
+    if vtemp_key in source and source[vtemp_key] is not None:
+        payload["mano_v_template"] = _as_array(source, vtemp_key).astype(np.float32)
     return payload
 
 

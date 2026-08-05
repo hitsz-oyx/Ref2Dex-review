@@ -18,7 +18,7 @@ DEFAULT_OUTPUT_ROOT = (
     ROOT / "data" / "processed_data" / "stage3" / "grab_initonly_4096_v2"
 )
 SCHEMA_NAME = "train_corr_static_v2"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -248,6 +248,48 @@ def build_stage3_sequence(
         "obj_candidate_mask_5cm": candidate_mask,
         "coordinate_frame": np.asarray(coordinate_frame),
     }
+    # ---- MANO cross-dataset fields (docs/指导.md) ----
+    # We forward the raw MANO parameters and the descriptive configuration
+    # unchanged from stage 2. v_template is per-subject (frame-invariant)
+    # so it is not re-indexed by frame.
+    num_frames = int(out["raw_frame_id"].shape[0])
+    for per_frame_key in (
+        "mano_global_orient",
+        "mano_transl",
+        "mano_pose",
+    ):
+        if per_frame_key in payload and payload[per_frame_key] is not None:
+            out[per_frame_key] = _require_array(
+                payload, per_frame_key, ndim=2, dtype=np.float32
+            )
+    # mano_betas is per-subject in ARCTIC ((10,)) and per-frame in GRAB
+    # ((T, 10)). Normalize to (T, 10) for the npz so train-time code can
+    # always index the leading dim by frame.
+    if "mano_betas" in payload and payload["mano_betas"] is not None:
+        betas_arr = np.asarray(payload["mano_betas"], dtype=np.float32)
+        if betas_arr.ndim == 1:
+            betas_arr = np.broadcast_to(betas_arr, (num_frames, betas_arr.shape[0])).astype(np.float32).copy()
+        if betas_arr.ndim != 2:
+            raise ValueError(
+                f"mano_betas: expected ndim=1 or 2, got shape={betas_arr.shape}"
+            )
+        out["mano_betas"] = betas_arr
+    if "mano_v_template" in payload and payload["mano_v_template"] is not None:
+        out["mano_v_template"] = _require_array(
+            payload, "mano_v_template", ndim=2, dtype=np.float32
+        )
+    # Frame-invariant descriptive fields. We store them as 0-d numpy arrays so
+    # `np.load(..., allow_pickle=False)` keeps the strict type. The dataset
+    # side reads them with `np.asarray(...).item()` to get the original
+    # Python scalar / str.
+    if "mano_use_pca" in payload:
+        out["mano_use_pca"] = np.asarray(bool(payload["mano_use_pca"]))
+    if "mano_num_pca_comps" in payload:
+        out["mano_num_pca_comps"] = np.asarray(int(payload["mano_num_pca_comps"]))
+    if "mano_flat_hand_mean" in payload:
+        out["mano_flat_hand_mean"] = np.asarray(bool(payload["mano_flat_hand_mean"]))
+    if "mano_pose_repr" in payload:
+        out["mano_pose_repr"] = np.asarray(str(payload["mano_pose_repr"]))
     return out
 
 
@@ -288,6 +330,19 @@ def _write_meta(
         "padding_policy": "pad_invalid_without_replacement",
         "epoch_sampling": True,
         "mirror_left_to_right": bool(args.mirror_left_to_right),
+        # docs/指导.md cross-dataset compatibility.
+        "length_unit": "meter",
+        "mano_fields": [
+            "mano_global_orient",
+            "mano_transl",
+            "mano_pose",
+            "mano_betas",
+            "mano_v_template",
+            "mano_use_pca",
+            "mano_num_pca_comps",
+            "mano_flat_hand_mean",
+            "mano_pose_repr",
+        ],
         "fields": [
             "schema_name",
             "schema_version",
@@ -301,6 +356,15 @@ def _write_meta(
             "hand_to_obj_min_dist",
             "obj_candidate_mask_5cm",
             "coordinate_frame",
+            "mano_global_orient",
+            "mano_transl",
+            "mano_pose",
+            "mano_betas",
+            "mano_v_template",
+            "mano_use_pca",
+            "mano_num_pca_comps",
+            "mano_flat_hand_mean",
+            "mano_pose_repr",
         ],
         "stats": stats,
     }

@@ -1,0 +1,43 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_full_grab_50ep_hand_heatmap_stage3data
+
+data:
+  train_path: data/processed_data/stage3/data/GRAB/initonly_4096_ds4
+  batch_size: 64
+  val_batch_size: 32
+  num_workers: 4
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+train:
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.02
+  warmup_steps: 0
+  epochs: 50
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 100
+  diagnostic_every_steps: 100
+  eval_every_epochs: 1
+  save_every_epochs: 5
+  max_to_keep: 4
+  metric_for_best: val_clean/cross_edge_random_qfl
+  lower_is_better: true
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, v2, full-grab, 50ep, hand-heatmap, lambda005, recovery-metrics, stage3-data]
