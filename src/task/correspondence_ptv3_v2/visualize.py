@@ -1,37 +1,34 @@
 from __future__ import annotations
 
 # =============================================================================
-# 交互式可视化脚本 — 按键说明
+# 交互式可视化脚本 — HTML / Three.js 鼠标控制
 # =============================================================================
 # 通用操作
-#   A / D               上一帧 / 下一帧  (← / → 方向键亦可)
-#   [ / ]               上一 epoch / 下一 epoch
-#   H                   切换 CrossEdge / HandHeatmap 主模式
-#   G                   在当前主模式内切换 GT 与模型 Eval 概率的着色
-#   ,  / .              切换选中的物体 (仅 CrossEdge 着色使用)
-#   R                   重置相机视角
+#   上一帧 / 下一帧      按钮 [◀ Prev] / [Next ▶]  (← / → 方向键亦可)
+#   上一 epoch / 下一    按钮 [◀ Epoch] / [Epoch ▶]  + 输入框直接设置
+#   主模式切换            [CrossEdge] / [HandHeatmap] 按钮
+#   着色源                [GT] / [Eval] 按钮
+#   选中物体              [◀ Prev] / [Next ▶] 按钮 (CrossEdge 着色用)
+#   重置相机              [Reset Cam] 按钮  (R 键亦可)
 #
-# 扰动模式 (Object Perturbation)
-#   P                   开启 / 关闭扰动模式 (开启后物体位姿/姿态会按
-#                       perturbation 平移旋转渲染)
-#   0                   清零扰动 (translation/rotation 归零并关闭扰动)
-#   F                   在扰动模式下,切换"用参考 GT(原始未扰动)着
-#                       色手部"和"用当前伪 GT(已扰动)着色手部"
+# 扰动模式
+#   开启 / 关闭           [Enable] 按钮 (P 键亦可)
+#   清零扰动              [Reset (0)] 按钮 (0 键亦可)
+#   Ref GT / Pseudo 切换  [Reference GT] 按钮 (F 键亦可, 仅扰动开启)
 #
-# 平移扰动 (扰动开启时有效,单位: 米/按键)
-#   J / L               物体沿 X 轴 -/+  (左/右)
-#   I / K               物体沿 Y 轴 +/-   (上/下)
-#   U / O               物体沿 Z 轴 +/-   (前/后)
+# 平移扰动 (扰动开启时可用,单位 米)
+#   X / Y / Z             滑块或 [X-] [X+] 等步进按钮 (步长见右上标签)
 #
-# 旋转扰动 (扰动开启时有效,单位: 度/按键)
-#   Z / X               物体绕 X 轴 -/+
-#   C / V               物体绕 Y 轴 -/+
-#   B / N               物体绕 Z 轴 -/+
+# 旋转扰动 (扰动开启时可用,单位 度)
+#   Rx / Ry / Rz          滑块或 [Rx-] [Rx+] 等步进按钮 (步长见右上标签)
 # =============================================================================
 
 import argparse
-import os
+import json
+import threading
 from dataclasses import dataclass, field
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -44,9 +41,6 @@ from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
 
 
-os.environ.setdefault("DISPLAY", "localhost:10.0")
-
-
 OBJ_GRAY = np.asarray([0.62, 0.62, 0.66], dtype=np.float64)
 HAND_CROSS_LOW = np.asarray([0.18, 0.18, 0.22], dtype=np.float64)
 HAND_CROSS_HIGH = np.asarray([0.98, 0.16, 0.12], dtype=np.float64)
@@ -55,7 +49,7 @@ HAND_HEATMAP_HIGH = np.asarray([0.72, 0.28, 0.96], dtype=np.float64)
 MARKER_COLOR = np.asarray([1.0, 0.95, 0.15], dtype=np.float64)
 
 
-@dataclass
+@ dataclass
 class ViewerState:
     frame_idx: int = 0
     epoch: int = 0
@@ -64,7 +58,7 @@ class ViewerState:
     display_mode: str = "cross_edge"
 
 
-@dataclass
+@ dataclass
 class PerturbationState:
     enabled: bool = False
     translation: np.ndarray = field(default_factory=lambda: np.zeros((3,), dtype=np.float32))
@@ -73,7 +67,7 @@ class PerturbationState:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualize correspondence_ptv3_v2 CrossEdge and HandHeatmap predictions."
+        description="Visualize correspondence_ptv3_v2 CrossEdge and HandHeatmap predictions in the browser."
     )
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--input", required=True)
@@ -88,6 +82,17 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=None,
         help="Override GT visualization radius in meters. Defaults to the checkpoint contact_radius.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP host to bind the visualizer to. Default 127.0.0.1 (loopback).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="HTTP port to bind the visualizer to. Default 8765.",
     )
     parser.add_argument("--check-only", action="store_true")
     return parser.parse_args()
@@ -287,7 +292,15 @@ def _apply_object_perturbation(
     return out
 
 
-class InteractiveViewer:
+class HtmlVisualizer:
+    """Backend for the HTML / Three.js visualizer.
+
+    This class owns the same state machine the Open3D ``InteractiveViewer``
+    used (frame, epoch, perturbation, etc.) and serves it over an HTTP
+    API.  All NumPy arrays are converted to plain Python lists at the
+    boundary so the JSON encoder can serialise them.
+    """
+
     def __init__(
         self,
         *,
@@ -311,28 +324,42 @@ class InteractiveViewer:
         self.base_batch: dict[str, torch.Tensor] | None = None
         self.current_batch: dict[str, torch.Tensor] | None = None
         self.selected_obj_idx = 0
-        self.vis = None
-        self.obj_pcd = None
-        self.hand_pcd = None
-        self.marker = None
+        self._lock = threading.Lock()
+        self.refresh_cache()
+
+    # ---------- state helpers ----------
 
     def refresh_cache(self) -> None:
         self.base_batch = _sample(self.dataset, self.state.frame_idx, self.state.epoch)
         self.current_batch = _apply_object_perturbation(self.base_batch, self.perturbation)
         self.selected_obj_idx = _select_valid_obj(self.current_batch, self.state.selected_rank)
 
-    def _mode_label(self) -> str:
-        if self.state.display_mode == "cross_edge":
-            return "CrossEdge"
-        if self.state.display_mode == "hand_heatmap":
-            return "HandHeatmap"
-        raise ValueError(f"Unknown display mode: {self.state.display_mode!r}.")
-
     def _has_hand_heatmap_head(self) -> bool:
         model = self.runner.model
         return bool(model is not None and getattr(model, "use_hand_contact_head", False))
 
-    def _build_scene_arrays(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def get_state_dict(self) -> dict[str, Any]:
+        return {
+            "frame_idx": self.state.frame_idx,
+            "total_frames": len(self.dataset),
+            "epoch": self.state.epoch,
+            "selected_rank": self.state.selected_rank,
+            "show_gt": self.state.show_gt,
+            "display_mode": self.state.display_mode,
+            "perturbation_enabled": self.perturbation.enabled,
+            "show_reference_gt": self.show_reference_gt,
+            "translation": [float(v) for v in self.perturbation.translation.tolist()],
+            "rotation_deg_xyz": [float(v) for v in self.perturbation.rotation_deg_xyz.tolist()],
+            "perturb_translation_step": self.perturb_translation_step,
+            "perturb_rotation_step_deg": self.perturb_rotation_step_deg,
+            "marker_radius": self.marker_radius,
+            "vis_contact_radius": self.vis_contact_radius,
+            "has_hand_heatmap_head": self._has_hand_heatmap_head(),
+        }
+
+    def _build_scene_arrays(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         assert self.current_batch is not None
         assert self.base_batch is not None
         batch = self.current_batch
@@ -381,212 +408,183 @@ class InteractiveViewer:
         marker_center = obj_points[self.selected_obj_idx]
         return obj_points, obj_colors, hand_points, hand_colors, marker_center
 
-    def _update_geometry(self, *, reset_view: bool = False) -> None:
-        import open3d as o3d
-
-        obj_points, obj_colors, hand_points, hand_colors, marker_center = self._build_scene_arrays()
-        self.obj_pcd.points = o3d.utility.Vector3dVector(obj_points)
-        self.obj_pcd.colors = o3d.utility.Vector3dVector(obj_colors)
-        self.hand_pcd.points = o3d.utility.Vector3dVector(hand_points)
-        self.hand_pcd.colors = o3d.utility.Vector3dVector(hand_colors)
-        marker_mesh = o3d.geometry.TriangleMesh.create_sphere(radius=self.marker_radius)
-        marker_mesh.paint_uniform_color(MARKER_COLOR)
-        marker_mesh.compute_vertex_normals()
-        marker_mesh.translate(marker_center)
-        self.marker.vertices = marker_mesh.vertices
-        self.marker.triangles = marker_mesh.triangles
-        self.marker.vertex_colors = marker_mesh.vertex_colors
-        self.marker.vertex_normals = marker_mesh.vertex_normals
-        self.vis.update_geometry(self.obj_pcd)
-        self.vis.update_geometry(self.hand_pcd)
-        self.vis.update_geometry(self.marker)
-        if reset_view:
-            self.vis.reset_view_point(True)
-        self.vis.poll_events()
-        self.vis.update_renderer()
-        self._print_status()
-
-    def _print_status(self) -> None:
-        source = "GT" if self.state.show_gt else "Eval"
-        perturb_mode = "Perturb" if self.perturbation.enabled else "Base"
-        if not self.state.show_gt:
-            gt_color_mode = "N/A"
-        elif not self.perturbation.enabled:
-            gt_color_mode = "CleanGT"
-        else:
-            gt_color_mode = (
-                "RefGT"
-                if (self.perturbation.enabled and self.show_reference_gt)
-                else "CurrentPseudo"
+    def get_scene_dict(self) -> dict[str, Any]:
+        with self._lock:
+            obj_points, obj_colors, hand_points, hand_colors, marker_center = (
+                self._build_scene_arrays()
             )
-        translation = np.asarray(self.perturbation.translation, dtype=np.float32)
-        rotation = np.asarray(self.perturbation.rotation_deg_xyz, dtype=np.float32)
-        selected = (
-            str(self.selected_obj_idx)
-            if self.state.display_mode == "cross_edge"
-            else "N/A"
-        )
-        print(
-            f"frame={self.state.frame_idx} epoch={self.state.epoch} "
-            f"display={self._mode_label()} source={source} "
-            f"selected_obj={selected} scene={perturb_mode} "
-            f"gt_color={gt_color_mode} "
-            f"t(mm)=({translation[0] * 1e3:+.1f},{translation[1] * 1e3:+.1f},{translation[2] * 1e3:+.1f}) "
-            f"r(deg)=({rotation[0]:+.1f},{rotation[1]:+.1f},{rotation[2]:+.1f})"
-        )
+            return {
+                "obj_points": obj_points.tolist(),
+                "obj_colors": obj_colors.tolist(),
+                "hand_points": hand_points.tolist(),
+                "hand_colors": hand_colors.tolist(),
+                "marker_center": [float(v) for v in marker_center.tolist()],
+                "marker_radius": self.marker_radius,
+            }
 
-    def _refresh_scene(self, *, reset_view: bool = False) -> bool:
-        self.refresh_cache()
-        self._update_geometry(reset_view=reset_view)
-        return False
+    # ---------- action handling ----------
 
-    def _change_frame(self, delta: int):
-        def callback(_vis):
-            self.state.frame_idx = int(np.clip(self.state.frame_idx + delta, 0, len(self.dataset) - 1))
-            return self._refresh_scene()
-
-        return callback
-
-    def _change_epoch(self, delta: int):
-        def callback(_vis):
-            self.state.epoch = max(0, self.state.epoch + delta)
-            return self._refresh_scene()
-
-        return callback
-
-    def _change_selected(self, delta: int):
-        def callback(_vis):
-            self.state.selected_rank = max(0, self.state.selected_rank + delta)
-            return self._refresh_scene()
-
-        return callback
-
-    def _toggle_gt_eval(self, _vis):
-        self.state.show_gt = not self.state.show_gt
-        return self._refresh_scene()
-
-    def _toggle_display_mode(self, _vis):
-        if self.state.display_mode == "cross_edge":
-            if not self._has_hand_heatmap_head():
-                print(
-                    "HandHeatmap is unavailable: this checkpoint has no dedicated "
-                    "hand-contact head."
+    def apply_action(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            n_frames = len(self.dataset)
+            if action == "prev_frame":
+                self.state.frame_idx = max(0, self.state.frame_idx - 1)
+            elif action == "next_frame":
+                self.state.frame_idx = min(n_frames - 1, self.state.frame_idx + 1)
+            elif action == "set_frame":
+                self.state.frame_idx = int(
+                    np.clip(int(params.get("frame_idx", 0)), 0, n_frames - 1)
                 )
-                return False
-            self.state.display_mode = "hand_heatmap"
+            elif action == "prev_epoch":
+                self.state.epoch = max(0, self.state.epoch - 1)
+            elif action == "next_epoch":
+                self.state.epoch = max(0, self.state.epoch + 1)
+            elif action == "set_epoch":
+                self.state.epoch = max(0, int(params.get("epoch", 0)))
+            elif action == "set_mode":
+                mode = str(params.get("mode", "cross_edge"))
+                if mode == "hand_heatmap" and not self._has_hand_heatmap_head():
+                    pass  # silently no-op; the button is disabled in the UI
+                else:
+                    self.state.display_mode = mode
+            elif action == "set_show_gt":
+                self.state.show_gt = bool(params.get("show_gt", True))
+            elif action == "toggle_gt":
+                self.state.show_gt = not self.state.show_gt
+            elif action == "toggle_mode":
+                if self.state.display_mode == "cross_edge":
+                    if self._has_hand_heatmap_head():
+                        self.state.display_mode = "hand_heatmap"
+                else:
+                    self.state.display_mode = "cross_edge"
+            elif action == "prev_obj":
+                self.state.selected_rank = max(0, self.state.selected_rank - 1)
+            elif action == "next_obj":
+                self.state.selected_rank = max(0, self.state.selected_rank + 1)
+            elif action == "set_obj":
+                self.state.selected_rank = max(0, int(params.get("rank", 0)))
+            elif action == "toggle_perturb":
+                self.perturbation.enabled = not self.perturbation.enabled
+                if not self.perturbation.enabled:
+                    self.show_reference_gt = False
+            elif action == "reset_perturb":
+                self.perturbation.translation[:] = 0.0
+                self.perturbation.rotation_deg_xyz[:] = 0.0
+                self.perturbation.enabled = False
+                self.show_reference_gt = False
+            elif action == "toggle_refgt":
+                if not self.perturbation.enabled:
+                    pass
+                else:
+                    self.show_reference_gt = not self.show_reference_gt
+            elif action == "set_translation":
+                vec = params.get("translation")
+                if isinstance(vec, (list, tuple)) and len(vec) == 3:
+                    self.perturbation.translation[:] = [float(v) for v in vec]
+            elif action == "set_rotation":
+                vec = params.get("rotation_deg_xyz")
+                if isinstance(vec, (list, tuple)) and len(vec) == 3:
+                    self.perturbation.rotation_deg_xyz[:] = [float(v) for v in vec]
+            elif action == "translate":
+                axis = int(params.get("axis", 0))
+                delta = float(params.get("delta", 0.0))
+                if 0 <= axis < 3:
+                    self.perturbation.translation[axis] += delta
+            elif action == "rotate":
+                axis = int(params.get("axis", 0))
+                delta = float(params.get("delta_deg", 0.0))
+                if 0 <= axis < 3:
+                    self.perturbation.rotation_deg_xyz[axis] += delta
+            else:
+                raise ValueError(f"Unknown action: {action!r}")
+            self.refresh_cache()
+            return self.get_state_dict()
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server_version = "CorrespondencePTV3V2Visualizer/1.0"
+    visualizer: HtmlVisualizer | None = None
+    html_path: Path | None = None
+
+    def log_message(self, format: str, *args: Any) -> None:
+        # Suppress default stderr noise; the visualizer prints its own
+        # status line.  Uncomment to debug HTTP traffic.
+        return
+
+    def _send_json(self, payload: Any, status: int = 200) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_html(self) -> None:
+        assert self.html_path is not None
+        with self.html_path.open("rb") as f:
+            body = f.read()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_404(self) -> None:
+        body = b"Not Found"
+        self.send_response(HTTPStatus.NOT_FOUND)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        try:
+            return json.loads(raw.decode("utf-8")) if raw else {}
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON body: {e}") from e
+
+    def do_GET(self) -> None:
+        assert self.visualizer is not None
+        if self.path in ("/", "/index.html"):
+            self._send_html()
+        elif self.path == "/api/state":
+            self._send_json(self.visualizer.get_state_dict())
+        elif self.path == "/api/scene":
+            self._send_json(self.visualizer.get_scene_dict())
+        elif self.path == "/api/health":
+            self._send_json({"ok": True})
         else:
-            self.state.display_mode = "cross_edge"
-        return self._refresh_scene()
+            self._send_404()
 
-    def _reset_camera(self, _vis):
-        return self._refresh_scene(reset_view=True)
-
-    def _toggle_perturbation(self, _vis):
-        self.perturbation.enabled = not self.perturbation.enabled
-        if not self.perturbation.enabled:
-            self.show_reference_gt = False
-        return self._refresh_scene()
-
-    def _reset_perturbation(self, _vis):
-        self.perturbation.translation[:] = 0.0
-        self.perturbation.rotation_deg_xyz[:] = 0.0
-        self.perturbation.enabled = False
-        self.show_reference_gt = False
-        return self._refresh_scene()
-
-    def _toggle_reference_gt(self, _vis):
-        if not self.perturbation.enabled:
-            print("Reference GT is only available in perturbation mode. Press P to enable it.")
-            return False
-        self.show_reference_gt = not self.show_reference_gt
-        return self._refresh_scene()
-
-    def _translate_perturbation(self, axis: int, delta: float):
-        def callback(_vis):
-            if not self.perturbation.enabled:
-                print("Perturbation mode is off. Press P to enable it.")
-                return False
-            self.perturbation.translation[axis] += float(delta)
-            return self._refresh_scene()
-
-        return callback
-
-    def _rotate_perturbation(self, axis: int, delta_deg: float):
-        def callback(_vis):
-            if not self.perturbation.enabled:
-                print("Perturbation mode is off. Press P to enable it.")
-                return False
-            self.perturbation.rotation_deg_xyz[axis] += float(delta_deg)
-            return self._refresh_scene()
-
-        return callback
-
-    def run(self) -> None:
-        import open3d as o3d
-
-        self.refresh_cache()
-        vis = o3d.visualization.VisualizerWithKeyCallback()
-        if not vis.create_window(window_name="correspondence_ptv3_v2", width=1280, height=900):
-            raise RuntimeError(
-                "Open3D window creation failed. Check DISPLAY and OpenGL availability; "
-                f"DISPLAY={__import__('os').environ.get('DISPLAY')!r}."
+    def do_POST(self) -> None:
+        assert self.visualizer is not None
+        if self.path != "/api/action":
+            self._send_404()
+            return
+        try:
+            body = self._read_json_body()
+        except ValueError as e:
+            self._send_json({"error": str(e)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        action = body.pop("action", None)
+        if not isinstance(action, str) or not action:
+            self._send_json(
+                {"error": "Missing 'action' field in JSON body."},
+                status=HTTPStatus.BAD_REQUEST,
             )
-        self.vis = vis
-        render_option = vis.get_render_option()
-        if render_option is None:
-            raise RuntimeError("Open3D render option is unavailable after window creation.")
-        render_option.point_size = 4.0
-        render_option.line_width = 1.0
-        render_option.background_color = np.asarray([0.035, 0.035, 0.045])
-        self.obj_pcd = o3d.geometry.PointCloud()
-        self.hand_pcd = o3d.geometry.PointCloud()
-        self.marker = o3d.geometry.TriangleMesh()
-        vis.add_geometry(self.obj_pcd)
-        vis.add_geometry(self.hand_pcd)
-        vis.add_geometry(self.marker)
-        self._update_geometry(reset_view=True)
-
-        keymap = {
-            ord("A"): self._change_frame(-1),
-            ord("D"): self._change_frame(+1),
-            263: self._change_frame(-1),
-            262: self._change_frame(+1),
-            ord("["): self._change_epoch(-1),
-            ord("]"): self._change_epoch(+1),
-            ord("H"): self._toggle_display_mode,
-            ord("G"): self._toggle_gt_eval,
-            ord(","): self._change_selected(-1),
-            ord("."): self._change_selected(+1),
-            ord("P"): self._toggle_perturbation,
-            ord("F"): self._toggle_reference_gt,
-            ord("0"): self._reset_perturbation,
-            ord("J"): self._translate_perturbation(0, -self.perturb_translation_step),
-            ord("L"): self._translate_perturbation(0, +self.perturb_translation_step),
-            ord("I"): self._translate_perturbation(1, +self.perturb_translation_step),
-            ord("K"): self._translate_perturbation(1, -self.perturb_translation_step),
-            ord("U"): self._translate_perturbation(2, +self.perturb_translation_step),
-            ord("O"): self._translate_perturbation(2, -self.perturb_translation_step),
-            ord("Z"): self._rotate_perturbation(0, -self.perturb_rotation_step_deg),
-            ord("X"): self._rotate_perturbation(0, +self.perturb_rotation_step_deg),
-            ord("C"): self._rotate_perturbation(1, -self.perturb_rotation_step_deg),
-            ord("V"): self._rotate_perturbation(1, +self.perturb_rotation_step_deg),
-            ord("B"): self._rotate_perturbation(2, -self.perturb_rotation_step_deg),
-            ord("N"): self._rotate_perturbation(2, +self.perturb_rotation_step_deg),
-            ord("R"): self._reset_camera,
-        }
-        for key, callback in keymap.items():
-            vis.register_key_callback(key, callback)
-
-        print(
-            "A/D or arrows: frame, [/]: epoch, H: CrossEdge/HandHeatmap, "
-            "G: GT/Eval, ,/.: CrossEdge object, "
-            "P: perturb on/off, F: ref GT colors, 0: clear perturb, "
-            "J/L: tx, I/K: ty, U/O: tz, "
-            "Z/X: rx, C/V: ry, B/N: rz, R: reset camera"
-        )
-        self._print_status()
-        vis.run()
-        vis.destroy_window()
+            return
+        try:
+            new_state = self.visualizer.apply_action(action, body)
+        except Exception as e:  # noqa: BLE001 — surface to client
+            self._send_json({"error": str(e)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json({"ok": True, "state": new_state})
 
 
 def main() -> None:
@@ -638,19 +636,34 @@ def main() -> None:
             }
         )
         return
+
+    visualizer = HtmlVisualizer(
+        runner=runner,
+        dataset=dataset,
+        state=state,
+        marker_radius=args.marker_radius,
+        vis_contact_radius=vis_contact_radius,
+        perturb_translation_step=args.perturb_translation_step,
+        perturb_rotation_step_deg=args.perturb_rotation_step_deg,
+    )
+    html_path = Path(__file__).resolve().parent / "visualize.html"
+    _Handler.visualizer = visualizer
+    _Handler.html_path = html_path
+    server = ThreadingHTTPServer((args.host, args.port), _Handler)
+    print(
+        f"[visualize] serving on http://{args.host}:{args.port}\n"
+        f"  checkpoint: {args.checkpoint}\n"
+        f"  input:      {args.input}\n"
+        f"  frames:     {len(dataset)}\n"
+        f"  mode:       {state.display_mode} (HandHeatmap available: "
+        f"{visualizer._has_hand_heatmap_head()})"
+    )
     try:
-        viewer = InteractiveViewer(
-            runner=runner,
-            dataset=dataset,
-            state=state,
-            marker_radius=args.marker_radius,
-            vis_contact_radius=vis_contact_radius,
-            perturb_translation_step=args.perturb_translation_step,
-            perturb_rotation_step_deg=args.perturb_rotation_step_deg,
-        )
-        viewer.run()
-    except ImportError as exc:
-        raise RuntimeError("open3d is required for interactive visualization. Use --check-only for validation.") from exc
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[visualize] shutting down...")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":
