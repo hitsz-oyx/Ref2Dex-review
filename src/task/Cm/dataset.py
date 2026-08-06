@@ -44,6 +44,52 @@ def scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> s
     return str(value.item()) if value.size == 1 else default
 
 
+def _load_dominant_hand_manifest(path: str | Path, *, data_root: Path) -> dict[Path, list[tuple[int, int]]]:
+    """Load kept ``(current frame, stride)`` rows grouped by hand-side NPZ."""
+    manifest_path = Path(path)
+    if not manifest_path.is_absolute() and not manifest_path.exists():
+        manifest_path = data_root / manifest_path
+    manifest_path = manifest_path.resolve()
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"Dominant-hand manifest not found: {manifest_path}")
+
+    grouped: dict[Path, list[tuple[int, int]]] = {}
+    seen: set[tuple[Path, int, int]] = set()
+    for line_number, raw_line in enumerate(manifest_path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        try:
+            row = json.loads(raw_line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{manifest_path}:{line_number}: invalid JSON") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"{manifest_path}:{line_number}: expected a JSON object")
+        if row.get("decision", "keep") != "keep":
+            continue
+        try:
+            relative_path = Path(str(row["hand_path"]))
+            current = int(row["current_frame"])
+            stride = int(row["stride"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{manifest_path}:{line_number}: require hand_path, current_frame, and stride"
+            ) from exc
+        hand_path = relative_path.resolve() if relative_path.is_absolute() else (data_root / relative_path).resolve()
+        if hand_path.name not in {"left.npz", "right.npz"}:
+            raise ValueError(f"{manifest_path}:{line_number}: hand_path must end in left.npz or right.npz")
+        declared_side = row.get("dominant_side")
+        if declared_side is not None and str(declared_side) != hand_path.stem:
+            raise ValueError(f"{manifest_path}:{line_number}: dominant_side disagrees with hand_path")
+        key = (hand_path, current, stride)
+        if key in seen:
+            raise ValueError(f"{manifest_path}:{line_number}: duplicate sample {key}")
+        seen.add(key)
+        grouped.setdefault(hand_path, []).append((current, stride))
+    if not grouped:
+        raise ValueError(f"Dominant-hand manifest contains no kept samples: {manifest_path}")
+    return grouped
+
+
 def _world_to_hand(points: np.ndarray, pose_world: np.ndarray) -> np.ndarray:
     """Map world points to the current ``hand_root_t`` frame.
 
@@ -93,6 +139,7 @@ class Stage4CmDataset(Dataset):
         min_object_flow_norm: float = 0.0,
         train_strides: Sequence[int] | None = None,
         coordinate_frame: str = "hand_root_t",
+        dominant_hand_manifest: str | Path | None = None,
     ) -> None:
         if min_stride <= 0 or max_stride < min_stride:
             raise ValueError("Require 0 < min_stride <= max_stride.")
@@ -112,6 +159,7 @@ class Stage4CmDataset(Dataset):
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
         self.coordinate_frame = str(coordinate_frame)
         self.min_object_flow_norm = float(min_object_flow_norm)
+        self.dominant_hand_manifest = None if dominant_hand_manifest in {None, ""} else str(dominant_hand_manifest)
         if self.min_object_flow_norm < 0.0:
             raise ValueError("min_object_flow_norm must be non-negative.")
         self.train_strides = None if train_strides is None else tuple(sorted({int(value) for value in train_strides}))
@@ -126,6 +174,16 @@ class Stage4CmDataset(Dataset):
         self.file_paths = [path for path in self.file_paths if path.name in {"left.npz", "right.npz"}]
         if not self.file_paths:
             raise ValueError(f"No Cm hand-side NPZ files found in {self.data_path}")
+        manifest_samples = (
+            None if self.dominant_hand_manifest is None else
+            _load_dominant_hand_manifest(self.dominant_hand_manifest, data_root=self.data_root)
+        )
+        if manifest_samples is not None:
+            # ``file_list`` remains authoritative for train/val/test
+            # membership; skip unrelated streams before opening their arrays.
+            self.file_paths = [path for path in self.file_paths if path.resolve() in manifest_samples]
+            if not self.file_paths:
+                raise ValueError("No dominant-hand manifest samples belong to this dataset file split.")
         self._cached_sequence_path: Path | None = None
         self._cached_shared_data: dict[str, np.ndarray] | None = None
         self._cached_side_path: Path | None = None
@@ -171,21 +229,36 @@ class Stage4CmDataset(Dataset):
                 elif (self.ds_rate, self.source_fps) != (ds_rate, source_fps):
                     raise ValueError("All Cm cache files in one Dataset must use the same ds_rate and source_fps")
                 candidate = np.asarray(hand["obj_candidate_mask_5cm"], dtype=bool)
-                filter_stride = self.fixed_stride if self.fixed_stride is not None else self.max_stride
-                for current in range(0, frame_count - self.max_stride):
-                    if not self.active_only or candidate[current].any():
-                        if self.min_object_flow_norm > 0.0:
-                            candidate_now = candidate[current]
-                            flow_norm = np.linalg.norm(
-                                shared["obj_points_world"][current + filter_stride, candidate_now]
-                                - shared["obj_points_world"][current, candidate_now],
-                                axis=-1,
-                            ).mean() if candidate_now.any() else 0.0
-                            if float(flow_norm) < self.min_object_flow_norm:
-                                continue
-                        self._samples.append((path, current))
+                if manifest_samples is not None:
+                    entries = manifest_samples.get(path.resolve(), ())
+                    for current, stride in entries:
+                        if current < 0 or current + stride >= frame_count:
+                            raise ValueError(f"{path}: manifest sample ({current=}, {stride=}) is out of range")
+                        if not self.min_stride <= stride <= self.max_stride:
+                            raise ValueError(f"{path}: manifest stride {stride} is outside configured range")
+                        if self.fixed_stride is not None and stride != self.fixed_stride:
+                            continue
+                        if self.active_only and not candidate[current].any():
+                            raise ValueError(f"{path}: manifest keeps inactive frame {current}")
+                        self._samples.append((path, current, stride))
+                else:
+                    filter_stride = self.fixed_stride if self.fixed_stride is not None else self.max_stride
+                    for current in range(0, frame_count - self.max_stride):
+                        if not self.active_only or candidate[current].any():
+                            if self.min_object_flow_norm > 0.0:
+                                candidate_now = candidate[current]
+                                flow_norm = np.linalg.norm(
+                                    shared["obj_points_world"][current + filter_stride, candidate_now]
+                                    - shared["obj_points_world"][current, candidate_now],
+                                    axis=-1,
+                                ).mean() if candidate_now.any() else 0.0
+                                if float(flow_norm) < self.min_object_flow_norm:
+                                    continue
+                            self._samples.append((path, current))
         if max_samples is not None and int(max_samples) > 0:
             self._samples = self._samples[:int(max_samples)]
+        if self.train_strides is not None and manifest_samples is not None:
+            raise ValueError("train_strides cannot be combined with dominant_hand_manifest; manifest rows fix stride")
         if self.train_strides is not None:
             self._samples = [
                 (path, current, stride)
@@ -312,7 +385,8 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
               "base_seed": int(seed), "active_only": bool(getattr(data_cfg, "active_only", True)),
               "min_stride": int(getattr(data_cfg, "min_stride", 1)), "max_stride": int(getattr(data_cfg, "max_stride", 10)),
               "coordinate_frame": str(meta_cfg.coordinate_frame),
-              "min_object_flow_norm": float(getattr(data_cfg, "min_object_flow_norm", 0.0))}
+              "min_object_flow_norm": float(getattr(data_cfg, "min_object_flow_norm", 0.0)),
+              "dominant_hand_manifest": getattr(data_cfg, "dominant_hand_manifest", None)}
     train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(
         data_cfg, seed, dataset_cls=Stage4CmDataset, file_pattern="**/*.npz",
         train_dataset_kwargs={

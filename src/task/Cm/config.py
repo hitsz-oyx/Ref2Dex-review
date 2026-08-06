@@ -59,6 +59,10 @@ class Config(TaskConfig):
         # training path selects only pairs that have at least one valid object
         # candidate.  Set false only for explicit no-contact diagnostics.
         active_only: bool = True
+        # Optional offline pseudo-label manifest.  When set, each manifest
+        # row fixes (hand side, current frame, stride); the Stage 4 cache stays
+        # immutable and the default unfiltered dataset path is unchanged.
+        dominant_hand_manifest: str | None = None
         # Current 5cm contact is the only training-sample filter.  Do not
         # remove static object targets: they teach no-effect interactions.
         min_stride: int = 1
