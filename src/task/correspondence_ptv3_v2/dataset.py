@@ -19,6 +19,14 @@ from src.task.correspondence_ptv3_v2.sampling import (
 )
 
 
+# Cross-dataset MANO pose width. GRAB stores PCA24 and ARCTIC stores
+# axis-angle45; the dataset pads everything to this length so PyTorch's
+# default collate can stack the per-frame mano_pose vectors into a
+# single (B, MANO_POSE_MAX_DIM) tensor. The runner slices back to the
+# active representation length per group before calling smplx.MANO.
+MANO_POSE_MAX_DIM = 45
+
+
 class CorrStaticDatasetV2(Dataset):
     REQUIRED_FIELDS = {
         "seq_id",
@@ -31,13 +39,6 @@ class CorrStaticDatasetV2(Dataset):
         "hand_to_obj_min_dist",
         "coordinate_frame",
     }
-    # obj_candidate_mask_5cm is optional in v2.1+ (5cm gating was removed in
-    # favor of proxy-distance top-k sampling). Old v2.0 data still carries it;
-    # if it is missing we fall back to a uniform all-True pool mask.
-    OPTIONAL_FIELDS = {"obj_candidate_mask_5cm", "mano_global_orient", "mano_transl",
-                       "mano_pose", "mano_betas", "mano_v_template",
-                       "mano_use_pca", "mano_num_pca_comps", "mano_flat_hand_mean",
-                       "mano_pose_repr"}
 
     def __init__(
         self,
@@ -53,9 +54,11 @@ class CorrStaticDatasetV2(Dataset):
         contact_radius: float = 0.02,
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
+        apply_hand_perturb: bool = True,
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
+        runtime_resample_object: bool = True,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
@@ -80,9 +83,11 @@ class CorrStaticDatasetV2(Dataset):
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
         self.apply_obj_perturb = bool(apply_obj_perturb)
+        self.apply_hand_perturb = bool(apply_hand_perturb)
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
+        self.runtime_resample_object = bool(runtime_resample_object)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -129,33 +134,14 @@ class CorrStaticDatasetV2(Dataset):
             raise ValueError(
                 f"Inconsistent Stage 3 coordinate_frame across {self.data_root}: {sorted(per_file_frames)}"
             )
-        actual_frame = next(iter(per_file_frames))
-        if coordinate_frame is not None and actual_frame != str(coordinate_frame):
+        self.coordinate_frame = next(iter(per_file_frames))
+        if coordinate_frame is not None and self.coordinate_frame != str(coordinate_frame):
             raise ValueError(
                 f"Stage 3 .npz at {self.data_root} was generated in "
-                f"coordinate_frame={actual_frame!r} but training expects "
+                f"coordinate_frame={self.coordinate_frame!r} but training expects "
                 f"{coordinate_frame!r}. Re-run Stage 3 with "
                 f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
             )
-        self.coordinate_frame = actual_frame
-        # Read the MANO descriptive fields once. These are dataset-wide
-        # (per-npz, not per-frame) and are needed by the runner to
-        # build the correct smplx.MANO layer. Falls back to the
-        # GRAB-style defaults if absent (legacy v2.0 data).
-        self.mano_use_pca: bool = True
-        self.mano_num_pca_comps: int = 24
-        self.mano_flat_hand_mean: bool = True
-        self.mano_pose_repr: str = "pca"
-        if self.file_paths:
-            with np.load(self.file_paths[0], allow_pickle=False) as data:
-                if "mano_use_pca" in data.files:
-                    self.mano_use_pca = bool(np.asarray(data["mano_use_pca"]).item())
-                if "mano_num_pca_comps" in data.files:
-                    self.mano_num_pca_comps = int(np.asarray(data["mano_num_pca_comps"]).item())
-                if "mano_flat_hand_mean" in data.files:
-                    self.mano_flat_hand_mean = bool(np.asarray(data["mano_flat_hand_mean"]).item())
-                if "mano_pose_repr" in data.files:
-                    self.mano_pose_repr = str(np.asarray(data["mano_pose_repr"]).item())
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
@@ -209,23 +195,27 @@ class CorrStaticDatasetV2(Dataset):
             raw_frame_id=raw_frame_id,
             epoch=epoch,
         )
-        # In v2.1+ the 5 cm candidate mask is no longer precomputed; we
-        # fall back to the full object pool (sample_object_indices will
-        # then do its own pool-uniform sampling with no proximity bias).
-        candidate_mask = data.get("obj_candidate_mask_5cm")
-        if candidate_mask is None:
-            candidate_mask = np.ones(
-                (int(data["obj_points"].shape[1]),), dtype=bool
-            )
+        # Legacy v2.0 data carries a clean-hand 5 cm candidate mask. New v2.1+
+        # data deliberately omits it; use the full 4096 object pool as a
+        # placeholder here and let the runner replace the 512 selected object
+        # points with perturbed-hand proxy sampling.
+        candidate_mask_data = data.get("obj_candidate_mask_5cm")
+        has_legacy_candidate_mask = candidate_mask_data is not None
+        if has_legacy_candidate_mask:
+            candidate_mask = np.asarray(candidate_mask_data[frame_idx], dtype=bool)
+        else:
+            candidate_mask = np.ones((int(data["obj_points"].shape[1]),), dtype=bool)
         selected_idx, obj_valid = sample_object_indices(
-            candidate_mask[frame_idx],
+            candidate_mask,
             num_samples=self.num_obj_points,
             seed=sample_seed,
         )
         safe_idx = np.maximum(selected_idx, 0)
 
-        obj_points = np.asarray(data["obj_points"][frame_idx, safe_idx], dtype=np.float32).copy()
-        obj_normals = np.asarray(data["obj_normals"][frame_idx, safe_idx], dtype=np.float32).copy()
+        full_obj_points = np.asarray(data["obj_points"][frame_idx], dtype=np.float32).copy()
+        full_obj_normals = np.asarray(data["obj_normals"][frame_idx], dtype=np.float32).copy()
+        obj_points = np.asarray(full_obj_points[safe_idx], dtype=np.float32).copy()
+        obj_normals = np.asarray(full_obj_normals[safe_idx], dtype=np.float32).copy()
 
         obj_points[~obj_valid] = 0
         obj_normals[~obj_valid] = 0
@@ -252,6 +242,27 @@ class CorrStaticDatasetV2(Dataset):
             obj_trans_std=self.obj_trans_std,
             obj_perturb_prob=self.obj_perturb_prob,
         )
+        # Runtime resampling mode: also perturb the full 4096 pool with
+        # the same SE(3) so the runner can pick 384 near + 128 global
+        # at prepare_batch time using the (possibly MANO/PCA perturbed)
+        # hand as the query. ``full_geometry`` carries the clean
+        # (``gt_*``) and the perturbed (``input_*``) versions of the
+        # entire object pool; the hand arrays here are unused because
+        # hand perturbation is performed by MANO forward in the runner.
+        full_geometry = None
+        runtime_resample_this = self.runtime_resample_object and not has_legacy_candidate_mask
+        if runtime_resample_this:
+            full_geometry = perturb_object_geometry(
+                obj_points=full_obj_points,
+                obj_normals=full_obj_normals,
+                hand_points=hand_points,
+                hand_normals=hand_normals,
+                seed=aug_seed,
+                apply_obj_perturb=self.apply_obj_perturb,
+                obj_rot_std_deg=self.obj_rot_std_deg,
+                obj_trans_std=self.obj_trans_std,
+                obj_perturb_prob=self.obj_perturb_prob,
+            )
         # hand_to_obj_min_dist is fully frame-invariant AND independent of
         # the 512 obj sampling, so it is the clean absolute contact
         # target for the hand contact head.
@@ -291,9 +302,6 @@ class CorrStaticDatasetV2(Dataset):
             axis=0,
         )
 
-        # v2.1+: pass MANO parameters through so the runner can re-run
-        # MANO forward on the GPU and apply hand PCA perturbations.
-        has_mano = "mano_pose" in data and "mano_global_orient" in data
         result: dict[str, torch.Tensor] = {
             "points": torch.from_numpy(input_points).float(),
             "normals": torch.from_numpy(input_normals).float(),
@@ -307,12 +315,29 @@ class CorrStaticDatasetV2(Dataset):
             "contact_seed": torch.tensor(contact_seed, dtype=torch.long),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
-            "has_mano": torch.tensor(has_mano, dtype=torch.bool),
         }
-        if has_mano:
-            # "side" is the only non-Tensor key in the batch; the runner
-            # pulls it before super().prepare_batch so it is safe to be
-            # a plain string here.
+        if full_geometry is not None:
+            result["full_input_obj_points"] = torch.from_numpy(
+                full_geometry.input_obj_points
+            ).float()
+            result["full_input_obj_normals"] = torch.from_numpy(
+                full_geometry.input_obj_normals
+            ).float()
+            result["full_gt_obj_points"] = torch.from_numpy(
+                full_geometry.gt_obj_points
+            ).float()
+            result["full_gt_obj_normals"] = torch.from_numpy(
+                full_geometry.gt_obj_normals
+            ).float()
+            result["runtime_resample_object"] = torch.tensor(True, dtype=torch.bool)
+            result["object_seed"] = torch.tensor(int(aug_seed & ((1 << 63) - 1)), dtype=torch.long)
+
+        # v2.1+: pass MANO parameters through so the runner can re-run
+        # MANO forward on the GPU and apply hand PCA perturbations.
+        # The runner groups samples by (side, use_pca, num_pca_comps,
+        # flat_hand_mean, v_template_sha) so a single batch can mix
+        # GRAB (PCA24) and ARCTIC (axis-angle45) without crashing.
+        if "mano_pose" in data and "mano_global_orient" in data:
             result["__mano_side__"] = side
             result["mano_global_orient"] = torch.from_numpy(
                 np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)
@@ -320,9 +345,21 @@ class CorrStaticDatasetV2(Dataset):
             result["mano_transl"] = torch.from_numpy(
                 np.asarray(data["mano_transl"][frame_idx], dtype=np.float32)
             ).float()
-            result["mano_pose"] = torch.from_numpy(
-                np.asarray(data["mano_pose"][frame_idx], dtype=np.float32)
-            ).float()
+            # Cross-dataset batching: GRAB stores PCA24 while ARCTIC stores
+            # axis-angle45.  PyTorch's default collate cannot stack variable
+            # length vectors, so we pad to the MANO axis-angle width.  The
+            # runner slices back to the active representation length per
+            # sample/group before calling smplx.MANO.
+            mano_pose = np.asarray(data["mano_pose"][frame_idx], dtype=np.float32)
+            if mano_pose.ndim != 1:
+                raise ValueError(f"mano_pose frame must be 1D, got shape={mano_pose.shape}")
+            mano_pose_dim = int(mano_pose.shape[0])
+            if mano_pose_dim < MANO_POSE_MAX_DIM:
+                mano_pose_padded = np.zeros((MANO_POSE_MAX_DIM,), dtype=np.float32)
+                mano_pose_padded[:mano_pose_dim] = mano_pose
+                mano_pose = mano_pose_padded
+            result["mano_pose"] = torch.from_numpy(mano_pose).float()
+            result["mano_pose_dim"] = torch.tensor(mano_pose_dim, dtype=torch.long)
             result["mano_betas"] = torch.from_numpy(
                 np.asarray(data["mano_betas"][frame_idx], dtype=np.float32)
             ).float()
@@ -341,6 +378,18 @@ class CorrStaticDatasetV2(Dataset):
                 result["hand_root_pose_world"] = torch.from_numpy(
                     np.asarray(data["hand_root_pose"][frame_idx], dtype=np.float32)
                 ).float()
+            result["mano_use_pca"] = torch.tensor(
+                bool(np.asarray(data.get("mano_use_pca", True)).item()),
+                dtype=torch.bool,
+            )
+            result["mano_num_pca_comps"] = torch.tensor(
+                int(np.asarray(data.get("mano_num_pca_comps", mano_pose_dim)).item()),
+                dtype=torch.long,
+            )
+            result["mano_flat_hand_mean"] = torch.tensor(
+                bool(np.asarray(data.get("mano_flat_hand_mean", True)).item()),
+                dtype=torch.bool,
+            )
         return result
 
 
@@ -455,6 +504,7 @@ def make_dataloaders(
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
     expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
+    runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
@@ -469,22 +519,28 @@ def make_dataloaders(
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
+        "runtime_resample_object": runtime_resample_object,
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
     }
     val_clean_kwargs = {
         **train_kwargs,
         "apply_obj_perturb": False,
+        "apply_hand_perturb": False,
         "obj_perturb_prob": 0.0,
+        "runtime_resample_object": runtime_resample_object,
         "eval_sampling_epoch": 0,
     }
     val_perturbed_kwargs = {
         **train_kwargs,
         "apply_obj_perturb": True,
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
         "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
+        "runtime_resample_object": runtime_resample_object,
         "eval_sampling_epoch": 0,
     }
     train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(

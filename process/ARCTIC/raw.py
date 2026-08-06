@@ -833,15 +833,11 @@ class ArcticRawAdapter:
         mano_num_pca_comps = 45
         mano_flat_hand_mean = False
         mano_pose_repr = "axis_angle"
-        # Per-side MANO layers each carry their own canonical v_template
-        # (the left/right template is mirrored at the body-model level, not
-        # re-mirrored at runtime). Persist them separately so train-time
-        # MANO forward can rebuild each hand with the correct template.
-        v_template_r = (
+        # Use the default MANO layer's v_template as the canonical hand shape
+        # so train-time MANO forward can re-create the hand from parameters
+        # alone (subject-specific v_template is not available in ARCTIC).
+        default_v_template = (
             self.mano_r.v_template.detach().cpu().numpy().astype(np.float32).copy()
-        )
-        v_template_l = (
-            self.mano_l.v_template.detach().cpu().numpy().astype(np.float32).copy()
         )
 
         def _to_numpy(arr: torch.Tensor) -> np.ndarray:
@@ -852,14 +848,14 @@ class ArcticRawAdapter:
             "mano_transl": _to_numpy(trans_r),
             "mano_pose": _to_numpy(pose_r),
             "mano_betas": _to_numpy(shape_r) if shape_r.ndim == 1 else _to_numpy(shape_r[:1]),
-            "mano_v_template": v_template_r,
+            "mano_v_template": default_v_template,
         }
         left_mano = {
             "mano_global_orient": _to_numpy(rot_l),
             "mano_transl": _to_numpy(trans_l),
             "mano_pose": _to_numpy(pose_l),
             "mano_betas": _to_numpy(shape_l) if shape_l.ndim == 1 else _to_numpy(shape_l[:1]),
-            "mano_v_template": v_template_l,
+            "mano_v_template": default_v_template,
         }
 
         output = {
@@ -871,7 +867,16 @@ class ArcticRawAdapter:
             "raw_frame_id": raw_frame_id.astype(np.int32),
             "obj_points_world": obj_points.astype(np.float32),
             "obj_normals_world": obj_normals.astype(np.float32),
+            "obj_repr": "articulated_canonical" if obj_sample_parts is not None else "rigid_canonical",
+            "obj_points_canonical": obj_canon_points.astype(np.float32),
+            "obj_normals_canonical": obj_canon_normals.astype(np.float32),
             "obj_point_id": obj_point_id,
+            "obj_part_id": (
+                obj_sample_parts.astype(np.int32)
+                if obj_sample_parts is not None
+                else np.zeros_like(obj_point_id, dtype=np.int32)
+            ),
+            "obj_articulation": arti.astype(np.float32),
             "obj_root_pose": obj_root_pose.astype(np.float32),
             "right_hand_points_world": right_face_pts.astype(np.float32),
             "right_hand_normals_world": right_normals.astype(np.float32),

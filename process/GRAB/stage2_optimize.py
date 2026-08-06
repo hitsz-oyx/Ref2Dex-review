@@ -96,7 +96,17 @@ def main() -> None:
     for raw_path in sequences:
         try:
             source = preprocessor.process_sequence(raw_path)
-            source_rel = Path(raw_path).resolve().relative_to(Path(args.grab_root).resolve()).as_posix()
+            raw_path_obj = Path(raw_path)
+            try:
+                # Prefer the lexical path under --grab-root.  Some local GRAB
+                # files are symlinks into dataset/GRAB; resolving them before
+                # relative_to would make otherwise valid inputs fail.
+                source_rel = raw_path_obj.relative_to(Path(args.grab_root)).as_posix()
+            except ValueError:
+                try:
+                    source_rel = raw_path_obj.resolve().relative_to(Path(args.grab_root).resolve()).as_posix()
+                except ValueError:
+                    source_rel = raw_path_obj.as_posix()
             for side in sides:
                 expected = output_root / str(source["subject_id"]) / f"{source['seq_name']}_{side}.pkl"
                 if expected.exists() and not args.overwrite:

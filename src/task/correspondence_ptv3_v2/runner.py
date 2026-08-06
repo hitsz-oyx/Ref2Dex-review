@@ -122,7 +122,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         contact_seed = batch.pop("contact_seed", None)
         batch = super().prepare_batch(batch)
         if mano_side is not None and self._should_reconstruct_mano(batch):
-            self._reconstruct_hand_from_mano(batch, side=str(mano_side))
+            self._reconstruct_hand_from_mano(batch, side=mano_side)
         if contact_seed is None:
             return batch
 
@@ -131,6 +131,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         else:
             contact_seed_list = [int(contact_seed)]
         with torch.no_grad():
+            self._resample_object_from_perturbed_hand(batch)
             self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
         return batch
 
@@ -183,11 +184,53 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         del side
         return True, 24, True
 
+    @staticmethod
+    def _normalize_side_batch(side: Any, batch_size: int) -> list[str]:
+        if isinstance(side, str):
+            return [side] * batch_size
+        if isinstance(side, (list, tuple)):
+            values = [str(x) for x in side]
+            if len(values) == batch_size:
+                return values
+            if len(values) == 1:
+                return values * batch_size
+        return [str(side)] * batch_size
+
+    @staticmethod
+    def _batch_bool(batch: dict[str, torch.Tensor], key: str, index: int, default: bool) -> bool:
+        value = batch.get(key)
+        if value is None:
+            return bool(default)
+        return bool(value.reshape(-1)[index].item())
+
+    @staticmethod
+    def _batch_int(batch: dict[str, torch.Tensor], key: str, index: int, default: int) -> int:
+        value = batch.get(key)
+        if value is None:
+            return int(default)
+        return int(value.reshape(-1)[index].item())
+
+    @staticmethod
+    def _v_template_for_index(v_template: torch.Tensor | None, index: int) -> np.ndarray | None:
+        if v_template is None:
+            return None
+        arr = v_template[index] if v_template.ndim >= 3 else v_template
+        return arr.detach().cpu().numpy().astype(np.float32, copy=True)
+
+    @staticmethod
+    def _v_template_sha(v_template: torch.Tensor | None, index: int) -> str | None:
+        arr = CorrespondencePTV3V2Runner._v_template_for_index(v_template, index)
+        if arr is None:
+            return None
+        import hashlib
+
+        return hashlib.sha1(np.ascontiguousarray(arr, dtype=np.float32).tobytes()).hexdigest()
+
     def _reconstruct_hand_from_mano(
         self,
         batch: dict[str, torch.Tensor],
         *,
-        side: str,
+        side: Any,
     ) -> None:
         """Re-build hand_points / hand_normals from MANO forward on the GPU.
 
@@ -211,50 +254,73 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         betas = batch["mano_betas"].to(device=device, dtype=torch.float32)
         v_template = batch.get("mano_v_template")
         if v_template is not None:
-            v_template = v_template.to(device=device, dtype=torch.float32).cpu().numpy()
+            v_template = v_template.to(device=device, dtype=torch.float32)
 
         # Subject-aware MANO config selection. We trust the npz's
         # descriptive fields (carried on the train dataset) over the cfg
         # defaults so a mixed-dataset batch (e.g. ARCTIC + GRAB) can
         # never desync. The values are read once in
         # ``CorrStaticDatasetV2.__init__``.
-        use_pca, num_pca_comps, flat_hand_mean = self._lookup_mano_descriptor(side)
+        batch_size = int(global_orient.shape[0])
+        side_list = self._normalize_side_batch(side, batch_size)
         # PCA-space hand perturbation. The std is in pose-coefficient
         # units; for axis-angle the same std produces a similar visual
         # effect (per-joint angular jitter).
-        apply_hand_perturb = bool(getattr(self.cfg.meta, "apply_hand_perturb", False))
+        batch_apply = batch.get("apply_hand_perturb")
+        batch_apply_hand = True
+        if torch.is_tensor(batch_apply):
+            batch_apply_hand = bool(batch_apply.bool().all().item())
+        apply_hand_perturb = (
+            bool(getattr(self.cfg.meta, "apply_hand_perturb", False))
+            and batch_apply_hand
+        )
         hand_pca_std = float(getattr(self.cfg.meta, "hand_pca_std", 0.0))
         if apply_hand_perturb and hand_pca_std > 0:
             noise = torch.randn_like(hand_pose) * hand_pca_std
             hand_pose = hand_pose + noise
 
-        # Reuse a single MANO layer per (side, use_pca, num_pca_comps,
-        # flat_hand_mean, v_template) tuple. The v_template is per-subject
-        # in GRAB, so the cache naturally grows up to ~10 entries.
-        layer, _cfg = cache.get_or_build_for_v_template(
-            side=side,
-            use_pca=use_pca,
-            num_pca_comps=num_pca_comps,
-            flat_hand_mean=flat_hand_mean,
-            v_template=v_template,
-        )
+        # Reuse one MANO layer per (side, config, subject v_template). This
+        # handles DataLoader-collated side lists and mixed GRAB/ARCTIC batches.
+        face_centers: torch.Tensor | None = None
+        face_normals: torch.Tensor | None = None
+        groups: dict[tuple[str, bool, int, bool, str | None], list[int]] = {}
+        for i in range(batch_size):
+            default_use_pca, default_num, default_flat = self._lookup_mano_descriptor(side_list[i])
+            use_pca_i = self._batch_bool(batch, "mano_use_pca", i, default_use_pca)
+            num_i = self._batch_int(batch, "mano_num_pca_comps", i, default_num)
+            flat_i = self._batch_bool(batch, "mano_flat_hand_mean", i, default_flat)
+            key = (side_list[i], use_pca_i, num_i, flat_i, self._v_template_sha(v_template, i))
+            groups.setdefault(key, []).append(i)
 
-        vertices = reconstruct_hand_points(
-            layer,
-            global_orient=global_orient,
-            hand_pose=hand_pose,
-            transl=transl,
-            betas=betas,
-        )                                                                  # (B, 778, 3)
-
-        # smplx.MANO.faces is a CPU numpy array; cache it on the device.
-        if self._mano_cache_root_face is None or self._mano_cache_root_face.device != device:
-            self._mano_cache_root_face = torch.as_tensor(
+        for (side_i, use_pca_i, num_i, flat_i, _sha), indices in groups.items():
+            idx = torch.as_tensor(indices, dtype=torch.long, device=device)
+            layer, _cfg = cache.get_or_build_for_v_template(
+                side=side_i,
+                use_pca=use_pca_i,
+                num_pca_comps=num_i,
+                flat_hand_mean=flat_i,
+                v_template=self._v_template_for_index(v_template, indices[0]),
+            )
+            pose_dim = int(num_i) if bool(use_pca_i) else 45
+            vertices_i = reconstruct_hand_points(
+                layer,
+                global_orient=global_orient.index_select(0, idx),
+                hand_pose=hand_pose.index_select(0, idx)[..., :pose_dim],
+                transl=transl.index_select(0, idx),
+                betas=betas.index_select(0, idx),
+            )
+            faces_i = torch.as_tensor(
                 np.asarray(layer.faces).astype(np.int64), dtype=torch.long, device=device
             )
-        face_centers, face_normals = derive_face_center_points_and_normals(
-            vertices, self._mano_cache_root_face
-        )                                                                  # (B, 1538, 3)
+            centers_i, normals_i = derive_face_center_points_and_normals(vertices_i, faces_i)
+            if face_centers is None:
+                face_centers = torch.empty(
+                    (batch_size, centers_i.shape[1], 3), dtype=centers_i.dtype, device=device
+                )
+                face_normals = torch.empty_like(face_centers)
+            face_centers.index_copy_(0, idx, centers_i)
+            face_normals.index_copy_(0, idx, normals_i)
+        assert face_centers is not None and face_normals is not None
 
         # The MANO forward output `vertices` lives in the **world** frame
         # (smplx applies global_orient + transl internally). To splice
@@ -295,6 +361,88 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         offset = batch["points"].shape[1] - num_hand_points
         batch["points"][:, offset:] = hand_root_points.to(batch["points"].dtype)
         batch["normals"][:, offset:] = hand_root_normals.to(batch["normals"].dtype)
+
+    def _resample_object_from_perturbed_hand(self, batch: dict[str, torch.Tensor]) -> None:
+        """Runtime v2.1 object sampling from perturbed geometry."""
+        flag = batch.get("runtime_resample_object")
+        if flag is None or "full_input_obj_points" not in batch:
+            return
+        if torch.is_tensor(flag) and not bool(flag.all().item()):
+            return
+
+        num_obj = int(self.cfg.meta.num_obj_points)
+        num_hand = int(self.cfg.meta.num_hand_points)
+        near_quota = min(int(getattr(self.cfg.meta, "runtime_near_obj_points", 384)), num_obj)
+        global_quota = max(0, num_obj - near_quota)
+        proxy_count = min(int(getattr(self.cfg.meta, "num_hand_proxy_points", 256)), num_hand)
+
+        full_input_obj = batch["full_input_obj_points"].float()
+        full_input_normals = batch["full_input_obj_normals"].float()
+        full_gt_obj = batch["full_gt_obj_points"].float()
+        full_gt_normals = batch["full_gt_obj_normals"].float()
+        hand_input = batch["points"][:, -num_hand:].float()
+        hand_input_normals = batch["normals"][:, -num_hand:].float()
+        hand_gt = batch["gt_points"][:, -num_hand:].float()
+        hand_gt_normals = batch["gt_normals"][:, -num_hand:].float()
+
+        device = full_input_obj.device
+        batch_size, pool_size, _ = full_input_obj.shape
+        proxy_idx = torch.linspace(0, num_hand - 1, steps=proxy_count, device=device).round().long().unique()
+        hand_proxy = hand_input.index_select(1, proxy_idx)
+        obj_min_dist = torch.cdist(full_input_obj, hand_proxy).amin(dim=-1)
+        near_pool = min(int(getattr(self.cfg.meta, "runtime_near_pool_points", 1024)), pool_size)
+
+        seeds = batch.get("object_seed")
+        selected_all: list[torch.Tensor] = []
+        valid_all: list[torch.Tensor] = []
+        for b in range(batch_size):
+            seed = int(seeds.reshape(-1)[b].item()) if torch.is_tensor(seeds) else b
+            gen = torch.Generator(device="cpu")
+            gen.manual_seed(seed)
+            near_idx = torch.topk(obj_min_dist[b], k=near_pool, largest=False).indices.cpu()
+            near_take = min(near_quota, int(near_idx.numel()))
+            near_perm = torch.randperm(int(near_idx.numel()), generator=gen)[:near_take]
+            parts = [near_idx[near_perm]]
+            valid_count = near_take
+            if global_quota > 0:
+                mask = torch.ones(pool_size, dtype=torch.bool)
+                mask[near_idx] = False
+                remaining = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+                if remaining.numel() == 0:
+                    remaining = torch.arange(pool_size, dtype=torch.long)
+                global_take = min(global_quota, int(remaining.numel()))
+                global_perm = torch.randperm(int(remaining.numel()), generator=gen)[:global_take]
+                parts.append(remaining[global_perm])
+                valid_count += global_take
+            chosen_idx = torch.cat(parts, dim=0)
+            if chosen_idx.numel() < num_obj:
+                chosen_idx = torch.cat([chosen_idx, chosen_idx.new_zeros(num_obj - chosen_idx.numel())], dim=0)
+            selected_all.append(chosen_idx[:num_obj].to(device=device))
+            valid = torch.zeros(num_obj, dtype=torch.bool, device=device)
+            valid[: min(valid_count, num_obj)] = True
+            valid_all.append(valid)
+
+        selected = torch.stack(selected_all, dim=0)
+        valid_mask = torch.stack(valid_all, dim=0)
+
+        def gather_pool(pool: torch.Tensor) -> torch.Tensor:
+            idx = selected.unsqueeze(-1).expand(-1, -1, pool.shape[-1])
+            return torch.gather(pool, dim=1, index=idx)
+
+        obj_points = gather_pool(full_input_obj).to(batch["points"].dtype)
+        obj_normals = gather_pool(full_input_normals).to(batch["normals"].dtype)
+        gt_obj_points = gather_pool(full_gt_obj).to(batch["gt_points"].dtype)
+        gt_obj_normals = gather_pool(full_gt_normals).to(batch["gt_normals"].dtype)
+
+        batch["points"] = torch.cat([obj_points, hand_input.to(batch["points"].dtype)], dim=1)
+        batch["normals"] = torch.cat([obj_normals, hand_input_normals.to(batch["normals"].dtype)], dim=1)
+        batch["gt_points"] = torch.cat([gt_obj_points, hand_gt.to(batch["gt_points"].dtype)], dim=1)
+        batch["gt_normals"] = torch.cat([gt_obj_normals, hand_gt_normals.to(batch["gt_normals"].dtype)], dim=1)
+        batch["runtime_obj_valid_mask"] = valid_mask
+        batch["point_valid_mask"] = torch.cat(
+            [valid_mask, torch.ones((batch_size, num_hand), dtype=torch.bool, device=device)],
+            dim=1,
+        )
 
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
         preds = model(batch)

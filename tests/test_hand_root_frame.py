@@ -1,8 +1,8 @@
 """Tests for hand-root transforms and the minimal v2 Stage 3 schema.
 
 Covers Stage 2 hand-root propagation, Stage 3 coordinate transforms, the
-minimal field set, and frame invariance of the candidate mask plus dense
-hand-to-object distance target.
+minimal field set, and frame invariance of the dense hand-to-object
+distance target.
 """
 
 from __future__ import annotations
@@ -37,8 +37,10 @@ _STAGE3_V2_FIELDS = {
     "hand_points",
     "hand_normals",
     "hand_to_obj_min_dist",
-    "obj_candidate_mask_5cm",
     "coordinate_frame",
+    "hand_root_pose",
+    "obj_point_id",
+    "obj_root_pose_world",
 }
 
 
@@ -255,7 +257,6 @@ def test_stage3_object_frame_emits_minimal_v2_schema() -> None:
         candidate_threshold=0.05,
         frame_batch_size=1,
         device=torch.device("cpu"),
-        mirror_left_to_right=False,
         coordinate_frame="object",
     )
     assert set(out) == _STAGE3_V2_FIELDS
@@ -275,7 +276,6 @@ def test_stage3_hand_root_frame_emits_minimal_v2_schema() -> None:
         candidate_threshold=0.05,
         frame_batch_size=1,
         device=torch.device("cpu"),
-        mirror_left_to_right=False,
         coordinate_frame="hand_root",
     )
     assert set(out) == _STAGE3_V2_FIELDS
@@ -284,6 +284,31 @@ def test_stage3_hand_root_frame_emits_minimal_v2_schema() -> None:
         payload["obj_points_world"], payload["hand_root_pose"]
     )
     np.testing.assert_allclose(out["obj_points"], expected, atol=1e-6)
+
+
+def test_stage3_persists_optional_object_state_fields() -> None:
+    payload = _build_payload_for_stage3()
+    payload["obj_repr"] = "rigid_canonical"
+    payload["obj_points_canonical"] = payload["obj_points_world"][0].copy()
+    payload["obj_normals_canonical"] = payload["obj_normals_world"][0].copy()
+    payload["obj_part_id"] = np.zeros((16,), dtype=np.int32)
+    payload["obj_articulation"] = np.zeros((payload["raw_frame_id"].shape[0], 1), dtype=np.float32)
+    out = stage3_mod.build_stage3_sequence(
+        payload,
+        num_obj_pool=16,
+        num_hand_points=6,
+        candidate_threshold=0.05,
+        frame_batch_size=1,
+        device=torch.device("cpu"),
+        coordinate_frame="hand_root",
+    )
+    assert str(out["obj_repr"].item()) == "rigid_canonical"
+    np.testing.assert_allclose(out["obj_points_canonical"], payload["obj_points_canonical"])
+    np.testing.assert_allclose(out["obj_normals_canonical"], payload["obj_normals_canonical"])
+    np.testing.assert_array_equal(out["obj_point_id"], payload["obj_point_id"])
+    np.testing.assert_allclose(out["obj_root_pose_world"], payload["obj_root_pose"])
+    np.testing.assert_array_equal(out["obj_part_id"], payload["obj_part_id"])
+    np.testing.assert_allclose(out["obj_articulation"], payload["obj_articulation"])
 
 
 def test_stage3_minimal_v2_does_not_require_legacy_stage2_metadata() -> None:
@@ -310,10 +335,9 @@ def test_stage3_minimal_v2_does_not_require_legacy_stage2_metadata() -> None:
         candidate_threshold=0.05,
         frame_batch_size=1,
         device=torch.device("cpu"),
-        mirror_left_to_right=False,
         coordinate_frame="hand_root",
     )
-    assert set(out) == _STAGE3_V2_FIELDS
+    assert set(out) == _STAGE3_V2_FIELDS.difference({"obj_point_id", "obj_root_pose_world"})
 
 
 def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:
@@ -327,13 +351,12 @@ def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:
             candidate_threshold=0.05,
             frame_batch_size=1,
             device=torch.device("cpu"),
-            mirror_left_to_right=False,
             coordinate_frame="hand_root",
         )
 
 
 def test_stage3_distances_are_frame_invariant() -> None:
-    """The stored candidate mask and dense hand target are frame-invariant."""
+    """The stored dense hand target is frame-invariant."""
     payload = _build_payload_for_stage3(num_obj=32, num_hand=10, T=2)
     common_kwargs = dict(
         num_obj_pool=32,
@@ -341,11 +364,9 @@ def test_stage3_distances_are_frame_invariant() -> None:
         candidate_threshold=1.0,  # accept all
         frame_batch_size=1,
         device=torch.device("cpu"),
-        mirror_left_to_right=False,
     )
     obj_out = stage3_mod.build_stage3_sequence(payload, coordinate_frame="object", **common_kwargs)
     hand_out = stage3_mod.build_stage3_sequence(payload, coordinate_frame="hand_root", **common_kwargs)
-    np.testing.assert_array_equal(obj_out["obj_candidate_mask_5cm"], hand_out["obj_candidate_mask_5cm"])
     np.testing.assert_allclose(
         obj_out["hand_to_obj_min_dist"], hand_out["hand_to_obj_min_dist"], atol=1e-5
     )
@@ -362,7 +383,6 @@ def test_stage3_rejects_invalid_coordinate_frame() -> None:
             candidate_threshold=0.05,
             frame_batch_size=1,
             device=torch.device("cpu"),
-            mirror_left_to_right=False,
             coordinate_frame="banana",
         )
 
@@ -388,7 +408,6 @@ def _write_stage3_npz(
         candidate_threshold=1.0,
         frame_batch_size=1,
         device=torch.device("cpu"),
-        mirror_left_to_right=False,
         coordinate_frame=coordinate_frame,
     )
     np.savez(path, **out)

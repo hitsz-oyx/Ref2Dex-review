@@ -140,11 +140,6 @@ def pack_stage2_hand(
     # them to the npz and the train side can re-run MANO forward / perturb
     # in PCA space. All fields are optional at this layer; missing fields
     # simply mean the upstream adapter did not produce them.
-    #
-    # Per-subject assets (mano_betas when stored as a single vector, and
-    # mano_v_template) are NOT indexed by the per-frame `keep` mask because
-    # they are frame-invariant.
-    per_subject_keys = {"mano_v_template"}
     for mano_key in (
         "mano_global_orient",
         "mano_transl",
@@ -152,14 +147,11 @@ def pack_stage2_hand(
         "mano_betas",
     ):
         source_key = f"{side}_{mano_key}"
-        if source_key not in source or source[source_key] is None:
-            continue
-        value = _as_array(source, source_key).astype(np.float32)
-        # ARCTIC stores betas as (10,), GRAB stores as (T, 10). Only slice
-        # with `keep` when the leading dim matches the frame count.
-        if value.shape[0] == int(keep.shape[0]):
-            value = value[keep]
-        payload[mano_key] = value
+        if source_key in source and source[source_key] is not None:
+            value = _as_array(source, source_key).astype(np.float32)
+            if value.ndim > 0 and value.shape[0] == int(raw_frame_id.shape[0]):
+                value = value[keep]
+            payload[mano_key] = value
     # Configuration booleans / ints / strings are frame-invariant; pass
     # through as-is when the upstream adapter emitted them.
     for cfg_key, caster in (
@@ -176,6 +168,24 @@ def pack_stage2_hand(
     vtemp_key = f"{side}_mano_v_template"
     if vtemp_key in source and source[vtemp_key] is not None:
         payload["mano_v_template"] = _as_array(source, vtemp_key).astype(np.float32)
+
+    # ---- Object parametric/canonical fields (Stage 3 v2.1 optional schema) ----
+    # The per-frame obj_points_world/obj_normals_world remain the authoritative
+    # training path for now.  These fields preserve enough information for a
+    # later canonical-object runtime path without making GRAB/ARCTIC diverge at
+    # the Stage 3 file level.
+    for obj_key in ("obj_points_canonical", "obj_normals_canonical"):
+        if obj_key in source and source[obj_key] is not None:
+            payload[obj_key] = _as_array(source, obj_key).astype(np.float32)
+    if "obj_repr" in source and source["obj_repr"] is not None:
+        payload["obj_repr"] = str(source["obj_repr"])
+    if "obj_part_id" in source and source["obj_part_id"] is not None:
+        payload["obj_part_id"] = _as_array(source, "obj_part_id").astype(np.int32)
+    if "obj_articulation" in source and source["obj_articulation"] is not None:
+        value = _as_array(source, "obj_articulation").astype(np.float32)
+        if value.ndim > 0 and value.shape[0] == int(raw_frame_id.shape[0]):
+            value = value[keep]
+        payload["obj_articulation"] = value
     return payload
 
 

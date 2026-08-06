@@ -32,7 +32,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
     parser.add_argument("--frame-batch-size", type=int, default=1)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--mirror-left-to-right", action="store_true")
     parser.add_argument("--save-compressed", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -73,7 +72,6 @@ def main() -> None:
                 candidate_threshold=args.candidate_threshold,
                 frame_batch_size=args.frame_batch_size,
                 device=device,
-                mirror_left_to_right=args.mirror_left_to_right,
                 coordinate_frame=args.coordinate_frame,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,12 +82,7 @@ def main() -> None:
             num_frames = int(stage3["raw_frame_id"].shape[0])
             stats["written"] += 1
             stats["frames"] += num_frames
-            candidate_counts = stage3["obj_candidate_mask_5cm"].sum(axis=1)
-            print(
-                f"[stage3-arctic] wrote {output_path} frames={num_frames} "
-                f"candidate[min/median/max]={int(candidate_counts.min())}/"
-                f"{int(np.median(candidate_counts))}/{int(candidate_counts.max())}"
-            )
+            print(f"[stage3-arctic] wrote {output_path} frames={num_frames} clean_hand_min_dist=cached")
         except Exception as exc:
             stats["failed"] += 1
             print(f"[stage3-arctic] failed {source_path}: {exc}")
