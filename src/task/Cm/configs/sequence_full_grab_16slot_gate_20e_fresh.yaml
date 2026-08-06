@@ -1,0 +1,14 @@
+_base_: sequence_full_grab_16slot_20e_fresh.yaml
+
+name: cm_full_grab_16slot_gate_20e_fresh
+
+meta:
+  # The gate contributes each slot's Hard-Concrete nonzero probability to
+  # routing and applies the corresponding hard mask in the forward pass.
+  use_slot_gate: true
+
+train:
+  description: "Fresh full GRAB (1068 train seqs): 16 slots, Hard-Concrete gate with competing slot routing, physical time conditioning, 20 epochs (epoch-limited, no step cap), two-GPU DDP."
+
+wandb:
+  tags: [cm, full-grab, slot-16, hard-gate, competing-slots, time-conditioned, ddp-2, fresh, 20e]

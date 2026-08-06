@@ -1,0 +1,681 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>CmAction Point Flow Viewer (HTML)</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #0a0a0f; color: #d8d8e0;
+                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; }
+    #stage { position: absolute; inset: 0; }
+    #hud {
+      position: absolute; top: 8px; left: 8px; padding: 8px 12px;
+      background: rgba(15, 15, 22, 0.78); border: 1px solid #2a2a35; border-radius: 4px;
+      font-size: 12px; line-height: 1.5; pointer-events: none;
+    }
+    #hud b { color: #ffd07a; }
+    #hud .key { display: inline-block; min-width: 18px; padding: 0 4px; margin: 0 2px;
+                background: #20202a; border: 1px solid #353541; border-radius: 3px;
+                text-align: center; color: #fff; }
+    #status {
+      position: absolute; bottom: 8px; left: 8px; right: 8px; padding: 6px 10px;
+      background: rgba(15, 15, 22, 0.78); border: 1px solid #2a2a35; border-radius: 4px;
+      font-size: 11px; line-height: 1.4; white-space: pre; overflow-x: auto;
+    }
+    #status .ok { color: #6dd66d; }
+    #status .err { color: #ff6e6e; }
+    #status .pill { display: inline-block; padding: 0 6px; margin-right: 6px;
+                   background: #20202a; border-radius: 3px; }
+    #controls {
+      position: absolute; z-index: 2; top: 8px; right: 8px; width: min(328px, calc(100vw - 16px));
+      padding: 12px; background: rgba(15, 15, 22, 0.92); border: 1px solid #343442;
+      border-radius: 5px; box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
+      font-size: 12px; line-height: 1.35;
+    }
+    .control-group { padding: 9px 0; border-top: 1px solid #2a2a35; }
+    .control-group:first-of-type { border-top: 0; padding-top: 5px; }
+    .control-label { display: block; margin-bottom: 6px; color: #b7b7c5; font-size: 11px; }
+    .file-row, .button-row { display: flex; gap: 6px; align-items: center; }
+    #npz-path {
+      min-width: 0; height: 30px; border: 1px solid #404052; border-radius: 3px;
+      background: #11111a; color: #f0f0f4; padding: 0 8px; font: inherit;
+    }
+    #npz-path { flex: 1; }
+    button.segment, button.command {
+      min-height: 30px; border: 1px solid #404052; border-radius: 3px; color: #d8d8e0;
+      background: #20202a; padding: 4px 8px; font: inherit; cursor: pointer;
+    }
+    button.segment { flex: 1; }
+    button.segment.active { color: #111118; background: #ffd07a; border-color: #ffd07a; font-weight: 700; }
+    button.command:hover, button.segment:hover { border-color: #77778b; }
+    button.command:disabled, button.segment:disabled, #npz-path:disabled { opacity: 0.5; cursor: wait; }
+    .toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 8px; }
+    .toggle-grid label { display: flex; align-items: center; gap: 5px; color: #d4d4df; cursor: pointer; }
+    .toggle-grid input { accent-color: #ffd07a; }
+    #stride-buttons { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+    #file-help { margin-top: 5px; color: #898999; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #error-panel { margin-top: 10px; padding: 8px; border: 1px solid #914a4a; border-radius: 3px; background: rgba(104, 31, 31, 0.32); color: #ffb0b0; }
+    #error-panel[hidden] { display: none; }
+    #error-title { font-weight: 700; }
+    #error-text { margin-top: 3px; max-height: 68px; overflow: auto; white-space: pre-wrap; font-size: 11px; }
+    .path-row { margin-top: 5px; color: #a9a9b7; font-size: 10px; }
+    .path-row strong { display: block; margin-bottom: 2px; color: #d6d6e0; font-size: 10px; font-weight: 600; }
+    .path-row code { display: block; max-height: 30px; overflow: auto; color: #8fceee; white-space: normal; overflow-wrap: anywhere; }
+    @media (max-width: 700px) { #controls { max-height: calc(100vh - 16px); overflow-y: auto; } }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="hud">
+    <div><b>CmAction Point Flow</b></div>
+    <div>Use the controls to inspect predictions.</div>
+  </div>
+  <aside id="controls" aria-label="Viewer controls">
+    <div class="control-group">
+      <label class="control-label" for="npz-path">Stage4 NPZ file</label>
+      <div class="file-row">
+        <input id="npz-path" list="npz-files" autocomplete="off" spellcheck="false">
+        <button id="load-npz" class="command" type="button">Load</button>
+      </div>
+      <datalist id="npz-files"></datalist>
+      <div class="button-row" style="margin-top:6px"><button id="refresh-files" class="command" type="button">Browse files</button></div>
+      <div id="file-help">Loading available Stage4 files...</div>
+    </div>
+    <div class="control-group">
+      <span class="control-label">Flow display</span>
+      <div class="button-row" id="mode-buttons">
+        <button class="segment" data-mode="gt" type="button">GT</button>
+        <button class="segment" data-mode="pred" type="button">Prediction</button>
+        <button class="segment" data-mode="both" type="button">Both</button>
+      </div>
+    </div>
+    <div class="control-group">
+      <span class="control-label">Visible layers</span>
+      <div class="toggle-grid">
+        <label><input id="toggle-lines" type="checkbox" checked> Flow lines</label>
+        <label><input id="toggle-future-hand" type="checkbox" checked> Future hand</label>
+        <label><input id="toggle-slots" type="checkbox"> Slot colors</label>
+        <label><input id="toggle-world" type="checkbox"> World frame</label>
+      </div>
+    </div>
+    <div class="control-group">
+      <span class="control-label">Prediction horizon</span>
+      <div class="button-row" id="trajectory-buttons">
+        <button class="segment active" data-trajectory="pair" type="button">Single pair</button>
+        <button class="segment" data-trajectory="horizon" type="button">Fixed-start prediction</button>
+      </div>
+      <div id="stride-buttons" style="margin-top:7px" aria-label="Prediction stride">
+        <button class="segment" data-stride="1" type="button">1</button><button class="segment" data-stride="2" type="button">2</button><button class="segment" data-stride="3" type="button">3</button><button class="segment" data-stride="4" type="button">4</button><button class="segment" data-stride="5" type="button">5</button>
+        <button class="segment" data-stride="6" type="button">6</button><button class="segment" data-stride="7" type="button">7</button><button class="segment" data-stride="8" type="button">8</button><button class="segment" data-stride="9" type="button">9</button><button class="segment" data-stride="10" type="button">10</button>
+      </div>
+      <div id="stride-help" style="margin-top:6px;color:#898999;font-size:10px">Choose a horizon. The current object candidates stay fixed.</div>
+      <div style="margin-top:5px;color:#898999;font-size:10px">In fixed-start mode, A/D changes the current frame and keeps this stride.</div>
+      <div class="button-row" style="margin-top:7px"><button id="reset-camera" class="command" type="button">Reset view</button></div>
+    </div>
+    <div class="control-group">
+      <span class="control-label">Active sources</span>
+      <div class="path-row"><strong>Checkpoint</strong><code id="checkpoint-path">Loading...</code></div>
+      <div class="path-row"><strong>Selected NPZ</strong><code id="dataset-path">Loading...</code></div>
+      <div class="path-row"><strong>Stage4 root</strong><code id="data-root-path">Loading...</code></div>
+    </div>
+    <div id="error-panel" hidden><div id="error-title">Viewer issue</div><div id="error-text"></div></div>
+  </aside>
+  <div id="status">loading…</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const PALETTE = {
+      current:  new THREE.Color(0.38, 0.40, 0.45),
+      gt:       new THREE.Color(0.15, 0.85, 0.34),
+      pred:     new THREE.Color(0.96, 0.24, 0.16),
+      handCur:  new THREE.Color(0.90, 0.78, 0.46),
+      handFut:  new THREE.Color(0.34, 0.90, 0.90),
+    };
+    const SLOT_PALETTE = [
+      [0.894,0.102,0.110],[0.216,0.494,0.722],[0.302,0.686,0.290],[0.596,0.306,0.639],
+      [1.000,0.498,0.000],[1.000,1.000,0.200],[0.651,0.337,0.157],[0.969,0.506,0.749],
+      [0.600,0.600,0.600],[0.122,0.471,0.706],[0.173,0.627,0.173],[0.839,0.153,0.157],
+      [0.580,0.404,0.741],[0.549,0.337,0.294],[0.890,0.467,0.761],[0.498,0.498,0.498],
+    ];
+
+    const state = {
+      idx: 0,
+      nPairs: 0,
+      mode: 'both',          // 'gt' | 'pred' | 'both'
+      showLines: true,
+      showFutureHand: true,
+      showSlotColors: false,
+      showWorld: true,       // World coordinates are the default viewer frame.
+      horizonMode: false,    // one fixed-start, non-autoregressive prediction horizon
+      horizonStride: 10,
+      data: null,            // latest /api/pair or /api/horizon payload
+      inflight: null,        // current fetch promise
+    };
+
+    const npzPathEl = document.getElementById('npz-path');
+    const npzFilesEl = document.getElementById('npz-files');
+    const fileHelpEl = document.getElementById('file-help');
+    const errorPanelEl = document.getElementById('error-panel');
+    const errorTextEl = document.getElementById('error-text');
+    const strideHelpEl = document.getElementById('stride-help');
+    const checkpointPathEl = document.getElementById('checkpoint-path');
+    const datasetPathEl = document.getElementById('dataset-path');
+    const dataRootPathEl = document.getElementById('data-root-path');
+
+    // ---------- three.js setup ----------
+    const stage = document.getElementById('stage');
+    const statusEl = document.getElementById('status');
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x06060c, 1.0);
+    stage.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 10);
+    camera.position.set(0.50, 0.50, 0.50);
+    camera.up.set(0, 1, 0);
+    const initialCamPos = camera.position.clone();
+    const initialCamTarget = new THREE.Vector3(0, 0, 0);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(initialCamTarget);
+    // Disable damping so the view stops the instant the user releases the mouse.
+    controls.enableDamping = false;
+
+    // grid: 0.5m square, 0.05m cells (matches open3d default ~0.5m viewing)
+    const grid = new THREE.GridHelper(0.5, 10, 0x303040, 0x202030);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.4;
+    scene.add(grid);
+
+    // Y-axis indicator (10cm up arrow)
+    const axisLen = 0.10;
+    const axisGeom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, axisLen, 0),
+    ]);
+    const axisLine = new THREE.Line(axisGeom, new THREE.LineBasicMaterial({ color: 0xffd07a }));
+    scene.add(axisLine);
+
+    // ---------- helpers ----------
+    const _vec3 = new THREE.Vector3();
+    const _mat4 = new THREE.Matrix4();
+    // Apply a 4x4 row-major transform (R|t; 0 0 0 1) to a flat XYZ array.
+    // poseFlat is 16 floats in the same layout as the npz hand_root_pose_world.
+    function transformPoints(flat, poseFlat) {
+      if (!poseFlat || flat.length === 0) return new Float32Array(flat);
+      _mat4.set(
+        poseFlat[0], poseFlat[1], poseFlat[2], poseFlat[3],
+        poseFlat[4], poseFlat[5], poseFlat[6], poseFlat[7],
+        poseFlat[8], poseFlat[9], poseFlat[10], poseFlat[11],
+        poseFlat[12], poseFlat[13], poseFlat[14], poseFlat[15],
+      );
+      const out = new Float32Array(flat.length);
+      for (let i = 0; i < flat.length; i += 3) {
+        _vec3.set(flat[i], flat[i + 1], flat[i + 2]).applyMatrix4(_mat4);
+        out[i] = _vec3.x; out[i + 1] = _vec3.y; out[i + 2] = _vec3.z;
+      }
+      return out;
+    }
+
+    function makePointCloud(color) {
+      const geom = new THREE.BufferGeometry();
+      const pos = new Float32Array(0);
+      geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const mat = new THREE.PointsMaterial({ size: 0.0035, sizeAttenuation: true, color });
+      return new THREE.Points(geom, mat);
+    }
+
+    function makeLineSegments(color) {
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
+      const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.55 });
+      return new THREE.LineSegments(geom, mat);
+    }
+
+    function makeAnchorSphere(color) {
+      const geom = new THREE.SphereGeometry(0.004, 16, 12);
+      const mat = new THREE.MeshBasicMaterial({ color });
+      return new THREE.Mesh(geom, mat);
+    }
+
+    // Object: current (gray) + gt (green) + pred (red)
+    const objCur = makePointCloud(PALETTE.current);
+    const objGt  = makePointCloud(PALETTE.gt);
+    const objPr  = makePointCloud(PALETTE.pred);
+    scene.add(objCur, objGt, objPr);
+
+    // Flow lines
+    const flowGt  = makeLineSegments(PALETTE.gt);
+    const flowPr  = makeLineSegments(PALETTE.pred);
+    scene.add(flowGt, flowPr);
+
+    // Hand: current (yellow) + future (cyan)
+    const handCur = makePointCloud(PALETTE.handCur);
+    const handFut = makePointCloud(PALETTE.handFut);
+    scene.add(handCur, handFut);
+
+    // Slot anchors (16 small spheres)
+    const anchors = SLOT_PALETTE.map(([r, g, b]) => {
+      const m = makeAnchorSphere(new THREE.Color(r, g, b));
+      m.visible = false;
+      scene.add(m);
+      return m;
+    });
+
+    function setPoints(cloud, flat) {
+      const n = flat.length / 3;
+      const pos = new Float32Array(flat);
+      cloud.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      cloud.geometry.computeBoundingSphere();
+      cloud.visible = n > 0;
+    }
+
+    function setColoredPoints(cloud, flat, rgbFlat) {
+      const n = flat.length / 3;
+      const pos = new Float32Array(flat);
+      cloud.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      const colors = new Float32Array(rgbFlat);
+      cloud.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      cloud.geometry.computeBoundingSphere();
+      cloud.material.vertexColors = true;
+      cloud.material.color.set(0xffffff);
+      cloud.visible = n > 0;
+    }
+
+    function setLines(lineSeg, starts, ends, stride) {
+      const pts = [];
+      for (let i = 0; i < starts.length; i += 3) {
+        if (((i / 3) % stride) !== 0) continue;
+        pts.push(starts[i], starts[i + 1], starts[i + 2]);
+        pts.push(ends[i],   ends[i + 1],   ends[i + 2]);
+      }
+      const pos = new Float32Array(pts);
+      lineSeg.geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      lineSeg.geometry.computeBoundingSphere();
+      lineSeg.visible = pts.length > 0;
+    }
+
+    // ---------- data fetch ----------
+    async function requestJson(url, options = undefined) {
+      const response = await fetch(url, options);
+      let payload;
+      try { payload = await response.json(); }
+      catch (_) { throw new Error(`HTTP ${response.status}: response was not JSON`); }
+      if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+      return payload;
+    }
+    async function loadInfo() {
+      return requestJson('/api/info');
+    }
+    async function loadPair(idx) {
+      return requestJson(`/api/pair?idx=${idx}`);
+    }
+    async function loadHorizon(startIdx, stride) {
+      return requestJson(`/api/horizon?idx=${startIdx}&stride=${stride}`);
+    }
+    async function loadFiles(query = '') {
+      return requestJson(`/api/files?query=${encodeURIComponent(query)}`);
+    }
+    async function selectInput(path) {
+      return requestJson('/api/input', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path}),
+      });
+    }
+
+    function showError(message) {
+      errorTextEl.textContent = String(message);
+      errorPanelEl.hidden = false;
+    }
+    function clearError() {
+      errorPanelEl.hidden = true;
+      errorTextEl.textContent = '';
+    }
+    function syncControls() {
+      document.querySelectorAll('#mode-buttons [data-mode]').forEach(button => {
+        button.classList.toggle('active', button.dataset.mode === state.mode);
+      });
+      document.querySelectorAll('#trajectory-buttons [data-trajectory]').forEach(button => {
+        button.classList.toggle('active', (button.dataset.trajectory === 'horizon') === state.horizonMode);
+      });
+      document.querySelectorAll('#stride-buttons [data-stride]').forEach(button => {
+        button.classList.toggle('active', Number(button.dataset.stride) === state.horizonStride);
+      });
+      document.getElementById('toggle-lines').checked = state.showLines;
+      document.getElementById('toggle-future-hand').checked = state.showFutureHand;
+      document.getElementById('toggle-slots').checked = state.showSlotColors;
+      document.getElementById('toggle-world').checked = state.showWorld;
+      strideHelpEl.textContent = state.horizonMode && state.data
+        ? `Stride ${state.horizonStride}: raw ${state.data.raw} -> ${state.data.next_raw} (delta ${state.data.next_raw - state.data.raw}). Same current candidates.`
+        : 'Choose a horizon. The current object candidates stay fixed.';
+    }
+    function updateSourcePaths(info) {
+      checkpointPathEl.textContent = info.checkpoint || 'Unavailable';
+      datasetPathEl.textContent = info.input || 'Unavailable';
+      dataRootPathEl.textContent = info.data_root || 'Unavailable';
+    }
+    async function refreshFileChoices() {
+      fileHelpEl.textContent = 'Loading matching files...';
+      try {
+        const result = await loadFiles(npzPathEl.value.trim());
+        npzFilesEl.replaceChildren();
+        result.files.forEach(path => {
+          const option = document.createElement('option');
+          option.value = path;
+          npzFilesEl.appendChild(option);
+        });
+        fileHelpEl.textContent = `${result.total} matching Stage4 side files. Type a path or choose a suggestion.`;
+        clearError();
+      } catch (error) {
+        fileHelpEl.textContent = 'Could not list Stage4 files.';
+        showError(`File list: ${error.message}`);
+      }
+    }
+    async function applyInputSelection() {
+      const path = npzPathEl.value.trim();
+      if (!path) { showError('Choose a Stage4 left.npz or right.npz file first.'); return; }
+      const button = document.getElementById('load-npz');
+      button.disabled = true;
+      setStatus('Loading Stage4 file...', 'ok');
+      try {
+        const info = await selectInput(path);
+        state.nPairs = info.n_pairs;
+        state.idx = 0;
+        state.horizonMode = false;
+        npzPathEl.value = info.input;
+        updateSourcePaths(info);
+        fileHelpEl.textContent = `${info.n_pairs} active pairs loaded from ${info.input}`;
+        clearError();
+        await setIdx(0);
+        if (state.showWorld) focusCurrentGeometry();
+      } catch (error) {
+        showError(`Load NPZ: ${error.message}`);
+        setStatus('The selected NPZ could not be loaded.', 'err');
+      } finally {
+        button.disabled = false;
+        syncControls();
+      }
+    }
+
+    // ---------- render ----------
+    function applyData() {
+      const d = state.data;
+      if (!d) return;
+      // Every sample field, including future endpoints, is expressed in the
+      // current hand-root frame. Convert the whole sample with its current pose.
+      const poseCur  = state.showWorld ? d.pose_world_current : null;
+
+      setPoints(objCur, transformPoints(d.points.current, poseCur));
+
+      const showGt  = state.mode === 'gt'  || state.mode === 'both';
+      const showPr  = state.mode === 'pred' || state.mode === 'both';
+      setPoints(objGt,  showGt  ? transformPoints(d.points.gt_next,   poseCur) : []);
+      setPoints(objPr,  showPr  ? transformPoints(d.points.pred_next, poseCur) : []);
+
+      const handCurFlat = transformPoints(d.hand.current, poseCur);
+      const handFutFlat = transformPoints(d.hand.future, poseCur);
+      if (state.showSlotColors) {
+        setColoredPoints(handCur, handCurFlat, d.hand.slot_colors);
+      } else {
+        handCur.geometry.deleteAttribute('color');
+        handCur.material.vertexColors = false;
+        handCur.material.color.copy(PALETTE.handCur);
+        setPoints(handCur, handCurFlat);
+      }
+      setPoints(handFut, state.showFutureHand ? handFutFlat : []);
+
+      if (state.showLines) {
+        const curW  = state.showWorld ? transformPoints(d.points.current,   poseCur)  : d.points.current;
+        const gtW   = state.showWorld ? transformPoints(d.points.gt_next,   poseCur) : d.points.gt_next;
+        const prW   = state.showWorld ? transformPoints(d.points.pred_next, poseCur) : d.points.pred_next;
+        setLines(flowGt, curW, gtW, 8);
+        setLines(flowPr, curW, prW, 8);
+      } else {
+        flowGt.visible = false;
+        flowPr.visible = false;
+      }
+
+      const anchorFlat = transformPoints(d.anchors.positions, poseCur);
+      const N = Math.min(anchorFlat.length / 3, anchors.length);
+      for (let i = 0; i < anchors.length; i++) {
+        const m = anchors[i];
+        if (i < N) {
+          m.position.set(anchorFlat[3 * i], anchorFlat[3 * i + 1], anchorFlat[3 * i + 2]);
+          m.visible = state.showSlotColors;
+        } else {
+          m.visible = false;
+        }
+      }
+
+      writeStatus(d);
+    }
+
+    function writeStatus(d) {
+      const modes = { gt: 'GT', pred: 'Pred', both: 'Both' };
+      const cur = d.points.current, gt = d.points.gt_next, pr = d.points.pred_next;
+      let mse = NaN, mae = NaN;
+      if (gt.length === pr.length && gt.length > 0) {
+        let s2 = 0, s1 = 0;
+        for (let i = 0; i < gt.length; i++) {
+          const e = pr[i] - gt[i];
+          s2 += e * e; s1 += Math.abs(e);
+        }
+        mse = s2 / gt.length; mae = s1 / gt.length;
+      }
+      const topSlot = d.anchors.usages.indexOf(Math.max(...d.anchors.usages));
+      const idxLabel = state.horizonMode
+        ? `fixed start=${d.source_idx}  stride=${d.horizon_stride}`
+        : `pair=${d.idx}/${state.nPairs - 1}`;
+      const lines = [
+        `<span class="pill">${idxLabel}</span>`,
+        `<span class="pill">raw=${d.raw}->${d.next_raw}</span>`,
+        `<span class="pill">stride=${d.stride}</span>`,
+        `<span class="pill">show=${modes[state.mode]}</span>`,
+        `<span class="pill">valid_obj=${d.valid_obj_count}</span>`,
+      ];
+      lines.push(`flow_mse=${mse.toExponential(3)}  flow_mae=${mae.toExponential(3)}`);
+      lines.push(`lines=${state.showLines ? 'on' : 'off'}  future_hand=${state.showFutureHand ? 'on' : 'off'}  slots=${state.showSlotColors ? 'on' : 'off'}  frame=${state.showWorld ? 'world' : 'hand'}`);
+      lines.push(`top_slot=${topSlot}  usage=${d.anchors.usages[topSlot].toFixed(3)}`);
+      statusEl.innerHTML = lines.join('  ');
+    }
+
+    function setStatus(text, cls = '') {
+      statusEl.innerHTML = `<span class="${cls}">${text}</span>`;
+    }
+
+    // ---------- pair navigation ----------
+    async function setIdx(next) {
+      next = Math.max(0, Math.min(state.nPairs - 1, next));
+      if (state.inflight) return;
+      state.idx = next;
+      setStatus(`loading pair ${next}…`, 'ok');
+      try {
+        state.inflight = loadPair(next);
+        const d = await state.inflight;
+        state.data = d;
+        applyData();
+        clearError();
+      } catch (e) {
+        setStatus(`load failed: ${e.message}`, 'err');
+        showError(`Pair ${next}: ${e.message}`);
+      } finally {
+        state.inflight = null;
+        syncControls();
+      }
+    }
+
+    function cycleMode() {
+      state.mode = { gt: 'pred', pred: 'both', both: 'gt' }[state.mode];
+      applyData();
+      syncControls();
+    }
+
+    function resetCamera() {
+      camera.position.copy(initialCamPos);
+      controls.target.copy(initialCamTarget);
+      controls.update();
+    }
+
+    function focusCurrentGeometry() {
+      const sphere = objCur.geometry.boundingSphere;
+      if (!sphere) return;
+      const distance = Math.max(0.28, sphere.radius * 4.0);
+      controls.target.copy(sphere.center);
+      camera.position.copy(sphere.center).add(new THREE.Vector3(distance, distance, distance));
+      controls.update();
+    }
+
+    // ---------- fixed-start horizon mode ----------
+    async function enterHorizonMode(startIdx, stride = state.horizonStride) {
+      if (state.inflight) return;
+      setStatus(`loading stride ${stride} prediction from pair ${startIdx}…`, 'ok');
+      try {
+        state.inflight = loadHorizon(startIdx, stride);
+        const result = await state.inflight;
+        state.horizonMode = true;
+        state.idx = startIdx;
+        state.horizonStride = stride;
+        state.data = result;
+        applyData();
+        clearError();
+      } catch (e) {
+        setStatus(`horizon failed: ${e.message}`, 'err');
+        showError(`Prediction horizon: ${e.message}`);
+      } finally {
+        state.inflight = null;
+        syncControls();
+      }
+    }
+
+    function exitHorizonMode() {
+      state.horizonMode = false;
+      setIdx(state.idx);  // re-fetch current pair in non-chunk mode
+      syncControls();
+    }
+
+    function changeHorizonStart(delta) {
+      const next = Math.max(0, Math.min(state.nPairs - 1, state.idx + delta));
+      if (next !== state.idx) enterHorizonMode(next, state.horizonStride);
+    }
+
+    // ---------- mouse controls ----------
+    document.querySelectorAll('#mode-buttons [data-mode]').forEach(button => {
+      button.addEventListener('click', () => {
+        state.mode = button.dataset.mode;
+        applyData();
+        syncControls();
+      });
+    });
+    document.getElementById('toggle-lines').addEventListener('change', event => {
+      state.showLines = event.target.checked; applyData();
+    });
+    document.getElementById('toggle-future-hand').addEventListener('change', event => {
+      state.showFutureHand = event.target.checked; applyData();
+    });
+    document.getElementById('toggle-slots').addEventListener('change', event => {
+      state.showSlotColors = event.target.checked; applyData();
+    });
+    document.getElementById('toggle-world').addEventListener('change', event => {
+      state.showWorld = event.target.checked; applyData(); focusCurrentGeometry();
+    });
+    document.querySelectorAll('#trajectory-buttons [data-trajectory]').forEach(button => {
+      button.addEventListener('click', () => {
+        if (button.dataset.trajectory === 'horizon') enterHorizonMode(state.idx);
+        else if (state.horizonMode) exitHorizonMode();
+      });
+    });
+    document.querySelectorAll('#stride-buttons [data-stride]').forEach(button => {
+      button.addEventListener('click', () => {
+        const stride = Number(button.dataset.stride);
+        state.horizonStride = stride;
+        if (state.horizonMode) enterHorizonMode(state.idx, stride);
+        else syncControls();
+      });
+    });
+    document.getElementById('reset-camera').addEventListener('click', resetCamera);
+    document.getElementById('refresh-files').addEventListener('click', refreshFileChoices);
+    document.getElementById('load-npz').addEventListener('click', applyInputSelection);
+    npzPathEl.addEventListener('keydown', event => {
+      if (event.key === 'Enter') { applyInputSelection(); event.preventDefault(); }
+    });
+
+    // ---------- keyboard ----------
+    window.addEventListener('keydown', (ev) => {
+      if (ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA')) return;
+      const k = ev.key.toLowerCase();
+      if (k === 'home') { state.horizonMode = false; setIdx(0); ev.preventDefault(); return; }
+      if (k === 'end')  { state.horizonMode = false; setIdx(state.nPairs - 1); ev.preventDefault(); return; }
+      if (k === 'a' || ev.key === 'ArrowLeft') {
+        if (state.horizonMode) changeHorizonStart(-1); else setIdx(state.idx - 1);
+        ev.preventDefault(); return;
+      }
+      if (k === 'd' || ev.key === 'ArrowRight') {
+        if (state.horizonMode) changeHorizonStart(1); else setIdx(state.idx + 1);
+        ev.preventDefault(); return;
+      }
+      if (k === 'g') { cycleMode(); ev.preventDefault(); return; }
+      if (k === 'l') { state.showLines = !state.showLines; applyData(); syncControls(); ev.preventDefault(); return; }
+      if (k === 'h') { state.showFutureHand = !state.showFutureHand; applyData(); syncControls(); ev.preventDefault(); return; }
+      if (k === 's') { state.showSlotColors = !state.showSlotColors; applyData(); syncControls(); ev.preventDefault(); return; }
+      if (k === 'r') { resetCamera(); ev.preventDefault(); return; }
+      if (k === 'w') {
+        state.showWorld = !state.showWorld;
+        applyData(); focusCurrentGeometry();
+        setStatus(`frame: ${state.showWorld ? 'world' : 'hand_root_t'}`, 'ok');
+        syncControls();
+        ev.preventDefault(); return;
+      }
+      if (k === 't') {
+        if (state.horizonMode) {
+          exitHorizonMode();
+        } else {
+          enterHorizonMode(state.idx);
+        }
+        ev.preventDefault(); return;
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------- main loop ----------
+    function frame() {
+      controls.update();
+      renderer.render(scene, camera);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // ---------- boot ----------
+    (async () => {
+      try {
+        const info = await loadInfo();
+        state.nPairs = info.n_pairs;
+        npzPathEl.value = info.input;
+        updateSourcePaths(info);
+        fileHelpEl.textContent = `${info.n_pairs} active pairs loaded from ${info.input}`;
+        syncControls();
+        refreshFileChoices();
+        setStatus(`info: pairs=${info.n_pairs}  ds_rate=${info.ds_rate}  coord=${info.coord_frame}`);
+        await setIdx(0);
+        if (state.showWorld) focusCurrentGeometry();
+      } catch (e) {
+        setStatus(`boot failed: ${e.message}`, 'err');
+        showError(`Viewer boot: ${e.message}`);
+      }
+    })();
+  </script>
+</body>
+</html>

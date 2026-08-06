@@ -11,7 +11,7 @@
 #   H                   开关"未来手"点云 (hand_future) 的显示
 #   S                   切换手部 Slot Assignment 分区与 soft-anchor 球
 #   T                   切换单步 / fixed-stride chunk 模式
-#   P                   从当前帧开始/清除最多 12 帧的 teacher-forced chunk
+#   P                   从当前帧开始/清除最多 10 帧的 teacher-forced chunk
 #   G                   切换 GT / Pred / Both
 #   W                   切换 hand-root / world 坐标系（需要 Stage 4 world pose 字段）
 #
@@ -344,13 +344,13 @@ class InteractiveFlowViewer:
         return prepared
 
     def _start_rollout(self) -> None:
-        """Build complete fixed-stride chunks from GT inputs, up to a 12-frame span.
+        """Build complete fixed-stride chunks from GT inputs, up to a 10-frame span.
 
         Every chunk is inferred from its own cached current object state.  This
         deliberately avoids feeding a previous prediction into the next chunk:
         D/A therefore inspect a sequence of independent, teacher-forced chunks
         rather than an autoregressive rollout.  A partial final chunk is never
-        created when the stride does not divide 12.
+        created when the stride does not divide 10.
         """
         start_idx = self.state.pair_idx
         start_sample = self.dataset[start_idx]
@@ -374,11 +374,16 @@ class InteractiveFlowViewer:
         steps: dict[int, RolloutStep] = {}
         order: list[int] = []
         start_raw = int(start_sample["raw_frame_id"])
-        max_raw = start_raw + 12
+        max_raw = start_raw + 10
         current_idx = start_idx
-        stop_reason = "reached the 12-frame fixed-stride chunk limit"
+        stop_reason = "reached the 10-frame fixed-stride chunk limit"
 
-        while int(self.dataset[current_idx]["raw_frame_id"]) + fixed_stride <= max_raw:
+        while True:
+            current_raw = int(self.dataset[current_idx]["raw_frame_id"])
+            target_raw = int(self.dataset[current_idx]["next_raw_frame_id"])
+            raw_step = target_raw - current_raw
+            if target_raw > max_raw:
+                break
             current_sample = self.dataset[current_idx]
             # Use the same 4096-pool identities selected at P time for every
             # chunk.  Their positions/normals come from this chunk's actual GT
@@ -405,18 +410,21 @@ class InteractiveFlowViewer:
             )
             order.append(current_idx)
 
-            target_raw_frame = int(current_sample["raw_frame_id"]) + fixed_stride
-            if target_raw_frame + fixed_stride > max_raw:
+            # next_raw_frame_id / raw_frame_id live in source-frame units
+            # (raw_frame_id steps equal ds_rate); fixed_stride is in NPZ-index
+            # units, so chain bookkeeping must use raw_frame_id-space values.
+            if target_raw + raw_step > max_raw:
+                stop_reason = "next chunk would exceed the 10-frame raw-frame window"
                 break
-            next_idx = raw_to_dataset_idx.get(target_raw_frame)
+            next_idx = raw_to_dataset_idx.get(target_raw)
             if next_idx is None:
                 stop_reason = (
-                    f"no selected pair starts at raw frame {target_raw_frame}; "
+                    f"no selected pair starts at raw frame {target_raw}; "
                     "cannot continue the fixed-stride chunk sequence"
                 )
                 break
             if next_idx <= current_idx:
-                stop_reason = f"invalid non-forward temporal chain at raw frame {target_raw_frame}"
+                stop_reason = f"invalid non-forward temporal chain at raw frame {target_raw}"
                 break
             current_idx = next_idx
 
