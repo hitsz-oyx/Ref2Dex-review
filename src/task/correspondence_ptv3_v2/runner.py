@@ -230,6 +230,154 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         return hashlib.sha1(np.ascontiguousarray(arr, dtype=np.float32).tobytes()).hexdigest()
 
+    @staticmethod
+    def _sample_passed_gate(
+        *,
+        i_global: int,
+        seed: int,
+        per_sample_apply: torch.Tensor,
+        hand_perturb_prob: float,
+    ) -> bool:
+        """Return True iff sample ``i_global`` should be perturbed this step.
+
+        Centralised so the PCA and axis-angle paths agree on the
+        per-sample gating (Fix #3): a sample is perturbed only when
+        ``per_sample_apply[i]`` is True and the per-step Bernoulli
+        gate (with seed ``seed ^ 0xC0FFEE``) is below
+        ``hand_perturb_prob``.
+        """
+        if not bool(per_sample_apply[i_global].item()):
+            return False
+        if hand_perturb_prob >= 1.0:
+            return True
+        gate_rng = torch.Generator(device="cpu")
+        gate_rng.manual_seed(int(seed) ^ 0xC0FFEE)
+        return float(torch.rand((), generator=gate_rng).item()) <= hand_perturb_prob
+
+    def _apply_pca_noise(
+        self,
+        *,
+        hand_pose_g: torch.Tensor,
+        num_pca_comps: int,
+        indices: list[int],
+        seeds_list: list[int],
+        per_sample_apply: torch.Tensor,
+        hand_pca_std: float,
+        hand_pca_scale: float,
+        hand_pca_clip: float,
+        per_dim_std_t: torch.Tensor | None,
+        hand_perturb_prob: float,
+    ) -> torch.Tensor:
+        """Apply PCA-coefficient noise to the active dims of ``hand_pose_g``.
+
+        ``hand_pose_g`` is padded to MANO_POSE_MAX_DIM (=45) by the
+        dataset.  The active PCA coefficients live in the first
+        ``num_pca_comps`` slots; the remaining slots are zero padding
+        and must NOT receive any noise (Fix #4).
+        """
+        if num_pca_comps <= 0 or (hand_pca_std <= 0 and hand_pca_scale <= 0):
+            return hand_pose_g
+        device = hand_pose_g.device
+        dtype = hand_pose_g.dtype
+        group_size = int(hand_pose_g.shape[0])
+        if group_size == 0:
+            return hand_pose_g
+        noise = torch.zeros((group_size, num_pca_comps), device=device, dtype=dtype)
+        any_perturbed = False
+        for j_local, i_global in enumerate(indices):
+            if not self._sample_passed_gate(
+                i_global=i_global,
+                seed=int(seeds_list[i_global]),
+                per_sample_apply=per_sample_apply,
+                hand_perturb_prob=hand_perturb_prob,
+            ):
+                continue
+            gen = torch.Generator(device=device)
+            gen.manual_seed(int(seeds_list[i_global]))
+            sample_noise = torch.empty((num_pca_comps,), device=device, dtype=dtype)
+            sample_noise.normal_(generator=gen)
+            noise[j_local] = sample_noise
+            any_perturbed = True
+        if not any_perturbed:
+            return hand_pose_g
+        # Per-dim std must match the active PCA dim exactly (Fix #4).
+        # The pre-grouping shape is padded to 45 to make DataLoader
+        # collate work, but the descriptor we want to scale here is
+        # only the leading ``num_pca_comps`` dims.
+        if per_dim_std_t is not None:
+            if per_dim_std_t.numel() != int(num_pca_comps):
+                raise ValueError(
+                    f"hand_pca_train_std_per_dim must have {num_pca_comps} entries "
+                    f"to match the active PCA dim of this group, got {per_dim_std_t.numel()}."
+                )
+            std = per_dim_std_t.to(device=device, dtype=dtype)
+            if hand_pca_scale > 0:
+                delta = noise * std * hand_pca_scale
+            else:
+                delta = noise * std
+            if hand_pca_clip > 0:
+                bound = std * hand_pca_clip
+                delta = torch.maximum(torch.minimum(delta, bound), -bound)
+        else:
+            if hand_pca_scale > 0:
+                delta = noise * hand_pca_scale
+            else:
+                delta = noise * hand_pca_std
+            if hand_pca_clip > 0:
+                delta = torch.clamp(delta, min=-hand_pca_clip, max=hand_pca_clip)
+        hand_pose_g = hand_pose_g.clone()
+        hand_pose_g[:, :num_pca_comps] = hand_pose_g[:, :num_pca_comps] + delta
+        return hand_pose_g
+
+    def _apply_axis_angle_noise(
+        self,
+        *,
+        hand_pose_g: torch.Tensor,
+        indices: list[int],
+        seeds_list: list[int],
+        per_sample_apply: torch.Tensor,
+        hand_aa_std: float,
+        hand_aa_clip: float,
+        hand_perturb_prob: float,
+    ) -> torch.Tensor:
+        """Apply axis-angle (rad) noise to ``hand_pose_g`` (Fix #3).
+
+        ARCTIC uses axis-angle45, so the active pose dim is 45
+        (which is also MANO_POSE_MAX_DIM — no padding).  PCA noise
+        must never be added to these samples; this method is only
+        called from the ``use_pca=False`` branch.
+        """
+        if hand_aa_std <= 0:
+            return hand_pose_g
+        device = hand_pose_g.device
+        dtype = hand_pose_g.dtype
+        group_size = int(hand_pose_g.shape[0])
+        if group_size == 0:
+            return hand_pose_g
+        pose_dim = int(hand_pose_g.shape[1])
+        noise = torch.zeros((group_size, pose_dim), device=device, dtype=dtype)
+        any_perturbed = False
+        for j_local, i_global in enumerate(indices):
+            if not self._sample_passed_gate(
+                i_global=i_global,
+                seed=int(seeds_list[i_global]) ^ 0xAA,
+                per_sample_apply=per_sample_apply,
+                hand_perturb_prob=hand_perturb_prob,
+            ):
+                continue
+            gen = torch.Generator(device=device)
+            gen.manual_seed(int(seeds_list[i_global]) ^ 0xAA)
+            sample_noise = torch.empty((pose_dim,), device=device, dtype=dtype)
+            sample_noise.normal_(generator=gen)
+            noise[j_local] = sample_noise
+            any_perturbed = True
+        if not any_perturbed:
+            return hand_pose_g
+        delta = noise * hand_aa_std
+        if hand_aa_clip > 0:
+            delta = torch.clamp(delta, min=-hand_aa_clip, max=hand_aa_clip)
+        return hand_pose_g + delta
+
     def _reconstruct_hand_from_mano(
         self,
         batch: dict[str, torch.Tensor],
@@ -305,39 +453,16 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         else:
             seeds_list = list(range(batch_size))
 
-        if apply_hand_perturb_cfg and hand_pca_std > 0 and batch_size > 0:
-            noise = torch.zeros_like(hand_pose)
-            for i in range(batch_size):
-                if not bool(per_sample_apply[i].item()):
-                    continue
-                if hand_perturb_prob < 1.0:
-                    gate_rng = torch.Generator(device="cpu")
-                    gate_rng.manual_seed(int(seeds_list[i]) ^ 0xC0FFEE)
-                    if float(torch.rand((), generator=gate_rng).item()) > hand_perturb_prob:
-                        continue
-                gen = torch.Generator(device=hand_pose.device)
-                gen.manual_seed(int(seeds_list[i]))
-                # one sample's noise; shape (MANO_POSE_MAX_DIM,)
-                sample_noise = torch.empty(
-                    hand_pose.shape[1:], device=hand_pose.device, dtype=hand_pose.dtype
-                )
-                sample_noise.normal_(generator=gen)
-                noise[i] = sample_noise
-            # Per-parameterisation scaling (Fix #5): PCA coefficients use
-            # a per-dim std when supplied, axis-angle use a radian std with
-            # a hard radian clip. The descriptor is per sample so we have
-            # to mask by the active representation length.
-            if per_dim_std_t is not None and per_dim_std_t.shape[0] == hand_pose.shape[1]:
-                scaled = noise * per_dim_std_t.unsqueeze(0) * hand_pca_scale
-            else:
-                # Fallback: a single scalar std across all dims.
-                scaled = noise * hand_pca_std
-            if hand_pca_clip > 0 and per_dim_std_t is not None:
-                clip = per_dim_std_t.unsqueeze(0) * hand_pca_clip
-                scaled = scaled.clamp(min=-clip, max=clip)
-            elif hand_pca_clip > 0:
-                scaled = scaled.clamp(min=-hand_pca_clip, max=hand_pca_clip)
-            hand_pose = hand_pose + scaled
+        # Pre-computed per-sample v_template SHA (Fix #6).  Computing
+        # SHA1 from a GPU tensor on every batch would force a per-sample
+        # GPU→CPU copy and an SHA1 evaluation per sample, so the
+        # dataset already pre-computes the digest on CPU when loading
+        # the npz.  We group on the string here.
+        sha_t = batch.get("mano_v_template_sha")
+        if torch.is_tensor(sha_t):
+            sha_list = [str(v) for v in sha_t.reshape(-1).tolist()]
+        else:
+            sha_list = [None] * batch_size
 
         # Reuse one MANO layer per (side, config, subject v_template). This
         # handles DataLoader-collated side lists and mixed GRAB/ARCTIC batches.
@@ -349,7 +474,12 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             use_pca_i = self._batch_bool(batch, "mano_use_pca", i, default_use_pca)
             num_i = self._batch_int(batch, "mano_num_pca_comps", i, default_num)
             flat_i = self._batch_bool(batch, "mano_flat_hand_mean", i, default_flat)
-            key = (side_list[i], use_pca_i, num_i, flat_i, self._v_template_sha(v_template, i))
+            # Prefer the pre-computed digest (Fix #6); fall back to a
+            # per-sample GPU→CPU SHA if the dataset is older.
+            sha_i = sha_list[i] if i < len(sha_list) else None
+            if sha_i is None:
+                sha_i = self._v_template_sha(v_template, i)
+            key = (side_list[i], use_pca_i, num_i, flat_i, sha_i)
             groups.setdefault(key, []).append(i)
 
         for (side_i, use_pca_i, num_i, flat_i, _sha), indices in groups.items():
@@ -362,32 +492,40 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 v_template=self._v_template_for_index(v_template, indices[0]),
             )
             pose_dim = int(num_i) if bool(use_pca_i) else 45
-            hand_pose_g = hand_pose.index_select(0, idx)
-            # Fix #5: axis-angle path uses a different (scale, clip) pair
-            # from the PCA path. Apply it only when the active
-            # representation is axis-angle and the per-group pose is
-            # already padded to 45 dims (the dataset enforces this).
-            if not bool(use_pca_i) and apply_hand_perturb_cfg and hand_aa_std > 0:
-                aa_noise = torch.zeros_like(hand_pose_g)
-                for j_local, i_global in enumerate(indices):
-                    if not bool(per_sample_apply[i_global].item()):
-                        continue
-                    if hand_perturb_prob < 1.0:
-                        gate_rng = torch.Generator(device="cpu")
-                        gate_rng.manual_seed(int(seeds_list[i_global]) ^ 0xC0FFEE)
-                        if float(torch.rand((), generator=gate_rng).item()) > hand_perturb_prob:
-                            continue
-                    gen = torch.Generator(device=hand_pose.device)
-                    gen.manual_seed(int(seeds_list[i_global]) ^ 0xAA)
-                    sample_noise = torch.empty(
-                        hand_pose_g.shape[1:], device=hand_pose.device, dtype=hand_pose_g.dtype
+            hand_pose_g = hand_pose.index_select(0, idx).clone()
+
+            # Fix #3 + #4: apply per-group noise.  Doing it per group
+            # (instead of once on the whole 45-dim padded pose) keeps
+            # the PCA path and the axis-angle path strictly
+            # disjoint — ARCTIC axis-angle samples must NEVER receive
+            # the PCA scalar noise, and the PCA per-dim std must
+            # multiply only the active PCA dims, not the 21 padding
+            # zeros used to bring axis-angle45 up to MANO_POSE_MAX_DIM.
+            if apply_hand_perturb_cfg:
+                if bool(use_pca_i):
+                    hand_pose_g = self._apply_pca_noise(
+                        hand_pose_g=hand_pose_g,
+                        num_pca_comps=int(num_i),
+                        indices=indices,
+                        seeds_list=seeds_list,
+                        per_sample_apply=per_sample_apply,
+                        hand_pca_std=hand_pca_std,
+                        hand_pca_scale=hand_pca_scale,
+                        hand_pca_clip=hand_pca_clip,
+                        per_dim_std_t=per_dim_std_t,
+                        hand_perturb_prob=hand_perturb_prob,
                     )
-                    sample_noise.normal_(generator=gen)
-                    aa_noise[j_local] = sample_noise
-                scaled_aa = aa_noise * hand_aa_std
-                if hand_aa_clip > 0:
-                    scaled_aa = scaled_aa.clamp(min=-hand_aa_clip, max=hand_aa_clip)
-                hand_pose_g = hand_pose_g + scaled_aa
+                else:
+                    hand_pose_g = self._apply_axis_angle_noise(
+                        hand_pose_g=hand_pose_g,
+                        indices=indices,
+                        seeds_list=seeds_list,
+                        per_sample_apply=per_sample_apply,
+                        hand_aa_std=hand_aa_std,
+                        hand_aa_clip=hand_aa_clip,
+                        hand_perturb_prob=hand_perturb_prob,
+                    )
+
             vertices_i = reconstruct_hand_points(
                 layer,
                 global_orient=global_orient.index_select(0, idx),
@@ -478,49 +616,108 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         device = full_input_obj.device
         batch_size, pool_size, _ = full_input_obj.shape
 
-        # Fix #6: use FPS-sampled proxy face indices. The indices are
-        # computed once on the canonical MANO face centres and cached
-        # for the lifetime of the process, so a per-batch call is just
-        # an ``index_select``. We need a single side per call; mixed
-        # batches fall back to the cheaper linspace proxy.
+        # Fix #5: per-sample side list. The dataset emits one string per
+        # sample via ``__mano_side__``; PyTorch's default collate keeps
+        # them as a list of strings. We also accept a single string
+        # (single-side npz) for backwards compatibility.
         side_hint = batch.get("__mano_side__")
-        if side_hint is None:
-            side_for_proxy = "right"
-        else:
-            if isinstance(side_hint, str):
-                side_for_proxy = side_hint
-            elif isinstance(side_hint, (list, tuple)) and len(side_hint) == batch_size:
-                # Mixed batch: take the majority side to keep a single
-                # proxy index list; the cross-side cost is negligible.
-                side_for_proxy = max(set(side_hint), key=lambda s: side_hint.count(s))
+        if isinstance(side_hint, (list, tuple)):
+            if len(side_hint) == batch_size:
+                per_sample_sides = [str(s) for s in side_hint]
+            elif len(side_hint) == 1:
+                per_sample_sides = [str(side_hint[0])] * batch_size
             else:
-                side_for_proxy = str(side_hint)
-        try:
-            proxy_idx_np = get_proxy_face_idx(
-                side=str(side_for_proxy),
-                count=int(proxy_count),
-                model_dir=str(self.cfg.meta.mano_model_dir),
-            )
-        except Exception:
-            proxy_idx_np = np.linspace(0, num_hand - 1, num=proxy_count).round().astype(np.int64)
-        proxy_idx = torch.as_tensor(np.unique(proxy_idx_np), dtype=torch.long, device=device)
-        hand_proxy = hand_input.index_select(1, proxy_idx)
+                per_sample_sides = [str(side_hint[0])] * batch_size
+        elif isinstance(side_hint, str):
+            per_sample_sides = [side_hint] * batch_size
+        else:
+            per_sample_sides = ["right"] * batch_size
 
-        # Fix #7: chunk the 4096x256 cdist so the peak distance matrix
-        # is at most B x cdist_chunk x proxy_count, not the full
-        # B x 4096 x 256 tensor.
-        obj_min_dist = torch.empty(
-            (batch_size, pool_size), device=device, dtype=hand_input.dtype
+        # Build per-side proxy indices. The MANO left/right hand meshes
+        # share the face topology but their face indices are NOT in the
+        # same spatial order, so a single shared index would mix
+        # fingertip points with palm points when the batch contains
+        # both sides. We build one proxy per side and select by sample
+        # later. The over-broad ``except`` is gone (Fix #5): a
+        # missing model dir is now a hard failure, only an explicit
+        # linspace fallback runs on a controlled exception.
+        mano_model_dir = str(self.cfg.meta.mano_model_dir)
+
+        def _proxy_for(side: str) -> torch.Tensor:
+            try:
+                proxy_idx_np = get_proxy_face_idx(
+                    side=side,
+                    count=int(proxy_count),
+                    model_dir=mano_model_dir,
+                )
+            except FileNotFoundError as e:
+                raise FileNotFoundError(
+                    f"MANO model dir {mano_model_dir!r} is required to build "
+                    f"the FPS proxy for side={side!r}. Set meta.mano_model_dir "
+                    "to the directory that contains the .pkl files."
+                ) from e
+            except Exception as e:
+                # Any other failure (e.g. smplx import error) bubbles
+                # up: the runner must not silently degrade to linspace.
+                raise RuntimeError(
+                    f"get_proxy_face_idx(side={side!r}) failed: {e}. "
+                    "This is a hard failure; do not silently fall back."
+                ) from e
+            return torch.as_tensor(
+                np.unique(proxy_idx_np), dtype=torch.long, device=device
+            )
+
+        proxy_per_side: dict[str, torch.Tensor] = {
+            "right": _proxy_for("right"),
+            "left": _proxy_for("left"),
+        }
+
+        # Per-side min-distance accumulator. We do not rely on a single
+        # shared proxy; each sample's hand is indexed with the proxy
+        # matching its own side. The cdist is still chunked (Fix #7).
+        obj_min_dist = torch.full(
+            (batch_size, pool_size), float("inf"), device=device, dtype=hand_input.dtype
         )
-        for start in range(0, pool_size, cdist_chunk):
-            end = min(start + cdist_chunk, pool_size)
-            dist = torch.cdist(full_input_obj[:, start:end], hand_proxy)
-            obj_min_dist[:, start:end] = dist.amin(dim=-1)
+        for side_name in set(per_sample_sides):
+            side_idx_list = [i for i, s in enumerate(per_sample_sides) if s == side_name]
+            if not side_idx_list:
+                continue
+            proxy = proxy_per_side.get(side_name, proxy_per_side["right"])
+            side_idx_t = torch.as_tensor(side_idx_list, dtype=torch.long, device=device)
+            side_hand_proxy = hand_input.index_select(0, side_idx_t).index_select(1, proxy)
+            side_obj = full_input_obj.index_select(0, side_idx_t)
+            for start in range(0, pool_size, cdist_chunk):
+                end = min(start + cdist_chunk, pool_size)
+                dist = torch.cdist(side_obj[:, start:end], side_hand_proxy)  # (b, chunk, P)
+                obj_min_dist[side_idx_t, start:end] = dist.amin(dim=-1)
+        # Any sample whose side was missing gets the right-hand proxy
+        # as a defensive fallback (the locality sampler keeps mixed
+        # batches rare, so this branch almost never fires).
+        if not torch.isfinite(obj_min_dist).all():
+            fallback_idx = torch.nonzero(
+                ~torch.isfinite(obj_min_dist).all(dim=-1), as_tuple=False
+            ).squeeze(-1)
+            if fallback_idx.numel() > 0:
+                proxy = proxy_per_side["right"]
+                side_hand_proxy = hand_input.index_select(0, fallback_idx).index_select(1, proxy)
+                for start in range(0, pool_size, cdist_chunk):
+                    end = min(start + cdist_chunk, pool_size)
+                    dist = torch.cdist(
+                        full_input_obj[fallback_idx, start:end], side_hand_proxy
+                    )
+                    obj_min_dist[fallback_idx, start:end] = dist.amin(dim=-1)
+
         near_pool = min(int(getattr(self.cfg.meta, "runtime_near_pool_points", 1024)), pool_size)
         # Fix #7: batched topk instead of per-sample ``topk(...).cpu()``.
         near_idx = torch.topk(
             obj_min_dist, k=near_pool, dim=1, largest=False
-        ).indices  # (B, near_pool)
+        ).indices  # (B, near_pool) on GPU
+
+        # Fix #2: single batch-level sync of the topk indices. The
+        # per-sample loop below runs entirely on CPU using a stable
+        # per-frame seed, so the GPU→CPU transition happens exactly
+        # once per batch instead of once per sample.
+        near_idx_cpu = near_idx.cpu()
 
         seeds = batch.get("object_seed")
         if torch.is_tensor(seeds):
@@ -533,13 +730,13 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             seed = seeds_list[b]
             gen = torch.Generator(device="cpu")
             gen.manual_seed(int(seed))
-            near_take = min(near_quota, int(near_idx.shape[1]))
-            near_perm = torch.randperm(int(near_idx.shape[1]), generator=gen)[:near_take]
-            parts = [near_idx[b][near_perm]]
+            near_take = min(near_quota, int(near_idx_cpu.shape[1]))
+            near_perm = torch.randperm(int(near_idx_cpu.shape[1]), generator=gen)[:near_take]
+            parts = [near_idx_cpu[b, near_perm]]
             valid_count = near_take
             if global_quota > 0:
                 mask = torch.ones(pool_size, dtype=torch.bool)
-                mask[near_idx[b]] = False
+                mask[near_idx_cpu[b]] = False
                 remaining = torch.nonzero(mask, as_tuple=False).squeeze(-1)
                 if remaining.numel() == 0:
                     remaining = torch.arange(pool_size, dtype=torch.long)

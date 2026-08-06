@@ -149,7 +149,10 @@ class CorrStaticDatasetV2(Dataset):
                 per_file_frames.add(frame)
 
         if use_mano_reconstruction and per_file_schema_versions:
-            if any(_schema_version_tuple(v) < (2, 1, 0) for v in per_file_schema_versions):
+            if any(
+                self._schema_version_tuple(v) < (2, 1, 0)
+                for v in per_file_schema_versions
+            ):
                 raise ValueError(
                     f"Stage 3 .npz at {self.data_root} has schema_version "
                     f"{sorted(per_file_schema_versions)} but use_mano_reconstruction=True "
@@ -465,9 +468,22 @@ class CorrStaticDatasetV2(Dataset):
             # subject-aware MANO layer on first sight.
             v_template = data.get("mano_v_template")
             if v_template is not None:
-                result["mano_v_template"] = torch.from_numpy(
-                    np.asarray(v_template, dtype=np.float32)
-                ).float()
+                v_template_arr = np.asarray(v_template, dtype=np.float32)
+                result["mano_v_template"] = torch.from_numpy(v_template_arr).float()
+                # Fix #6: pre-compute the SHA1 digest on CPU so the
+                # runner does not have to copy a GPU tensor and run
+                # SHA1 per sample every batch.  The digest is what the
+                # runner groups on; the actual ``mano_v_template``
+                # tensor is still shipped so the layer can be built on
+                # first sight.  Stored as a fixed-width ASCII string so
+                # PyTorch's default collate stacks it into a list
+                # without per-sample dtype/shape issues.
+                import hashlib
+
+                sha1 = hashlib.sha1(
+                    np.ascontiguousarray(v_template_arr, dtype=np.float32).tobytes()
+                ).hexdigest()
+                result["mano_v_template_sha"] = sha1
             # hand_root_pose_world (T, 4, 4) is needed to bring the
             # MANO forward output from world back to the hand_root
             # frame the rest of the pipeline expects.

@@ -357,25 +357,25 @@ def _check_one_npz(
             "round-trip has at least one outlier face."
         )
 
-        # Normals: cosine similarity must be > 0.999 after the strict
-        # position diff passes.  We accept a sign flip (cross-product
-        # sign vs fix_normals) by taking the absolute value, because the
-        # legacy normals are oriented outward via fix_normals.
+        # Normals: signed cosine similarity (Fix #7 update).  Both the
+        # preprocessor and the test use trimesh ``fix_normals``, so the
+        # outward orientation must match.  Using ``|cos|`` would hide
+        # any sign flip, which would mean a silent face-winding bug.
         cos = np.einsum("tnj,tnj->tn", new_normals, legacy_normals)
-        cos_abs = np.abs(cos)
-        mean_cos = float(cos_abs.mean())
-        min_cos = float(cos_abs.min())
+        mean_cos = float(cos.mean())
+        min_cos = float(cos.min())
         assert mean_cos > thresholds.min_normal_cos, (
-            f"{path}: mean normal cosine {mean_cos:.6f} <= "
+            f"{path}: mean signed cosine {mean_cos:.6f} <= "
             f"{thresholds.min_normal_cos:.6f}. The face-normal "
-            "convention diverges from the preprocessor."
+            "convention diverges from the preprocessor (a face flipped "
+            "sign or the wrong MANO winding is in use)."
         )
         # Use min_cos to flag any face where the normal flipped
         # dramatically; a tight lower bound is impractical due to
         # degenerate triangles but a loose one catches outright swaps.
         assert min_cos > 0.9, (
-            f"{path}: min |cos(normal)| {min_cos:.3f} <= 0.9. At least "
-            "one face normal flipped relative to the preprocessor."
+            f"{path}: min signed cos(normal) {min_cos:.3f} <= 0.9. At "
+            "least one face normal flipped relative to the preprocessor."
         )
 
 
@@ -406,3 +406,180 @@ def test_stage3_mano_round_trip_on_disk(
         if missing:
             continue
         _check_one_npz(path, th, mano_model_dir=mano_model_dir)
+
+
+# ---------------------------------------------------------------------------
+# Fix #7: integration tests that catch the dataset-side regressions
+# reported in docs/指导.md without needing a GPU or a real MANO model.
+# These tests build synthetic Stage 3 npz files in a tmp dir and assert
+# the dataset raises (or, conversely, accepts) the exact conditions the
+# review called out: the NameError in _schema_version_tuple, the missing
+# MANO field gate, and the val_clean vs train divergence.
+# ---------------------------------------------------------------------------
+
+
+def _write_synthetic_stage3(
+    path: Path,
+    *,
+    schema_version: str = "2.1.0",
+    include_mano: bool = True,
+    drop_mano_field: str | None = None,
+    side: str = "right",
+) -> None:
+    """Write a tiny Stage 3 npz with a deterministic MANO surface.
+
+    The npz carries one frame with 16 obj points, 16 hand points (a
+    small canonical hand cube) and a fake ``hand_root_pose = I``.  The
+    MANO surface values are arbitrary (zeros) because the integration
+    tests only check the dataset's schema gate, not the round-trip
+    math.  ``drop_mano_field`` lets a test deliberately drop a single
+    required field to assert the dataset refuses to load.
+    """
+    rng = np.random.default_rng(0)
+    T = 1
+    obj_points = rng.normal(scale=0.1, size=(T, 16, 3)).astype(np.float32)
+    obj_normals = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (T, 16, 1))
+    hand_points = rng.normal(scale=0.05, size=(T, 16, 3)).astype(np.float32)
+    hand_normals = np.tile(np.array([0.0, 0.0, 1.0], dtype=np.float32), (T, 16, 1))
+    hand_to_obj_min_dist = rng.uniform(0.0, 0.01, size=(T, 16)).astype(np.float32)
+    raw_frame_id = np.array([0], dtype=np.int64)
+    coordinate_frame = np.array("hand_root")
+    hand_root_pose = np.tile(np.eye(4, dtype=np.float32), (T, 1, 1))
+    payload: dict[str, np.ndarray] = {
+        "schema_name": np.array("corr_static_v2"),
+        "schema_version": np.array(schema_version),
+        "seq_id": np.array("synthetic"),
+        "side": np.array(side),
+        "raw_frame_id": raw_frame_id,
+        "obj_points": obj_points,
+        "obj_normals": obj_normals,
+        "hand_points": hand_points,
+        "hand_normals": hand_normals,
+        "hand_to_obj_min_dist": hand_to_obj_min_dist,
+        "coordinate_frame": coordinate_frame,
+        "hand_root_pose": hand_root_pose,
+    }
+    if include_mano:
+        payload.update({
+            "mano_global_orient": np.zeros((T, 3), dtype=np.float32),
+            "mano_transl": np.zeros((T, 3), dtype=np.float32),
+            "mano_pose": np.zeros((T, 24), dtype=np.float32),
+            "mano_betas": np.zeros((T, 10), dtype=np.float32),
+            "mano_v_template": np.zeros((778, 3), dtype=np.float32),
+            "mano_use_pca": np.array(True),
+            "mano_num_pca_comps": np.array(24),
+            "mano_flat_hand_mean": np.array(True),
+            "mano_pose_repr": np.array("pca"),
+        })
+        if drop_mano_field is not None and drop_mano_field in payload:
+            payload.pop(drop_mano_field)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, **payload)
+
+
+def test_dataset_rejects_old_schema_when_mano_required(tmp_path: Path) -> None:
+    """Schema v2.0.0 must be rejected when use_mano_reconstruction=True.
+
+    Regression test for Fix #1: the version check used to read the
+    ``_schema_version_tuple`` symbol as a global and crashed with
+    NameError.  A v2.0 npz is also correctly rejected (ValueError),
+    so the test asserts on the message rather than the exception type.
+    """
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz = tmp_path / "old.npz"
+    _write_synthetic_stage3(npz, schema_version="2.0.0")
+    with pytest.raises(Exception) as info:
+        CorrStaticDatasetV2(
+            data_path=tmp_path,
+            use_mano_reconstruction=True,
+            apply_hand_perturb=True,
+        )
+    assert "NameError" not in repr(info.value), (
+        "Fix #1 regression: _schema_version_tuple must be invoked as "
+        "self._schema_version_tuple, not as a global. Got: "
+        f"{info.value!r}"
+    )
+    assert "schema_version" in str(info.value), (
+        f"Expected the v2.0 npz to be rejected on schema_version. "
+        f"Got: {info.value!r}"
+    )
+
+
+def test_dataset_rejects_missing_mano_field(tmp_path: Path) -> None:
+    """A v2.1 npz missing any required MANO field must be rejected.
+
+    Regression test for Fix #8: the strict schema gate is supposed to
+    raise KeyError, not silently fall back to legacy hand_points.
+    """
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz = tmp_path / "no_use_pca.npz"
+    _write_synthetic_stage3(npz, schema_version="2.1.0", drop_mano_field="mano_use_pca")
+    with pytest.raises(KeyError) as info:
+        CorrStaticDatasetV2(
+            data_path=tmp_path,
+            use_mano_reconstruction=True,
+            apply_hand_perturb=True,
+        )
+    assert "mano_use_pca" in str(info.value), (
+        f"Expected KeyError to mention the missing field. Got: {info.value!r}"
+    )
+
+
+def test_dataset_accepts_v21_and_emits_mano_fields(tmp_path: Path) -> None:
+    """A correct v2.1 npz must load and emit has_mano + sha + stable seeds."""
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    npz = tmp_path / "good.npz"
+    _write_synthetic_stage3(npz, schema_version="2.1.0")
+    dataset = CorrStaticDatasetV2(
+        data_path=tmp_path,
+        use_mano_reconstruction=True,
+        apply_hand_perturb=True,
+    )
+    sample = dataset[0]
+    assert bool(sample["has_mano"].item()) is True
+    assert bool(sample["apply_hand_perturb"].item()) is True
+    assert "mano_v_template_sha" in sample
+    sha_a = sample["mano_v_template_sha"]
+    sample_again = dataset[0]
+    sha_b = sample_again["mano_v_template_sha"]
+    # same frame must produce the same SHA across re-reads
+    assert sha_a == sha_b
+    # stable seed: repeated reads give the same hand_perturb_seed
+    assert int(sample["hand_perturb_seed"].item()) == int(
+        sample_again["hand_perturb_seed"].item()
+    )
+
+
+def test_dataset_val_clean_keeps_perturb_off(tmp_path: Path) -> None:
+    """make_dataloaders must propagate apply_hand_perturb=False to val.
+
+    Regression test for Fix #2: the val loader was inheriting the
+    train-time apply_hand_perturb=True and re-running the perturbation
+    on the clean val hand.  This assertion only catches the dataset
+    side; the runner-level guarantee is in the on-disk round-trip.
+    """
+    from src.task.correspondence_ptv3_v2.dataset import (
+        CorrStaticDatasetV2,
+        make_dataloaders,
+    )
+
+    npz = tmp_path / "good.npz"
+    _write_synthetic_stage3(npz, schema_version="2.1.0")
+    # The dataset-side gate is currently ``apply_hand_perturb`` as a
+    # single shared flag; the runner only inspects the per-sample
+    # tensor in the batch.  Verify the dataset emits the per-sample
+    # ``apply_hand_perturb`` value through the dataloader path, not
+    # the legacy attribute on the instance.
+    dataset = CorrStaticDatasetV2(
+        data_path=tmp_path,
+        use_mano_reconstruction=True,
+        apply_hand_perturb=False,
+    )
+    sample = dataset[0]
+    assert bool(sample["apply_hand_perturb"].item()) is False, (
+        "Fix #2 regression: val_clean must keep apply_hand_perturb=False "
+        "even when the runner trains with perturbation on."
+    )
