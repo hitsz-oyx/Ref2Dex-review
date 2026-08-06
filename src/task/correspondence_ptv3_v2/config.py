@@ -81,11 +81,33 @@ class Config(TaskConfig):
         mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
         use_mano_reconstruction: bool = True
         apply_hand_perturb: bool = False
+        # Fix #5 (docs/指导.md): decouple PCA coefficients from axis-angle
+        # by giving each parameterisation its own (scale, clip) pair.
+        # The PCA path additionally supports per-dim std from the training
+        # set via ``hand_pca_train_std_per_dim`` (length 24, GRAB only);
+        # when absent we fall back to a single scalar hand_pca_std for
+        # backward compatibility.
+        hand_perturb_prob: float = 0.8
         hand_pca_std: float = 0.5
+        hand_pca_noise_scale: float = 0.10
+        hand_pca_noise_clip: float = 3.0
+        hand_axis_angle_std_rad: float = 0.05
+        hand_axis_angle_clip_rad: float = 0.15
+        hand_pca_train_std_per_dim: tuple[float, ...] | None = None
+        # Fix #6: number of FPS-sampled hand proxy face indices. The
+        # indices are computed once on the canonical MANO face centres
+        # and shared by the whole process; the runtime just does an
+        # ``index_select`` on the hand input.
+        hand_proxy_face_count: int = 256
         runtime_resample_object: bool = True
         num_hand_proxy_points: int = 256
         runtime_near_pool_points: int = 1024
         runtime_near_obj_points: int = 384
+        # Fix #7: block size for the 4096x256 cdist used to score every
+        # pool point against the hand proxy. 512 keeps the peak
+        # distance-matrix memory at B x 512 x 256 floats (≈0.5 MB at
+        # B=16).
+        runtime_cdist_chunk_size: int = 512
 
         loss_cross_edge_weight: float = 1.0
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so

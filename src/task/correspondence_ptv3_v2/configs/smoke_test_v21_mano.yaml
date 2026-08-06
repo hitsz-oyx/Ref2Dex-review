@@ -2,6 +2,29 @@ _base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
 
 name: smoke_test_v21_mano
 
+meta:
+  # Fix #9 (docs/指导.md): the smoke test must exercise the full
+  # MANO-reconstruction + hand-PCA-perturbation pipeline.  Without these
+  # flags the smoke run silently uses the legacy hand_points path and
+  # ``has_mano`` stays False, so the MANO forward never executes and the
+  # perturbation code is dead.  Setting them here is what makes this a
+  # genuine integration test for Fix #1-#8.
+  use_mano_reconstruction: true
+  apply_hand_perturb: true
+  # The full config uses hand_pca_std=0.5 in train; the smoke test
+  # intentionally halves it so a single batch never produces a wild pose.
+  hand_pca_std: 0.1
+  hand_pca_noise_scale: 0.10
+  hand_pca_noise_clip: 3.0
+  hand_axis_angle_std_rad: 0.05
+  hand_axis_angle_clip_rad: 0.15
+  hand_perturb_prob: 0.8
+  hand_proxy_face_count: 256
+  runtime_cdist_chunk_size: 512
+  # Force the runtime resample path even on legacy data, so the smoke
+  # test catches any regression in ``_resample_object_from_perturbed_hand``.
+  runtime_resample_object: true
+
 data:
   # Tiny subset (one subject, one sequence) for a training smoke test.
   train_path: /tmp/stage3_test_grab

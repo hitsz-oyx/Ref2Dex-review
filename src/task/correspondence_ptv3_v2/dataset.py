@@ -59,6 +59,12 @@ class CorrStaticDatasetV2(Dataset):
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
         runtime_resample_object: bool = True,
+        # Fix #8 (docs/指导.md): opt-in strict schema gate. When True the
+        # dataset refuses to load a Stage 3 root whose npz is below v2.1.0
+        # or missing any required MANO field. When False the legacy v2.0
+        # behaviour is preserved (hand_points are used as-is, no MANO
+        # forward) so old pipelines keep working.
+        use_mano_reconstruction: bool = False,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
@@ -88,6 +94,7 @@ class CorrStaticDatasetV2(Dataset):
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
         self.runtime_resample_object = bool(runtime_resample_object)
+        self.use_mano_reconstruction = bool(use_mano_reconstruction)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -112,12 +119,23 @@ class CorrStaticDatasetV2(Dataset):
         # Per-NPZ coordinate_frame is the source of truth (not the root
         # meta.json, which is only written once at generation time). If the
         # caller specified an expected frame, every file must agree with it.
+        # Fix #8 (docs/指导.md): when ``use_mano_reconstruction`` is set, the
+        # schema MUST be v2.1+ and every required MANO field must be present.
+        # We refuse to silently fall back to the legacy hand_points because
+        # that path produces empty gradients on the hand side and corrupts
+        # every metric that depends on the MANO reconstruction.
         per_file_frames: set[str] = set()
+        per_file_schema_versions: set[str] = set()
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
+                if use_mano_reconstruction:
+                    self._validate_mano_schema(path, data)
+                    per_file_schema_versions.add(
+                        self._scalar_string(data, "schema_version", "0.0.0")
+                    )
                 frame = _resolve_coordinate_frame_from_npz(
                     data,
                     fallback=self.root_coordinate_frame,
@@ -129,6 +147,15 @@ class CorrStaticDatasetV2(Dataset):
                         "prepare_corr_static.py."
                     )
                 per_file_frames.add(frame)
+
+        if use_mano_reconstruction and per_file_schema_versions:
+            if any(_schema_version_tuple(v) < (2, 1, 0) for v in per_file_schema_versions):
+                raise ValueError(
+                    f"Stage 3 .npz at {self.data_root} has schema_version "
+                    f"{sorted(per_file_schema_versions)} but use_mano_reconstruction=True "
+                    "requires schema_version >= 2.1.0. Re-run Stage 3 with the current "
+                    "process/common/stage3_corr.py on the same Stage 2 root."
+                )
 
         if len(per_file_frames) != 1:
             raise ValueError(
@@ -179,6 +206,52 @@ class CorrStaticDatasetV2(Dataset):
             return default
         array = np.asarray(value)
         return str(array.item()) if array.size == 1 else default
+
+    # ------------------------------------------------------------------
+    # Fix #8 (docs/指导.md): strict schema validation when the train path
+    # intends to re-run MANO forward. The Stage 3 .npz must carry every
+    # required MANO field; partial data is a hard error, not a silent
+    # fallback to the legacy hand_points field.
+    # ------------------------------------------------------------------
+    _MANO_REQUIRED_FIELDS: tuple[str, ...] = (
+        "schema_name",
+        "schema_version",
+        "mano_global_orient",
+        "mano_transl",
+        "mano_pose",
+        "mano_betas",
+        "mano_v_template",
+        "mano_use_pca",
+        "mano_num_pca_comps",
+        "mano_flat_hand_mean",
+        "mano_pose_repr",
+        "hand_root_pose",
+        "hand_to_obj_min_dist",
+    )
+
+    @classmethod
+    def _validate_mano_schema(
+        cls,
+        path: Path,
+        data: Any,
+    ) -> None:
+        missing = [f for f in cls._MANO_REQUIRED_FIELDS if f not in data.files]
+        if missing:
+            raise KeyError(
+                f"{path}: use_mano_reconstruction=True but the Stage 3 npz is missing "
+                f"required MANO fields {missing}. Re-run Stage 3 with the current "
+                "process/common/stage3_corr.py on the same Stage 2 root."
+            )
+
+    @staticmethod
+    def _schema_version_tuple(value: str) -> tuple[int, ...]:
+        parts: list[int] = []
+        for chunk in str(value).split("."):
+            try:
+                parts.append(int(chunk))
+            except ValueError:
+                parts.append(0)
+        return tuple(parts) or (0, 0, 0)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         path, frame_idx = self._samples[index]
@@ -338,6 +411,30 @@ class CorrStaticDatasetV2(Dataset):
         # flat_hand_mean, v_template_sha) so a single batch can mix
         # GRAB (PCA24) and ARCTIC (axis-angle45) without crashing.
         if "mano_pose" in data and "mano_global_orient" in data:
+            # Fix #1 (docs/指导.md): explicitly tell the runner this sample
+            # has MANO parameters, so it actually runs the reconstruction
+            # path instead of falling back to the legacy hand_points.
+            result["has_mano"] = torch.tensor(True, dtype=torch.bool)
+            # Fix #2: per-sample apply_hand_perturb flag so val_clean
+            # does not get the same noise injection as train.
+            result["apply_hand_perturb"] = torch.tensor(
+                bool(self.apply_hand_perturb), dtype=torch.bool
+            )
+            # Fix #4: a per-frame, per-epoch, per-side, per-namespace seed
+            # for the hand-PCA noise generator. The runner uses this so the
+            # noise is independent of batch composition / DataLoader order
+            # and stable across checkpoint resumes.
+            hand_perturb_seed = stable_frame_seed(
+                base_seed=self.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=epoch,
+                namespace="hand-perturbation",
+            )
+            result["hand_perturb_seed"] = torch.tensor(
+                int(hand_perturb_seed & ((1 << 63) - 1)), dtype=torch.long
+            )
             result["__mano_side__"] = side
             result["mano_global_orient"] = torch.from_numpy(
                 np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)
@@ -505,6 +602,7 @@ def make_dataloaders(
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
     expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
     runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
+    use_mano_reconstruction = bool(getattr(meta_cfg, "use_mano_reconstruction", False))
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
@@ -524,6 +622,7 @@ def make_dataloaders(
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
         "runtime_resample_object": runtime_resample_object,
+        "use_mano_reconstruction": use_mano_reconstruction,
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
     }

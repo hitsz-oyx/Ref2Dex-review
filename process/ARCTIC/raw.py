@@ -836,8 +836,14 @@ class ArcticRawAdapter:
         # Use the default MANO layer's v_template as the canonical hand shape
         # so train-time MANO forward can re-create the hand from parameters
         # alone (subject-specific v_template is not available in ARCTIC).
-        default_v_template = (
+        # Fix #3 (docs/指导.md): previously the *right* v_template was used
+        # for both hands, which broke left-hand MANO reconstruction
+        # consistency. The two MANO layers ship independent v_templates.
+        right_v_template = (
             self.mano_r.v_template.detach().cpu().numpy().astype(np.float32).copy()
+        )
+        left_v_template = (
+            self.mano_l.v_template.detach().cpu().numpy().astype(np.float32).copy()
         )
 
         def _to_numpy(arr: torch.Tensor) -> np.ndarray:
@@ -848,14 +854,14 @@ class ArcticRawAdapter:
             "mano_transl": _to_numpy(trans_r),
             "mano_pose": _to_numpy(pose_r),
             "mano_betas": _to_numpy(shape_r) if shape_r.ndim == 1 else _to_numpy(shape_r[:1]),
-            "mano_v_template": default_v_template,
+            "mano_v_template": right_v_template,
         }
         left_mano = {
             "mano_global_orient": _to_numpy(rot_l),
             "mano_transl": _to_numpy(trans_l),
             "mano_pose": _to_numpy(pose_l),
             "mano_betas": _to_numpy(shape_l) if shape_l.ndim == 1 else _to_numpy(shape_l[:1]),
-            "mano_v_template": default_v_template,
+            "mano_v_template": left_v_template,
         }
 
         output = {

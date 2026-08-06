@@ -207,3 +207,79 @@ def compose_hand_root_points(
     R = hand_root_pose_world[:, :3, :3]                   # (B, 3, 3)
     t = hand_root_pose_world[:, :3, 3]                    # (B, 3)
     return torch.einsum("bij,bnj->bni", R, hand_root_points) + t[:, None, :]
+
+
+# ---------------------------------------------------------------------------
+# Fix #6 (docs/指导.md): offline FPS-sampled hand proxy face indices.
+# ---------------------------------------------------------------------------
+
+_PROXY_FACE_IDX_CACHE: dict[tuple[str, int, str | None], np.ndarray] = {}
+
+
+def get_proxy_face_idx(
+    *,
+    side: str,
+    count: int = 256,
+    model_dir: str | Path | None,
+    seed: int = 0,
+) -> np.ndarray:
+    """Return ``count`` face indices that FPS-sample the canonical MANO mesh.
+
+    The indices are computed once per (side, count, model_dir) and cached
+    for the lifetime of the process. FPS gives a spatial-uniform proxy
+    that covers fingertips, palm, finger creases and the back of the
+    hand — unlike the linspace-on-face-index heuristic the previous
+    implementation used.
+    """
+    side = str(side)
+    if side not in {"left", "right"}:
+        raise ValueError(f"side must be 'left' or 'right', got {side!r}")
+    model_dir_key = None if model_dir is None else str(Path(model_dir).resolve())
+    cache_key = (side, int(count), model_dir_key)
+    cached = _PROXY_FACE_IDX_CACHE.get(cache_key)
+    if cached is not None and len(cached) == int(count):
+        return cached
+    if model_dir is None:
+        raise ValueError(
+            "model_dir is required to compute the FPS proxy face indices on first call."
+        )
+    from smplx import MANO
+
+    is_rhand = side == "right"
+    layer = MANO(
+        str(model_dir),
+        is_rhand=is_rhand,
+        use_pca=True,
+        num_pca_comps=24,
+        flat_hand_mean=True,
+    )
+    v_template = layer.v_template.detach().cpu().numpy().astype(np.float32)
+    faces = np.asarray(layer.faces, dtype=np.int64)
+    centers = v_template[faces].mean(axis=1).astype(np.float32)  # (F, 3)
+    selected = farthest_point_sampling(centers, count=int(count), seed=int(seed))
+    _PROXY_FACE_IDX_CACHE[cache_key] = selected
+    return selected
+
+
+def farthest_point_sampling(points: np.ndarray, *, count: int, seed: int = 0) -> np.ndarray:
+    """Pure-NumPy FPS implementation for an (N, 3) point cloud.
+
+    Deterministic for a fixed (points, count, seed). The first point is
+    drawn with the supplied PRNG so cache busts only when the canonical
+    mesh or the count changes.
+    """
+    points = np.ascontiguousarray(points, dtype=np.float32)
+    n = int(points.shape[0])
+    count = max(1, min(int(count), n))
+    rng = np.random.default_rng(int(seed))
+    selected = np.empty((count,), dtype=np.int64)
+    dists = np.full((n,), np.inf, dtype=np.float32)
+    first = int(rng.integers(0, n))
+    selected[0] = first
+    dists = np.linalg.norm(points - points[first], axis=1).astype(np.float32)
+    for k in range(1, count):
+        idx = int(np.argmax(dists))
+        selected[k] = idx
+        new_dists = np.linalg.norm(points - points[idx], axis=1).astype(np.float32)
+        np.minimum(dists, new_dists, out=dists)
+    return selected
