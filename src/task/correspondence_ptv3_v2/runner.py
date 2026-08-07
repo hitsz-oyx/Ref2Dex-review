@@ -20,6 +20,9 @@ from src.task.correspondence_ptv3_v2.losses import (
     zero_predictor_mae_map,
     zero_predictor_qfl_map,
 )
+from src.task.correspondence_ptv3_v2.hand_noise_profiles import (
+    HandGeometryNoiseProfiles,
+)
 from src.utils.correspondence import gather_batched_knn_features
 
 
@@ -42,6 +45,10 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         # cfg.meta.use_mano_reconstruction is True).
         self._mano_cache = None
         self._mano_cache_root_face = None
+        profile_paths = getattr(self.cfg.meta, "hand_geometry_calibration_paths", {})
+        if hasattr(profile_paths, "to_dict"):
+            profile_paths = profile_paths.to_dict()
+        self._hand_geometry_profiles = HandGeometryNoiseProfiles.from_paths(profile_paths)
 
     @classmethod
     def configure_overfit_mode(
@@ -125,18 +132,18 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         mano_side = batch.get("__mano_side__")
         contact_seed = batch.pop("contact_seed", None)
         batch = super().prepare_batch(batch)
-        if mano_side is not None and self._should_reconstruct_mano(batch):
-            self._reconstruct_hand_from_mano(batch, side=mano_side)
-        if contact_seed is None:
-            return batch
-
         if torch.is_tensor(contact_seed):
             contact_seed_list = [int(value) for value in contact_seed.reshape(-1).tolist()]
-        else:
+        elif contact_seed is not None:
             contact_seed_list = [int(contact_seed)]
+        else:
+            contact_seed_list = None
         with torch.no_grad():
-            self._resample_object_from_perturbed_hand(batch)
-            self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
+            if mano_side is not None and self._should_reconstruct_mano(batch):
+                self._reconstruct_hand_from_mano(batch, side=mano_side)
+            if contact_seed_list is not None:
+                self._resample_object_from_perturbed_hand(batch)
+                self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
         return batch
 
     # ---------- MANO reconstruction on the GPU ----------
@@ -201,20 +208,6 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         return [str(side)] * batch_size
 
     @staticmethod
-    def _batch_bool(batch: dict[str, torch.Tensor], key: str, index: int, default: bool) -> bool:
-        value = batch.get(key)
-        if value is None:
-            return bool(default)
-        return bool(value.reshape(-1)[index].item())
-
-    @staticmethod
-    def _batch_int(batch: dict[str, torch.Tensor], key: str, index: int, default: int) -> int:
-        value = batch.get(key)
-        if value is None:
-            return int(default)
-        return int(value.reshape(-1)[index].item())
-
-    @staticmethod
     def _v_template_for_index(v_template: torch.Tensor | None, index: int) -> np.ndarray | None:
         if v_template is None:
             return None
@@ -231,11 +224,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         return hashlib.sha1(np.ascontiguousarray(arr, dtype=np.float32).tobytes()).hexdigest()
 
     @staticmethod
+    def _normalize_v_template_sha(value: Any, batch_size: int) -> list[str | None]:
+        if isinstance(value, str):
+            return [value] * batch_size
+        if isinstance(value, (list, tuple)):
+            return [None if item is None else str(item) for item in value]
+        if torch.is_tensor(value):
+            return [str(item) for item in value.reshape(-1).tolist()]
+        return [None] * batch_size
+
+    @staticmethod
     def _sample_passed_gate(
         *,
         i_global: int,
         seed: int,
-        per_sample_apply: torch.Tensor,
+        per_sample_apply: list[bool],
         hand_perturb_prob: float,
     ) -> bool:
         """Return True iff sample ``i_global`` should be perturbed this step.
@@ -246,7 +249,9 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         gate (with seed ``seed ^ 0xC0FFEE``) is below
         ``hand_perturb_prob``.
         """
-        if not bool(per_sample_apply[i_global].item()):
+        if not per_sample_apply[i_global]:
+            return False
+        if hand_perturb_prob <= 0.0:
             return False
         if hand_perturb_prob >= 1.0:
             return True
@@ -261,12 +266,14 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         num_pca_comps: int,
         indices: list[int],
         seeds_list: list[int],
-        per_sample_apply: torch.Tensor,
+        per_sample_apply: list[bool],
         hand_pca_std: float,
         hand_pca_scale: float,
         hand_pca_clip: float,
         per_dim_std_t: torch.Tensor | None,
         hand_perturb_prob: float,
+        geometry_std_t: torch.Tensor | None = None,
+        geometry_clip_sigma: float | None = None,
     ) -> torch.Tensor:
         """Apply PCA-coefficient noise to the active dims of ``hand_pose_g``.
 
@@ -275,7 +282,11 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         ``num_pca_comps`` slots; the remaining slots are zero padding
         and must NOT receive any noise (Fix #4).
         """
-        if num_pca_comps <= 0 or (hand_pca_std <= 0 and hand_pca_scale <= 0):
+        if num_pca_comps <= 0:
+            return hand_pose_g
+        if geometry_std_t is None and per_dim_std_t is None and hand_pca_std <= 0:
+            return hand_pose_g
+        if geometry_std_t is None and per_dim_std_t is not None and hand_pca_scale <= 0:
             return hand_pose_g
         device = hand_pose_g.device
         dtype = hand_pose_g.dtype
@@ -304,27 +315,32 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         # The pre-grouping shape is padded to 45 to make DataLoader
         # collate work, but the descriptor we want to scale here is
         # only the leading ``num_pca_comps`` dims.
-        if per_dim_std_t is not None:
+        if geometry_std_t is not None:
+            if geometry_std_t.numel() != int(num_pca_comps):
+                raise ValueError(
+                    f"Geometry profile must have {num_pca_comps} entries, got "
+                    f"{geometry_std_t.numel()}."
+                )
+            effective_std = geometry_std_t.to(device=device, dtype=dtype)
+        elif per_dim_std_t is not None:
             if per_dim_std_t.numel() != int(num_pca_comps):
                 raise ValueError(
                     f"hand_pca_train_std_per_dim must have {num_pca_comps} entries "
                     f"to match the active PCA dim of this group, got {per_dim_std_t.numel()}."
                 )
-            std = per_dim_std_t.to(device=device, dtype=dtype)
-            if hand_pca_scale > 0:
-                delta = noise * std * hand_pca_scale
-            else:
-                delta = noise * std
-            if hand_pca_clip > 0:
-                bound = std * hand_pca_clip
-                delta = torch.maximum(torch.minimum(delta, bound), -bound)
+            effective_std = per_dim_std_t.to(device=device, dtype=dtype) * hand_pca_scale
         else:
-            if hand_pca_scale > 0:
-                delta = noise * hand_pca_scale
-            else:
-                delta = noise * hand_pca_std
-            if hand_pca_clip > 0:
-                delta = torch.clamp(delta, min=-hand_pca_clip, max=hand_pca_clip)
+            effective_std = torch.full(
+                (num_pca_comps,), hand_pca_std, device=device, dtype=dtype
+            )
+        clip_sigma = (
+            float(geometry_clip_sigma)
+            if geometry_std_t is not None and geometry_clip_sigma is not None
+            else hand_pca_clip
+        )
+        if clip_sigma > 0:
+            noise = noise.clamp(min=-clip_sigma, max=clip_sigma)
+        delta = noise * effective_std
         hand_pose_g = hand_pose_g.clone()
         hand_pose_g[:, :num_pca_comps] = hand_pose_g[:, :num_pca_comps] + delta
         return hand_pose_g
@@ -335,10 +351,12 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         hand_pose_g: torch.Tensor,
         indices: list[int],
         seeds_list: list[int],
-        per_sample_apply: torch.Tensor,
+        per_sample_apply: list[bool],
         hand_aa_std: float,
         hand_aa_clip: float,
         hand_perturb_prob: float,
+        geometry_std_t: torch.Tensor | None = None,
+        geometry_clip_sigma: float | None = None,
     ) -> torch.Tensor:
         """Apply axis-angle (rad) noise to ``hand_pose_g`` (Fix #3).
 
@@ -347,7 +365,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         must never be added to these samples; this method is only
         called from the ``use_pca=False`` branch.
         """
-        if hand_aa_std <= 0:
+        if geometry_std_t is None and hand_aa_std <= 0:
             return hand_pose_g
         device = hand_pose_g.device
         dtype = hand_pose_g.dtype
@@ -373,9 +391,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             any_perturbed = True
         if not any_perturbed:
             return hand_pose_g
-        delta = noise * hand_aa_std
-        if hand_aa_clip > 0:
-            delta = torch.clamp(delta, min=-hand_aa_clip, max=hand_aa_clip)
+        if geometry_std_t is not None:
+            if geometry_std_t.numel() != pose_dim:
+                raise ValueError(
+                    f"Geometry profile must have {pose_dim} entries, got "
+                    f"{geometry_std_t.numel()}."
+                )
+            if geometry_clip_sigma is not None and geometry_clip_sigma > 0:
+                noise = noise.clamp(
+                    min=-float(geometry_clip_sigma), max=float(geometry_clip_sigma)
+                )
+            delta = noise * geometry_std_t.to(device=device, dtype=dtype)
+        else:
+            delta = noise * hand_aa_std
+            if hand_aa_clip > 0:
+                delta = torch.clamp(delta, min=-hand_aa_clip, max=hand_aa_clip)
         return hand_pose_g + delta
 
     def _reconstruct_hand_from_mano(
@@ -432,12 +462,21 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             per_sample_apply = torch.as_tensor(
                 bool(batch_apply), dtype=torch.bool, device=device
             ).expand(batch_size).clone()
+        per_sample_apply_list = [
+            bool(value) for value in per_sample_apply.detach().cpu().tolist()
+        ]
         hand_pca_std = float(getattr(self.cfg.meta, "hand_pca_std", 0.0))
         hand_pca_scale = float(getattr(self.cfg.meta, "hand_pca_noise_scale", 0.0))
         hand_pca_clip = float(getattr(self.cfg.meta, "hand_pca_noise_clip", 0.0))
         hand_aa_std = float(getattr(self.cfg.meta, "hand_axis_angle_std_rad", 0.0))
         hand_aa_clip = float(getattr(self.cfg.meta, "hand_axis_angle_clip_rad", 0.0))
         hand_perturb_prob = float(getattr(self.cfg.meta, "hand_perturb_prob", 1.0))
+        geometry_noise_scale = float(
+            getattr(self.cfg.meta, "hand_geometry_noise_scale", 1.0)
+        )
+        geometry_noise_required = bool(
+            getattr(self.cfg.meta, "hand_geometry_noise_required", False)
+        )
         per_dim_std = getattr(self.cfg.meta, "hand_pca_train_std_per_dim", None)
         per_dim_std_t: torch.Tensor | None = None
         if per_dim_std is not None:
@@ -458,41 +497,109 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         # GPU→CPU copy and an SHA1 evaluation per sample, so the
         # dataset already pre-computes the digest on CPU when loading
         # the npz.  We group on the string here.
-        sha_t = batch.get("mano_v_template_sha")
-        if torch.is_tensor(sha_t):
-            sha_list = [str(v) for v in sha_t.reshape(-1).tolist()]
-        else:
-            sha_list = [None] * batch_size
+        sha_list = self._normalize_v_template_sha(
+            batch.get("mano_v_template_sha"), batch_size
+        )
+        descriptor_lists: dict[str, list[Any]] = {}
+        for key in ("mano_use_pca", "mano_num_pca_comps", "mano_flat_hand_mean"):
+            value = batch.get(key)
+            if torch.is_tensor(value):
+                descriptor_lists[key] = value.detach().cpu().reshape(-1).tolist()
+        dataset_id_list = self._normalize_side_batch(
+            batch.get("__dataset_id__", "unknown"), batch_size
+        )
 
         # Reuse one MANO layer per (side, config, subject v_template). This
         # handles DataLoader-collated side lists and mixed GRAB/ARCTIC batches.
         face_centers: torch.Tensor | None = None
         face_normals: torch.Tensor | None = None
-        groups: dict[tuple[str, bool, int, bool, str | None], list[int]] = {}
+        groups: dict[tuple[str, str, bool, int, bool, str | None], list[int]] = {}
         for i in range(batch_size):
             default_use_pca, default_num, default_flat = self._lookup_mano_descriptor(side_list[i])
-            use_pca_i = self._batch_bool(batch, "mano_use_pca", i, default_use_pca)
-            num_i = self._batch_int(batch, "mano_num_pca_comps", i, default_num)
-            flat_i = self._batch_bool(batch, "mano_flat_hand_mean", i, default_flat)
+            use_pca_i = bool(
+                descriptor_lists.get("mano_use_pca", [default_use_pca] * batch_size)[i]
+            )
+            num_i = int(
+                descriptor_lists.get("mano_num_pca_comps", [default_num] * batch_size)[i]
+            )
+            flat_i = bool(
+                descriptor_lists.get("mano_flat_hand_mean", [default_flat] * batch_size)[i]
+            )
             # Prefer the pre-computed digest (Fix #6); fall back to a
             # per-sample GPU→CPU SHA if the dataset is older.
             sha_i = sha_list[i] if i < len(sha_list) else None
             if sha_i is None:
                 sha_i = self._v_template_sha(v_template, i)
-            key = (side_list[i], use_pca_i, num_i, flat_i, sha_i)
+            key = (
+                dataset_id_list[i],
+                side_list[i],
+                use_pca_i,
+                num_i,
+                flat_i,
+                sha_i,
+            )
             groups.setdefault(key, []).append(i)
 
-        for (side_i, use_pca_i, num_i, flat_i, _sha), indices in groups.items():
+        for (
+            dataset_id_i,
+            side_i,
+            use_pca_i,
+            num_i,
+            flat_i,
+            _sha,
+        ), indices in groups.items():
             idx = torch.as_tensor(indices, dtype=torch.long, device=device)
-            layer, _cfg = cache.get_or_build_for_v_template(
+            template_shape = (
+                tuple(int(dim) for dim in v_template.shape[-2:])
+                if v_template is not None
+                else None
+            )
+            cached = cache.get_cached_for_v_template_id(
                 side=side_i,
                 use_pca=use_pca_i,
                 num_pca_comps=num_i,
                 flat_hand_mean=flat_i,
-                v_template=self._v_template_for_index(v_template, indices[0]),
+                v_template_sha=_sha,
+                v_template_shape=template_shape,
             )
+            if cached is None:
+                layer, _cfg = cache.get_or_build_for_v_template(
+                    side=side_i,
+                    use_pca=use_pca_i,
+                    num_pca_comps=num_i,
+                    flat_hand_mean=flat_i,
+                    v_template=self._v_template_for_index(v_template, indices[0]),
+                    v_template_sha=_sha,
+                )
+            else:
+                layer, _cfg = cached
             pose_dim = int(num_i) if bool(use_pca_i) else 45
             hand_pose_g = hand_pose.index_select(0, idx).clone()
+            geometry_profile = self._hand_geometry_profiles.get(
+                dataset_id=dataset_id_i,
+                side=side_i,
+                use_pca=bool(use_pca_i),
+                num_components=pose_dim,
+                flat_hand_mean=flat_i,
+            )
+            if (
+                apply_hand_perturb_cfg
+                and geometry_noise_required
+                and geometry_profile is None
+            ):
+                raise ValueError(
+                    "Missing required hand geometry-noise profile for "
+                    f"dataset={dataset_id_i!r}, side={side_i!r}, "
+                    f"use_pca={bool(use_pca_i)}, dims={pose_dim}, "
+                    f"flat_hand_mean={flat_i}."
+                )
+            geometry_std_t = None
+            geometry_clip_sigma = None
+            if geometry_profile is not None:
+                geometry_std_t = geometry_profile.std_tensor(
+                    device=device, dtype=hand_pose_g.dtype
+                ) * geometry_noise_scale
+                geometry_clip_sigma = geometry_profile.clip_sigma
 
             # Fix #3 + #4: apply per-group noise.  Doing it per group
             # (instead of once on the whole 45-dim padded pose) keeps
@@ -508,22 +615,26 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                         num_pca_comps=int(num_i),
                         indices=indices,
                         seeds_list=seeds_list,
-                        per_sample_apply=per_sample_apply,
+                        per_sample_apply=per_sample_apply_list,
                         hand_pca_std=hand_pca_std,
                         hand_pca_scale=hand_pca_scale,
                         hand_pca_clip=hand_pca_clip,
                         per_dim_std_t=per_dim_std_t,
                         hand_perturb_prob=hand_perturb_prob,
+                        geometry_std_t=geometry_std_t,
+                        geometry_clip_sigma=geometry_clip_sigma,
                     )
                 else:
                     hand_pose_g = self._apply_axis_angle_noise(
                         hand_pose_g=hand_pose_g,
                         indices=indices,
                         seeds_list=seeds_list,
-                        per_sample_apply=per_sample_apply,
+                        per_sample_apply=per_sample_apply_list,
                         hand_aa_std=hand_aa_std,
                         hand_aa_clip=hand_aa_clip,
                         hand_perturb_prob=hand_perturb_prob,
+                        geometry_std_t=geometry_std_t,
+                        geometry_clip_sigma=geometry_clip_sigma,
                     )
 
             vertices_i = reconstruct_hand_points(
@@ -724,8 +835,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             seeds_list = [int(v) for v in seeds.reshape(-1).tolist()]
         else:
             seeds_list = list(range(batch_size))
-        selected_all: list[torch.Tensor] = []
-        valid_all: list[torch.Tensor] = []
+        selected_all_cpu: list[torch.Tensor] = []
+        valid_all_cpu: list[torch.Tensor] = []
         for b in range(batch_size):
             seed = seeds_list[b]
             gen = torch.Generator(device="cpu")
@@ -747,13 +858,13 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             chosen_idx = torch.cat(parts, dim=0)
             if chosen_idx.numel() < num_obj:
                 chosen_idx = torch.cat([chosen_idx, chosen_idx.new_zeros(num_obj - chosen_idx.numel())], dim=0)
-            selected_all.append(chosen_idx[:num_obj].to(device=device))
-            valid = torch.zeros(num_obj, dtype=torch.bool, device=device)
+            selected_all_cpu.append(chosen_idx[:num_obj])
+            valid = torch.zeros(num_obj, dtype=torch.bool)
             valid[: min(valid_count, num_obj)] = True
-            valid_all.append(valid)
+            valid_all_cpu.append(valid)
 
-        selected = torch.stack(selected_all, dim=0)
-        valid_mask = torch.stack(valid_all, dim=0)
+        selected = torch.stack(selected_all_cpu, dim=0).to(device=device)
+        valid_mask = torch.stack(valid_all_cpu, dim=0).to(device=device)
 
         def gather_pool(pool: torch.Tensor) -> torch.Tensor:
             idx = selected.unsqueeze(-1).expand(-1, -1, pool.shape[-1])
@@ -769,6 +880,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         batch["gt_points"] = torch.cat([gt_obj_points, hand_gt.to(batch["gt_points"].dtype)], dim=1)
         batch["gt_normals"] = torch.cat([gt_obj_normals, hand_gt_normals.to(batch["gt_normals"].dtype)], dim=1)
         batch["runtime_obj_valid_mask"] = valid_mask
+        batch["runtime_obj_selected_idx"] = selected
         batch["point_valid_mask"] = torch.cat(
             [valid_mask, torch.ones((batch_size, num_hand), dtype=torch.bool, device=device)],
             dim=1,

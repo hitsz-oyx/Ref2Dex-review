@@ -55,6 +55,25 @@ baseline.yaml 当前默认使用 AdamW、lr 1e-4、cosine + 3% warmup、100 epoc
 
 输出目录中的 config.json 是该 run 的最终有效配置，应优先于本文或 baseline.yaml。
 
+### MANO 几何噪声标定
+
+不要直接假设相同的 PCA/axis-angle 系数标准差会产生相同的手部变化。可从 Stage 3 v2.1 数据统计每个 MANO pose 维度对手部几何的实际影响：
+
+    python tools/calibrate_mano_geometry_noise.py <stage3_root> \
+      --mano-model-dir dataset/arctic/data/body_models/mano \
+      --output tmp/mano_geometry_calibration/<dataset>_target_9mm.json \
+      --max-files 64 \
+      --max-samples 1024 \
+      --target-rms-mm 9
+
+标定固定 `global_orient=0`、`transl=0`，并在每次 forward 后减去各自的 MANO wrist joint，以 778 个 root-aligned 顶点的 RMS 位移（mm）作为度量。GRAB PCA 默认以统一系数 `std=0.5` 为参考；ARCTIC axis-angle 默认以 `std=0.05 rad` 为参考。输出包含逐维灵敏度、参考噪声的位移分布，以及命中 `--target-rms-mm` 中位 RMS 的 inverse-sensitivity 候选尺度；省略目标时匹配参考中位数。该命令只写统计 JSON，不会自动改训练配置。
+
+训练与可视化通过 `dataset_id + side + MANO representation/dimensions/mean` 选择 profile；旧文件缺少 `dataset_id` 时会按 MANO 描述回退推断。三数据集本地兼容检查可使用：
+
+    src/task/correspondence_ptv3_v2/configs/mixed_stage3_geometry_9mm_sample.yaml
+
+该配置严格要求 GRAB PCA24、ARCTIC axis-angle45 和 ContactPose PCA15 的 9 mm profile 都能命中。工程 `tmp/mano_geometry_calibration/` 中 GRAB JSON 来自 1024 帧统计；文件名带 `_sample` 的 ARCTIC 和 ContactPose JSON 是用于兼容验证的初步样本统计，全量训练前应从更广的数据覆盖重新标定。NAS 中旧 ContactPose Stage 3 v2.0 没有 MANO 字段，不能直接混训；应使用 `process/ContactPose/stage3_export.py` 导出到新的 v2.1 目录，不要覆盖备份。
+
 ## 评估
 
     PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.eval \
@@ -86,9 +105,11 @@ Pseudo recovery 衡量模型相对“直接相信扰动物体几何”的伪 con
 ## 可视化
 
     PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.visualize \
-      --checkpoint outputs/train/<run_name>/checkpoints/best.pt \
+      --config src/task/correspondence_ptv3_v2/configs/baseline.yaml \
       --input <single_stage3_sequence.npz> \
       --device cuda
+
+省略 `--checkpoint` 时为 GT-only 模式：CrossEdge 和 HandHeatmap 都显示数据集 GT，仍可使用 `P` 和平移/旋转控制查看手工 object 扰动。v2.1 数据还会启用独立的 MANO hand perturbation 控制：按样本描述自动选择 PCA 或 axis-angle 路径，`1.0x` 对应 YAML 中的噪声强度，variant 可在不改变帧和 object 采样的情况下切换稳定噪声。传入 `--checkpoint` 后才启用 Eval 着色；`--input` 省略时使用 YAML 中的 `data.val_path`，再回退到 `data.train_path`。
 
 可增加 --check-only 进行无窗口的 checkpoint 和数据兼容性检查。
 
@@ -100,6 +121,7 @@ Pseudo recovery 衡量模型相对“直接相信扰动物体几何”的伪 con
 | G | 当前模式的 GT / Eval |
 | , / . | 选择 CrossEdge 的 object point |
 | P | 手工开关 object pose 扰动 |
+| M | 开关 MANO hand 扰动（仅 GT-only v2.1 数据） |
 | F | 扰动时 RefGT / CurrentPseudo |
 | A / D、[ / ]、R | 帧、sampling epoch、相机控制 |
 

@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<link rel="icon" href="data:," />
 <title>correspondence_ptv3_v2 visualizer</title>
 <style>
 :root {
@@ -85,6 +86,19 @@ body {
 }
 #panel::-webkit-scrollbar { width: 6px; }
 #panel::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+@media (max-width: 700px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(320px, 55vh) minmax(0, 1fr);
+  }
+  #panel {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  #legend {
+    max-width: calc(100vw - 24px);
+  }
+}
 .section {
   margin-bottom: 18px;
   padding-bottom: 14px;
@@ -123,6 +137,13 @@ body {
 .button.tog.active { background: var(--accent-warm); border-color: var(--accent-warm); }
 .button.danger:hover { background: #4a2a2a; border-color: var(--accent-hot); }
 .row { display: flex; gap: 4px; flex-wrap: wrap; }
+.stepper {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  gap: 4px;
+  align-items: center;
+}
+.stepper .button { margin: 0; padding-left: 0; padding-right: 0; }
 .slider-row {
   display: flex;
   align-items: center;
@@ -135,6 +156,7 @@ body {
   font-size: 11px;
   font-family: monospace;
 }
+.slider-row label.wide { width: 54px; }
 .slider-row .slider {
   flex: 1;
   -webkit-appearance: none;
@@ -332,6 +354,32 @@ input[type="number"]:focus { outline: none; border-color: var(--accent); }
       </div>
     </div>
 
+    <div class="section" id="hand_perturb_section">
+      <h3>MANO Hand Perturbation</h3>
+      <div class="row">
+        <button class="button tog" id="btn_hand_perturb" data-action="toggle_hand_perturb">Enable</button>
+        <button class="button danger" id="btn_hand_reset" data-action="reset_hand_perturb">Reset</button>
+        <button class="button tog" id="btn_hand_refgt" data-action="toggle_refgt">Reference GT</button>
+      </div>
+      <div class="subhead">Noise Sample</div>
+      <div id="hand_variant_controls" class="perturb-toggle disabled">
+        <div class="stepper">
+          <button class="button" data-action="prev_hand_variant" title="Previous deterministic noise sample">&#9664;</button>
+          <input type="number" id="hand_variant_input" min="0" value="0" aria-label="Hand perturbation variant" />
+          <button class="button" data-action="next_hand_variant" title="Next deterministic noise sample">&#9654;</button>
+        </div>
+      </div>
+      <div class="subhead">YAML Noise Strength</div>
+      <div id="hand_strength_controls" class="perturb-toggle disabled">
+        <div class="slider-row">
+          <label class="wide">Scale</label>
+          <input type="range" id="hand_strength_slider" class="slider" min="0" max="3" step="0.05" value="1" />
+          <span class="val" id="hand_strength_value">1.00x</span>
+        </div>
+      </div>
+      <div class="status" id="hand_perturb_status">MANO unavailable</div>
+    </div>
+
     <div class="section">
       <h3>Status</h3>
       <div class="status" id="status_box">connecting...</div>
@@ -380,7 +428,23 @@ const state = {
   perturb_translation_step: 0.005,
   perturb_rotation_step_deg: 5.0,
   has_hand_heatmap_head: false,
-  has_mano: false,
+  has_model: false,
+  hand_perturbation_enabled: false,
+  hand_perturbation_available: false,
+  hand_perturbation_representation: null,
+  hand_pose_dim: 0,
+  hand_perturbation_strength: 1,
+  hand_perturbation_variant: 0,
+  hand_pca_std_config: 0,
+  hand_pca_noise_scale_config: 0,
+  hand_pca_noise_clip: 0,
+  hand_axis_angle_std_rad_config: 0,
+  hand_axis_angle_clip_rad: 0,
+  hand_perturb_prob_config: 0,
+  hand_pca_uses_per_dim_std: false,
+  hand_pca_std_effective: 0,
+  hand_pca_noise_scale_effective: 0,
+  hand_axis_angle_std_rad_effective: 0,
 };
 function applyState(s) {
   Object.assign(state, s);
@@ -440,6 +504,8 @@ const handMat = new THREE.PointsMaterial({
 const handPoints = new THREE.Points(handGeom, handMat);
 scene.add(handPoints);
 
+let hasFittedScene = false;
+
 // Marker sphere
 const markerGeom = new THREE.SphereGeometry(0.003, 16, 12);
 const markerMat = new THREE.MeshBasicMaterial({ color: 0xffe226 });
@@ -456,10 +522,33 @@ function resize() {
 window.addEventListener('resize', resize);
 
 function resetView() {
-  camera.position.set(0.35, 0.25, 0.35);
+  const bounds = new THREE.Box3();
+  if (objGeom.attributes.position.count > 0) bounds.expandByObject(objPoints);
+  if (handGeom.attributes.position.count > 0) bounds.expandByObject(handPoints);
+  if (bounds.isEmpty()) {
+    camera.position.set(0.35, 0.25, 0.35);
+    controls.target.set(0, 0, 0);
+  } else {
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() * 0.5, 0.03);
+    const direction = new THREE.Vector3(1, 0.75, 1).normalize();
+    camera.position.copy(center).addScaledVector(direction, radius * 2.8);
+    controls.target.copy(center);
+    controls.minDistance = Math.max(radius * 0.1, 0.005);
+    controls.maxDistance = Math.max(radius * 20, 2.0);
+    camera.near = Math.max(radius / 1000, 0.0001);
+    camera.far = Math.max(radius * 100, 10);
+    camera.updateProjectionMatrix();
+  }
   camera.up.set(0, 0, 1);
-  controls.target.set(0, 0, 0);
   controls.update();
+}
+
+function flattenVec3(values) {
+  if (!Array.isArray(values) || values.length === 0) return new Float32Array(0);
+  const flat = Array.isArray(values[0]) ? values.flat() : values;
+  return new Float32Array(flat);
 }
 
 function updateScene(geom) {
@@ -469,15 +558,15 @@ function updateScene(geom) {
   const hc = geom.hand_colors;
   const mc = geom.marker_center;
   if (op && op.length) {
-    objGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(op), 3));
-    objGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(oc), 3));
+    objGeom.setAttribute('position', new THREE.BufferAttribute(flattenVec3(op), 3));
+    objGeom.setAttribute('color', new THREE.BufferAttribute(flattenVec3(oc), 3));
   } else {
     objGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     objGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
   }
   if (hp && hp.length) {
-    handGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(hp), 3));
-    handGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(hc), 3));
+    handGeom.setAttribute('position', new THREE.BufferAttribute(flattenVec3(hp), 3));
+    handGeom.setAttribute('color', new THREE.BufferAttribute(flattenVec3(hc), 3));
   } else {
     handGeom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3));
     handGeom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3));
@@ -486,7 +575,13 @@ function updateScene(geom) {
   handGeom.computeBoundingSphere();
   if (mc) {
     marker.position.set(mc[0], mc[1], mc[2]);
+    const markerScale = Number(geom.marker_radius) / 0.003;
+    marker.scale.setScalar(Number.isFinite(markerScale) ? markerScale : 1);
     marker.visible = state.display_mode === 'cross_edge';
+  }
+  if (!hasFittedScene && (objGeom.attributes.position.count || handGeom.attributes.position.count)) {
+    resetView();
+    hasFittedScene = true;
   }
 }
 
@@ -499,18 +594,22 @@ function renderState() {
   $('epoch_input').max = state.epoch + 1000;
 
   $('btn_mode_cross').classList.toggle('active', state.display_mode === 'cross_edge');
-  $('btn_mode_heat').classList.toggle(
-    'active', state.display_mode === 'hand_heatmap' && state.has_hand_heatmap_head
-  );
-  $('btn_mode_heat').classList.toggle('disabled', !state.has_hand_heatmap_head);
-  $('btn_mode_heat').disabled = !state.has_hand_heatmap_head;
+  const heatmapAvailable = state.show_gt || state.has_hand_heatmap_head;
+  $('btn_mode_heat').classList.toggle('active', state.display_mode === 'hand_heatmap');
+  $('btn_mode_heat').classList.toggle('disabled', !heatmapAvailable);
+  $('btn_mode_heat').disabled = !heatmapAvailable;
 
   $('btn_src_gt').classList.toggle('active', state.show_gt);
   $('btn_src_eval').classList.toggle('active', !state.show_gt);
+  $('btn_src_eval').classList.toggle('disabled', !state.has_model);
+  $('btn_src_eval').disabled = !state.has_model;
 
   $('btn_perturb').classList.toggle('active', state.perturbation_enabled);
+  const anyPerturb = state.perturbation_enabled ||
+    (state.hand_perturbation_enabled && state.hand_perturbation_available);
   $('btn_refgt').classList.toggle('active', state.show_reference_gt);
-  $('btn_refgt').classList.toggle('disabled', !state.perturbation_enabled);
+  $('btn_refgt').classList.toggle('disabled', !anyPerturb);
+  $('btn_refgt').disabled = !anyPerturb;
 
   const perturbEnabled = state.perturbation_enabled;
   $('translation_controls').classList.toggle('disabled', !perturbEnabled);
@@ -533,16 +632,61 @@ function renderState() {
   $('tx_step_label').textContent = state.perturb_translation_step.toFixed(3);
   $('rx_step_label').textContent = state.perturb_rotation_step_deg.toFixed(1);
 
+  const handAvailable = state.hand_perturbation_available;
+  const handEnabled = handAvailable && state.hand_perturbation_enabled;
+  $('btn_hand_perturb').classList.toggle('active', handEnabled);
+  $('btn_hand_perturb').classList.toggle('disabled', !handAvailable);
+  $('btn_hand_perturb').disabled = !handAvailable;
+  $('btn_hand_reset').disabled = !handAvailable;
+  $('btn_hand_reset').classList.toggle('disabled', !handAvailable);
+  $('btn_hand_refgt').classList.toggle('active', state.show_reference_gt);
+  $('btn_hand_refgt').classList.toggle('disabled', !anyPerturb);
+  $('btn_hand_refgt').disabled = !anyPerturb;
+  $('hand_variant_controls').classList.toggle('disabled', !handEnabled);
+  $('hand_strength_controls').classList.toggle('disabled', !handEnabled);
+  $('hand_variant_input').disabled = !handEnabled;
+  $('hand_variant_input').value = state.hand_perturbation_variant;
+  $('hand_strength_slider').disabled = !handEnabled;
+  $('hand_strength_slider').value = state.hand_perturbation_strength;
+  $('hand_strength_value').textContent = state.hand_perturbation_strength.toFixed(2) + 'x';
+  const repr = state.hand_perturbation_representation === 'pca'
+    ? `PCA${state.hand_pose_dim}`
+    : state.hand_perturbation_representation === 'axis_angle'
+    ? `Axis-angle${state.hand_pose_dim}`
+    : 'Unavailable';
+  let noise = 'No MANO fields in this sample';
+  if (state.hand_geometry_noise_profile_active) {
+    noise = `geometry-calibrated x ${state.hand_geometry_noise_scale_effective.toFixed(2)}`;
+  } else if (state.hand_perturbation_representation === 'pca') {
+    noise = state.hand_pca_uses_per_dim_std
+      ? `train std/dim x ${state.hand_pca_noise_scale_effective.toFixed(3)}`
+      : `std ${state.hand_pca_std_effective.toFixed(3)}`;
+    noise += `, clip ${state.hand_pca_noise_clip.toFixed(2)}`;
+  } else if (state.hand_perturbation_representation === 'axis_angle') {
+    noise = `std ${state.hand_axis_angle_std_rad_effective.toFixed(3)} rad, clip ${state.hand_axis_angle_clip_rad.toFixed(3)} rad`;
+  }
+  $('hand_perturb_status').innerHTML =
+    `<span class="k">repr:</span> <span class="v">${repr}</span><br>` +
+    `<span class="k">noise:</span> <span class="v">${noise}</span><br>` +
+    `<span class="k">variant:</span> <span class="v">${state.hand_perturbation_variant}</span> ` +
+    `<span class="k">train prob:</span> <span class="v">${state.hand_perturb_prob_config.toFixed(2)}</span>`;
+
   $('obj_section').style.opacity = state.display_mode === 'cross_edge' ? '1' : '0.45';
   $('selected_obj_status').textContent =
     `selected rank: ${state.selected_rank}`;
 
   // Status
   const source = state.show_gt ? 'GT' : 'Eval';
-  const scene_ = state.perturbation_enabled ? 'Perturb' : 'Base';
+  const scene_ = state.perturbation_enabled && handEnabled
+    ? 'Object+Hand'
+    : state.perturbation_enabled
+    ? 'Object'
+    : handEnabled
+    ? 'Hand'
+    : 'Base';
   const gt_color = !state.show_gt
     ? 'N/A'
-    : !state.perturbation_enabled
+    : !anyPerturb
     ? 'CleanGT'
     : (state.show_reference_gt ? 'RefGT' : 'CurrentPseudo');
   statusBox.innerHTML =
@@ -553,7 +697,8 @@ function renderState() {
     `<span class="k">scene:</span> <span class="v">${scene_}</span> ` +
     `<span class="k">gt_color:</span> <span class="v">${gt_color}</span><br>` +
     `<span class="k">t(m):</span> <span class="v">(${state.translation[0].toFixed(3)}, ${state.translation[1].toFixed(3)}, ${state.translation[2].toFixed(3)})</span><br>` +
-    `<span class="k">r(deg):</span> <span class="v">(${state.rotation_deg_xyz[0].toFixed(0)}, ${state.rotation_deg_xyz[1].toFixed(0)}, ${state.rotation_deg_xyz[2].toFixed(0)})</span>`;
+    `<span class="k">r(deg):</span> <span class="v">(${state.rotation_deg_xyz[0].toFixed(0)}, ${state.rotation_deg_xyz[1].toFixed(0)}, ${state.rotation_deg_xyz[2].toFixed(0)})</span><br>` +
+    `<span class="k">hand:</span> <span class="v">${repr} ${handEnabled ? state.hand_perturbation_strength.toFixed(2) + 'x v' + state.hand_perturbation_variant : 'off'}</span>`;
 }
 
 // ---- Action dispatch ----
@@ -631,6 +776,18 @@ for (const s of document.querySelectorAll('.rx_slider')) {
   });
 }
 
+const handStrengthSlider = $('hand_strength_slider');
+handStrengthSlider.addEventListener('input', () => {
+  debounceAxis('hand-strength', () => {
+    action_run('set_hand_perturb_strength', { strength: Number(handStrengthSlider.value) });
+  });
+});
+
+const handVariantInput = $('hand_variant_input');
+handVariantInput.addEventListener('change', () => {
+  action_run('set_hand_variant', { variant: Number(handVariantInput.value) });
+});
+
 const frameSlider = $('frame_slider');
 frameSlider.addEventListener('input', () => {
   debounceAxis('frame', () => {
@@ -653,6 +810,7 @@ window.addEventListener('keydown', (ev) => {
     'g': 'toggle_gt', 'G': 'toggle_gt',
     ',': 'prev_obj', '.': 'next_obj',
     'p': 'toggle_perturb', 'P': 'toggle_perturb',
+    'm': 'toggle_hand_perturb', 'M': 'toggle_hand_perturb',
     'f': 'toggle_refgt', 'F': 'toggle_refgt',
     '0': 'reset_perturb',
   };

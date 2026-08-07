@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from src.task.correspondence_ptv3_v2.hand_noise_profiles import normalize_dataset_id
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STAGE2_ROOT = ROOT / "data" / "processed_data" / "stage2" / "grab_initonly_4096"
@@ -228,6 +230,10 @@ def build_stage3_sequence(
     out: dict[str, np.ndarray] = {
         "schema_name": np.asarray(SCHEMA_NAME),
         "schema_version": np.asarray(SCHEMA_VERSION),
+        "dataset_id": np.asarray(
+            normalize_dataset_id(payload.get("dataset_name", "unknown"))
+        ),
+        "dataset_name": np.asarray(str(payload.get("dataset_name", "unknown"))),
         "seq_id": np.asarray(str(payload["seq_id"])),
         "side": np.asarray(side),
         "raw_frame_id": _require_array(payload, "raw_frame_id", ndim=1, dtype=np.int32),
@@ -390,6 +396,8 @@ def _write_meta(
         "fields": [
             "schema_name",
             "schema_version",
+            "dataset_id",
+            "dataset_name",
             "seq_id",
             "side",
             "raw_frame_id",

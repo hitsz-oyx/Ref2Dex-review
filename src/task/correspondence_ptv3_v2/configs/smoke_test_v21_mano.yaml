@@ -21,8 +21,9 @@ meta:
   hand_perturb_prob: 0.8
   hand_proxy_face_count: 256
   runtime_cdist_chunk_size: 512
-  # Force the runtime resample path even on legacy data, so the smoke
-  # test catches any regression in ``_resample_object_from_perturbed_hand``.
+  # Exercise runtime resampling when the input is a current v2.1 export.
+  # Legacy files carrying obj_candidate_mask_5cm intentionally stay on
+  # their precomputed candidate-mask path.
   runtime_resample_object: true
 
 data:

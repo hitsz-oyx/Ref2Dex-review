@@ -96,8 +96,31 @@ class MANOLayerCache:
             "flat_hand_mean": bool(cfg.flat_hand_mean),
         }
         layer = MANO(str(self._resolve_model_path(cfg.side)), **kwargs).to(self.device)
+        layer.eval()
+        layer.requires_grad_(False)
         self._cache[cfg] = layer
         return layer
+
+    def get_cached_for_v_template_id(
+        self,
+        *,
+        side: str,
+        use_pca: bool,
+        num_pca_comps: int,
+        flat_hand_mean: bool,
+        v_template_sha: str | None,
+        v_template_shape: tuple[int, ...] | None,
+    ) -> tuple[Any, MANOConfig] | None:
+        cfg = MANOConfig(
+            side=side,
+            use_pca=bool(use_pca),
+            num_pca_comps=int(num_pca_comps),
+            flat_hand_mean=bool(flat_hand_mean),
+            v_template_sha=v_template_sha,
+            v_template_shape=v_template_shape,
+        )
+        layer = self._cache.get(cfg)
+        return None if layer is None else (layer, cfg)
 
     def get_or_build_for_v_template(
         self,
@@ -107,8 +130,15 @@ class MANOLayerCache:
         num_pca_comps: int,
         flat_hand_mean: bool,
         v_template: np.ndarray | None,
+        v_template_sha: str | None = None,
     ) -> tuple[Any, MANOConfig]:
-        sha, shape = self._v_template_id(v_template)
+        computed_sha, shape = self._v_template_id(v_template)
+        if v_template_sha is not None and computed_sha != v_template_sha:
+            raise ValueError(
+                "Precomputed v_template SHA does not match the supplied template: "
+                f"expected {v_template_sha}, got {computed_sha}."
+            )
+        sha = v_template_sha if v_template_sha is not None else computed_sha
         cfg = MANOConfig(
             side=side,
             use_pca=bool(use_pca),
@@ -117,26 +147,25 @@ class MANOLayerCache:
             v_template_sha=sha,
             v_template_shape=shape,
         )
-        layer = self.get(cfg)
-        if v_template is not None and getattr(layer, "v_template", None) is not None:
-            # smplx's MANO accepts v_template only at construction time.
-            # If the cache key is the *mean* shape and the caller wants a
-            # subject-specific shape, fall through to a per-shape layer.
-            cached = np.asarray(layer.v_template.detach().cpu().numpy())
-            expected = np.ascontiguousarray(v_template, dtype=cached.dtype)
-            if cached.shape != expected.shape or not np.allclose(cached, expected, atol=1e-6):
-                # Re-build with v_template as a one-off.
-                from smplx import MANO
+        cached = self._cache.get(cfg)
+        if cached is not None:
+            return cached, cfg
+        if v_template is None:
+            return self.get(cfg), cfg
 
-                kwargs: dict[str, Any] = {
-                    "is_rhand": side == "right",
-                    "use_pca": bool(use_pca),
-                    "num_pca_comps": int(num_pca_comps),
-                    "flat_hand_mean": bool(flat_hand_mean),
-                    "v_template": expected,
-                }
-                layer = MANO(str(self._resolve_model_path(side)), **kwargs).to(self.device)
-                self._cache[cfg] = layer
+        from smplx import MANO
+
+        kwargs: dict[str, Any] = {
+            "is_rhand": side == "right",
+            "use_pca": bool(use_pca),
+            "num_pca_comps": int(num_pca_comps),
+            "flat_hand_mean": bool(flat_hand_mean),
+            "v_template": np.ascontiguousarray(v_template, dtype=np.float32),
+        }
+        layer = MANO(str(self._resolve_model_path(side)), **kwargs).to(self.device)
+        layer.eval()
+        layer.requires_grad_(False)
+        self._cache[cfg] = layer
         return layer, cfg
 
 

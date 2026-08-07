@@ -15,10 +15,17 @@ data:
 meta:
   use_mano_reconstruction: true
   apply_hand_perturb: true
+  # Geometry-calibrated PCA24 profiles target 9 mm median wrist-aligned
+  # MANO vertex RMS. hand_pca_std remains only as an explicit fallback for
+  # configs that do not enable required profile dispatch.
   hand_pca_std: 0.5
+  hand_geometry_calibration_paths:
+    grab: tmp/mano_geometry_calibration/grab_pca24_target_9mm.json
+  hand_geometry_noise_scale: 1.0
+  hand_geometry_noise_required: true
   mano_model_dir: dataset/arctic/data/body_models/mano
   runtime_resample_object: true
-  num_hand_proxy_points: 256
+  hand_proxy_face_count: 256
   runtime_near_pool_points: 1024
   runtime_near_obj_points: 384
 

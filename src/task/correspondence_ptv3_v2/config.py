@@ -85,8 +85,9 @@ class Config(TaskConfig):
         # by giving each parameterisation its own (scale, clip) pair.
         # The PCA path additionally supports per-dim std from the training
         # set via ``hand_pca_train_std_per_dim`` (length 24, GRAB only);
-        # when absent we fall back to a single scalar hand_pca_std for
-        # backward compatibility.
+        # when absent we use the scalar hand_pca_std directly and ignore
+        # hand_pca_noise_scale. hand_pca_noise_clip always clips the standard
+        # normal sample before scaling, so its unit is effective std multiples.
         hand_perturb_prob: float = 0.8
         hand_pca_std: float = 0.5
         hand_pca_noise_scale: float = 0.10
@@ -94,18 +95,23 @@ class Config(TaskConfig):
         hand_axis_angle_std_rad: float = 0.05
         hand_axis_angle_clip_rad: float = 0.15
         hand_pca_train_std_per_dim: tuple[float, ...] | None = None
+        # Dataset/descriptor-specific, geometry-calibrated noise profiles.
+        # Keys are normalized dataset IDs (grab/arctic/contactpose), values
+        # are JSON files emitted by tools/calibrate_mano_geometry_noise.py.
+        hand_geometry_calibration_paths: dict[str, str] = {}
+        hand_geometry_noise_scale: float = 1.0
+        hand_geometry_noise_required: bool = False
         # Fix #6: number of FPS-sampled hand proxy face indices. The
         # indices are computed once on the canonical MANO face centres
         # and shared by the whole process; the runtime just does an
         # ``index_select`` on the hand input.
         hand_proxy_face_count: int = 256
         runtime_resample_object: bool = True
-        num_hand_proxy_points: int = 256
         runtime_near_pool_points: int = 1024
         runtime_near_obj_points: int = 384
         # Fix #7: block size for the 4096x256 cdist used to score every
         # pool point against the hand proxy. 512 keeps the peak
-        # distance-matrix memory at B x 512 x 256 floats (≈0.5 MB at
+        # distance-matrix memory at B x 512 x 256 floats (≈8 MB at
         # B=16).
         runtime_cdist_chunk_size: int = 512
 

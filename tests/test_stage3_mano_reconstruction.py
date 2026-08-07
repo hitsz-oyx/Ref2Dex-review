@@ -129,7 +129,7 @@ def _mano_forward_world_points(
 
 def _face_center_points(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
     """Per-face centroid; matches ``process/GRAB/raw.py::compute_canonical_hand_surface``."""
-    return verts[:, faces].mean(axis=1)
+    return verts[:, faces].mean(axis=2)
 
 
 def _face_normals_outward(verts: np.ndarray, faces: np.ndarray) -> np.ndarray:
@@ -425,6 +425,11 @@ def _write_synthetic_stage3(
     include_mano: bool = True,
     drop_mano_field: str | None = None,
     side: str = "right",
+    dataset_name: str | None = None,
+    use_pca: bool = True,
+    pose_dim: int = 24,
+    flat_hand_mean: bool = True,
+    include_legacy_candidate_mask: bool = False,
 ) -> None:
     """Write a tiny Stage 3 npz with a deterministic MANO surface.
 
@@ -459,22 +464,74 @@ def _write_synthetic_stage3(
         "coordinate_frame": coordinate_frame,
         "hand_root_pose": hand_root_pose,
     }
+    if dataset_name is not None:
+        payload["dataset_name"] = np.asarray(dataset_name)
+    if include_legacy_candidate_mask:
+        payload["obj_candidate_mask_5cm"] = np.ones((T, 16), dtype=bool)
     if include_mano:
         payload.update({
             "mano_global_orient": np.zeros((T, 3), dtype=np.float32),
             "mano_transl": np.zeros((T, 3), dtype=np.float32),
-            "mano_pose": np.zeros((T, 24), dtype=np.float32),
+            "mano_pose": np.zeros((T, pose_dim), dtype=np.float32),
             "mano_betas": np.zeros((T, 10), dtype=np.float32),
             "mano_v_template": np.zeros((778, 3), dtype=np.float32),
-            "mano_use_pca": np.array(True),
-            "mano_num_pca_comps": np.array(24),
-            "mano_flat_hand_mean": np.array(True),
-            "mano_pose_repr": np.array("pca"),
+            "mano_use_pca": np.array(use_pca),
+            "mano_num_pca_comps": np.array(pose_dim),
+            "mano_flat_hand_mean": np.array(flat_hand_mean),
+            "mano_pose_repr": np.array("pca" if use_pca else "axis_angle"),
         })
         if drop_mano_field is not None and drop_mano_field in payload:
             payload.pop(drop_mano_field)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(path, **payload)
+
+
+def test_mixed_dataset_mano_descriptors_collate_from_separate_roots(
+    tmp_path: Path,
+) -> None:
+    import torch
+    from torch.utils.data._utils.collate import default_collate
+
+    from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
+
+    specs = (
+        ("grab", True, 24, True, False),
+        ("ARCTIC", False, 45, False, False),
+        ("ContactPose", True, 15, False, True),
+    )
+    paths = []
+    for dataset_name, use_pca, pose_dim, flat, legacy_mask in specs:
+        path = tmp_path / dataset_name / f"sample_{dataset_name}.npz"
+        _write_synthetic_stage3(
+            path,
+            dataset_name=dataset_name,
+            use_pca=use_pca,
+            pose_dim=pose_dim,
+            flat_hand_mean=flat,
+            include_legacy_candidate_mask=legacy_mask,
+        )
+        paths.append(path)
+
+    dataset = CorrStaticDatasetV2(
+        data_path=tmp_path,
+        file_list=paths,
+        num_obj_points=16,
+        num_hand_points=16,
+        num_supervision_edges=8,
+        use_mano_reconstruction=True,
+        apply_hand_perturb=True,
+        runtime_resample_object=True,
+        coordinate_frame="hand_root",
+    )
+    batch = default_collate([dataset[index] for index in range(3)])
+
+    assert batch["__dataset_id__"] == ["arctic", "contactpose", "grab"]
+    assert tuple(batch["mano_pose"].shape) == (3, 45)
+    torch.testing.assert_close(
+        batch["mano_pose_dim"], torch.tensor([45, 15, 24], dtype=torch.long)
+    )
+    assert bool(batch["runtime_resample_object"].all())
+    assert tuple(batch["full_input_obj_points"].shape) == (3, 16, 3)
 
 
 def test_dataset_rejects_old_schema_when_mano_required(tmp_path: Path) -> None:

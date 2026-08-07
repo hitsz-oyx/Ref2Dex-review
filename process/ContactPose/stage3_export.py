@@ -32,7 +32,7 @@ DEFAULT_CONTACTPOSE_ROOT = Path("/mnt/ugreen_nas/storage/Ref2Dex_storage/Contact
 DEFAULT_MANO_PATH = Path("/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano")
 DEFAULT_OUTPUT_ROOT = ROOT / "data" / "processed_data" / "stage3" / "contactpose_use_stage3_v2"
 SCHEMA_NAME = "train_corr_static_v2"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 HAND_SIDES = ("left", "right")
 NUM_HAND_POINTS = 1538
 
@@ -62,6 +62,11 @@ class HandSequence:
     hand_normals: np.ndarray
     obj_points: np.ndarray
     obj_normals: np.ndarray
+    mano_global_orient: np.ndarray
+    mano_pose: np.ndarray
+    mano_betas: np.ndarray
+    mano_v_template: np.ndarray
+    hand_root_pose: np.ndarray
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -206,7 +211,7 @@ def _load_hand_mesh_in_hand_frame(
     *,
     side: str,
     mano_fit: dict[str, Any],
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     pose = np.asarray(mano_fit["pose"], dtype=np.float32)
     if pose.ndim != 1 or pose.shape[0] < 4:
         raise ValueError(f"Unexpected MANO pose shape for {side}: {pose.shape}")
@@ -219,7 +224,8 @@ def _load_hand_mesh_in_hand_frame(
     with torch.no_grad():
         out = mano_layer(global_orient=global_orient, hand_pose=hand_pose, betas=betas_t)
     vertices = out.vertices[0].detach().cpu().numpy().astype(np.float32)
-    hTm = _invert_pose(_pose_dict_to_matrix(mano_fit["mTc"]))
+    mTc = _pose_dict_to_matrix(mano_fit["mTc"])
+    hTm = _invert_pose(mTc)
     vertices_hand = _transform_points(vertices, hTm)
     faces = np.asarray(mano_layer.faces, dtype=np.int64)
     hand_points = _compute_face_centers(vertices_hand, faces)
@@ -228,7 +234,13 @@ def _load_hand_mesh_in_hand_frame(
         raise ValueError(
             f"Expected {NUM_HAND_POINTS} MANO face centers, got {hand_points.shape[0]} for {side}"
         )
-    return hand_points, hand_normals
+    return hand_points, hand_normals, {
+        "global_orient": pose[:3].copy(),
+        "hand_pose": pose[3:].copy(),
+        "betas": betas.copy(),
+        "v_template": mano_layer.v_template.detach().cpu().numpy().astype(np.float32).copy(),
+        "hand_root_pose": mTc,
+    }
 
 
 def _enumerate_sequences(contactpose_root: Path, *, intent: str) -> list[SequenceRef]:
@@ -286,7 +298,7 @@ def _build_hand_sequence(
     if not bool(hand_meta.get("valid")) or not bool(mano_fit.get("valid")):
         raise ValueError(f"{ref.seq_id} {side}: hand is not valid")
 
-    hand_points_single, hand_normals_single = _load_hand_mesh_in_hand_frame(
+    hand_points_single, hand_normals_single, mano = _load_hand_mesh_in_hand_frame(
         mano_cache,
         side=side,
         mano_fit=mano_fit,
@@ -328,6 +340,11 @@ def _build_hand_sequence(
         hand_normals=hand_normals,
         obj_points=obj_points,
         obj_normals=obj_normals,
+        mano_global_orient=mano["global_orient"],
+        mano_pose=mano["hand_pose"],
+        mano_betas=mano["betas"],
+        mano_v_template=mano["v_template"],
+        hand_root_pose=mano["hand_root_pose"],
     )
 
 
@@ -353,6 +370,7 @@ def _write_stage3_npz(
         output_path,
         schema_name=np.asarray(SCHEMA_NAME),
         schema_version=np.asarray(SCHEMA_VERSION),
+        dataset_id=np.asarray("contactpose"),
         dataset_name=np.asarray("ContactPose"),
         subject_id=np.asarray(sequence.ref.subject_id),
         seq_name=np.asarray(sequence.ref.seq_name),
@@ -367,6 +385,26 @@ def _write_stage3_npz(
         hand_to_obj_min_dist=hand_to_obj_min_dist.astype(np.float32),
         obj_candidate_mask_5cm=candidate_mask.astype(bool),
         coordinate_frame=np.asarray("hand_root"),
+        mano_global_orient=np.broadcast_to(
+            sequence.mano_global_orient[None], (sequence.num_frames, 3)
+        ).astype(np.float32).copy(),
+        mano_transl=np.zeros((sequence.num_frames, 3), dtype=np.float32),
+        mano_pose=np.broadcast_to(
+            sequence.mano_pose[None],
+            (sequence.num_frames, sequence.mano_pose.shape[0]),
+        ).astype(np.float32).copy(),
+        mano_betas=np.broadcast_to(
+            sequence.mano_betas[None],
+            (sequence.num_frames, sequence.mano_betas.shape[0]),
+        ).astype(np.float32).copy(),
+        mano_v_template=sequence.mano_v_template.astype(np.float32),
+        mano_use_pca=np.asarray(True),
+        mano_num_pca_comps=np.asarray(sequence.mano_pose.shape[0], dtype=np.int64),
+        mano_flat_hand_mean=np.asarray(False),
+        mano_pose_repr=np.asarray("pca"),
+        hand_root_pose=np.broadcast_to(
+            sequence.hand_root_pose[None], (sequence.num_frames, 4, 4)
+        ).astype(np.float32).copy(),
     )
     return output_path
 
@@ -407,6 +445,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mano-path", default=str(DEFAULT_MANO_PATH))
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--intent", choices=("use", "handoff"), default="use")
+    parser.add_argument(
+        "--seq",
+        default=None,
+        help="Exact seq_id or substring filter, e.g. full10_use/binoculars",
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--num-obj-pool", type=int, default=4096)
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
@@ -426,6 +469,12 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     device = _resolve_device(args.device)
     refs = _enumerate_sequences(contactpose_root, intent=args.intent)
+    if args.seq:
+        refs = [
+            ref
+            for ref in refs
+            if args.seq == ref.seq_id or str(args.seq) in ref.seq_id
+        ]
     if args.limit is not None:
         refs = refs[: int(args.limit)]
     if not refs:

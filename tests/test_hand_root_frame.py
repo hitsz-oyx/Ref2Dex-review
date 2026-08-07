@@ -29,6 +29,8 @@ from process.common.stage2 import pack_stage2_hand  # noqa: E402
 _STAGE3_V2_FIELDS = {
     "schema_name",
     "schema_version",
+    "dataset_id",
+    "dataset_name",
     "seq_id",
     "side",
     "raw_frame_id",
@@ -338,6 +340,8 @@ def test_stage3_minimal_v2_does_not_require_legacy_stage2_metadata() -> None:
         coordinate_frame="hand_root",
     )
     assert set(out) == _STAGE3_V2_FIELDS.difference({"obj_point_id", "obj_root_pose_world"})
+    assert str(out["dataset_id"].item()) == "unknown"
+    assert str(out["dataset_name"].item()) == "unknown"
 
 
 def test_stage3_hand_root_requires_hand_root_pose_in_payload() -> None:

@@ -17,6 +17,9 @@ from src.task.correspondence_ptv3_v2.sampling import (
     sample_random_supervision_edges,
     stable_frame_seed,
 )
+from src.task.correspondence_ptv3_v2.hand_noise_profiles import (
+    infer_stage3_dataset_id,
+)
 
 
 # Cross-dataset MANO pose width. GRAB stores PCA24 and ARCTIC stores
@@ -261,6 +264,7 @@ class CorrStaticDatasetV2(Dataset):
         data = self._load_file(path)
         seq_id = self._scalar_string(data, "seq_id", path.stem)
         side = self._scalar_string(data, "side", "")
+        dataset_id = infer_stage3_dataset_id(data)
         raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame_idx])
         epoch = self.eval_sampling_epoch if self.eval_sampling_epoch is not None else self.epoch
 
@@ -326,7 +330,11 @@ class CorrStaticDatasetV2(Dataset):
         # entire object pool; the hand arrays here are unused because
         # hand perturbation is performed by MANO forward in the runner.
         full_geometry = None
-        runtime_resample_this = self.runtime_resample_object and not has_legacy_candidate_mask
+        # Keep the batch schema identical across datasets. Some regenerated
+        # v2.1 sources (notably ContactPose) still carry the legacy candidate
+        # mask while GRAB/ARCTIC may omit it. Runtime resampling must therefore
+        # depend only on the training config, not on that optional file field.
+        runtime_resample_this = self.runtime_resample_object
         if runtime_resample_this:
             full_geometry = perturb_object_geometry(
                 obj_points=full_obj_points,
@@ -438,6 +446,7 @@ class CorrStaticDatasetV2(Dataset):
             result["hand_perturb_seed"] = torch.tensor(
                 int(hand_perturb_seed & ((1 << 63) - 1)), dtype=torch.long
             )
+            result["__dataset_id__"] = dataset_id
             result["__mano_side__"] = side
             result["mano_global_orient"] = torch.from_numpy(
                 np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)

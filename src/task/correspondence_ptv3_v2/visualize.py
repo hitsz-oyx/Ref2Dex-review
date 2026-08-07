@@ -24,6 +24,7 @@ from __future__ import annotations
 # =============================================================================
 
 import argparse
+import copy
 import json
 import threading
 from dataclasses import dataclass, field
@@ -35,7 +36,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from src.base import build_runner_from_checkpoint
+from src.base import build_runner_from_checkpoint, load_config
 from src.task.correspondence_ptv3_v2.dataset import CorrStaticDatasetV2
 from src.task.correspondence_ptv3_v2.losses import contact_target_from_distance
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
@@ -65,12 +66,32 @@ class PerturbationState:
     rotation_deg_xyz: np.ndarray = field(default_factory=lambda: np.zeros((3,), dtype=np.float32))
 
 
+@ dataclass
+class HandPerturbationState:
+    enabled: bool = False
+    strength: float = 1.0
+    variant: int = 0
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Visualize correspondence_ptv3_v2 CrossEdge and HandHeatmap predictions in the browser."
     )
-    parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--input", required=True)
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Optional model checkpoint. Omit it for GT-only dataset visualization.",
+    )
+    parser.add_argument(
+        "--config",
+        default="src.task.correspondence_ptv3_v2.config:Config",
+        help="Task config or YAML used when --checkpoint is omitted.",
+    )
+    parser.add_argument(
+        "--input",
+        default=None,
+        help="Stage 3 file/root. Defaults to data.val_path or data.train_path from the config.",
+    )
     parser.add_argument("--device", default="auto")
     parser.add_argument("--frame", type=int, default=0)
     parser.add_argument("--epoch", type=int, default=0)
@@ -81,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--vis-contact-radius",
         type=float,
         default=None,
-        help="Override GT visualization radius in meters. Defaults to the checkpoint contact_radius.",
+        help="Override GT visualization radius in meters. Defaults to meta.contact_radius.",
     )
     parser.add_argument(
         "--host",
@@ -103,15 +124,15 @@ def _ensure_v2_runner(runner: Any) -> None:
         raise ValueError("visualize.py only supports correspondence_ptv3_v2 checkpoints.")
 
 
-def _prepare_single_batch(batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    prepared: dict[str, torch.Tensor] = {}
+def _prepare_single_batch(batch: dict[str, Any]) -> dict[str, Any]:
+    prepared: dict[str, Any] = {}
     for key, value in batch.items():
-        if not torch.is_tensor(value):
-            continue
-        if value.dim() == 0:
-            prepared[key] = value
-        else:
+        if torch.is_tensor(value):
             prepared[key] = value.unsqueeze(0)
+        elif isinstance(value, str):
+            prepared[key] = [value]
+        else:
+            prepared[key] = value
     return prepared
 
 
@@ -122,17 +143,20 @@ def _clone_tensor_batch(batch: dict[str, torch.Tensor]) -> dict[str, torch.Tenso
     return cloned
 
 
-def _load_sequence(path: Path, runner: CorrespondencePTV3V2Runner) -> CorrStaticDatasetV2:
-    meta = runner.cfg.meta
+def _load_sequence(path: Path, cfg: Any) -> CorrStaticDatasetV2:
+    meta = cfg.meta
     return CorrStaticDatasetV2(
         path,
         num_obj_points=int(meta.num_obj_points),
         num_hand_points=int(meta.num_hand_points),
         num_supervision_edges=int(meta.num_supervision_edges),
         contact_radius=float(meta.contact_radius),
-        base_seed=int(runner.cfg.train.seed),
+        base_seed=int(cfg.train.seed),
         augment=False,
         apply_obj_perturb=False,
+        apply_hand_perturb=False,
+        runtime_resample_object=False,
+        use_mano_reconstruction=False,
         eval_sampling_epoch=None,
         coordinate_frame=str(getattr(meta, "coordinate_frame", "hand_root")),
     )
@@ -163,8 +187,14 @@ def _prob_to_hand_heatmap_colors(prob: np.ndarray) -> np.ndarray:
     return _prob_to_colors(prob, HAND_HEATMAP_LOW, HAND_HEATMAP_HIGH)
 
 
-def _gt_cross_prob(batch: dict[str, torch.Tensor], obj_idx: int, contact_radius: float) -> torch.Tensor:
-    gt_points = batch["gt_points"].float()
+def _gt_cross_prob(
+    batch: dict[str, torch.Tensor],
+    obj_idx: int,
+    contact_radius: float,
+    *,
+    point_key: str = "gt_points",
+) -> torch.Tensor:
+    gt_points = batch[point_key].float()
     num_obj = int(batch["num_obj_points"])
     obj_point = gt_points[obj_idx]
     hand_points = gt_points[num_obj : num_obj + int(batch["num_hand_points"])]
@@ -292,6 +322,91 @@ def _apply_object_perturbation(
     return out
 
 
+def _sample_has_mano(batch: dict[str, Any]) -> bool:
+    value = batch.get("has_mano")
+    if torch.is_tensor(value):
+        return bool(value.numel() and value.bool().all().item())
+    return bool(value)
+
+
+def _mano_representation(batch: dict[str, Any]) -> tuple[str | None, int]:
+    if not _sample_has_mano(batch):
+        return None, 0
+    use_pca = batch.get("mano_use_pca", True)
+    if torch.is_tensor(use_pca):
+        use_pca = bool(use_pca.reshape(-1)[0].item())
+    pose_dim = batch.get(
+        "mano_num_pca_comps" if use_pca else "mano_pose_dim",
+        24 if use_pca else 45,
+    )
+    if torch.is_tensor(pose_dim):
+        pose_dim = int(pose_dim.reshape(-1)[0].item())
+    return ("pca" if bool(use_pca) else "axis_angle"), int(pose_dim)
+
+
+def _apply_hand_perturbation(
+    batch: dict[str, Any],
+    perturbation: HandPerturbationState,
+    mano_runner: CorrespondencePTV3V2Runner | None,
+    *,
+    base_pca_std: float,
+    base_pca_scale: float,
+    base_axis_angle_std_rad: float,
+    base_geometry_noise_scale: float = 1.0,
+) -> dict[str, Any]:
+    if (
+        not perturbation.enabled
+        or perturbation.strength <= 0.0
+        or mano_runner is None
+        or not _sample_has_mano(batch)
+    ):
+        return batch
+
+    prepared = _prepare_single_batch(_clone_tensor_batch(batch))
+    prepared["apply_hand_perturb"] = torch.ones((1,), dtype=torch.bool)
+    seed = prepared.get("hand_perturb_seed")
+    if torch.is_tensor(seed):
+        # Variant zero exactly matches the dataset seed. Other variants are
+        # deterministic but independent without changing frame/epoch sampling.
+        offset = int(perturbation.variant) * 0x1E3779B97F4A7C15
+        prepared["hand_perturb_seed"] = (seed.long() + offset) & ((1 << 63) - 1)
+
+    meta = mano_runner.cfg.meta
+    original = {
+        "apply_hand_perturb": getattr(meta, "apply_hand_perturb", False),
+        "hand_perturb_prob": getattr(meta, "hand_perturb_prob", 1.0),
+        "hand_pca_std": getattr(meta, "hand_pca_std", 0.0),
+        "hand_pca_noise_scale": getattr(meta, "hand_pca_noise_scale", 0.0),
+        "hand_axis_angle_std_rad": getattr(meta, "hand_axis_angle_std_rad", 0.0),
+        "hand_geometry_noise_scale": getattr(meta, "hand_geometry_noise_scale", 1.0),
+    }
+    try:
+        meta.apply_hand_perturb = True
+        # The UI toggle is the gate. Once enabled, always draw a perturbation;
+        # the YAML probability remains visible as training metadata.
+        meta.hand_perturb_prob = 1.0
+        meta.hand_pca_std = float(base_pca_std) * float(perturbation.strength)
+        meta.hand_pca_noise_scale = float(base_pca_scale) * float(perturbation.strength)
+        meta.hand_axis_angle_std_rad = (
+            float(base_axis_angle_std_rad) * float(perturbation.strength)
+        )
+        meta.hand_geometry_noise_scale = (
+            float(base_geometry_noise_scale) * float(perturbation.strength)
+        )
+        mano_runner._reconstruct_hand_from_mano(
+            prepared,
+            side=prepared.get("__mano_side__"),
+        )
+    finally:
+        for key, value in original.items():
+            setattr(meta, key, value)
+
+    out = _clone_tensor_batch(batch)
+    out["points"] = prepared["points"].squeeze(0).detach().cpu()
+    out["normals"] = prepared["normals"].squeeze(0).detach().cpu()
+    return out
+
+
 class HtmlVisualizer:
     """Backend for the HTML / Three.js visualizer.
 
@@ -304,13 +419,22 @@ class HtmlVisualizer:
     def __init__(
         self,
         *,
-        runner: CorrespondencePTV3V2Runner,
+        runner: CorrespondencePTV3V2Runner | None,
         dataset: CorrStaticDatasetV2,
         state: ViewerState,
         marker_radius: float,
         vis_contact_radius: float,
         perturb_translation_step: float,
         perturb_rotation_step_deg: float,
+        mano_runner: CorrespondencePTV3V2Runner | None = None,
+        hand_pca_std: float = 0.0,
+        hand_pca_noise_scale: float = 0.0,
+        hand_pca_noise_clip: float = 0.0,
+        hand_axis_angle_std_rad: float = 0.0,
+        hand_axis_angle_clip_rad: float = 0.0,
+        hand_perturb_prob: float = 0.0,
+        hand_pca_uses_per_dim_std: bool = False,
+        hand_geometry_noise_scale: float = 1.0,
     ) -> None:
         self.runner = runner
         self.dataset = dataset
@@ -320,6 +444,16 @@ class HtmlVisualizer:
         self.perturb_translation_step = float(perturb_translation_step)
         self.perturb_rotation_step_deg = float(perturb_rotation_step_deg)
         self.perturbation = PerturbationState()
+        self.hand_perturbation = HandPerturbationState()
+        self.mano_runner = mano_runner
+        self.hand_pca_std = float(hand_pca_std)
+        self.hand_pca_noise_scale = float(hand_pca_noise_scale)
+        self.hand_pca_noise_clip = float(hand_pca_noise_clip)
+        self.hand_axis_angle_std_rad = float(hand_axis_angle_std_rad)
+        self.hand_axis_angle_clip_rad = float(hand_axis_angle_clip_rad)
+        self.hand_perturb_prob = float(hand_perturb_prob)
+        self.hand_pca_uses_per_dim_std = bool(hand_pca_uses_per_dim_std)
+        self.hand_geometry_noise_scale = float(hand_geometry_noise_scale)
         self.show_reference_gt = False
         self.base_batch: dict[str, torch.Tensor] | None = None
         self.current_batch: dict[str, torch.Tensor] | None = None
@@ -332,13 +466,48 @@ class HtmlVisualizer:
     def refresh_cache(self) -> None:
         self.base_batch = _sample(self.dataset, self.state.frame_idx, self.state.epoch)
         self.current_batch = _apply_object_perturbation(self.base_batch, self.perturbation)
+        self.current_batch = _apply_hand_perturbation(
+            self.current_batch,
+            self.hand_perturbation,
+            self.mano_runner,
+            base_pca_std=self.hand_pca_std,
+            base_pca_scale=self.hand_pca_noise_scale,
+            base_axis_angle_std_rad=self.hand_axis_angle_std_rad,
+            base_geometry_noise_scale=self.hand_geometry_noise_scale,
+        )
         self.selected_obj_idx = _select_valid_obj(self.current_batch, self.state.selected_rank)
 
+    def _has_mano(self) -> bool:
+        return bool(
+            self.mano_runner is not None
+            and self.base_batch is not None
+            and _sample_has_mano(self.base_batch)
+        )
+
+    def _any_perturbation_enabled(self) -> bool:
+        return self.perturbation.enabled or (
+            self.hand_perturbation.enabled and self._has_mano()
+        )
+
     def _has_hand_heatmap_head(self) -> bool:
+        if self.runner is None:
+            return False
         model = self.runner.model
         return bool(model is not None and getattr(model, "use_hand_contact_head", False))
 
+    def _has_model(self) -> bool:
+        return self.runner is not None and self.runner.model is not None
+
+    def _mode_available(self, mode: str) -> bool:
+        if mode == "cross_edge":
+            return self.state.show_gt or self._has_model()
+        if mode == "hand_heatmap":
+            return self.state.show_gt or self._has_hand_heatmap_head()
+        return False
+
     def get_state_dict(self) -> dict[str, Any]:
+        hand_repr, hand_pose_dim = _mano_representation(self.base_batch or {})
+        strength = float(self.hand_perturbation.strength)
         return {
             "frame_idx": self.state.frame_idx,
             "total_frames": len(self.dataset),
@@ -350,11 +519,35 @@ class HtmlVisualizer:
             "show_reference_gt": self.show_reference_gt,
             "translation": [float(v) for v in self.perturbation.translation.tolist()],
             "rotation_deg_xyz": [float(v) for v in self.perturbation.rotation_deg_xyz.tolist()],
+            "hand_perturbation_enabled": self.hand_perturbation.enabled,
+            "hand_perturbation_available": self._has_mano(),
+            "hand_perturbation_representation": hand_repr,
+            "hand_pose_dim": hand_pose_dim,
+            "hand_perturbation_strength": strength,
+            "hand_perturbation_variant": self.hand_perturbation.variant,
+            "hand_pca_std_config": self.hand_pca_std,
+            "hand_pca_noise_scale_config": self.hand_pca_noise_scale,
+            "hand_pca_noise_clip": self.hand_pca_noise_clip,
+            "hand_axis_angle_std_rad_config": self.hand_axis_angle_std_rad,
+            "hand_axis_angle_clip_rad": self.hand_axis_angle_clip_rad,
+            "hand_perturb_prob_config": self.hand_perturb_prob,
+            "hand_pca_uses_per_dim_std": self.hand_pca_uses_per_dim_std,
+            "hand_geometry_noise_profile_active": bool(
+                self.mano_runner is not None
+                and getattr(self.mano_runner, "_hand_geometry_profiles", None)
+            ),
+            "hand_geometry_noise_scale_effective": (
+                self.hand_geometry_noise_scale * strength
+            ),
+            "hand_pca_std_effective": self.hand_pca_std * strength,
+            "hand_pca_noise_scale_effective": self.hand_pca_noise_scale * strength,
+            "hand_axis_angle_std_rad_effective": self.hand_axis_angle_std_rad * strength,
             "perturb_translation_step": self.perturb_translation_step,
             "perturb_rotation_step_deg": self.perturb_rotation_step_deg,
             "marker_radius": self.marker_radius,
             "vis_contact_radius": self.vis_contact_radius,
             "has_hand_heatmap_head": self._has_hand_heatmap_head(),
+            "has_model": self._has_model(),
         }
 
     def _build_scene_arrays(
@@ -373,23 +566,39 @@ class HtmlVisualizer:
         obj_colors = np.broadcast_to(OBJ_GRAY[None, :], (num_obj, 3)).copy()
         if self.state.display_mode == "cross_edge":
             if self.state.show_gt:
-                hand_points = gt_points[num_obj : num_obj + num_hand]
+                hand_points = (
+                    noisy_points[num_obj : num_obj + num_hand]
+                    if self.hand_perturbation.enabled and self._has_mano()
+                    else gt_points[num_obj : num_obj + num_hand]
+                )
                 gt_color_batch = (
                     self.base_batch
-                    if (self.perturbation.enabled and self.show_reference_gt)
+                    if (self._any_perturbation_enabled() and self.show_reference_gt)
                     else batch
                 )
                 hand_prob = _gt_cross_prob(
-                    gt_color_batch, self.selected_obj_idx, self.vis_contact_radius
+                    gt_color_batch,
+                    self.selected_obj_idx,
+                    self.vis_contact_radius,
+                    point_key=(
+                        "points"
+                        if self._any_perturbation_enabled() and not self.show_reference_gt
+                        else "gt_points"
+                    ),
                 ).numpy()
             else:
+                assert self.runner is not None
                 hand_points = noisy_points[num_obj : num_obj + num_hand]
                 hand_prob = _dense_cross_prob(self.runner, batch, self.selected_obj_idx).numpy()
             hand_colors = _prob_to_cross_colors(hand_prob)
         else:
             if self.state.show_gt:
-                hand_points = gt_points[num_obj : num_obj + num_hand]
-                if self.perturbation.enabled and not self.show_reference_gt:
+                hand_points = (
+                    noisy_points[num_obj : num_obj + num_hand]
+                    if self.hand_perturbation.enabled and self._has_mano()
+                    else gt_points[num_obj : num_obj + num_hand]
+                )
+                if self._any_perturbation_enabled() and not self.show_reference_gt:
                     hand_prob = _current_pseudo_hand_heatmap_prob(
                         batch, self.vis_contact_radius
                     ).numpy()
@@ -398,15 +607,18 @@ class HtmlVisualizer:
                         self.base_batch, self.vis_contact_radius
                     ).numpy()
             else:
+                assert self.runner is not None
                 hand_points = noisy_points[num_obj : num_obj + num_hand]
                 hand_prob = _predict_hand_heatmap_prob(self.runner, batch).numpy()
             hand_colors = _prob_to_hand_heatmap_colors(hand_prob)
-        obj_points = obj_points.copy()
-        obj_points[~obj_valid] = 0.0
-        obj_colors = obj_colors.copy()
-        obj_colors[~obj_valid] = 0.0
         marker_center = obj_points[self.selected_obj_idx]
-        return obj_points, obj_colors, hand_points, hand_colors, marker_center
+        return (
+            obj_points[obj_valid].copy(),
+            obj_colors[obj_valid].copy(),
+            hand_points,
+            hand_colors,
+            marker_center,
+        )
 
     def get_scene_dict(self) -> dict[str, Any]:
         with self._lock:
@@ -443,17 +655,24 @@ class HtmlVisualizer:
                 self.state.epoch = max(0, int(params.get("epoch", 0)))
             elif action == "set_mode":
                 mode = str(params.get("mode", "cross_edge"))
-                if mode == "hand_heatmap" and not self._has_hand_heatmap_head():
-                    pass  # silently no-op; the button is disabled in the UI
-                else:
+                if self._mode_available(mode):
                     self.state.display_mode = mode
             elif action == "set_show_gt":
-                self.state.show_gt = bool(params.get("show_gt", True))
+                requested = bool(params.get("show_gt", True))
+                if requested or self._has_model():
+                    previous = self.state.show_gt
+                    self.state.show_gt = requested
+                    if not self._mode_available(self.state.display_mode):
+                        self.state.show_gt = previous
             elif action == "toggle_gt":
-                self.state.show_gt = not self.state.show_gt
+                if self._has_model():
+                    previous = self.state.show_gt
+                    self.state.show_gt = not self.state.show_gt
+                    if not self._mode_available(self.state.display_mode):
+                        self.state.show_gt = previous
             elif action == "toggle_mode":
                 if self.state.display_mode == "cross_edge":
-                    if self._has_hand_heatmap_head():
+                    if self._mode_available("hand_heatmap"):
                         self.state.display_mode = "hand_heatmap"
                 else:
                     self.state.display_mode = "cross_edge"
@@ -467,13 +686,34 @@ class HtmlVisualizer:
                 self.perturbation.enabled = not self.perturbation.enabled
                 if not self.perturbation.enabled:
                     self.show_reference_gt = False
+            elif action == "toggle_hand_perturb":
+                if self._has_mano():
+                    self.hand_perturbation.enabled = not self.hand_perturbation.enabled
+                    if not self._any_perturbation_enabled():
+                        self.show_reference_gt = False
+            elif action == "reset_hand_perturb":
+                self.hand_perturbation.enabled = False
+                self.hand_perturbation.strength = 1.0
+                self.hand_perturbation.variant = 0
+                if not self._any_perturbation_enabled():
+                    self.show_reference_gt = False
+            elif action == "set_hand_perturb_strength":
+                self.hand_perturbation.strength = float(
+                    np.clip(float(params.get("strength", 1.0)), 0.0, 5.0)
+                )
+            elif action == "prev_hand_variant":
+                self.hand_perturbation.variant = max(0, self.hand_perturbation.variant - 1)
+            elif action == "next_hand_variant":
+                self.hand_perturbation.variant += 1
+            elif action == "set_hand_variant":
+                self.hand_perturbation.variant = max(0, int(params.get("variant", 0)))
             elif action == "reset_perturb":
                 self.perturbation.translation[:] = 0.0
                 self.perturbation.rotation_deg_xyz[:] = 0.0
                 self.perturbation.enabled = False
                 self.show_reference_gt = False
             elif action == "toggle_refgt":
-                if not self.perturbation.enabled:
+                if not self._any_perturbation_enabled():
                     pass
                 else:
                     self.show_reference_gt = not self.show_reference_gt
@@ -589,28 +829,47 @@ class _Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     args = parse_args()
-    runner = build_runner_from_checkpoint(
-        args.checkpoint,
-        mode="eval",
-        device=args.device,
-        build_data=False,
-    )
-    runner.setup_inference(args.checkpoint)
-    _ensure_v2_runner(runner)
-    dataset = _load_sequence(Path(args.input), runner)
+    runner: CorrespondencePTV3V2Runner | None = None
+    if args.checkpoint:
+        loaded_runner = build_runner_from_checkpoint(
+            args.checkpoint,
+            mode="eval",
+            device=args.device,
+            build_data=False,
+        )
+        loaded_runner.setup_inference(args.checkpoint)
+        _ensure_v2_runner(loaded_runner)
+        runner = loaded_runner
+        cfg = runner.cfg
+    else:
+        cfg = load_config(args.config)
+
+    input_value = args.input
+    if not input_value:
+        input_value = getattr(cfg.data, "val_path", None) or getattr(
+            cfg.data, "train_path", None
+        )
+    if not input_value:
+        raise ValueError(
+            "No Stage 3 input configured. Pass --input or set data.val_path/data.train_path."
+        )
+    input_path = Path(str(input_value))
+    dataset = _load_sequence(input_path, cfg)
     state = ViewerState(frame_idx=args.frame, epoch=args.epoch)
     sample = _sample(dataset, state.frame_idx, state.epoch)
     selected_obj = _select_valid_obj(sample, state.selected_rank)
     vis_contact_radius = float(
         args.vis_contact_radius
         if args.vis_contact_radius is not None
-        else runner.cfg.meta.contact_radius
+        else cfg.meta.contact_radius
     )
     gt_cross = _gt_cross_prob(sample, selected_obj, vis_contact_radius)
-    eval_cross = _dense_cross_prob(runner, sample, selected_obj)
+    eval_cross = _dense_cross_prob(runner, sample, selected_obj) if runner is not None else None
     if args.check_only:
         has_hand_heatmap_head = bool(
-            runner.model is not None and getattr(runner.model, "use_hand_contact_head", False)
+            runner is not None
+            and runner.model is not None
+            and getattr(runner.model, "use_hand_contact_head", False)
         )
         hand_heatmap_info: dict[str, Any] = {"hand_heatmap_available": has_hand_heatmap_head}
         if has_hand_heatmap_head:
@@ -631,11 +890,23 @@ def main() -> None:
                 "selected_obj": selected_obj,
                 "vis_contact_radius": vis_contact_radius,
                 "gt_cross_shape": tuple(gt_cross.shape),
-                "eval_cross_shape": tuple(eval_cross.shape),
+                "eval_cross_shape": tuple(eval_cross.shape) if eval_cross is not None else None,
+                "has_mano": _sample_has_mano(sample),
+                "mano_representation": _mano_representation(sample)[0],
                 **hand_heatmap_info,
             }
         )
         return
+
+    mano_runner: CorrespondencePTV3V2Runner | None = None
+    if runner is None and _sample_has_mano(sample):
+        mano_cfg = copy.deepcopy(cfg)
+        mano_runner = CorrespondencePTV3V2Runner(
+            mano_cfg,
+            mode="eval",
+            device="cpu",
+            build_data=False,
+        )
 
     visualizer = HtmlVisualizer(
         runner=runner,
@@ -645,6 +916,19 @@ def main() -> None:
         vis_contact_radius=vis_contact_radius,
         perturb_translation_step=args.perturb_translation_step,
         perturb_rotation_step_deg=args.perturb_rotation_step_deg,
+        mano_runner=mano_runner,
+        hand_pca_std=float(getattr(cfg.meta, "hand_pca_std", 0.0)),
+        hand_pca_noise_scale=float(getattr(cfg.meta, "hand_pca_noise_scale", 0.0)),
+        hand_pca_noise_clip=float(getattr(cfg.meta, "hand_pca_noise_clip", 0.0)),
+        hand_axis_angle_std_rad=float(getattr(cfg.meta, "hand_axis_angle_std_rad", 0.0)),
+        hand_axis_angle_clip_rad=float(getattr(cfg.meta, "hand_axis_angle_clip_rad", 0.0)),
+        hand_perturb_prob=float(getattr(cfg.meta, "hand_perturb_prob", 0.0)),
+        hand_pca_uses_per_dim_std=(
+            getattr(cfg.meta, "hand_pca_train_std_per_dim", None) is not None
+        ),
+        hand_geometry_noise_scale=float(
+            getattr(cfg.meta, "hand_geometry_noise_scale", 1.0)
+        ),
     )
     html_path = Path(__file__).resolve().parent / "visualize.html"
     _Handler.visualizer = visualizer
@@ -652,11 +936,12 @@ def main() -> None:
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
     print(
         f"[visualize] serving on http://{args.host}:{args.port}\n"
-        f"  checkpoint: {args.checkpoint}\n"
-        f"  input:      {args.input}\n"
+        f"  checkpoint: {args.checkpoint or 'none (GT-only)'}\n"
+        f"  input:      {input_path}\n"
         f"  frames:     {len(dataset)}\n"
         f"  mode:       {state.display_mode} (HandHeatmap available: "
-        f"{visualizer._has_hand_heatmap_head()})"
+        f"{visualizer._has_hand_heatmap_head()})\n"
+        f"  MANO hand:  {visualizer.get_state_dict()['hand_perturbation_representation'] or 'unavailable'}"
     )
     try:
         server.serve_forever()
