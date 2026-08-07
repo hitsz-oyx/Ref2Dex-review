@@ -18,9 +18,9 @@ meta:
   use_mano_reconstruction: true
   apply_hand_perturb: true
   hand_geometry_calibration_paths:
-    grab: tmp/mano_geometry_calibration/grab_pca24_target_9mm.json
-    arctic: tmp/mano_geometry_calibration/arctic_axis_angle45_target_9mm_sample.json
-    contactpose: tmp/mano_geometry_calibration/contactpose_pca15_target_9mm_sample.json
+    grab: src/task/correspondence_ptv3_v2/calibration/grab_pca24_target_9mm.json
+    arctic: src/task/correspondence_ptv3_v2/calibration/arctic_axis_angle45_target_9mm_sample.json
+    contactpose: src/task/correspondence_ptv3_v2/calibration/contactpose_pca15_target_9mm_sample.json
   hand_geometry_noise_scale: 1.0
   hand_geometry_noise_required: true
   mano_model_dir: dataset/arctic/data/body_models/mano

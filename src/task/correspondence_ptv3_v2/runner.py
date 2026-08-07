@@ -40,6 +40,30 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # Fix #4 (docs/指导.md): legacy mode (``use_mano_reconstruction=False``)
+        # is documented as "no MANO forward, just pre-stored hand_points".
+        # But ``runtime_resample_object`` independently calls
+        # ``get_proxy_face_idx`` to score the object pool against a hand
+        # proxy, which still requires smplx + MANO .pkl on disk. Make the
+        # conflict loud at construction time instead of crashing deep in
+        # the training loop.
+        if (
+            not bool(getattr(self.cfg.meta, "use_mano_reconstruction", False))
+            and bool(getattr(self.cfg.meta, "runtime_resample_object", True))
+        ):
+            raise ValueError(
+                "cfg.meta.use_mano_reconstruction=False but "
+                "cfg.meta.runtime_resample_object=True. The runtime object "
+                "resampler still needs smplx + MANO .pkl to build a hand "
+                "proxy (see hand_noise_profiles.get_proxy_face_idx), which "
+                "contradicts the legacy 'no MANO forward' contract. Pick "
+                "one of:\n"
+                "  - use_mano_reconstruction: true  (full MANO path, current default)\n"
+                "  - runtime_resample_object: false (pure pre-stored hand_points, "
+                "no runtime obj resampling)\n"
+                "If you want a true zero-smplx legacy smoke test, set BOTH "
+                "explicitly in your YAML."
+            )
         # Lazily-built MANO layer cache. Only populated when MANO forward
         # is actually needed (i.e. the batch has hand MANO parameters and
         # cfg.meta.use_mano_reconstruction is True).
@@ -48,7 +72,15 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         profile_paths = getattr(self.cfg.meta, "hand_geometry_calibration_paths", {})
         if hasattr(profile_paths, "to_dict"):
             profile_paths = profile_paths.to_dict()
-        self._hand_geometry_profiles = HandGeometryNoiseProfiles.from_paths(profile_paths)
+        # Fix #3 (docs/指导.md): resolve ``hand_geometry_calibration_paths``
+        # relative to the repo root, NOT the current working directory. This
+        # way ``python -m src.task...`` works the same whether you launch
+        # from the repo root, from src/, or from inside an IDE.
+        from src.task.correspondence_ptv3_v2.config import ROOT as _REPO_ROOT
+        self._hand_geometry_profiles = HandGeometryNoiseProfiles.from_paths(
+            profile_paths,
+            base_dir=_REPO_ROOT,
+        )
 
     @classmethod
     def configure_overfit_mode(

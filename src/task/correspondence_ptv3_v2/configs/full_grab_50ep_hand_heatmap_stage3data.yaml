@@ -19,8 +19,12 @@ meta:
   # MANO vertex RMS. hand_pca_std remains only as an explicit fallback for
   # configs that do not enable required profile dispatch.
   hand_pca_std: 0.5
+  # Fix #2 (docs/指导.md): calibration JSONs ship with the repo under
+  # ``src/task/correspondence_ptv3_v2/calibration/`` so training is
+  # reproducible from a fresh clone. Relative paths are resolved against
+  # the repo root by the runner.
   hand_geometry_calibration_paths:
-    grab: tmp/mano_geometry_calibration/grab_pca24_target_9mm.json
+    grab: src/task/correspondence_ptv3_v2/calibration/grab_pca24_target_9mm.json
   hand_geometry_noise_scale: 1.0
   hand_geometry_noise_required: true
   mano_model_dir: dataset/arctic/data/body_models/mano

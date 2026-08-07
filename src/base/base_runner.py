@@ -952,7 +952,16 @@ class BaseRunner:
         if self.jsonl is not None:
             self.jsonl.write(payload)
         if self.wandb_run is not None:
-            is_evaluation = any(key.startswith(("val/", "test/")) for key in metrics)
+            # Match every metric that names a validation/test set, not just
+            # the historical ``val/`` / ``test/`` prefixes. v2 runners use
+            # ``val_clean/`` and ``val_perturbed/``; downstream code that
+            # filters by prefix (``val*/`` or ``test*/``) must keep working
+            # even when a new split name (e.g. ``val_smoke/``) is added.
+            eval_prefixes = ("val", "test")
+            is_evaluation = any(
+                any(key.startswith(prefix) and key[len(prefix):len(prefix) + 1] in ("/", "_") for prefix in eval_prefixes)
+                for key in metrics
+            )
             self.wandb_run.log(
                 self.select_eval_metrics(metrics) if is_evaluation else metrics,
                 step=self.global_step,

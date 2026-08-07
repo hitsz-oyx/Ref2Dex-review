@@ -303,3 +303,63 @@ def test_runner_prepare_batch_gpu_smoke() -> None:
         torch.testing.assert_close(val_hand, val_gt_hand, atol=1e-5, rtol=0.0)
     finally:
         cleanup_distributed()
+
+
+# ---------------------------------------------------------------------------
+# Fix #3 / Fix #4 (docs/指导.md):
+#   * Path resolution for hand-noise calibration must be repo-relative.
+#   * Legacy mode (use_mano_reconstruction=False) must be incompatible with
+#     runtime_resample_object=True at runner construction time.
+# ---------------------------------------------------------------------------
+
+
+def test_hand_noise_profiles_resolve_relative_to_base_dir() -> None:
+    """Fix #3: relative ``hand_geometry_calibration_paths`` must resolve
+    against the supplied ``base_dir`` (the repo root), NOT ``Path.cwd()``."""
+    from src.task.correspondence_ptv3_v2.hand_noise_profiles import (
+        HandGeometryNoiseProfiles,
+    )
+
+    repo_root = Path(__file__).resolve().parents[1]
+    relative = "src/task/correspondence_ptv3_v2/calibration/grab_pca24_target_9mm.json"
+    absolute = repo_root / relative
+
+    # Sanity: the file we depend on is actually shipped with the repo now.
+    assert absolute.exists(), (
+        f"Calibration JSON missing from tracked location: {absolute}. "
+        "Re-run tools/calibrate_mano_geometry_noise.py or check the "
+        "fix-2 commit."
+    )
+
+    # Run the loader from a different cwd; the relative path must still
+    # be found because base_dir is the repo root.
+    cwd = os.getcwd()
+    try:
+        os.chdir("/tmp")
+        profiles = HandGeometryNoiseProfiles.from_paths(
+            {"grab": relative},
+            base_dir=repo_root,
+        )
+    finally:
+        os.chdir(cwd)
+
+    assert len(profiles._profiles) > 0
+    for profile in profiles._profiles.values():
+        assert profile.source_path == str(absolute)
+
+
+def test_runner_rejects_legacy_with_runtime_resample() -> None:
+    """Fix #4: ``use_mano_reconstruction=False`` + ``runtime_resample_object=True``
+    is documented as the legacy fallback path, but the runtime object
+    resampler still calls ``get_proxy_face_idx`` (smplx + MANO .pkl). The
+    conflict must raise a clear error at construction time."""
+    from src.base import TaskConfig
+
+    cfg = TaskConfig()
+    cfg.meta.use_mano_reconstruction = False
+    cfg.meta.runtime_resample_object = True
+
+    runner = _runner_without_init()
+    runner.cfg = cfg
+    with pytest.raises(ValueError, match="use_mano_reconstruction=False but"):
+        CorrespondencePTV3V2Runner.__init__(runner, cfg, mode="train", build_data=False)

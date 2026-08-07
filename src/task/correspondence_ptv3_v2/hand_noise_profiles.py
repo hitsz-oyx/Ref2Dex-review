@@ -80,12 +80,34 @@ class HandGeometryNoiseProfiles:
 
     @classmethod
     def from_paths(
-        cls, paths: Mapping[str, str | Path] | None
+        cls,
+        paths: Mapping[str, str | Path] | None,
+        *,
+        base_dir: str | Path | None = None,
     ) -> "HandGeometryNoiseProfiles":
+        """Load calibrated hand-noise profiles from disk.
+
+        Parameters
+        ----------
+        paths:
+            ``{dataset_id: path_or_str}`` mapping.  Values may be absolute
+            or relative; relative paths are resolved against ``base_dir``
+            (the repo root by default) instead of ``Path.cwd()``, so
+            launching ``python -m src.task...`` from any directory yields
+            the same behavior.
+        base_dir:
+            Anchor for relative paths.  ``None`` falls back to ``Path.cwd()``
+            for backwards compatibility, but new callers should always pass
+            the repo root explicitly.
+        """
+        anchor = Path(base_dir).expanduser().resolve() if base_dir is not None else Path.cwd()
         profiles: dict[tuple[str, str], HandGeometryNoiseProfile] = {}
         for raw_dataset_id, raw_path in dict(paths or {}).items():
             dataset_id = normalize_dataset_id(raw_dataset_id)
-            path = Path(raw_path).expanduser().resolve()
+            candidate = Path(raw_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = anchor / candidate
+            path = candidate.resolve()
             payload = json.loads(path.read_text(encoding="utf-8"))
             if payload.get("schema") != "ref2dex_mano_geometry_noise_calibration_v1":
                 raise ValueError(f"Unsupported hand-noise calibration schema: {path}")

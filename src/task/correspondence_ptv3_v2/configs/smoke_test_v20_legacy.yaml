@@ -2,9 +2,24 @@ _base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
 
 name: smoke_test_v20_legacy
 
+# WARNING: train_path and val_path are intentionally the SAME directory.
+# This config verifies the legacy v2.0 smoke data flow end-to-end (no
+# MANO forward, no runtime object resampling); it does NOT measure
+# generalisation. Do NOT use the resulting val numbers for any
+# performance comparison, model selection, or paper claim.
+#
+# Fix #1 (docs/指导.md): legacy v2.0 data has no ``mano_*`` fields, so
+# the dataset MUST be loaded with ``use_mano_reconstruction=false``;
+# otherwise the strict schema gate in CorrStaticDatasetV2 raises
+# KeyError before training even starts.
+#
+# Fix #4 (docs/指导.md): ``use_mano_reconstruction=false`` is also
+# incompatible with the default ``runtime_resample_object=true`` (the
+# resampler still needs smplx + MANO .pkl for the hand proxy), so we
+# pin ``runtime_resample_object=false`` here for a true zero-smplx
+# legacy smoke. The runner's __init__ enforces this combination.
+
 data:
-  # Legacy v2.0 schema (no mano_* fields); the runner should fall back
-  # to the pre-stored hand_points.
   train_path: /mnt/ugreen_nas/storage/oyx_storage/ref2dex_stage3/GRAB/initonly_4096_ds4/s1
   val_path: /mnt/ugreen_nas/storage/oyx_storage/ref2dex_stage3/GRAB/initonly_4096_ds4/s1
   batch_size: 4
@@ -15,6 +30,11 @@ data:
   persistent_workers: false
   prefetch_factor: 2
   blacklist_path: null
+
+meta:
+  use_mano_reconstruction: false
+  apply_hand_perturb: false
+  runtime_resample_object: false
 
 train:
   optimizer: adamw
@@ -31,7 +51,7 @@ train:
   eval_every_epochs: 1
   save_every_epochs: 1
   max_to_keep: 1
-  metric_for_best: val_clean/cross_edge_random_qfl
+  metric_for_best: val/cross_edge_random_qfl
   lower_is_better: true
   distributed:
     enable: false
@@ -44,4 +64,4 @@ wandb:
   enable: false
   project: ref2dex
   mode: disabled
-  tags: [correspondence, ptv3, v2, smoke-test, v20-legacy]
+  tags: [correspondence, ptv3, v2, smoke-test, v20-legacy, samedata]
