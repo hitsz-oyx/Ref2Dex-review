@@ -6,6 +6,7 @@ correspondence-motion）任务样本。
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Sequence
 import multiprocessing as mp
@@ -44,6 +45,7 @@ def scalar_string(data: dict[str, np.ndarray], key: str, default: str = "") -> s
     return str(value.item()) if value.size == 1 else default
 
 
+@lru_cache(maxsize=4)
 def _load_dominant_hand_manifest(path: str | Path, *, data_root: Path) -> dict[Path, list[tuple[int, int]]]:
     """Load kept ``(current frame, stride)`` rows grouped by hand-side NPZ."""
     manifest_path = Path(path)
@@ -231,6 +233,7 @@ class Stage4CmDataset(Dataset):
                 candidate = np.asarray(hand["obj_candidate_mask_5cm"], dtype=bool)
                 if manifest_samples is not None:
                     entries = manifest_samples.get(path.resolve(), ())
+                    strides_by_current: dict[int, list[int]] = {}
                     for current, stride in entries:
                         if current < 0 or current + stride >= frame_count:
                             raise ValueError(f"{path}: manifest sample ({current=}, {stride=}) is out of range")
@@ -240,7 +243,11 @@ class Stage4CmDataset(Dataset):
                             continue
                         if self.active_only and not candidate[current].any():
                             raise ValueError(f"{path}: manifest keeps inactive frame {current}")
-                        self._samples.append((path, current, stride))
+                        strides_by_current.setdefault(current, []).append(stride)
+                    self._samples.extend(
+                        (path, current, tuple(sorted(strides)))
+                        for current, strides in sorted(strides_by_current.items())
+                    )
                 else:
                     filter_stride = self.fixed_stride if self.fixed_stride is not None else self.max_stride
                     for current in range(0, frame_count - self.max_stride):
@@ -313,6 +320,8 @@ class Stage4CmDataset(Dataset):
         object_seed = stable_frame_seed(**seed_args, namespace="cm-object-sampling")
         # 验证模式走 fixed_stride；训练模式从 [min_stride, max_stride] 闭区间随机
         stride = (
+            int(np.random.default_rng(stride_seed).choice(location[2]))
+            if len(location) == 3 and isinstance(location[2], tuple) else
             int(location[2]) if len(location) == 3 else
             self.fixed_stride if self.fixed_stride is not None else
             int(np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1))

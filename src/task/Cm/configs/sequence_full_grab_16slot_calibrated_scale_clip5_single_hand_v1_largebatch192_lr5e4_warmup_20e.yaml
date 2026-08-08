@@ -1,0 +1,13 @@
+_base_: sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_largebatch192_20e.yaml
+
+name: cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_largebatch192_lr5e4_warmup_20e
+
+train:
+  # The 3.6e-3 linear-scaled LR collapsed to the zero-flow solution.
+  # Keep the large batch while using a conservative LR and a short warmup.
+  lr: 5.0e-4
+  warmup_ratio: 0.05
+  description: "Single-hand-dominant v1, global batch 384, calibrated scales, grad clip 5, lr 5e-4 with 5% warmup, 20 epochs."
+
+wandb:
+  tags: [cm, full-grab, slot-16, no-gate, calibrated-scale, geometry-15, grad-clip-5, time-conditioned, ddp-2, single-hand-dominant-v1, filtered, largebatch192, lr5e-4, warmup]

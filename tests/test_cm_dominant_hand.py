@@ -72,6 +72,7 @@ def test_dataset_manifest_fixes_side_frame_stride_and_respects_file_split(tmp_pa
     second = _write_sequence(data_root, "second")
     rows = [
         {"hand_path": "grab/s1/first/left.npz", "current_frame": 0, "stride": 1, "dominant_side": "left"},
+        {"hand_path": "grab/s1/first/left.npz", "current_frame": 0, "stride": 3, "dominant_side": "left"},
         {"hand_path": "grab/s1/first/right.npz", "current_frame": 1, "stride": 5, "dominant_side": "right"},
         {"hand_path": "grab/s1/second/left.npz", "current_frame": 2, "stride": 1, "dominant_side": "left"},
     ]
@@ -87,7 +88,8 @@ def test_dataset_manifest_fixes_side_frame_stride_and_respects_file_split(tmp_pa
     assert [(path.stem, frame) for path, frame in map(dataset.sample_location, range(2))] == [
         ("left", 0), ("right", 1),
     ]
-    assert [int(dataset[index]["stride"]) for index in range(2)] == [1, 5]
+    assert int(dataset[0]["stride"]) in {1, 3}
+    assert int(dataset[1]["stride"]) == 5
     assert all(path.parent == first for path in dataset.file_paths)
     assert all(path.parent != second for path in dataset.file_paths)
 

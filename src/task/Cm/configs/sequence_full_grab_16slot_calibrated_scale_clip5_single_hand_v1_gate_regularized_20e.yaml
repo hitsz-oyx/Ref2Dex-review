@@ -1,0 +1,18 @@
+_base_: sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e.yaml
+
+name: cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e
+
+meta:
+  use_slot_gate: true
+  # Penalize surplus active slots while ensuring at least one slot crosses the
+  # hard routing threshold. These are the established hard-gate weights.
+  loss_slot_count_weight: 1.0e-3
+  loss_slot_confidence_weight: 0.1
+  loss_active_overlap_weight: 0.0
+  slot_threshold: 0.85
+
+train:
+  description: "Single-hand-dominant v1 data with calibrated scales, grad clip 5, and regularized slot gating."
+
+wandb:
+  tags: [cm, full-grab, slot-16, hard-gate, gate-regularized, calibrated-scale, geometry-15, grad-clip-5, time-conditioned, ddp-2, single-hand-dominant-v1, filtered]
