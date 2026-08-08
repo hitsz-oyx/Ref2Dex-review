@@ -1,0 +1,21 @@
+_base_: src.task.InteractionDynamics.config:Config
+
+data:
+  root: data/processed_data/interaction_dynamics_v1/data/grab
+  train_path: data/processed_data/interaction_dynamics_v1/data/grab
+  dominant_hand_manifest: data/processed_data/interaction_dynamics_v1/dominant_hand.jsonl
+  batch_size: 8
+  num_workers: 8
+  shuffle: true
+
+train:
+  seed: 42
+  epochs: 30
+  optimizer: adamw
+  lr: 0.0001
+  uni3d_lr: 0.00001
+  weight_decay: 0.05
+  scheduler: null
+  grad_clip_norm: 1.0
+  amp: true
+  amp_dtype: bfloat16
