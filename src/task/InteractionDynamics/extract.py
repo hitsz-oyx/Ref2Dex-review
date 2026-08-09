@@ -15,6 +15,7 @@ from src.task.InteractionDynamics.runner import InteractionDynamicsRunner
 
 PREDICTION_FIELDS = (
     "action_tokens", "action_context_tokens", "interaction_tokens",
+    "pred_hand_patch_disp_internal", "pred_obj_patch_disp_internal",
     "pred_obj_disp_chunk", "action_to_world_attention",
     "object_to_action_attention", "effect_to_interaction_attention",
 )

@@ -57,6 +57,8 @@ class Config(TaskConfig):
         weight_decay = 0.05
         scheduler = None
         grad_clip_norm = 1.0
+        action_loss_weight = 1.0
+        patch_effect_loss_weight = 1.0
         amp = True
         amp_dtype = "bfloat16"
         metric_for_best = "val/object/ade_mm"

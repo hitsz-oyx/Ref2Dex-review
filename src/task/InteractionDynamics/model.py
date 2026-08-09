@@ -119,6 +119,8 @@ class InteractionDynamicsModel(nn.Module):
         self.action_world = nn.ModuleList(
             [CrossAttentionBlock(meta.model_dim, meta.attention_heads) for _ in range(meta.action_world_layers)])
         self.canonicalizer = CrossAttentionBlock(meta.model_dim, meta.attention_heads)
+        self.action_reconstruction = nn.Linear(meta.model_dim, meta.chunk_len * 3)
+        self.patch_effect = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.effect = EffectDecoder(meta.model_dim, meta.attention_heads, meta.chunk_len, dense_dim)
 
     def train(self, mode: bool = True):
@@ -193,9 +195,16 @@ class InteractionDynamicsModel(nn.Module):
         # No object residual: object tokens only locate canonical interaction queries.
         interaction, object_attention = self.canonicalizer(world["world_obj_tokens"], action_context, residual=False)
         interaction = nn.functional.layer_norm(interaction, (interaction.shape[-1],))
+        batch_size = interaction.shape[0]
+        pred_hand_patch_disp_internal = self.action_reconstruction(action_context).reshape(
+            batch_size, -1, self.effect.time_embed.shape[1], 3).transpose(1, 2)
+        pred_obj_patch_disp_internal = self.patch_effect(interaction).reshape(
+            batch_size, -1, self.effect.time_embed.shape[1], 3).transpose(1, 2)
         effect = self.effect(effect_obj_points_object, effect_obj_normals_object, z_obj,
                              interaction, effect_obj_valid_mask, self.motion_scale)
         return {**world, **action, **effect, "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,
+                "pred_hand_patch_disp_internal": pred_hand_patch_disp_internal,
+                "pred_obj_patch_disp_internal": pred_obj_patch_disp_internal,
                 "action_to_world_attention": action_attention,
                 "object_to_action_attention": object_attention}

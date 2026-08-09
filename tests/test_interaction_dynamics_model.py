@@ -42,6 +42,8 @@ def test_forward_backward_without_future_object_input():
     assert output["action_tokens"].shape == (batch, 4, 48)
     assert output["interaction_tokens"].shape == (batch, 4, 48)
     assert output["pred_obj_disp_chunk"].shape == (batch, 8, effect_count, 3)
+    assert output["pred_hand_patch_disp_internal"].shape == (batch, 8, 4, 3)
+    assert output["pred_obj_patch_disp_internal"].shape == (batch, 8, 4, 3)
     output["pred_obj_disp_internal"].square().mean().backward()
     assert model.action.spatial[0].weight.grad is not None
     assert model.canonicalizer.attn.in_proj_weight.grad is not None

@@ -41,6 +41,7 @@ assets/
 !/third_party/PointTransformerV3/**
 !/third_party/PointTransformerV3/assets/
 !/third_party/PointTransformerV3/assets/**
+# 研究/训练产物：output/exp 为训练输出，output/research 为分析诊断产物，均不入库。
 outputs/*
 output/*
 docs/修改指导.md

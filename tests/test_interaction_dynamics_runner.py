@@ -1,6 +1,6 @@
 import torch
 
-from src.task.InteractionDynamics.runner import masked_effect_mse, trajectory_statistics
+from src.task.InteractionDynamics.runner import masked_effect_mse, patch_motion_target, trajectory_statistics
 
 
 def test_internal_centimeter_mse_and_metrics():
@@ -13,3 +13,16 @@ def test_internal_centimeter_mse_and_metrics():
     stats = trajectory_statistics(pred, gt, valid)
     assert torch.allclose(stats["object/ade_mm"], torch.tensor(1.0))
     assert torch.allclose(stats["object/fde_mm"], torch.tensor(1.0))
+
+
+def test_patch_motion_target_uses_stable_patch_indices_and_centimeters():
+    displacement = torch.zeros(1, 2, 4, 3)
+    displacement[:, :, 0, 0] = .01
+    displacement[:, :, 1, 0] = .03
+    displacement[:, :, 2, 1] = .02
+    displacement[:, :, 3, 1] = .04
+    knn = torch.tensor([[[0, 1], [2, 3]]])
+    target = patch_motion_target(displacement, knn)
+    assert target.shape == (1, 2, 2, 3)
+    assert torch.allclose(target[0, :, 0, 0], torch.tensor([2., 2.]))
+    assert torch.allclose(target[0, :, 1, 1], torch.tensor([3., 3.]))

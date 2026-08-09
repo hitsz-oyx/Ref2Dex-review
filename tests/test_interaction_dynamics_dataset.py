@@ -5,10 +5,9 @@ import numpy as np
 from src.task.InteractionDynamics.dataset import InteractionDynamicsDataset
 
 
-def _write_sequence(root: Path) -> Path:
+def _write_sequence(root: Path, t: int = 10) -> Path:
     sequence = root / "s1" / "synthetic"
     sequence.mkdir(parents=True)
-    t = 10
     obj0 = np.zeros((4096, 3), np.float32)
     obj0[:, 0] = np.arange(4096) / 4096
     hand0 = np.zeros((1538, 3), np.float32)
@@ -50,12 +49,15 @@ def test_chunk_shapes_and_correspondence(tmp_path):
 
 
 def test_max_samples_per_sequence_balances_files(tmp_path):
-    first = _write_sequence(tmp_path / "first")
-    second = _write_sequence(tmp_path / "second")
+    first = _write_sequence(tmp_path / "first", t=14)
+    second = _write_sequence(tmp_path / "second", t=14)
     dataset = InteractionDynamicsDataset(
-        tmp_path, file_list=[first, second], max_samples_per_sequence=1,
+        tmp_path, file_list=[first, second], max_samples_per_sequence=3,
     )
-    assert len(dataset) == 2
-    assert {dataset.sample_location(i)[0].parent for i in range(2)} == {
+    assert len(dataset) == 6
+    assert {dataset.sample_location(i)[0].parent for i in range(6)} == {
         first.parent, second.parent,
     }
+    for path in (first, second):
+        currents = [current for hand_path, current in dataset._samples if hand_path == path]
+        assert currents == [0, 2, 5]

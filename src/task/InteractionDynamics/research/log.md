@@ -184,3 +184,85 @@ action_context = mean + 10 × local_residual
 
 **下一步**
 扩充 sequence-disjoint 验证/测试序列后重复同一诊断，区分序列特性与系统性 attention bottleneck。
+
+## 实验：small10 训练强度与均匀时间采样
+
+**假设**
+原 small10 只训练 5 epochs 且每序列取最前 128 个片段，训练不足和时间覆盖偏差共同限制了泛化结论。
+
+**改动**
+先保持旧采样从 5 epochs 续训到总计 20 epochs；再将 `max_samples_per_sequence` 改为在全部合法片段上均匀取样，从头训练相同 20 epochs。
+
+**结果**
+旧采样第 20 轮 train ADE 为 10.87 mm，最佳验证 ADE 为 30.78 mm，最佳 checkpoint 测试 ADE 为 29.31 mm，说明继续训练形成明确 train/val gap。均匀采样把 `toruslarge_lift` 覆盖从前段扩展到 current frame 37–847；最佳验证 ADE 进一步降至 27.62 mm。均匀测试集 zero-flow ADE/FDE 为 45.99/79.83 mm，模型为 46.01/81.19 mm，表明旧测试前段采样明显低估了后段难度。
+
+**决策**
+保留均匀时间采样，并将 small10 默认训练改为 20 epochs。原 5-epoch、前 128 帧结果不能作为稳定泛化结论。
+
+## 实验：post-gain interaction token 干预
+
+**假设**
+即使 `action_local_gain=10` 提高了 token 方差，Effect Decoder 仍可能只使用样本级全局 interaction。
+
+**改动**
+在均匀采样 small10 最佳 checkpoint 上比较 normal、mean-token replacement、token shuffle 和 cross-sample replacement。
+
+**结果**
+验证 ADE 分别为 27.62/27.34/27.62/30.03 mm；测试为 46.01/46.48/46.01/47.17 mm。mean-token 几乎不损失性能，shuffle 与 normal 数值相同，cross-sample 只产生有限退化。
+
+**诊断**
+Decoder 使用样本级 interaction 信息，但没有建立有效的 object-indexed token-level dependency。仅观察 variance/cosine 不足以证明局部表征被使用。
+
+**决策**
+保留 `intervention.py` 作为后续结构验收工具；当前 object-flow supervision 下的 global shortcut 得到直接确认。
+
+## 实验：small20 的 12/4/4 序列泛化
+
+**假设**
+增加验证和测试序列可以区分单条 sequence 特性与系统性泛化问题。
+
+**改动**
+扩展到 20 条 GRAB 序列，使用 sequence-disjoint 12/4/4 划分和均匀时间采样；训练集 1536、验证集 362、测试集 512 个片段，训练 20 epochs。
+
+**结果**
+train ADE 收敛到 14.38 mm。zero-flow 验证/测试 ADE 为 49.05/45.82 mm；最佳 checkpoint 为 46.93/44.80 mm，仅改善 4.3%/2.2%。最佳 checkpoint 的验证/测试 interaction cosine 为 0.9965/0.9987，接近完全 collapse；继续训练后验证 ADE 恶化至 52.61 mm。
+
+**决策**
+结论明确：训练可以收敛，但现有结构对未见 sequence 的提升很弱，并存在系统性 global-token shortcut。下一步应修改 canonicalization 或 supervision，而不是继续单纯增加 epoch。
+
+## 实验：Uni3D 联合单位球输入
+
+**假设**
+pretrained Uni3D 的单位球坐标分布与当前米制输入不一致，可能导致多序列泛化弱。
+
+**改动**
+仅对送入 Uni3D backbone 的 hand+object 联合副本使用共享中心和尺度归一化，其余 action、contact 和 effect 几何保持米制；在 small20 上训练 5 epochs。
+
+**结果**
+单位球版本最佳验证 ADE 为 49.47 mm；原始米制版本相同早期阶段最佳为 46.93 mm。interaction cosine 仍约 0.99。
+
+**决策**
+撤回。坐标分布 shift 不是当前主要瓶颈，下一实验转向 canonicalization / action-preserve supervision。
+
+## 实验：V3 hand/object patch 直接监督
+
+**假设**
+参考 Fast-WAM 的逐 token 直接目标，在 `action_context_tokens` 上重建 hand patch motion、在 `interaction_tokens` 上重建 object patch effect，可以约束中间表征并让 Effect Decoder 使用 object-indexed 局部信息。
+
+**观察到的失败 / 现象**
+small20 仅使用 dense effect loss 时，最佳验证/测试 improvement 很弱，interaction cosine 为 0.9965/0.9987，mean 与 shuffle intervention 几乎不改变预测。
+
+**改动**
+增加两个线性 head，分别预测 `[8,64,3]` 的 hand/object patch 平均位移；Runner 使用 Uni3D 的稳定 KNN index pooling GT，三项厘米制 MSE 权重均为 1。完整 future object displacement 只作为 Runner target，不进入模型 forward。
+
+**结果**
+真实 batch 的初始 effect/action/patch-effect loss 为 19.02/20.60/19.65，量级相当且一步更新成功。small20 训练 5 epochs 后最佳 checkpoint 位于 step 384，验证 ADE 为 48.82 mm，弱于原 baseline 的 46.93 mm；验证 interaction cosine 仍接近 1。最佳 checkpoint 的 normal/mean/shuffle/cross-sample ADE 为 48.82/48.81/48.82/49.09 mm。
+
+**诊断**
+两个辅助 head 能优化，但它们是主 Effect Decoder 之外的旁路；模型仍可让 patch head拟合以全局刚体运动为主的平均 target，同时让 dense decoder 继续忽略局部 token。直接监督存在不等于主预测路径建立了局部依赖。
+
+**决策**
+保留 V3 三层监督实现作为明确对照，但该实验未通过局部表征验收，不扩大训练规模，也不调辅助 loss 权重。
+
+**下一步**
+最小化地把 object-patch prediction 与 dense effect prediction 结构性耦合，再用同一 small20 与 intervention 验收。

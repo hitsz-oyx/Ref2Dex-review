@@ -4,7 +4,7 @@ data:
   root: data/processed_data/interaction_dynamics_v1/data/grab
   train_path: data/processed_data/interaction_dynamics_v1/data/grab
   dominant_hand_manifest: data/processed_data/interaction_dynamics_v1/dominant_hand.jsonl
-  split_json_path: data/processed_data/interaction_dynamics_v1/splits/small10/split.json
+  split_json_path: data/processed_data/interaction_dynamics_v1/splits/small20/split.json
   max_samples_per_sequence: 128
   min_object_effect_norm: 0.0001
   batch_size: 8
@@ -21,6 +21,8 @@ train:
   weight_decay: 0.05
   scheduler: null
   grad_clip_norm: 1.0
+  action_loss_weight: 1.0
+  patch_effect_loss_weight: 1.0
   amp: true
   amp_dtype: bfloat16
   log_every_steps: 20

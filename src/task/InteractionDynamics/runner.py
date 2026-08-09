@@ -11,6 +11,7 @@ from src.base.checkpoint import unwrap_model
 from src.task.InteractionDynamics.dataset import (
     InteractionDynamicsDataset, ensure_sequence_disjoint, sequence_group_key,
 )
+from src.task.InteractionDynamics.uni3d import gather_points
 
 
 def masked_effect_mse(pred_m: torch.Tensor, gt_m: torch.Tensor, valid: torch.Tensor,
@@ -19,6 +20,13 @@ def masked_effect_mse(pred_m: torch.Tensor, gt_m: torch.Tensor, valid: torch.Ten
     if not mask.any():
         raise RuntimeError("InteractionDynamics batch has no valid effect points")
     return ((pred_m - gt_m) * motion_scale).square()[mask].mean()
+
+
+def patch_motion_target(displacement_m: torch.Tensor, knn_idx: torch.Tensor,
+                        motion_scale: float = 100.0) -> torch.Tensor:
+    """Pool stable-index point trajectories into patch trajectories, in internal cm units."""
+    return torch.stack([gather_points(displacement_m[:, step], knn_idx).mean(2)
+                        for step in range(displacement_m.shape[1])], 1) * motion_scale
 
 
 def trajectory_statistics(pred_m: torch.Tensor, gt_m: torch.Tensor,
@@ -86,8 +94,21 @@ class InteractionDynamicsRunner(BaseRunner):
         valid = batch["effect_obj_valid_mask"].bool()
         gt = batch["effect_obj_disp_gt"].float()
         pred = prediction["pred_obj_disp_chunk"].float()
-        loss = masked_effect_mse(pred, gt, valid, float(self.cfg.meta.motion_scale))
-        metrics: dict[str, Any] = {"loss": loss}
+        scale = float(self.cfg.meta.motion_scale)
+        effect_loss = masked_effect_mse(pred, gt, valid, scale)
+        action_target = patch_motion_target(batch["hand_disp_chunk"].float(),
+                                            prediction["hand_knn_idx"], scale)
+        patch_effect_target = patch_motion_target(batch["obj_disp_chunk_gt"].float(),
+                                                  prediction["obj_knn_idx"], scale)
+        action_loss = torch.nn.functional.mse_loss(
+            prediction["pred_hand_patch_disp_internal"].float(), action_target)
+        patch_effect_loss = torch.nn.functional.mse_loss(
+            prediction["pred_obj_patch_disp_internal"].float(), patch_effect_target)
+        loss = (effect_loss + float(self.cfg.train.action_loss_weight) * action_loss
+                + float(self.cfg.train.patch_effect_loss_weight) * patch_effect_loss)
+        metrics: dict[str, Any] = {"loss": loss, "loss/effect": effect_loss,
+                                  "loss/action": action_loss,
+                                  "loss/patch_effect": patch_effect_loss}
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(collapse_statistics(prediction["interaction_tokens"],
                                            prediction["object_to_action_attention"]))

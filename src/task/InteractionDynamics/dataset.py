@@ -108,15 +108,18 @@ class InteractionDynamicsDataset(Dataset):
                     self._samples.append((hand_path, current))
         self._samples.sort(key=lambda item: (str(item[0]), item[1]))
         if max_samples_per_sequence is not None:
-            limited: list[tuple[Path, int]] = []
-            sequence_counts: dict[Path, int] = {}
+            by_sequence: dict[Path, list[tuple[Path, int]]] = {}
             for sample in self._samples:
-                sequence = sample[0].parent.resolve()
-                count = sequence_counts.get(sequence, 0)
-                if count < int(max_samples_per_sequence):
-                    limited.append(sample)
-                    sequence_counts[sequence] = count + 1
-            self._samples = limited
+                by_sequence.setdefault(sample[0].parent.resolve(), []).append(sample)
+            limited: list[tuple[Path, int]] = []
+            limit = int(max_samples_per_sequence)
+            for sequence_samples in by_sequence.values():
+                sequence_samples.sort(key=lambda item: (item[1], str(item[0])))
+                if len(sequence_samples) > limit:
+                    indices = np.rint(np.linspace(0, len(sequence_samples) - 1, limit)).astype(np.int64)
+                    sequence_samples = [sequence_samples[index] for index in indices]
+                limited.extend(sequence_samples)
+            self._samples = sorted(limited, key=lambda item: (str(item[0]), item[1]))
         if max_samples is not None:
             self._samples = self._samples[:int(max_samples)]
         self._cache_path: Path | None = None
@@ -187,6 +190,7 @@ class InteractionDynamicsDataset(Dataset):
         effect_obj = world_obj[safe]
         effect_normals = transform_normals(data["obj_normals_world"][current, safe], obj_pose)
         effect_disp = obj_future[:, safe] - effect_obj[None]
+        obj_disp = obj_future - world_obj[None]
         dense_normals = transform_normals(data["obj_normals_world"][current, safe], hand_pose)
         dense_obj[~valid] = dense_normals[~valid] = effect_obj[~valid] = effect_normals[~valid] = 0
         effect_disp[:, ~valid] = 0
@@ -206,6 +210,9 @@ class InteractionDynamicsDataset(Dataset):
             "effect_obj_points_object": effect_obj,
             "effect_obj_normals_object": effect_normals,
             "effect_obj_disp_gt": effect_disp,
+            # Full stable-index object target is used only by Runner-side patch
+            # supervision; it is deliberately absent from model.forward inputs.
+            "obj_disp_chunk_gt": obj_disp,
             "effect_obj_valid_mask": valid,
             "effect_obj_idx": selected.astype(np.int64),
         }
