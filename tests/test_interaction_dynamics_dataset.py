@@ -47,3 +47,15 @@ def test_chunk_shapes_and_correspondence(tmp_path):
     np.testing.assert_allclose(sample["hand_disp_chunk"][7, :, 0], .016, atol=1e-7)
     np.testing.assert_allclose(sample["effect_obj_disp_gt"][7, :, 1], .008, atol=1e-7)
     assert sample["future_raw_frame_ids"].tolist() == list(range(4, 36, 4))
+
+
+def test_max_samples_per_sequence_balances_files(tmp_path):
+    first = _write_sequence(tmp_path / "first")
+    second = _write_sequence(tmp_path / "second")
+    dataset = InteractionDynamicsDataset(
+        tmp_path, file_list=[first, second], max_samples_per_sequence=1,
+    )
+    assert len(dataset) == 2
+    assert {dataset.sample_location(i)[0].parent for i in range(2)} == {
+        first.parent, second.parent,
+    }

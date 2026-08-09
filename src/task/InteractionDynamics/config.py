@@ -42,6 +42,7 @@ class Config(TaskConfig):
         group_val_by_sequence = True
         max_train_samples = None
         max_val_samples = None
+        max_samples_per_sequence = None
         min_object_effect_norm = 0.0
         batch_size = 8
         num_workers = 8
@@ -58,7 +59,7 @@ class Config(TaskConfig):
         grad_clip_norm = 1.0
         amp = True
         amp_dtype = "bfloat16"
-        metric_for_best = "val/object_ade_mm"
+        metric_for_best = "val/object/ade_mm"
         lower_is_better = True
 
     class wandb(TaskConfig.wandb):

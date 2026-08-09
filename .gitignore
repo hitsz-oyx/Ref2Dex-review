@@ -42,6 +42,7 @@ assets/
 !/third_party/PointTransformerV3/assets/
 !/third_party/PointTransformerV3/assets/**
 outputs/*
+output/*
 docs/修改指导.md
 docs/代码.py
 tmp/**

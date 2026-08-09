@@ -49,7 +49,8 @@ class InteractionDynamicsRunner(BaseRunner):
         common = {"dominant_hand_manifest": data_cfg.dominant_hand_manifest,
                   "num_effect_points": self.cfg.meta.num_effect_points,
                   "chunk_len": self.cfg.meta.chunk_len,
-                  "temporal_stride": self.cfg.meta.temporal_stride, "base_seed": seed}
+                  "temporal_stride": self.cfg.meta.temporal_stride, "base_seed": seed,
+                  "max_samples_per_sequence": getattr(data_cfg, "max_samples_per_sequence", None)}
         loaders = make_file_split_dataloaders(
             data_cfg, seed, dataset_cls=InteractionDynamicsDataset, file_pattern="**/*.npz",
             train_dataset_kwargs={**common,
