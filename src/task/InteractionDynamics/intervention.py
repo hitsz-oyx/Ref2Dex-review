@@ -24,7 +24,8 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
     prefix = f"{split}/"
     loaders = runner.val_loaders if split == "val" else runner.test_loaders
     loader = loaders[prefix]
-    effect = unwrap_model(runner.model).effect
+    model = unwrap_model(runner.model)
+    effect = model.effect
     results: dict[str, dict[str, float]] = {}
 
     for mode in ("normal", "mean", "shuffle", "cross_sample"):
@@ -42,6 +43,9 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
                         raise RuntimeError("cross_sample intervention requires batch_size >= 2")
                     tokens = tokens.roll(1, 0)
                 values[3] = tokens
+                batch, patches, _ = tokens.shape
+                values[5] = model.patch_effect(tokens).reshape(
+                    batch, patches, model.effect.time_embed.shape[1], 3).transpose(1, 2)
                 return tuple(values)
             handle = effect.register_forward_pre_hook(intervene)
         metrics = runner.evaluate_loader(loader, prefix=prefix)

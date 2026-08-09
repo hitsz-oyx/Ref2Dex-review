@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 
-from src.task.InteractionDynamics.model import InteractionDynamicsModel
+from src.task.InteractionDynamics.model import EffectDecoder, InteractionDynamicsModel
 
 
 class FakeDense(nn.Module):
@@ -44,6 +44,7 @@ def test_forward_backward_without_future_object_input():
     assert output["pred_obj_disp_chunk"].shape == (batch, 8, effect_count, 3)
     assert output["pred_hand_patch_disp_internal"].shape == (batch, 8, 4, 3)
     assert output["pred_obj_patch_disp_internal"].shape == (batch, 8, 4, 3)
+    assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()
     assert model.action.spatial[0].weight.grad is not None
     assert model.canonicalizer.attn.in_proj_weight.grad is not None
@@ -51,3 +52,21 @@ def test_forward_backward_without_future_object_input():
     assert model.world.patch_encoder.local[0].weight.grad is not None
     assert not any(parameter.requires_grad for parameter in model.dense_encoder.parameters())
     assert not any(key.startswith("dense_encoder.") for key in model.state_dict())
+
+
+def test_effect_decoder_routes_patch_motion_by_nearest_center():
+    decoder = EffectDecoder(dim=12, heads=3, chunk_len=2, dense_dim=4)
+    torch.nn.init.zeros_(decoder.flow[0].weight)
+    torch.nn.init.zeros_(decoder.flow[0].bias)
+    torch.nn.init.zeros_(decoder.flow[2].weight)
+    torch.nn.init.zeros_(decoder.flow[2].bias)
+    points = torch.tensor([[[-.9, 0., 0.], [.8, 0., 0.]]])
+    centers = torch.tensor([[[-1., 0., 0.], [1., 0., 0.]]])
+    patch_motion = torch.tensor([[[[1., 0., 0.], [2., 0., 0.]],
+                                  [[3., 0., 0.], [4., 0., 0.]]]])
+    output = decoder(points, torch.zeros_like(points), torch.empty(1, 2, 4),
+                     torch.zeros(1, 2, 12), centers, patch_motion,
+                     torch.ones(1, 2, dtype=torch.bool), 100.)
+    assert torch.equal(output["effect_patch_index"], torch.tensor([[0, 1]]))
+    assert torch.allclose(output["pred_obj_disp_internal"][0, :, :, 0],
+                          torch.tensor([[1., 2.], [3., 4.]]))

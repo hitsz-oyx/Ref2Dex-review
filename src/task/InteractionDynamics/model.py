@@ -74,26 +74,38 @@ class ActionEncoder(nn.Module):
 class EffectDecoder(nn.Module):
     def __init__(self, dim: int, heads: int, chunk_len: int, dense_dim: int) -> None:
         super().__init__()
-        self.query = nn.Sequential(nn.Linear(6 + dense_dim, dim), nn.GELU(), nn.Linear(dim, dim))
+        del heads, dense_dim
         self.time_embed = nn.Parameter(torch.empty(1, chunk_len, 1, dim))
-        self.cross = CrossAttentionBlock(dim, heads)
-        self.flow = nn.Sequential(nn.Linear(dim + 3 + dim, dim), nn.GELU(), nn.Linear(dim, 3))
+        self.flow = nn.Sequential(nn.Linear(dim + 3 + 3 + dim, dim), nn.GELU(), nn.Linear(dim, 3))
         nn.init.normal_(self.time_embed, std=.02)
 
     def forward(self, points: torch.Tensor, normals: torch.Tensor, z_obj: torch.Tensor,
-                interaction: torch.Tensor, valid: torch.Tensor, motion_scale: float) -> dict[str, torch.Tensor]:
-        base = self.query(torch.cat([points, normals, z_obj], -1))
-        temporal = base[:, None] + self.time_embed
-        batch, steps, queries, dim = temporal.shape
-        flat = temporal.reshape(batch, steps * queries, dim)
-        context, attention = self.cross(flat, interaction, residual=False)
-        xyz = points[:, None].expand(-1, steps, -1, -1).reshape(batch, steps * queries, 3)
-        time = self.time_embed.expand(batch, -1, queries, -1).reshape(batch, steps * queries, dim)
-        pred_internal = self.flow(torch.cat([context, xyz, time], -1)).reshape(batch, steps, queries, 3)
+                interaction: torch.Tensor, patch_centers: torch.Tensor,
+                patch_motion_internal: torch.Tensor, valid: torch.Tensor,
+                motion_scale: float) -> dict[str, torch.Tensor]:
+        del z_obj
+        nearest = torch.cdist(points.float(), patch_centers.float()).argmin(-1)
+        batch_index = torch.arange(points.shape[0], device=points.device)[:, None]
+        routed_interaction = interaction[batch_index, nearest]
+        routed_centers = patch_centers[batch_index, nearest]
+        routed_patch_motion = patch_motion_internal[
+            torch.arange(points.shape[0], device=points.device)[:, None, None],
+            torch.arange(patch_motion_internal.shape[1], device=points.device)[None, :, None],
+            nearest[:, None, :],
+        ]
+        steps, queries, dim = patch_motion_internal.shape[1], points.shape[1], interaction.shape[-1]
+        context = routed_interaction[:, None].expand(-1, steps, -1, -1)
+        local_xyz = (points - routed_centers)[:, None].expand(-1, steps, -1, -1)
+        local_normals = normals[:, None].expand(-1, steps, -1, -1)
+        time = self.time_embed[:, :steps].expand(points.shape[0], -1, queries, -1)
+        residual = self.flow(torch.cat([context, local_xyz, local_normals, time], -1))
+        pred_internal = routed_patch_motion + residual
         pred = pred_internal / motion_scale
         pred = pred * valid[:, None, :, None].to(pred.dtype)
+        routing = torch.nn.functional.one_hot(nearest, num_classes=interaction.shape[1]).to(interaction.dtype)
         return {"pred_obj_disp_chunk": pred, "pred_obj_disp_internal": pred_internal,
-                "effect_to_interaction_attention": attention.reshape(batch, attention.shape[1], steps, queries, -1)}
+                "effect_patch_index": nearest,
+                "effect_to_interaction_attention": routing[:, None, None].expand(-1, 1, steps, -1, -1)}
 
 
 class InteractionDynamicsModel(nn.Module):
@@ -201,7 +213,8 @@ class InteractionDynamicsModel(nn.Module):
         pred_obj_patch_disp_internal = self.patch_effect(interaction).reshape(
             batch_size, -1, self.effect.time_embed.shape[1], 3).transpose(1, 2)
         effect = self.effect(effect_obj_points_object, effect_obj_normals_object, z_obj,
-                             interaction, effect_obj_valid_mask, self.motion_scale)
+                             interaction, world["obj_patch_centers_object"],
+                             pred_obj_patch_disp_internal, effect_obj_valid_mask, self.motion_scale)
         return {**world, **action, **effect, "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,
                 "pred_hand_patch_disp_internal": pred_hand_patch_disp_internal,

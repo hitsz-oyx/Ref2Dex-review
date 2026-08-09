@@ -266,3 +266,46 @@ small20 仅使用 dense effect loss 时，最佳验证/测试 improvement 很弱
 
 **下一步**
 最小化地把 object-patch prediction 与 dense effect prediction 结构性耦合，再用同一 small20 与 intervention 验收。
+
+## 实验：V4 patch-routed Effect Decoder
+
+**假设**
+把 `interaction token → patch motion` 串入 dense effect 主链，并让每个 effect point 只读取最近 object patch 的 token，可以消除全局 attention 与 absolute xyz 的刚体捷径，使 shuffle interaction tokens 显著破坏预测。
+
+**改动**
+移除 Effect Decoder 的全局 cross-attention。effect point 根据当前 object-frame 坐标硬路由到最近 Uni3D object patch；预测为对应 patch motion 加局部 residual，residual 仅输入对应 `C_j`、point-to-patch 相对坐标、normal 和时间编码。干预工具同步重算被干预 token 的 patch motion，避免保留原始旁路结果。
+
+**结果**
+真实 batch forward/backward 和 5-epoch small20 训练均成功。最佳 checkpoint 位于 step 384。验证 ADE 为 49.45 mm，测试 ADE 为 42.94 mm；旧仅 effect baseline 为 46.93/44.80 mm，表现一升一降。验证 normal/mean/shuffle/cross-sample ADE 为 49.45/49.40/49.42/49.76 mm，shuffle 相对 normal 变化 -0.05%；测试为 42.94/42.93/42.95/43.74 mm，shuffle 相对变化 +0.03%。两者均远低于预设 +10% 验收线。
+
+**诊断**
+局部路由本身已经进入主链，但上游 interaction cosine 仍接近 1；当所有 `C_j` 和 patch-motion prediction 近似相同时，硬路由仍等价于读取全局刚体状态。结构耦合无法单独创造 object effect 中不存在或很弱的局部辨识信号。
+
+**决策**
+保留 V4 实现和负结果作为强结构对照，但判定未通过 object-indexed representation 验收；不继续调辅助 loss 权重或扩大训练。
+
+**下一步**
+重新审视刚体 object effect 是否支持 64-token object-indexed 表示；若继续该表示，需要引入能区分相同 SE(3) 下不同 human mechanism 的目标。
+
+## 实验：canonicalization 定位与 patch target 能量分解
+
+**假设**
+如果 action-context 本身保留局部差异而 canonicalizer 将其抹平，空间局部 canonicalization 可能恢复 object-indexed interaction；同时 patch target 的空间能量占比决定这种表示是否真的受到数据监督。
+
+**观察到的失败 / 现象**
+V4 已将 patch prediction 接入 dense 主链，但 shuffle 仍几乎不影响 ADE。
+
+**改动**
+先导出 V4 最佳 checkpoint 的 16 个验证样本，比较 action-context、interaction 和 attention。随后以 5 cm Gaussian 权重按 object-hand 相对位置聚合 action tokens，训练相同 small20 5 epochs。最后增加 `target_diagnostics.py`，将 hand/object patch motion 分解为跨 patch 均值和 patch-local residual 能量。
+
+**结果**
+原 V4 action-context variance/cosine 为 0.592/0.814，interaction 为 0.000406/0.99959，canonical attention entropy 为 4.044，确认坍缩发生在 canonicalizer。空间 canonicalization 初始验证 interaction variance/cosine 改善到 0.0276/0.9720，但最佳 checkpoint 验证/测试 ADE 为 51.31/43.23 mm；shuffle 相对 normal 仅退化 0.07%/0.85%，仍未通过 10% 验收，结构改动已撤回。target 分解中，验证 hand/object local energy ratio 为 1.16%/1.01%，测试为 1.90%/3.30%；全局共同运动占 96.70–98.99%。
+
+**诊断**
+原 canonicalizer 的确会平均 action token，但这不是唯一根因。GRAB 刚体 patch motion target 的绝大多数能量本来就在全局共同分量，raw patch MSE 自然鼓励 64 个 token 给出相同预测。人为制造 token 差异不能让 decoder 使用数据中缺乏辨识力的局部信息。
+
+**决策**
+撤回 spatial canonicalization，保留 target 诊断工具。停止继续调 canonicalizer、loss 权重或 diversity 正则。
+
+**下一步**
+将表示拆分为全局 object motion/SE(3) 与 hand-patch mechanism；object-patch 表示只在有 local residual/contact 等信息性目标时使用。
