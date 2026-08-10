@@ -603,3 +603,20 @@ V12 的 object effect 仍先对 64 个 ActionToken 取全局均值。V13 首版�
 
 **下一步**
 导出并检查两级 attention 的空间分布；设计不会被 object/slot 集合池化抵消的局部 effect 读取方式，再以相同四组 intervention 验收。
+
+## 实验：V14 pretrained Action → World → Cm
+
+**假设**
+独立预训练的 Pose/ActionToken 在逐 timestep query 当前 WorldToken 后，其输出本身即可作为 Cm 并预测 object SE(3)；破坏 detailed articulation tokens 应使物体预测明显恶化。
+
+**改动**
+Dataset 直接从 cache 的 canonical hand surface 构建独立 `64×32` action atlas，并限制右手样本。新增独立 `PretrainedTokenInteractionModel`：冻结 `pose_encoder_v2_morph.pt` 和 `action_encoder_v1_diagnostic.pt`，把 1 个 12D root SE(3) 投影 token 与 64 个 articulation ActionTokens 拼接；加入当前 object-frame patch 位置后逐 timestep query WorldToken，所得 `[B,8,65,384]` 直接作为 Cm。Effect Query 只读取 Cm 并预测增量 object SE(3)。Runner 使用独立 V14 loss/metrics 分支。
+
+**结果**
+运行 `outputs/interactiondynamics/interaction_dynamics_20260810_222251`。32 chunks、100 epochs / 800 steps，耗时 1:55；最终 train ADE/FDE 为 `1.0145/1.3907 mm`，SE(3) translation RMSE `0.02672 cm`、rotation error `0.4576°`，controlled-overfit 拟合验收通过。latest checkpoint 在 eval 模式下 normal ADE/FDE 为 `1.586/2.618 mm`；root-zero 为 `11.721/19.517 mm`；articulation-zero 为 `1.588/2.624 mm`；articulation-mean 为 `1.586/2.618 mm`；articulation-shuffle 为 `1.586/2.618 mm`；cross-sample 为 `2.796/4.756 mm`。
+
+**诊断**
+模型容量、SE(3) compose 和 Cm→Effect 路径均可拟合，cross-sample 也确认输出依赖当前动作。然而 root-zero 造成约 10.1 mm ADE 退化，而三种 articulation 干预变化不超过 0.003 mm，说明模型几乎完全依赖 RootToken；64 个 detailed pretrained ActionTokens 的内容和局部 identity 没有被 Effect 使用。仅有拟合结果不足以声称 detailed interaction dynamics 成立。
+
+**决策**
+保留 V14 最小实现和 intervention 工具，但判定核心科学验收未通过。按指导不运行 small20、不解冻 ActionEncoder、不增加 slots。下一步若继续，应先对 A→W 与 Effect Query 做 root/articulation 显式分支归因，寻找局部 token 被单 query 汇聚抵消的位置。

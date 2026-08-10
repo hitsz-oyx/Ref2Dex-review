@@ -253,6 +253,7 @@ def field_statistics(field: torch.Tensor, descriptor: torch.Tensor,
 class InteractionDynamicsRunner(BaseRunner):
     def make_dataloaders(self, data_cfg: Any, seed: int):
         common = {"dominant_hand_manifest": data_cfg.dominant_hand_manifest,
+                  "hand_side": getattr(data_cfg, "hand_side", None),
                   "num_effect_points": self.cfg.meta.num_effect_points,
                   "chunk_len": self.cfg.meta.chunk_len,
                   "temporal_stride": self.cfg.meta.temporal_stride, "base_seed": seed,
@@ -269,6 +270,8 @@ class InteractionDynamicsRunner(BaseRunner):
         ensure_sequence_disjoint(train.dataset.file_paths,
             [] if val is None else val.dataset.file_paths, [] if test is None else test.dataset.file_paths)
         val_loaders = {} if val is None else {"val/": val}
+        if bool(getattr(data_cfg, "intervention_on_train", False)):
+            val_loaders["train/"] = train
         test_loaders = {} if test is None else {"test/": test}
         return train, val, test, metadata, val_loaders, test_loaders
 
@@ -293,6 +296,8 @@ class InteractionDynamicsRunner(BaseRunner):
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
         del mode
         prediction = model(batch)
+        if "cm_tokens" in prediction:
+            return self._step_v14(prediction, batch)
         if "pred_dense_relative_motion_internal" in prediction:
             target, hand_baseline = dense_relative_motion_target(batch, prediction)
             radius_cm = float(self.cfg.train.relative_edge_radius_cm)
@@ -413,4 +418,37 @@ class InteractionDynamicsRunner(BaseRunner):
         off_diagonal = ~torch.eye(edge.shape[1], dtype=torch.bool, device=edge.device)
         metrics["relative/feature_variance"] = edge_centered.square().mean()
         metrics["relative/pairwise_cosine"] = edge_similarity[:, off_diagonal].mean()
+        return RunnerOutput(loss=loss, metrics=metrics, batch_size=pred.shape[0])
+
+    def _step_v14(self, prediction: dict[str, torch.Tensor],
+                  batch: dict[str, torch.Tensor]) -> RunnerOutput:
+        valid = batch["effect_obj_valid_mask"].bool()
+        gt = batch["effect_obj_disp_gt"].float()
+        pred = prediction["pred_obj_disp_chunk"].float()
+        scale = float(self.cfg.meta.motion_scale)
+        translation_loss, rotation_loss, se3_metrics = se3_statistics_and_loss(
+            prediction, batch["obj_increment_pose_gt"], scale)
+        loss = (float(self.cfg.train.se3_translation_loss_weight) * translation_loss
+                + float(self.cfg.train.se3_rotation_loss_weight) * rotation_loss)
+        cm = prediction["cm_tokens"].float()
+        spatial = cm - cm.mean(2, keepdim=True)
+        temporal = cm - cm.mean(1, keepdim=True)
+        normalized = torch.nn.functional.normalize(cm, dim=-1)
+        similarity = normalized @ normalized.transpose(-1, -2)
+        off = ~torch.eye(cm.shape[2], dtype=torch.bool, device=cm.device)
+        action_probability = prediction["action_to_world_attention"].float().mean(2).clamp_min(1e-8)
+        effect_probability = prediction["effect_to_cm_attention"].float().mean(2).clamp_min(1e-8)
+        metrics: dict[str, torch.Tensor] = {
+            "loss": loss,
+            "loss/se3_translation": translation_loss,
+            "loss/se3_rotation": rotation_loss,
+            "cm/spatial_variance": spatial.square().mean(),
+            "cm/temporal_variance": temporal.square().mean(),
+            "cm/pairwise_cosine": similarity[..., off].mean(),
+            "cm/l2_norm": cm.norm(dim=-1).mean(),
+            "cm/action_to_world_entropy": -(action_probability * action_probability.log()).sum(-1).mean(),
+            "cm/effect_attention_entropy": -(effect_probability * effect_probability.log()).sum(-1).mean(),
+        }
+        metrics.update(trajectory_statistics(pred, gt, valid))
+        metrics.update(se3_metrics)
         return RunnerOutput(loss=loss, metrics=metrics, batch_size=pred.shape[0])

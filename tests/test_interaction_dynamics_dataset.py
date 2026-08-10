@@ -27,6 +27,7 @@ def _write_sequence(root: Path, t: int = 10) -> Path:
         "hand_points_world": np.stack([hand0 + [k * .002, 0, 0] for k in range(t)]).astype(np.float32),
         "hand_normals_world": np.tile([[[0, 0, 1]]], (t, 1538, 1)).astype(np.float32),
         "hand_root_pose_world": np.tile(np.eye(4, dtype=np.float32), (t, 1, 1)),
+        "hand_cano_points": hand0,
         "obj_candidate_mask_5cm": np.ones((t, 4096), bool),
     }
     np.savez(sequence / "shared.npz", **shared)
@@ -45,6 +46,8 @@ def test_chunk_shapes_and_correspondence(tmp_path):
     assert sample["hand_root_increment_pose_gt"].shape == (8, 4, 4)
     assert sample["action_hand_points_local_sequence"].shape == (9, 1538, 3)
     assert sample["action_hand_root_increment_pose"].shape == (8, 4, 4)
+    assert sample["action_hand_cano_points"].shape == (1538, 3)
+    assert sample["action_patch_knn_idx"].shape == (64, 32)
     assert sample["hand_disp_chunk_object_gt"].shape == (8, 1538, 3)
     assert sample["action_hand_disp_chunk_object"].shape == (8, 1538, 3)
     assert sample["obj_normals_chunk_object_gt"].shape == (8, 4096, 3)

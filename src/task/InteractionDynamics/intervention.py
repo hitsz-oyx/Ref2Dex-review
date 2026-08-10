@@ -6,7 +6,7 @@ import json
 
 import torch
 
-from src.base import build_runner_from_checkpoint
+from src.base import build_runner_from_checkpoint, load_config
 from src.base.checkpoint import unwrap_model
 from src.task.InteractionDynamics.runner import InteractionDynamicsRunner
 
@@ -15,23 +15,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--config", default=None)
-    parser.add_argument("--split", choices=("val", "test"), default="test")
+    parser.add_argument("--split", choices=("train", "val", "test"), default="test")
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
 
 
 def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dict[str, dict[str, float]]:
     prefix = f"{split}/"
-    loaders = runner.val_loaders if split == "val" else runner.test_loaders
-    loader = loaders[prefix]
+    if split == "train":
+        loader = runner.train_loader
+    else:
+        loaders = runner.val_loaders if split == "val" else runner.test_loaders
+        loader = loaders[prefix]
     model = unwrap_model(runner.model)
     effect = model.effect
     results: dict[str, dict[str, float]] = {}
 
-    for mode in ("normal", "mean", "shuffle", "cross_sample"):
+    is_v14 = hasattr(model, "action_adapter") and hasattr(model, "action_intervention_mode")
+    modes = (("normal", "root_zero", "articulation_zero", "articulation_mean",
+              "articulation_shuffle", "cross_sample") if is_v14
+             else ("normal", "mean", "shuffle", "cross_sample"))
+    for mode in modes:
         handle = None
-        uses_slots = bool(getattr(model, "num_interaction_slots", 0))
-        if uses_slots:
+        uses_model_intervention = is_v14 or bool(getattr(model, "num_interaction_slots", 0))
+        if uses_model_intervention:
             model.action_intervention_mode = mode
         elif mode != "normal":
             def intervene(_module, args, intervention=mode):
@@ -54,7 +61,7 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
         metrics = runner.evaluate_loader(loader, prefix=prefix)
         if handle is not None:
             handle.remove()
-        if uses_slots:
+        if uses_model_intervention:
             model.action_intervention_mode = "normal"
         results[mode] = {
             "ade_mm": metrics[f"{prefix}object/ade_mm"],
@@ -65,8 +72,14 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
 
 def main() -> None:
     args = parse_args()
+    config = args.config
+    if args.split == "train":
+        if config is None:
+            raise ValueError("train intervention requires --config")
+        config = load_config(config)
+        config.data.intervention_on_train = True
     runner = build_runner_from_checkpoint(
-        args.checkpoint, config=args.config, mode="eval", device=args.device,
+        args.checkpoint, config=config, mode="eval", device=args.device,
     )
     if not isinstance(runner, InteractionDynamicsRunner):
         raise ValueError("intervention.py 只支持 InteractionDynamicsRunner checkpoint")

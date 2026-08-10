@@ -10,6 +10,7 @@ import torch
 from torch.utils.data import Dataset
 
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
+from src.task.InteractionDynamics.uni3d import patchify
 
 
 SHARED_SCHEMA_NAME = "ref2dex_interaction_dynamics_shared"
@@ -68,7 +69,7 @@ class InteractionDynamicsDataset(Dataset):
                  dominant_hand_manifest: str | Path | None = None, num_effect_points: int = 512,
                  chunk_len: int = 8, temporal_stride: int = 1, base_seed: int = 42,
                  max_samples: int | None = None, max_samples_per_sequence: int | None = None,
-                 min_object_effect_norm: float = 0.0) -> None:
+                 min_object_effect_norm: float = 0.0, hand_side: str | None = None) -> None:
         if (chunk_len, temporal_stride) != (CHUNK_LEN, TEMPORAL_STRIDE):
             raise ValueError("InteractionDynamics V1 requires chunk_len=8 and temporal_stride=1")
         self.data_root = Path(data_path)
@@ -77,6 +78,10 @@ class InteractionDynamicsDataset(Dataset):
         paths = ([Path(p) for p in file_list] if file_list is not None else
                  sorted(self.data_root.rglob("*.npz")))
         self.file_paths = [p for p in paths if p.name in {"left.npz", "right.npz"}]
+        if hand_side is not None:
+            if hand_side not in {"left", "right"}:
+                raise ValueError(f"Unsupported hand_side: {hand_side}")
+            self.file_paths = [path for path in self.file_paths if path.stem == hand_side]
         selected = None if dominant_hand_manifest is None else _manifest_samples(dominant_hand_manifest, self.data_root)
         if selected is not None:
             self.file_paths = [p for p in self.file_paths if p.resolve() in selected]
@@ -124,6 +129,7 @@ class InteractionDynamicsDataset(Dataset):
             self._samples = self._samples[:int(max_samples)]
         self._cache_path: Path | None = None
         self._cache: dict[str, np.ndarray] | None = None
+        self._action_atlas: dict[str, np.ndarray] = {}
 
     @staticmethod
     def _validate_sequence(shared_path: Path, hand_path: Path, shared: np.lib.npyio.NpzFile,
@@ -191,6 +197,11 @@ class InteractionDynamicsDataset(Dataset):
         object_poses = data["obj_root_pose_world"]
         previous_pose = object_poses[np.concatenate([[current], future[:-1]])]
         object_increment = np.linalg.inv(previous_pose) @ object_poses[future]
+        canonical = np.asarray(data["hand_cano_points"], dtype=np.float32)
+        atlas_key = str(data["side"].item())
+        if atlas_key not in self._action_atlas:
+            _, _, atlas = patchify(torch.from_numpy(canonical)[None], 64, 32)
+            self._action_atlas[atlas_key] = atlas[0].numpy()
 
         raw_frame = int(data["raw_frame_id"][current])
         seed = stable_frame_seed(base_seed=self.base_seed, seq_id=str(data["seq_id"].item()),
@@ -216,6 +227,8 @@ class InteractionDynamicsDataset(Dataset):
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
             "action_hand_points_local_sequence": hand_local.astype(np.float32),
+            "action_hand_cano_points": canonical,
+            "action_patch_knn_idx": self._action_atlas[atlas_key],
             "action_hand_root_increment_pose": hand_root_increment.astype(np.float32),
             "hand_disp_chunk": hand_future - action_hand[None],
             # V12-A targets remove wrist SE(3) before differencing stable MANO vertices.

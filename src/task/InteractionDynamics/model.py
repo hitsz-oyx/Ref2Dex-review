@@ -1,13 +1,17 @@
 """InteractionDynamics V1 model: action chunk -> interaction -> object effect."""
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import torch
 from torch import nn
 
 from src.task.Cm.dense_token import FrozenDenseTokenEncoder
+from src.task.Actiontoken.model import DynamicActionEncoder
 from src.task.InteractionDynamics.uni3d import Uni3DWorldEncoder, gather_points
+from src.task.Posetoken.model import StaticPoseEncoder
 
 
 class CrossAttentionBlock(nn.Module):
@@ -641,3 +645,229 @@ class InteractionDynamicsModel(nn.Module):
                 "pred_obj_patch_disp_internal": pred_obj_patch_disp_internal,
                 "action_to_world_attention": action_attention,
                 "object_to_action_attention": object_attention}
+
+
+class PretrainedActionAdapter(nn.Module):
+    """冻结的 PoseToken/ActionToken 编码器，不读取任何 world 信息。"""
+    def __init__(self, meta: Any) -> None:
+        super().__init__()
+        pose_meta = SimpleNamespace(
+            model_dim=meta.model_dim, global_dim=128, attention_heads=meta.attention_heads,
+            patch_size=meta.patch_size, num_patches=meta.num_hand_patches,
+            num_hand_points=meta.num_hand_points)
+        self.pose_encoder = StaticPoseEncoder(SimpleNamespace(meta=pose_meta))
+        pose_path, action_path = Path(meta.pose_encoder_checkpoint), Path(meta.action_encoder_checkpoint)
+        if not pose_path.is_file() or not action_path.is_file():
+            raise FileNotFoundError(f"V14 pretrained token checkpoint missing: {pose_path}, {action_path}")
+        pose_incompatible = self.pose_encoder.load_state_dict(
+            torch.load(pose_path, map_location="cpu")["pose_encoder"], strict=False)
+        invalid_missing = [key for key in pose_incompatible.missing_keys
+                           if not key.startswith(("local_decoder.", "global_decoder."))]
+        if invalid_missing or pose_incompatible.unexpected_keys:
+            raise RuntimeError(f"PoseEncoder export mismatch: missing={invalid_missing}, "
+                               f"unexpected={pose_incompatible.unexpected_keys}")
+        self.dynamic_action = DynamicActionEncoder(
+            meta.model_dim, 128, meta.attention_heads, meta.action_temporal_layers, meta.patch_size)
+        action_payload = torch.load(action_path, map_location="cpu")
+        action_state = action_payload.get("dynamic_action_encoder")
+        if action_state is None:
+            action_state = {key[len("dynamic."):]: value
+                            for key, value in action_payload.get("model", {}).items()
+                            if key.startswith("dynamic.")}
+        action_incompatible = self.dynamic_action.load_state_dict(action_state, strict=False)
+        invalid_action_missing = [key for key in action_incompatible.missing_keys
+                                  if not key.startswith("flow_decoder.")]
+        if invalid_action_missing or action_incompatible.unexpected_keys:
+            raise RuntimeError(f"ActionEncoder export mismatch: missing={invalid_action_missing}, "
+                               f"unexpected={action_incompatible.unexpected_keys}")
+        self.pose_encoder.requires_grad_(False).eval()
+        self.dynamic_action.requires_grad_(not bool(meta.freeze_action_encoder))
+        if bool(meta.freeze_action_encoder):
+            self.dynamic_action.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.pose_encoder.eval()
+        if not any(parameter.requires_grad for parameter in self.dynamic_action.parameters()):
+            self.dynamic_action.eval()
+        return self
+
+    def forward(self, hand_local_sequence: torch.Tensor, hand_cano_points: torch.Tensor,
+                patch_knn_idx: torch.Tensor) -> torch.Tensor:
+        batch, frames, count, _ = hand_local_sequence.shape
+        pose_batch = {
+            "hand_points_root": hand_local_sequence.reshape(batch * frames, count, 3),
+            "hand_cano_points": hand_cano_points[:, None].expand(-1, frames, -1, -1).reshape(
+                batch * frames, count, 3),
+            "patch_knn_idx": patch_knn_idx[:, None].expand(-1, frames, -1, -1).reshape(
+                batch * frames, *patch_knn_idx.shape[1:]),
+        }
+        with torch.no_grad():
+            pose = self.pose_encoder(pose_batch)
+        local = pose["pose_tokens"].reshape(batch, frames, -1, pose["pose_tokens"].shape[-1])
+        global_pose = pose["global_pose_token"].reshape(batch, frames, -1)
+        if any(parameter.requires_grad for parameter in self.dynamic_action.parameters()):
+            return self.dynamic_action(local, global_pose)["action_tokens"]
+        with torch.no_grad():
+            return self.dynamic_action(local, global_pose)["action_tokens"]
+
+
+class RootActionEncoder(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.encoder = nn.Sequential(nn.Linear(12, 128), nn.GELU(), nn.Linear(128, dim))
+
+    def forward(self, root_increment: torch.Tensor, motion_scale: float) -> torch.Tensor:
+        feature = torch.cat([root_increment[..., :3, 3] * motion_scale,
+                             root_increment[..., :3, :3].flatten(-2)], -1)
+        return self.encoder(feature).unsqueeze(2)
+
+
+class CmEffectHead(nn.Module):
+    def __init__(self, dim: int, heads: int, motion_scale: float) -> None:
+        super().__init__()
+        self.motion_scale = float(motion_scale)
+        self.effect_query = nn.Parameter(torch.randn(1, 1, dim) * .02)
+        self.effect_attention = CrossAttentionBlock(dim, heads)
+        self.twist_head = nn.Sequential(nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, 6))
+        nn.init.zeros_(self.twist_head[-1].weight)
+        nn.init.zeros_(self.twist_head[-1].bias)
+
+    def forward(self, cm: torch.Tensor, points: torch.Tensor) -> dict[str, torch.Tensor]:
+        batch, steps, tokens, dim = cm.shape
+        flat = cm.reshape(batch * steps, tokens, dim)
+        query = self.effect_query.expand(batch * steps, -1, -1)
+        effect, attention = self.effect_attention(query, flat)
+        twist = self.twist_head(effect[:, 0]).reshape(batch, steps, 6)
+        increment_translation = twist[..., :3] / self.motion_scale
+        increment_rotation_vector = twist[..., 3:]
+        increment_rotation = axis_angle_to_matrix(increment_rotation_vector)
+        rotation = torch.eye(3, dtype=points.dtype, device=points.device).expand(batch, 3, 3).clone()
+        translation = torch.zeros(batch, 3, dtype=points.dtype, device=points.device)
+        displacement = []
+        for step in range(steps):
+            translation = translation + torch.einsum(
+                "bij,bj->bi", rotation, increment_translation[:, step])
+            rotation = rotation @ increment_rotation[:, step]
+            future = torch.einsum("bij,bqj->bqi", rotation, points) + translation[:, None]
+            displacement.append(future - points)
+        return {
+            "pred_obj_increment_translation_internal": twist[..., :3],
+            "pred_obj_increment_rotation_vector": increment_rotation_vector,
+            "pred_obj_increment_rotation_matrix": increment_rotation,
+            "pred_obj_disp_chunk": torch.stack(displacement, 1),
+            "effect_to_cm_attention": attention.reshape(batch, steps, *attention.shape[1:]),
+        }
+
+
+class PretrainedTokenInteractionModel(nn.Module):
+    """V14: frozen detailed ActionToken queries current WorldToken; output is Cm."""
+    _FROZEN_PREFIXES = ("dense_encoder.", "action_adapter.pose_encoder.",
+                        "action_adapter.dynamic_action.")
+
+    def __init__(self, cfg: Any, *, dense_encoder: nn.Module | None = None,
+                 load_uni3d: bool = True, world_depth: int = 12) -> None:
+        super().__init__()
+        meta = cfg.meta
+        self.motion_scale = float(meta.motion_scale)
+        self.dense_encoder = dense_encoder or FrozenDenseTokenEncoder(meta.dense_checkpoint)
+        self.dense_encoder.requires_grad_(False).eval()
+        dense_dim = int(self.dense_encoder.token_dim)
+        self.world = Uni3DWorldEncoder(meta.model_dim, meta.num_hand_patches, meta.num_obj_patches,
+                                       meta.patch_size, world_depth, meta.attention_heads)
+        if load_uni3d:
+            self.world.load_pretrained(meta.uni3d_checkpoint)
+        self.world_dense_adapter = nn.Linear(dense_dim + 1, meta.model_dim)
+        self.world_dense_gate = nn.Parameter(torch.tensor(-4.0))
+        self.action_adapter = PretrainedActionAdapter(meta)
+        self.root_action = RootActionEncoder(meta.model_dim)
+        self.root_type_embedding = nn.Parameter(torch.randn(1, 1, 1, meta.model_dim) * .02)
+        self.articulation_type_embedding = nn.Parameter(torch.randn(1, 1, 1, meta.model_dim) * .02)
+        self.action_position = nn.Sequential(
+            nn.Linear(3, meta.model_dim), nn.GELU(), nn.Linear(meta.model_dim, meta.model_dim))
+        self.action_world = nn.ModuleList([
+            CrossAttentionBlock(meta.model_dim, meta.attention_heads)
+            for _ in range(meta.action_world_layers)])
+        self.effect = CmEffectHead(meta.model_dim, meta.attention_heads, self.motion_scale)
+        self.action_intervention_mode = "normal"
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.dense_encoder.eval()
+        self.action_adapter.train(mode)
+        return self
+
+    def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        state = super().state_dict(*args, **kwargs)
+        return {key: value for key, value in state.items()
+                if not any(key.startswith(prefix) for prefix in self._FROZEN_PREFIXES)}
+
+    def load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
+        incompatible = super().load_state_dict(state_dict, strict=False)
+        missing = [key for key in incompatible.missing_keys
+                   if not any(key.startswith(prefix) for prefix in self._FROZEN_PREFIXES)]
+        if strict and (missing or incompatible.unexpected_keys):
+            raise RuntimeError(f"V14 checkpoint mismatch: missing={missing}, "
+                               f"unexpected={incompatible.unexpected_keys}")
+        return incompatible
+
+    def _intervene(self, raw: torch.Tensor) -> torch.Tensor:
+        mode = self.action_intervention_mode
+        if mode == "normal":
+            return raw
+        changed = raw.clone()
+        if mode == "root_zero":
+            changed[:, :, :1] = 0
+        elif mode == "articulation_zero":
+            changed[:, :, 1:] = 0
+        elif mode == "articulation_mean":
+            changed[:, :, 1:] = changed[:, :, 1:].mean(2, keepdim=True)
+        elif mode == "articulation_shuffle":
+            changed[:, :, 1:] = changed[:, :, 1:].roll(17, dims=2)
+        elif mode == "cross_sample":
+            changed = changed.roll(1, dims=0)
+        else:
+            raise ValueError(f"Unsupported V14 action intervention: {mode}")
+        return changed
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        with torch.autocast(device_type=batch["dense_obj_points_hand"].device.type, enabled=False):
+            _, z_hand, contact = self.dense_encoder(
+                obj_points=batch["dense_obj_points_hand"].float(),
+                obj_normals=batch["dense_obj_normals_hand"].float(),
+                hand_points=batch["dense_hand_points_hand"].float(),
+                hand_normals=batch["dense_hand_normals_hand"].float(),
+                obj_valid_mask=batch["effect_obj_valid_mask"])
+        world = self.world(batch["world_hand_points_object"], batch["world_hand_normals_object"],
+                           batch["world_obj_points_object"], batch["world_obj_normals_object"])
+        dense_patch = gather_points(z_hand, world["hand_knn_idx"]).mean(2)
+        contact_patch = gather_points(contact.unsqueeze(-1), world["hand_knn_idx"]).mean(2)
+        world_hand = world["world_hand_tokens"] + self.world_dense_gate.sigmoid() * (
+            self.world_dense_adapter(torch.cat([dense_patch, contact_patch], -1)))
+        world_tokens = torch.cat([world_hand, world["world_obj_tokens"]], 1)
+        articulation = self.action_adapter(
+            batch["action_hand_points_local_sequence"], batch["action_hand_cano_points"],
+            batch["action_patch_knn_idx"])
+        root = self.root_action(batch["action_hand_root_increment_pose"], self.motion_scale)
+        raw = torch.cat([root + self.root_type_embedding,
+                         articulation + self.articulation_type_embedding], 2)
+        raw = self._intervene(raw)
+        action_patch = gather_points(
+            batch["world_hand_points_object"], batch["action_patch_knn_idx"]).mean(2)
+        position = torch.cat([action_patch.mean(1, keepdim=True), action_patch], 1)
+        query = raw + self.action_position(position)[:, None]
+        batch_size, steps, count, dim = query.shape
+        query = query.reshape(batch_size * steps, count, dim)
+        context = world_tokens[:, None].expand(-1, steps, -1, -1).reshape(
+            batch_size * steps, world_tokens.shape[1], dim)
+        attention = None
+        for block in self.action_world:
+            query, attention = block(query, context)
+        cm = query.reshape(batch_size, steps, count, dim)
+        assert attention is not None
+        effect = self.effect(cm, batch["effect_obj_points_object"])
+        valid = batch["effect_obj_valid_mask"][:, None, :, None].to(effect["pred_obj_disp_chunk"].dtype)
+        effect["pred_obj_disp_chunk"] = effect["pred_obj_disp_chunk"] * valid
+        return {"raw_action_tokens": raw, "cm_tokens": cm,
+                "action_to_world_attention": attention.reshape(
+                    batch_size, steps, *attention.shape[1:]), **effect}

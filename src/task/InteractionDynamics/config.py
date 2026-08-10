@@ -43,6 +43,11 @@ class Config(TaskConfig):
         dense_edge_knn = 4
         dense_edge_dim = 64
         dense_edge_sigma_m = 0.02
+        pose_encoder_checkpoint = None
+        action_encoder_checkpoint = None
+        action_encoder_mode = "legacy"
+        freeze_pose_encoder = True
+        freeze_action_encoder = True
 
     class model(TaskConfig.model):
         class_path = "src.task.InteractionDynamics.model.InteractionDynamicsModel"
@@ -56,6 +61,8 @@ class Config(TaskConfig):
         max_val_samples = None
         max_samples_per_sequence = None
         min_object_effect_norm = 0.0
+        hand_side = None
+        intervention_on_train = False
         batch_size = 8
         num_workers = 8
         shuffle = True
@@ -102,11 +109,12 @@ def validate_config(cfg: TaskConfig) -> None:
         "num_obj_world_points": 4096, "num_effect_points": 512,
         "num_hand_patches": 64, "num_obj_patches": 64, "patch_size": 32,
         "model_dim": 384, "attention_heads": 6, "motion_scale": 100.0,
-        "action_local_gain": 10.0,
     }
     changed = {key: (getattr(meta, key), value) for key, value in expected.items()
                if getattr(meta, key) != value}
     if changed:
         raise ValueError(f"InteractionDynamics V1 fixed parameters changed: {changed}")
+    if getattr(meta, "action_encoder_mode", "legacy") == "legacy" and meta.action_local_gain != 10.0:
+        raise ValueError("Legacy InteractionDynamics requires action_local_gain=10")
     if meta.model_dim % meta.attention_heads:
         raise ValueError("model_dim must be divisible by attention_heads")

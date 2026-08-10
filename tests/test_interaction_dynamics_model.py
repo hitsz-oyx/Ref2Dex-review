@@ -4,7 +4,8 @@ import torch
 from torch import nn
 
 from src.task.InteractionDynamics.model import (
-    DenseEdgeInteractionModel, EffectDecoder, InteractionDynamicsModel, SE3DynamicsHead,
+    CmEffectHead, DenseEdgeInteractionModel, EffectDecoder, InteractionDynamicsModel,
+    PretrainedTokenInteractionModel, RootActionEncoder, SE3DynamicsHead,
     InteractionSlotEncoder, PosePairActionEncoder, SpatiotemporalInteractionField,
     axis_angle_to_matrix,
 )
@@ -195,3 +196,29 @@ def test_dense_edge_model_preserves_all_hand_points_and_local_neighbors():
     assert output["dense_interaction_tokens"].shape == (1, 2, 3, 8)
     assert output["pred_dense_relative_motion_internal"].shape == (1, 2, 3, 4)
     assert torch.equal(output["dense_nearest_obj_point"], torch.tensor([[0, 1, 2]]))
+
+
+def test_v14_root_encoder_and_zero_initialized_effect_head_shapes():
+    root = RootActionEncoder(24)
+    pose = torch.eye(4).expand(2, 8, 4, 4).clone()
+    pose[..., :3, 3] = torch.randn(2, 8, 3) * .01
+    assert root(pose, 100.).shape == (2, 8, 1, 24)
+    effect = CmEffectHead(24, 4, 100.)
+    output = effect(torch.randn(2, 8, 65, 24), torch.randn(2, 12, 3))
+    assert output["pred_obj_disp_chunk"].shape == (2, 8, 12, 3)
+    assert output["effect_to_cm_attention"].shape[-2:] == (1, 65)
+    torch.testing.assert_close(output["pred_obj_disp_chunk"],
+                               torch.zeros_like(output["pred_obj_disp_chunk"]))
+
+
+def test_v14_action_interventions_do_not_mix_root_with_articulation():
+    raw = torch.arange(2 * 3 * 65 * 2, dtype=torch.float32).reshape(2, 3, 65, 2)
+    holder = SimpleNamespace(action_intervention_mode="root_zero")
+    changed = PretrainedTokenInteractionModel._intervene(holder, raw)
+    assert not changed[:, :, :1].any()
+    torch.testing.assert_close(changed[:, :, 1:], raw[:, :, 1:])
+    holder.action_intervention_mode = "articulation_mean"
+    changed = PretrainedTokenInteractionModel._intervene(holder, raw)
+    torch.testing.assert_close(changed[:, :, :1], raw[:, :, :1])
+    torch.testing.assert_close(changed[:, :, 1:],
+                               raw[:, :, 1:].mean(2, keepdim=True).expand(-1, -1, 64, -1))
