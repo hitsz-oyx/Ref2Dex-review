@@ -19,8 +19,10 @@ class CrossAttentionBlock(nn.Module):
         self.ffn = nn.Sequential(nn.Linear(dim, dim * 4), nn.GELU(), nn.Linear(dim * 4, dim))
 
     def forward(self, query: torch.Tensor, context: torch.Tensor,
-                *, residual: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+                *, residual: bool = True,
+                attention_bias: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         attended, weights = self.attn(self.q_norm(query), self.kv_norm(context), self.kv_norm(context),
+                                      attn_mask=attention_bias,
                                       need_weights=True, average_attn_weights=False)
         output = query + attended if residual else attended
         output = output + self.ffn(self.ffn_norm(output))
@@ -191,6 +193,65 @@ class SpatiotemporalInteractionField(nn.Module):
                 "hand_to_object_soft_weights": normalized_weights.squeeze(-1)}
 
 
+class InteractionSlotEncoder(nn.Module):
+    """Object-query local action fusion followed by embodiment-agnostic latent slots."""
+    def __init__(self, model_dim: int, field_dim: int, heads: int, slots: int,
+                 slot_heads: int) -> None:
+        super().__init__()
+        self.action_position = nn.Sequential(
+            nn.Linear(3, model_dim), nn.GELU(), nn.Linear(model_dim, model_dim))
+        self.object_position = nn.Sequential(
+            nn.Linear(3, model_dim), nn.GELU(), nn.Linear(model_dim, model_dim))
+        self.object_to_action = CrossAttentionBlock(model_dim, heads)
+        self.interaction_proj = nn.Linear(model_dim, field_dim)
+        self.slot_queries = nn.Parameter(torch.empty(1, slots, field_dim))
+        self.slot_attention = CrossAttentionBlock(field_dim, slot_heads)
+        self.effect_query = nn.Parameter(torch.empty(1, 1, field_dim))
+        self.effect_attention = CrossAttentionBlock(field_dim, slot_heads)
+        nn.init.normal_(self.slot_queries, std=.02)
+        nn.init.normal_(self.effect_query, std=.02)
+
+    def forward(self, action_temporal: torch.Tensor, object_tokens: torch.Tensor,
+                hand_centers_object: torch.Tensor,
+                object_centers_object: torch.Tensor) -> dict[str, torch.Tensor]:
+        batch, steps, _, dim = action_temporal.shape
+        action = action_temporal + self.action_position(hand_centers_object)[:, None]
+        object_query = (object_tokens + self.object_position(object_centers_object))[
+            :, None].expand(-1, steps, -1, -1)
+        spatial_bias = -torch.cdist(object_centers_object.float(),
+                                    hand_centers_object.float()) / .05
+        spatial_bias = spatial_bias[:, None, None].expand(
+            -1, steps, self.object_to_action.attn.num_heads, -1, -1).reshape(
+                batch * steps * self.object_to_action.attn.num_heads,
+                object_tokens.shape[1], action.shape[2])
+        interaction, object_attention = self.object_to_action(
+            object_query.reshape(batch * steps, object_tokens.shape[1], dim),
+            action.reshape(batch * steps, action.shape[2], dim), residual=True,
+            attention_bias=spatial_bias.to(action.dtype))
+        interaction = interaction.reshape(batch, steps, object_tokens.shape[1], dim)
+        interaction_field = self.interaction_proj(interaction)
+        slot_query = self.slot_queries.expand(batch * steps, -1, -1)
+        slots, slot_attention = self.slot_attention(
+            slot_query, interaction_field.reshape(batch * steps, interaction.shape[2], -1),
+            residual=True)
+        slots = slots.reshape(batch, steps, slot_query.shape[1], -1)
+        effect, effect_attention = self.effect_attention(
+            self.effect_query.expand(batch * steps, -1, -1),
+            slots.reshape(batch * steps, slot_query.shape[1], -1), residual=True)
+        effect = effect.reshape(batch, steps, -1)
+        return {
+            "object_action_interaction_tokens_temporal": interaction,
+            "interaction_slots": slots,
+            "interaction_slot_effect": effect,
+            "object_to_local_action_attention": object_attention.reshape(
+                batch, steps, *object_attention.shape[1:]),
+            "slot_to_interaction_attention": slot_attention.reshape(
+                batch, steps, *slot_attention.shape[1:]),
+            "effect_to_slot_attention": effect_attention.reshape(
+                batch, steps, *effect_attention.shape[1:]),
+        }
+
+
 class SE3DynamicsHead(nn.Module):
     def __init__(self, model_dim: int, field_dim: int, motion_scale: float) -> None:
         super().__init__()
@@ -201,8 +262,10 @@ class SE3DynamicsHead(nn.Module):
         nn.init.zeros_(self.head[-1].bias)
 
     def forward(self, field: torch.Tensor, descriptor: torch.Tensor,
-                object_tokens: torch.Tensor, points: torch.Tensor) -> dict[str, torch.Tensor]:
-        global_token = (field + self.object_proj(object_tokens)[:, None]).mean(2)
+                object_tokens: torch.Tensor, points: torch.Tensor,
+                global_field: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+        global_token = ((field.mean(2) if global_field is None else global_field)
+                        + self.object_proj(object_tokens).mean(1)[:, None])
         twist = self.head(torch.cat([global_token, descriptor.mean(2)], -1))
         increment_translation = twist[..., :3] / self.motion_scale
         increment_rotation_vector = twist[..., 3:]
@@ -361,6 +424,12 @@ class InteractionDynamicsModel(nn.Module):
         field_dim = int(getattr(meta, "field_dim", 128))
         self.interaction_field = SpatiotemporalInteractionField(
             meta.model_dim, field_dim, float(getattr(meta, "field_sigma_m", 0.05)))
+        self.num_interaction_slots = int(getattr(meta, "interaction_slots", 0))
+        if self.num_interaction_slots:
+            self.interaction_slot_encoder = InteractionSlotEncoder(
+                meta.model_dim, field_dim, meta.attention_heads,
+                self.num_interaction_slots, int(getattr(meta, "interaction_slot_heads", 8)))
+        self.action_intervention_mode = "normal"
         self.se3_dynamics = SE3DynamicsHead(meta.model_dim, field_dim, self.motion_scale)
         self.interaction_reconstruction = bool(
             getattr(meta, "interaction_reconstruction", False))
@@ -490,7 +559,25 @@ class InteractionDynamicsModel(nn.Module):
             obj_patch_normal_object, hand_patch_disp_object)
         se3_field = field["interaction_field"]
         se3_descriptor = field["interaction_field_descriptor"]
-        if self.field_ablation == "no_descriptor":
+        slot_output = {}
+        if self.num_interaction_slots:
+            slot_action = action["action_tokens_temporal"]
+            if self.action_intervention_mode == "mean":
+                slot_action = slot_action.mean(2, keepdim=True).expand_as(slot_action)
+            elif self.action_intervention_mode == "shuffle":
+                slot_action = slot_action.flip(2)
+            elif self.action_intervention_mode == "cross_sample":
+                if slot_action.shape[0] < 2:
+                    raise RuntimeError("cross_sample intervention requires batch_size >= 2")
+                slot_action = slot_action.roll(1, 0)
+            elif self.action_intervention_mode != "normal":
+                raise ValueError(f"Unsupported action intervention: {self.action_intervention_mode}")
+            slot_output = self.interaction_slot_encoder(
+                slot_action, world["world_obj_tokens"], action["hand_patch_center_object"],
+                world["obj_patch_centers_object"])
+            se3_field = slot_output["interaction_slots"]
+            se3_descriptor = se3_field.new_zeros(*se3_field.shape[:-1], 5)
+        elif self.field_ablation == "no_descriptor":
             se3_descriptor = torch.zeros_like(se3_descriptor)
         elif self.field_ablation == "global_action_only":
             global_action = torch.nn.functional.gelu(
@@ -498,8 +585,9 @@ class InteractionDynamicsModel(nn.Module):
             global_action = self.interaction_field.norm(global_action)
             se3_field = global_action[:, :, None].expand_as(se3_field)
             se3_descriptor = torch.zeros_like(se3_descriptor)
-        se3 = self.se3_dynamics(se3_field, se3_descriptor,
-                                world["world_obj_tokens"], effect_obj_points_object)
+        se3 = self.se3_dynamics(
+            se3_field, se3_descriptor, world["world_obj_tokens"], effect_obj_points_object,
+            global_field=slot_output.get("interaction_slot_effect"))
         global_c = se3_field.mean(2)
         reconstruction = {}
         if self.interaction_reconstruction:
@@ -537,7 +625,7 @@ class InteractionDynamicsModel(nn.Module):
                              pred_obj_patch_disp_internal, effect_obj_valid_mask, self.motion_scale)
         pred_obj_disp = (se3["pred_obj_disp_chunk_se3"] if self.use_v7_field
                          else effect["pred_obj_disp_chunk"])
-        return {**world, **action, **effect, **field, **se3, **reconstruction,
+        return {**world, **action, **effect, **field, **slot_output, **se3, **reconstruction,
                 **action_decomposition,
                 "se3_interaction_field": se3_field,
                 "se3_interaction_field_descriptor": se3_descriptor,

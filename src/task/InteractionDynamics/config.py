@@ -38,6 +38,8 @@ class Config(TaskConfig):
         interaction_reconstruction = False
         action_decomposition_reconstruction = False
         pose_pair_action = False
+        interaction_slots = 0
+        interaction_slot_heads = 8
         dense_edge_knn = 4
         dense_edge_dim = 64
         dense_edge_sigma_m = 0.02

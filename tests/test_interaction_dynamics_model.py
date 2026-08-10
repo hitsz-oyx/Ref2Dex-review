@@ -5,7 +5,8 @@ from torch import nn
 
 from src.task.InteractionDynamics.model import (
     DenseEdgeInteractionModel, EffectDecoder, InteractionDynamicsModel, SE3DynamicsHead,
-    PosePairActionEncoder, SpatiotemporalInteractionField, axis_angle_to_matrix,
+    InteractionSlotEncoder, PosePairActionEncoder, SpatiotemporalInteractionField,
+    axis_angle_to_matrix,
 )
 
 
@@ -112,6 +113,29 @@ def test_pose_pair_encoder_builds_static_and_incremental_tokens():
     assert output["global_pose_code"].shape == (2, 9, 24)
     assert output["action_tokens_temporal"].shape == (2, 8, 4, 24)
     assert output["pred_hand_pose_patch_center_internal"].shape == (2, 9, 4, 3)
+
+
+def test_interaction_slots_preserve_time_and_compress_object_patches():
+    encoder = InteractionSlotEncoder(model_dim=24, field_dim=16, heads=4, slots=3,
+                                     slot_heads=4)
+    output = encoder(torch.randn(2, 8, 4, 24), torch.randn(2, 5, 24),
+                     torch.randn(2, 4, 3), torch.randn(2, 5, 3))
+    assert output["object_action_interaction_tokens_temporal"].shape == (2, 8, 5, 24)
+    assert output["interaction_slots"].shape == (2, 8, 3, 16)
+    assert output["interaction_slot_effect"].shape == (2, 8, 16)
+    assert output["object_to_local_action_attention"].shape[-2:] == (5, 4)
+    assert output["slot_to_interaction_attention"].shape[-2:] == (3, 5)
+
+
+def test_interaction_slots_use_spatially_local_action_prior():
+    encoder = InteractionSlotEncoder(model_dim=8, field_dim=8, heads=2, slots=2,
+                                     slot_heads=2)
+    hand_centers = torch.tensor([[[0., 0., 0.], [1., 0., 0.]]])
+    object_centers = torch.tensor([[[.01, 0., 0.], [.99, 0., 0.]]])
+    output = encoder(torch.zeros(1, 1, 2, 8), torch.zeros(1, 2, 8),
+                     hand_centers, object_centers)
+    attention = output["object_to_local_action_attention"].mean((1, 2))
+    assert attention.argmax(-1).tolist() == [[0, 1]]
 
 
 def test_effect_decoder_routes_patch_motion_by_nearest_center():

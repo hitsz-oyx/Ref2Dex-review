@@ -580,3 +580,26 @@ V12 的主要表示假设成立：相邻 wrist-frame surface motion 能形成跨
 
 **决策**
 保留 V12-B/C 作为新的 ActionEncoder 主候选。下一步不再调整 action reconstruction，而是分开处理两个问题：用 neutral deformation 或 MANO PCA pose 消除 static code 的 morphology；让 interaction/effect 显式消费 local incremental ActionToken，并用 object ADE 与 intervention 验证。
+
+## 实验：V13 Local ActionToken 到 interaction slots
+
+**假设**
+V12 已学到可泛化的局部关节动作；用 object-query cross-attention 建立 object-indexed interaction，再压缩为 8 个 embodiment-independent slots，可以让 object SE(3) 真正依赖 local ActionToken identity。
+
+**观察到的失败 / 现象**
+V12 的 object effect 仍先对 64 个 ActionToken 取全局均值。V13 首版虽然产生 `[B,8,8,128]` slots，但 SE(3) 对 slots 再取均值；small20 test normal/mean/shuffle/cross-sample ADE 为 43.965/43.939/43.964/44.381 mm，mean 和 shuffle 几乎无影响，未通过核心 intervention。
+
+**诊断**
+仅引入 slot 形状不等于 decoder 使用局部结构。首版 object→action 可以退化为集合汇聚，slot→SE(3) 的硬均值又进一步削弱局部配对。需要显式提供 object-hand 空间对应，并移除最终硬均值。
+
+**改动**
+保留 V12 PosePairActionEncoder 与全部 action supervision。object token 查询带 object/hand patch 位置编码的 ActionToken，并加入 5 cm 距离 attention bias；64 个 object-indexed interaction tokens 由 8 个 learnable slots 聚合，再由单个 learned effect query 读取 slots 作为 SE(3) 条件。intervention 在进入 local fusion 前执行 normal、patch mean、patch reverse shuffle 和跨 sample 替换。
+
+**结果**
+修正版 controlled overfit 为 `outputs/interactiondynamics/interaction_dynamics_20260810_194117`：32 chunks、400 steps、1:58，object ADE 2.896 mm。small20 为 `outputs/interactiondynamics/interaction_dynamics_20260810_194350`：5 epochs / 1920 steps、10:27，最佳 epoch 5 验证 ADE/FDE 44.358/76.638 mm，articulation 0.0170 cm（zero 0.0393）。test normal ADE/FDE 为 43.584/75.845 mm；mean 43.732、shuffle 43.602、cross-sample 44.013 mm，相对 normal 分别退化 0.148、0.018、0.429 mm。
+
+**决策**
+保留 V13 结构作为下一步原型，但判定核心验收未通过：normal 虽优于 mean/shuffle，shuffle 差距远不够明显，尚不能证明 local ActionToken identity 真正影响 object effect。当前不进入 V14 multi-embodiment，也不修改已经成功的 V12 ActionToken。
+
+**下一步**
+导出并检查两级 attention 的空间分布；设计不会被 object/slot 集合池化抵消的局部 effect 读取方式，再以相同四组 intervention 验收。

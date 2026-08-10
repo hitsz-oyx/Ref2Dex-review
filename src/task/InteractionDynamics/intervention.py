@@ -30,7 +30,10 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
 
     for mode in ("normal", "mean", "shuffle", "cross_sample"):
         handle = None
-        if mode != "normal":
+        uses_slots = bool(getattr(model, "num_interaction_slots", 0))
+        if uses_slots:
+            model.action_intervention_mode = mode
+        elif mode != "normal":
             def intervene(_module, args, intervention=mode):
                 values = list(args)
                 tokens = values[3]
@@ -51,6 +54,8 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
         metrics = runner.evaluate_loader(loader, prefix=prefix)
         if handle is not None:
             handle.remove()
+        if uses_slots:
+            model.action_intervention_mode = "normal"
         results[mode] = {
             "ade_mm": metrics[f"{prefix}object/ade_mm"],
             "fde_mm": metrics[f"{prefix}object/fde_mm"],
