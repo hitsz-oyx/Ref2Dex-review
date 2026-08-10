@@ -27,3 +27,20 @@ PoseEncoder 完全冻结；DynamicActionEncoder 只读取相邻 local/global Pos
 
 **下一步**
 冻结相邻 PoseToken features 做无 temporal 的 local-flow probe，并与直接 surface-pair oracle 对齐，定位信息瓶颈发生在 PoseEncoder 还是 DynamicActionEncoder。
+
+## 实验：V1.1 PoseToken 与时序读出归因对照
+
+**假设**
+原完整模型约 75% 的改善上限可能来自 frozen PoseToken 信息损失，也可能来自 temporal Transformer 对单 transition 局部细节的破坏。用同一数据分别移除 temporal、增强 pair readout、直接读取 surface 和解码两帧后作差可以区分二者。
+
+**改动**
+新增 `probes.py`，固定随机种子 42，在与 V1 相同的 32 条、9 帧 synthetic MANO trajectories 上运行四组对照。A 使用 local/global PoseToken pair 和两层 MLP，不经过 temporal；B 只使用 local PoseToken pair 和更宽 MLP；C 使用真实 surface pair 作为 oracle；D 使用完整 PoseToken checkpoint 分别重建两帧形变后直接作差。A–C 保持解析奇对称读出。
+
+**结果**
+A 训练 4000 steps，RMSE `0.00199 cm`、EPE `0.02772 mm`、相对 zero 改善 `94.54%`。B 训练 4000 steps，RMSE `0.00259 cm`、EPE `0.03192 mm`、改善 `92.90%`。C 在 4000 steps 改善 `90.00%`，延长到 20000 steps 后 RMSE `0.000824 cm`、EPE `0.01118 mm`、改善 `97.74%`，说明 4000-step oracle 尚未充分优化。D 不训练，RMSE `0.00637 cm`、EPE `0.07304 mm`、改善 `82.55%`。作为比较，原 temporal ActionToken 最佳改善为 `75.14%`。
+
+**诊断**
+只读取 PoseToken pair 的 A/B 均显著超过原模型，并接近充分训练的 surface oracle；直接 PoseToken 解码差分也已超过 80%。因此 PoseToken 压缩不是当前主要信息瓶颈，约 18–20 个百分点的差距主要由 temporal readout 路径引入。C 的短程结果不能作为信息上界，延长训练后才接近预期 oracle。
+
+**决策**
+保留 frozen PoseToken、pair readout 和解析反对称约束；下一实验优先把 temporal 分支改为 pair flow 上的小残差修正，避免覆盖已被 A/B 证明可读的局部运动。暂不扩大数据、不做 RootToken、不回接 InteractionDynamics。

@@ -4,6 +4,7 @@ import torch
 
 from src.task.Actiontoken.generator import sample_smooth_pose_trajectory
 from src.task.Actiontoken.model import DynamicActionEncoder
+from src.task.Actiontoken.probes import OddProbe
 
 
 def test_smooth_trajectory_is_deterministic_and_temporally_correlated():
@@ -33,3 +34,10 @@ def test_static_pair_is_zero_and_swapped_pair_reverses_flow():
                                torch.zeros_like(static["pred_dense_flow_internal"]))
     torch.testing.assert_close(forward["pred_dense_flow_internal"],
                                -reverse["pred_dense_flow_internal"])
+
+
+def test_probe_is_analytically_odd():
+    probe = OddProbe(12, (16, 8), 6).eval()
+    first, second = torch.randn(4, 3, 12), torch.randn(4, 3, 12)
+    torch.testing.assert_close(probe(first, first), torch.zeros(4, 3, 6))
+    torch.testing.assert_close(probe(first, second), -probe(second, first))
