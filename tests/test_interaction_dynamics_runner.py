@@ -1,7 +1,8 @@
 import torch
 
 from src.task.InteractionDynamics.runner import (
-    masked_effect_mse, masked_relative_mse, patch_motion_target, relative_motion_target,
+    dense_relative_motion_target, field_statistics, masked_effect_mse, masked_relative_mse,
+    patch_motion_target, relative_motion_target,
     trajectory_statistics,
 )
 
@@ -70,3 +71,31 @@ def test_masked_relative_mse_ignores_far_edges():
     distance = torch.tensor([[.01, .10]])
     assert torch.allclose(masked_relative_mse(torch.zeros_like(target), target, distance, 5.),
                           torch.tensor(.25))
+
+
+def test_field_statistics_measure_v7_spatial_temporal_structure():
+    field = torch.zeros(1, 2, 2, 1)
+    field[0, 0, 1, 0] = 2.
+    field[0, 1, :, 0] = torch.tensor([2., 4.])
+    descriptor = torch.zeros(1, 2, 2, 5)
+    descriptor[..., 0] = .25
+    weights = torch.tensor([[[[.5, .5], [.5, .5]], [[.5, .5], [.5, .5]]]])
+    stats = field_statistics(field, descriptor, weights)
+    assert stats["field/spatial_feature_variance"] > 0
+    assert stats["field/temporal_feature_variance"] > 0
+    assert torch.allclose(stats["field/proximity_density_mean"], torch.tensor(.25))
+    assert torch.allclose(stats["field/hand_weight_entropy"], torch.log(torch.tensor(2.)))
+
+
+def test_dense_relative_target_uses_point_level_fixed_edge_increment():
+    batch = {
+        "hand_disp_chunk_object_gt": torch.tensor([[[[.02, .03, 0.]], [[.05, .07, 0.]]]]),
+        "obj_disp_chunk_gt": torch.tensor([
+            [[[.01, .01, 0.], [0., 0., 0.]], [[.02, .02, 0.], [0., 0., 0.]]]]),
+        "obj_normals_chunk_object_gt": torch.tensor([
+            [[[1., 0., 0.], [1., 0., 0.]], [[1., 0., 0.], [1., 0., 0.]]]]),
+    }
+    prediction = {"dense_nearest_obj_point": torch.tensor([[0]])}
+    target, hand_only = dense_relative_motion_target(batch, prediction)
+    assert torch.allclose(target[0, :, 0], torch.tensor([[1., 0., 2., 0.], [2., 0., 3., 0.]]))
+    assert torch.allclose(hand_only[0, :, 0], torch.tensor([[2., 0., 3., 0.], [3., 0., 4., 0.]]))

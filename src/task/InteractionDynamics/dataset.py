@@ -180,6 +180,9 @@ class InteractionDynamicsDataset(Dataset):
         hand_future_object = transform_points(data["hand_points_world"][future], obj_pose)
         obj_future = transform_points(data["obj_points_world"][future], obj_pose)
         obj_normals_future = transform_normals(data["obj_normals_world"][future], obj_pose)
+        object_poses = data["obj_root_pose_world"]
+        previous_pose = object_poses[np.concatenate([[current], future[:-1]])]
+        object_increment = np.linalg.inv(previous_pose) @ object_poses[future]
 
         raw_frame = int(data["raw_frame_id"][current])
         seed = stable_frame_seed(base_seed=self.base_seed, seq_id=str(data["seq_id"].item()),
@@ -205,6 +208,7 @@ class InteractionDynamicsDataset(Dataset):
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
             "hand_disp_chunk": hand_future - action_hand[None],
+            "action_hand_disp_chunk_object": hand_future_object - world_hand[None],
             # Runner-side mechanism diagnostics/supervision use this target in the
             # current object frame. It is deliberately absent from model.forward.
             "hand_disp_chunk_object_gt": hand_future_object - world_hand[None],
@@ -219,6 +223,7 @@ class InteractionDynamicsDataset(Dataset):
             # supervision; it is deliberately absent from model.forward inputs.
             "obj_disp_chunk_gt": obj_disp,
             "obj_normals_chunk_object_gt": obj_normals_future,
+            "obj_increment_pose_gt": object_increment.astype(np.float32),
             "effect_obj_valid_mask": valid,
             "effect_obj_idx": selected.astype(np.int64),
         }

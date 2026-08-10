@@ -380,3 +380,49 @@ dominant-hand summary 的 8,488 个候选窗口中保留 5,770（67.98%）；主
 
 **下一步**
 重新设计 interaction-change 与 bilateral-active 数据采样，并先建立条件均值等强基线；目标在新采样上可预测后，再训练 mechanism representation。
+
+## 实验：V7 时空 object-centric interaction field 与全局 SE(3)
+
+**假设**
+V5/V6 的困难来自把 interaction 压缩为单帧最近邻 edge 并直接拟合高噪声局部 target。保留完整时间 action token，以连续 Gaussian 场将已知手部轨迹投影到物体表面，再显式预测全局刚体 SE(3)，应更符合 GRAB 刚体 effect 的结构并改善未见序列泛化。
+
+**观察到的失败 / 现象**
+V4 的 object patch flow 约 97%–99% 为全局共同运动；V5/V6 的局部相对目标均未优于零预测。继续训练 nearest edge 或调相对损失权重的信息量较低。
+
+**改动**
+Action Encoder 输出 `[B,8,64,D]` temporal tokens。对每个时间步和 object patch，使用 5 cm Gaussian 对 64 个 hand patches 连续加权，融合 action、object token、相对几何、法向和手部法向/切向增量，形成时空 interaction field。全局池化后预测 8 个逐步 SE(3) increment；旋转由 axis-angle 转换并逐步复合，dense point flow 由刚体变换解析生成。训练只使用厘米制 translation MSE 与 rotation-matrix MSE（权重 1/10），关闭旧 effect/patch/relative losses。增加 field 空间/时间方差、描述子方差、接近密度和 soft-weight entropy 指标。
+
+**结果**
+训练产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_102612`，5 epochs / 1920 steps，最佳 checkpoint 位于 step 1152。验证 ADE 为 46.70 mm，zero-flow 为 49.05 mm，改善 2.35 mm（4.8%）。测试 ADE/FDE 为 42.08/73.09 mm，zero-flow ADE 为 45.82 mm，改善 3.75 mm（8.2%）；此前 V4/V6 测试 ADE 为 42.94/43.51 mm。测试 SE(3) translation error 为 0.953 cm，rotation error 为 2.572°。测试 field 空间/时间 feature variance 为 0.0411/0.0171，descriptor variance 为 0.00340，soft hand-weight entropy 为 3.621（64-way 上限 4.159），说明场在空间和时间上都不是常量。训练 batch ADE 可达到约 10 mm。实现与坐标链路聚焦测试共 15 项全部通过。
+
+**诊断**
+显式刚体归纳偏置避免了逐点 decoder 学习一个几乎纯全局的 flow，同时连续 splatting 保留了完整动作时序并消除了 hard nearest correspondence。验证和测试均优于各自 zero-flow，方向成立；但当前尚不能区分收益主要来自 SE(3) head，还是来自局部时空 field。
+
+**决策**
+保留 V7 路径，作为下一阶段主实验方向。旧 V1–V6 分支只保留作对照，不据此继续调 nearest-edge target。
+
+**下一步**
+做 action shuffle、移除显式 descriptor、global-action-only 三个最小消融，确认 V7 是否真实利用局部时空交互，再考虑扩大数据。
+
+## 实验：V8 full-resolution local-edge sanity check
+
+**假设**
+V6 的 64-patch 表示可能在交互关系形成前丢失指尖和接触边界等稀疏高频信号。若保留全部 1538 个 hand surface points，并只连接每点最近的 4 个 object points，逐点 dense interaction representation 应明显优于 patch-edge 和 zero baseline。
+
+**观察到的失败 / 现象**
+V6 patch-edge 的验证/测试增量 relative RMSE 为 0.275/0.240 cm，差于 zero 0.247/0.206 cm；但不能排除 FPS/KNN patch pooling 已破坏接触几何。
+
+**改动**
+新增不加载 Uni3D/DenseToken 的 `DenseEdgeInteractionModel`。对完整 1538×4096 当前几何计算 KNN，每个 hand point 保留 4 条边；以逐步 hand position、相对位置/距离、hand/object normals、hand increment 及其法向/切向分解构造 edge，经 64 维 MLP 和距离 soft pooling 得到 `[B,8,1538,64]` dense interaction set。Runner 使用 future object 仅构造逐点固定对应的增量 relative target，并同时报告 zero 与 hand-motion-only 基线。尚未加入 bottleneck `C`。
+
+**结果**
+训练产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_110406`，5 epochs / 1920 steps，耗时 2 分 36 秒。所有 epoch 验证结果均未超过 zero；最佳 checkpoint 为 step 384。最佳验证 relative RMSE 为 0.2470 cm，zero 为 0.2465 cm，hand-only 为 0.5971 cm；测试为 0.2031/0.2027/0.5507 cm。验证/测试 5 cm 内有效 hand-point 比例为 60.76%/77.85%。dense token feature variance 从验证 epoch 1 的 0.000894 增至 epoch 5 的 0.001322，但误差同步恶化。相关聚焦测试通过。
+
+**诊断**
+全量 hand points 和更高近场覆盖率没有让相对增量跨序列变得可预测，说明 64-patch 过早压缩不是 V6 失败的主要原因。hand-only 基线远差于 zero，也说明 target 不能靠直接复制已知 hand action 解决。继续增加 K、edge width 或 learned compressor 只会在尚未成立的 `E_dense` 上增加复杂度。
+
+**决策**
+保留轻量 V8 分支和负结果作为 dense-first 对照；暂不实现 `E_dense → C` reconstruction/compressor，也不调 K 或网络宽度。V7 的显式 SE(3) effect 路径仍是当前主方向。
+
+**下一步**
+优先完成 V7 action/descriptor/global-only 消融以定位 8.2% test ADE 改善来源；只有找到比 zero 更可预测的 interaction-specific target 后，再重启 dense bottleneck 研究。

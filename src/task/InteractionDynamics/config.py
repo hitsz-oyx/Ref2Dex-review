@@ -31,6 +31,12 @@ class Config(TaskConfig):
         attention_heads = 6
         motion_scale = 100.0
         action_local_gain = 10.0
+        use_v7_field = False
+        field_dim = 128
+        field_sigma_m = 0.05
+        dense_edge_knn = 4
+        dense_edge_dim = 64
+        dense_edge_sigma_m = 0.02
 
     class model(TaskConfig.model):
         class_path = "src.task.InteractionDynamics.model.InteractionDynamicsModel"
@@ -62,6 +68,10 @@ class Config(TaskConfig):
         relative_loss_weight = 0.0
         relative_edge_radius_cm = 5.0
         relative_target_mode = "cumulative_fixed"
+        effect_loss_weight = 1.0
+        se3_translation_loss_weight = 0.0
+        se3_rotation_loss_weight = 0.0
+        dense_relative_loss_weight = 0.0
         amp = True
         amp_dtype = "bfloat16"
         metric_for_best = "val/object/ade_mm"

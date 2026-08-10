@@ -61,14 +61,170 @@ class ActionEncoder(nn.Module):
         spatial = self.spatial(base).amax(3) + self.time_embed[:, :hand_disp_chunk.shape[1]]
         batch, steps, patches, dim = spatial.shape
         temporal = self.temporal(spatial.permute(0, 2, 1, 3).reshape(batch * patches, steps, dim))
-        action = temporal.mean(1).reshape(batch, patches, dim)
+        temporal = temporal.reshape(batch, patches, steps, dim).permute(0, 2, 1, 3)
+        action = temporal.mean(1)
         centers_object = gather_points(hand_points_object, hand_knn_idx).mean(2)
         dense = gather_points(z_hand, hand_knn_idx).mean(2)
         contact = gather_points(hand_contact.unsqueeze(-1), hand_knn_idx).mean(2)
         action = (action + self.hand_position(centers_hand) + self.object_position(centers_object)
                   + self.dense_gate.sigmoid() * self.dense_adapter(torch.cat([dense, contact], -1)))
-        return {"action_tokens": action, "hand_patch_center_hand": centers_hand,
+        return {"action_tokens": action, "action_tokens_temporal": temporal,
+                "hand_patch_center_hand": centers_hand,
                 "hand_patch_center_object": centers_object}
+
+
+def axis_angle_to_matrix(vector: torch.Tensor) -> torch.Tensor:
+    """Differentiable Rodrigues map with a stable zero-angle limit."""
+    x, y, z = vector.unbind(-1)
+    zero = torch.zeros_like(x)
+    skew = torch.stack([zero, -z, y, z, zero, -x, -y, x, zero], -1).reshape(*vector.shape[:-1], 3, 3)
+    theta = vector.norm(dim=-1)
+    a = torch.sinc(theta / torch.pi)
+    b = 0.5 * torch.sinc(theta / (2.0 * torch.pi)).square()
+    eye = torch.eye(3, dtype=vector.dtype, device=vector.device).expand(*vector.shape[:-1], 3, 3)
+    return eye + a[..., None, None] * skew + b[..., None, None] * (skew @ skew)
+
+
+class SpatiotemporalInteractionField(nn.Module):
+    """Continuously splat known hand action onto the current object surface."""
+    def __init__(self, model_dim: int, field_dim: int, sigma_m: float) -> None:
+        super().__init__()
+        self.sigma_m = float(sigma_m)
+        self.action_proj = nn.Linear(model_dim, field_dim)
+        self.object_proj = nn.Linear(model_dim, field_dim)
+        # relative xyz, distance, object/hand normals, hand increment,
+        # normal scalar and tangent xyz = 17 dimensions.
+        self.geometry_proj = nn.Sequential(nn.Linear(17, field_dim), nn.GELU(),
+                                           nn.Linear(field_dim, field_dim))
+        self.norm = nn.LayerNorm(field_dim)
+
+    def forward(self, action_temporal: torch.Tensor, object_tokens: torch.Tensor,
+                hand_centers: torch.Tensor, object_centers: torch.Tensor,
+                hand_normals: torch.Tensor, object_normals: torch.Tensor,
+                hand_disp_chunk_object: torch.Tensor) -> dict[str, torch.Tensor]:
+        hand_position = hand_centers[:, None] + hand_disp_chunk_object
+        hand_increment = torch.diff(hand_disp_chunk_object, dim=1,
+                                    prepend=torch.zeros_like(hand_disp_chunk_object[:, :1]))
+        relative = hand_position[:, :, None, :, :] - object_centers[:, None, :, None, :]
+        distance = relative.norm(dim=-1, keepdim=True)
+        weights = torch.exp(-distance.square() / (2.0 * self.sigma_m ** 2))
+        normal_value = (hand_increment[:, :, None] * object_normals[:, None, :, None]).sum(-1, keepdim=True)
+        tangent = hand_increment[:, :, None] - normal_value * object_normals[:, None, :, None]
+        geometry = torch.cat([
+            relative, distance,
+            object_normals[:, None, :, None].expand(-1, action_temporal.shape[1], -1,
+                                                     hand_centers.shape[1], -1),
+            hand_normals[:, None, None].expand(-1, action_temporal.shape[1], object_centers.shape[1], -1, -1),
+            hand_increment[:, :, None].expand(-1, -1, object_centers.shape[1], -1, -1),
+            normal_value.expand(-1, -1, -1, hand_centers.shape[1], -1),
+            tangent.expand(-1, -1, object_centers.shape[1], -1, -1),
+        ], -1)
+        message = torch.nn.functional.gelu(
+            self.action_proj(action_temporal)[:, :, None]
+            + self.object_proj(object_tokens)[:, None, :, None]
+            + self.geometry_proj(geometry))
+        density = weights.sum(3)
+        normalized_weights = weights / density[:, :, :, None].clamp_min(1e-8)
+        field = self.norm((normalized_weights * message).sum(3))
+        mean_normal = (normalized_weights * normal_value).sum(3)
+        mean_tangent = (normalized_weights * tangent).sum(3)
+        descriptor = torch.cat([density / hand_centers.shape[1], mean_normal, mean_tangent], -1)
+        return {"interaction_field": field, "interaction_field_descriptor": descriptor,
+                "hand_to_object_soft_weights": normalized_weights.squeeze(-1)}
+
+
+class SE3DynamicsHead(nn.Module):
+    def __init__(self, model_dim: int, field_dim: int, motion_scale: float) -> None:
+        super().__init__()
+        self.motion_scale = float(motion_scale)
+        self.object_proj = nn.Linear(model_dim, field_dim)
+        self.head = nn.Sequential(nn.Linear(field_dim + 5, field_dim), nn.GELU(), nn.Linear(field_dim, 6))
+        nn.init.zeros_(self.head[-1].weight)
+        nn.init.zeros_(self.head[-1].bias)
+
+    def forward(self, field: torch.Tensor, descriptor: torch.Tensor,
+                object_tokens: torch.Tensor, points: torch.Tensor) -> dict[str, torch.Tensor]:
+        global_token = (field + self.object_proj(object_tokens)[:, None]).mean(2)
+        twist = self.head(torch.cat([global_token, descriptor.mean(2)], -1))
+        increment_translation = twist[..., :3] / self.motion_scale
+        increment_rotation_vector = twist[..., 3:]
+        increment_rotation = axis_angle_to_matrix(increment_rotation_vector)
+        batch = points.shape[0]
+        rotation = torch.eye(3, dtype=points.dtype, device=points.device).expand(batch, 3, 3).clone()
+        translation = torch.zeros(batch, 3, dtype=points.dtype, device=points.device)
+        displacements = []
+        for step in range(twist.shape[1]):
+            translation = translation + torch.einsum("bij,bj->bi", rotation, increment_translation[:, step])
+            rotation = rotation @ increment_rotation[:, step]
+            future = torch.einsum("bij,bqj->bqi", rotation, points) + translation[:, None]
+            displacements.append(future - points)
+        return {"pred_obj_increment_translation_internal": twist[..., :3],
+                "pred_obj_increment_rotation_vector": increment_rotation_vector,
+                "pred_obj_increment_rotation_matrix": increment_rotation,
+                "pred_obj_disp_chunk_se3": torch.stack(displacements, 1)}
+
+
+class DenseEdgeInteractionModel(nn.Module):
+    """V8 diagnostic: encode full-resolution local hand-object edges before compression."""
+    def __init__(self, cfg: Any) -> None:
+        super().__init__()
+        meta = cfg.meta
+        self.motion_scale = float(meta.motion_scale)
+        self.knn = int(getattr(meta, "dense_edge_knn", 4))
+        self.sigma_m = float(getattr(meta, "dense_edge_sigma_m", 0.02))
+        dim = int(getattr(meta, "dense_edge_dim", 64))
+        # relative xyz, distance, hand/object normal, hand increment,
+        # normal action scalar and tangent xyz.
+        self.edge_mlp = nn.Sequential(nn.Linear(17, dim), nn.GELU(),
+                                      nn.Linear(dim, dim), nn.GELU())
+        self.prediction = nn.Linear(dim, 4)
+        nn.init.zeros_(self.prediction.weight)
+        nn.init.zeros_(self.prediction.bias)
+
+    def forward(self, batch: dict[str, torch.Tensor] | None = None, *,
+                world_hand_points_object: torch.Tensor | None = None,
+                world_hand_normals_object: torch.Tensor | None = None,
+                world_obj_points_object: torch.Tensor | None = None,
+                world_obj_normals_object: torch.Tensor | None = None,
+                action_hand_disp_chunk_object: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+        if batch is not None:
+            return self.forward(**{key: batch[key] for key in (
+                "world_hand_points_object", "world_hand_normals_object",
+                "world_obj_points_object", "world_obj_normals_object",
+                "action_hand_disp_chunk_object")})
+        required = (world_hand_points_object, world_hand_normals_object,
+                    world_obj_points_object, world_obj_normals_object,
+                    action_hand_disp_chunk_object)
+        if any(value is None for value in required):
+            raise ValueError("DenseEdgeInteractionModel is missing a current/action tensor")
+        distance = torch.cdist(world_hand_points_object.float(), world_obj_points_object.float())
+        edge_distance, neighbor = distance.topk(self.knn, dim=-1, largest=False, sorted=True)
+        object_points = gather_points(world_obj_points_object, neighbor)
+        object_normals = gather_points(world_obj_normals_object, neighbor)
+        hand_increment = torch.diff(action_hand_disp_chunk_object, dim=1,
+                                    prepend=torch.zeros_like(action_hand_disp_chunk_object[:, :1]))
+        hand_position = world_hand_points_object[:, None] + action_hand_disp_chunk_object
+        relative = hand_position[:, :, :, None] - object_points[:, None]
+        step_distance = relative.norm(dim=-1, keepdim=True)
+        normal_action = (hand_increment[:, :, :, None] * object_normals[:, None]).sum(-1, keepdim=True)
+        tangent_action = hand_increment[:, :, :, None] - normal_action * object_normals[:, None]
+        geometry = torch.cat([
+            relative, step_distance,
+            world_hand_normals_object[:, None, :, None].expand(-1, hand_increment.shape[1], -1,
+                                                                self.knn, -1),
+            object_normals[:, None].expand(-1, hand_increment.shape[1], -1, -1, -1),
+            hand_increment[:, :, :, None].expand(-1, -1, -1, self.knn, -1),
+            normal_action, tangent_action,
+        ], -1)
+        edge = self.edge_mlp(geometry)
+        weights = torch.softmax(-step_distance.squeeze(-1).square() / (2 * self.sigma_m ** 2), dim=-1)
+        dense_interaction = (weights[..., None] * edge).sum(3)
+        return {
+            "dense_interaction_tokens": dense_interaction,
+            "dense_nearest_obj_point": neighbor[..., 0],
+            "dense_edge_distance_m": edge_distance[..., 0],
+            "pred_dense_relative_motion_internal": self.prediction(dense_interaction),
+        }
 
 
 class EffectDecoder(nn.Module):
@@ -117,6 +273,7 @@ class InteractionDynamicsModel(nn.Module):
         meta = cfg.meta
         self.motion_scale = float(meta.motion_scale)
         self.action_local_gain = float(getattr(meta, "action_local_gain", 1.0))
+        self.use_v7_field = bool(getattr(meta, "use_v7_field", False))
         self.dense_encoder = dense_encoder or FrozenDenseTokenEncoder(meta.dense_checkpoint)
         self.dense_encoder.requires_grad_(False).eval()
         dense_dim = int(self.dense_encoder.token_dim)
@@ -135,6 +292,10 @@ class InteractionDynamicsModel(nn.Module):
             nn.Linear(meta.model_dim * 2 + 7, meta.model_dim), nn.GELU(),
             nn.Linear(meta.model_dim, meta.model_dim), nn.LayerNorm(meta.model_dim))
         self.relative_motion = nn.Linear(meta.model_dim, meta.chunk_len * 4)
+        field_dim = int(getattr(meta, "field_dim", 128))
+        self.interaction_field = SpatiotemporalInteractionField(
+            meta.model_dim, field_dim, float(getattr(meta, "field_sigma_m", 0.05)))
+        self.se3_dynamics = SE3DynamicsHead(meta.model_dim, field_dim, self.motion_scale)
         self.action_reconstruction = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.patch_effect = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.effect = EffectDecoder(meta.model_dim, meta.attention_heads, meta.chunk_len, dense_dim)
@@ -163,6 +324,7 @@ class InteractionDynamicsModel(nn.Module):
                 action_hand_points_hand: torch.Tensor | None = None,
                 action_hand_normals_hand: torch.Tensor | None = None,
                 hand_disp_chunk: torch.Tensor | None = None,
+                action_hand_disp_chunk_object: torch.Tensor | None = None,
                 dense_obj_points_hand: torch.Tensor | None = None,
                 dense_obj_normals_hand: torch.Tensor | None = None,
                 dense_hand_points_hand: torch.Tensor | None = None,
@@ -174,12 +336,14 @@ class InteractionDynamicsModel(nn.Module):
             return self.forward(**{key: batch[key] for key in (
                 "world_hand_points_object", "world_hand_normals_object", "world_obj_points_object",
                 "world_obj_normals_object", "action_hand_points_hand", "action_hand_normals_hand",
-                "hand_disp_chunk", "dense_obj_points_hand", "dense_obj_normals_hand",
+                "hand_disp_chunk", "action_hand_disp_chunk_object",
+                "dense_obj_points_hand", "dense_obj_normals_hand",
                 "dense_hand_points_hand", "dense_hand_normals_hand", "effect_obj_points_object",
                 "effect_obj_normals_object", "effect_obj_valid_mask")})
         required = (world_hand_points_object, world_hand_normals_object, world_obj_points_object,
                     world_obj_normals_object, action_hand_points_hand, action_hand_normals_hand,
-                    hand_disp_chunk, dense_obj_points_hand, dense_obj_normals_hand,
+                    hand_disp_chunk, action_hand_disp_chunk_object,
+                    dense_obj_points_hand, dense_obj_normals_hand,
                     dense_hand_points_hand, dense_hand_normals_hand, effect_obj_points_object,
                     effect_obj_normals_object, effect_obj_valid_mask)
         if any(value is None for value in required):
@@ -208,6 +372,25 @@ class InteractionDynamicsModel(nn.Module):
         action_mean = action_context.mean(dim=1, keepdim=True)
         action_context = action_mean + float(getattr(self, "action_local_gain", 1.0)) * (
             action_context - action_mean)
+        action_temporal = action["action_tokens_temporal"] + (
+            action_context - action["action_tokens"])[:, None]
+        hand_patch_disp_object = torch.stack([
+            gather_points(action_hand_disp_chunk_object[:, step], world["hand_knn_idx"]).mean(2)
+            for step in range(action_hand_disp_chunk_object.shape[1])
+        ], 1)
+        hand_patch_normal_object = gather_points(
+            world_hand_normals_object, world["hand_knn_idx"]).mean(2)
+        hand_patch_normal_object = nn.functional.normalize(hand_patch_normal_object, dim=-1)
+        obj_patch_normal_object = gather_points(
+            world_obj_normals_object, world["obj_knn_idx"]).mean(2)
+        obj_patch_normal_object = nn.functional.normalize(obj_patch_normal_object, dim=-1)
+        field = self.interaction_field(
+            action_temporal, world["world_obj_tokens"], action["hand_patch_center_object"],
+            world["obj_patch_centers_object"], hand_patch_normal_object,
+            obj_patch_normal_object, hand_patch_disp_object)
+        se3 = self.se3_dynamics(field["interaction_field"],
+                                field["interaction_field_descriptor"],
+                                world["world_obj_tokens"], effect_obj_points_object)
         # No object residual: object tokens only locate canonical interaction queries.
         interaction, object_attention = self.canonicalizer(world["world_obj_tokens"], action_context, residual=False)
         interaction = nn.functional.layer_norm(interaction, (interaction.shape[-1],))
@@ -235,7 +418,11 @@ class InteractionDynamicsModel(nn.Module):
         effect = self.effect(effect_obj_points_object, effect_obj_normals_object, z_obj,
                              interaction, world["obj_patch_centers_object"],
                              pred_obj_patch_disp_internal, effect_obj_valid_mask, self.motion_scale)
-        return {**world, **action, **effect, "world_hand_tokens": world_hand, "world_tokens": world_tokens,
+        pred_obj_disp = (se3["pred_obj_disp_chunk_se3"] if self.use_v7_field
+                         else effect["pred_obj_disp_chunk"])
+        return {**world, **action, **effect, **field, **se3,
+                "pred_obj_disp_chunk": pred_obj_disp,
+                "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,
                 "relative_interaction_tokens": relative_interaction,
                 "relative_nearest_obj_patch": nearest_obj,

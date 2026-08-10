@@ -3,7 +3,10 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 
-from src.task.InteractionDynamics.model import EffectDecoder, InteractionDynamicsModel
+from src.task.InteractionDynamics.model import (
+    DenseEdgeInteractionModel, EffectDecoder, InteractionDynamicsModel, SE3DynamicsHead,
+    SpatiotemporalInteractionField, axis_angle_to_matrix,
+)
 
 
 class FakeDense(nn.Module):
@@ -34,6 +37,7 @@ def test_forward_backward_without_future_object_input():
         world_obj_points_object=obj, world_obj_normals_object=normals(batch, object_count),
         action_hand_points_hand=hand_local, action_hand_normals_hand=normals(batch, hand_count),
         hand_disp_chunk=torch.randn(batch, 8, hand_count, 3) * .01,
+        action_hand_disp_chunk_object=torch.randn(batch, 8, hand_count, 3) * .01,
         dense_obj_points_hand=effect, dense_obj_normals_hand=normals(batch, effect_count),
         dense_hand_points_hand=hand_local, dense_hand_normals_hand=normals(batch, hand_count),
         effect_obj_points_object=effect, effect_obj_normals_object=normals(batch, effect_count),
@@ -46,6 +50,10 @@ def test_forward_backward_without_future_object_input():
     assert output["pred_obj_patch_disp_internal"].shape == (batch, 8, 4, 3)
     assert output["relative_interaction_tokens"].shape == (batch, 4, 48)
     assert output["pred_relative_motion_internal"].shape == (batch, 8, 4, 4)
+    assert output["action_tokens_temporal"].shape == (batch, 8, 4, 48)
+    assert output["interaction_field"].shape == (batch, 8, 4, 128)
+    assert output["interaction_field_descriptor"].shape == (batch, 8, 4, 5)
+    assert output["pred_obj_increment_rotation_matrix"].shape == (batch, 8, 3, 3)
     assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()
     assert model.action.spatial[0].weight.grad is not None
@@ -72,3 +80,44 @@ def test_effect_decoder_routes_patch_motion_by_nearest_center():
     assert torch.equal(output["effect_patch_index"], torch.tensor([[0, 1]]))
     assert torch.allclose(output["pred_obj_disp_internal"][0, :, :, 0],
                           torch.tensor([[1., 2.], [3., 4.]]))
+
+
+def test_axis_angle_and_se3_translation_are_analytic():
+    rotation = axis_angle_to_matrix(torch.zeros(1, 2, 3))
+    assert torch.allclose(rotation, torch.eye(3).expand(1, 2, 3, 3))
+    head = SE3DynamicsHead(model_dim=6, field_dim=4, motion_scale=100.)
+    with torch.no_grad():
+        head.head[-1].bias[0] = 1.0
+    output = head(torch.zeros(1, 2, 3, 4), torch.zeros(1, 2, 3, 5),
+                  torch.zeros(1, 3, 6), torch.zeros(1, 1, 3))
+    assert torch.allclose(output["pred_obj_disp_chunk_se3"][0, :, 0, 0],
+                          torch.tensor([.01, .02]))
+
+
+def test_soft_field_is_normalized_and_differentiable_to_hand_trajectory():
+    module = SpatiotemporalInteractionField(model_dim=6, field_dim=4, sigma_m=.05)
+    action = torch.randn(1, 2, 3, 6)
+    displacement = torch.randn(1, 2, 3, 3, requires_grad=True) * .01
+    output = module(action, torch.randn(1, 2, 6), torch.randn(1, 3, 3) * .01,
+                    torch.randn(1, 2, 3) * .01, torch.randn(1, 3, 3),
+                    torch.randn(1, 2, 3), displacement)
+    weights = output["hand_to_object_soft_weights"]
+    assert torch.allclose(weights.sum(-1), torch.ones_like(weights.sum(-1)), atol=1e-6)
+    gradient = torch.autograd.grad(output["interaction_field_descriptor"].square().sum(), displacement)[0]
+    assert torch.isfinite(gradient).all() and gradient.abs().sum() > 0
+
+
+def test_dense_edge_model_preserves_all_hand_points_and_local_neighbors():
+    meta = SimpleNamespace(motion_scale=100., dense_edge_knn=2,
+                           dense_edge_dim=8, dense_edge_sigma_m=.02)
+    model = DenseEdgeInteractionModel(SimpleNamespace(meta=meta))
+    hand = torch.tensor([[[0., 0., 0.], [.1, 0., 0.], [.2, 0., 0.]]])
+    obj = torch.tensor([[[.01, 0., 0.], [.11, 0., 0.], [.21, 0., 0.], [.3, 0., 0.]]])
+    normals_hand = torch.tensor([[[1., 0., 0.]]]).expand_as(hand)
+    normals_obj = torch.tensor([[[1., 0., 0.]]]).expand_as(obj)
+    output = model(world_hand_points_object=hand, world_hand_normals_object=normals_hand,
+                   world_obj_points_object=obj, world_obj_normals_object=normals_obj,
+                   action_hand_disp_chunk_object=torch.zeros(1, 2, 3, 3))
+    assert output["dense_interaction_tokens"].shape == (1, 2, 3, 8)
+    assert output["pred_dense_relative_motion_internal"].shape == (1, 2, 3, 4)
+    assert torch.equal(output["dense_nearest_obj_point"], torch.tensor([[0, 1, 2]]))
