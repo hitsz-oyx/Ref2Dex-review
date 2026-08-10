@@ -9,7 +9,9 @@ from src.base import BaseRunner, RunnerOutput
 from src.base.checkpoint import unwrap_model
 from src.base.data import make_dataloader_kwargs
 from src.task.Actiontoken.generator import (SyntheticManoActionDataset,
-                                            SyntheticManoTransitionDataset)
+                                            SyntheticManoTransitionDataset,
+                                            ManoTransitionParameterDataset, MANO,
+                                            face_centers)
 from src.task.InteractionDynamics.uni3d import gather_points
 
 
@@ -94,6 +96,11 @@ class ActionTokenRunner(BaseRunner):
 
 
 class ActionTokenV2Runner(BaseRunner):
+    def __init__(self, *args, **kwargs):
+        self._mano_layer = None
+        self._mano_faces = None
+        super().__init__(*args, **kwargs)
+
     def make_dataloaders(self, data_cfg: Any, seed: int):
         common = dict(mano_path=self.cfg.meta.mano_path, side=self.cfg.meta.side,
                       num_pca_comps=self.cfg.meta.num_pca_comps,
@@ -103,12 +110,12 @@ class ActionTokenV2Runner(BaseRunner):
                       motion_probs=tuple(data_cfg.motion_probs),
                       sparse_probability=data_cfg.sparse_probability,
                       motion_scale=self.cfg.meta.motion_scale)
-        train = SyntheticManoTransitionDataset(**common, num_samples=data_cfg.train_samples,
-                                               seed=seed)
-        val = SyntheticManoTransitionDataset(**common, num_samples=data_cfg.val_samples,
-                                             seed=data_cfg.val_seed)
-        test = SyntheticManoTransitionDataset(**common, num_samples=data_cfg.test_samples,
-                                              seed=data_cfg.test_seed)
+        dataset_class = (ManoTransitionParameterDataset
+                         if bool(getattr(data_cfg, "on_the_fly", False))
+                         else SyntheticManoTransitionDataset)
+        train = dataset_class(**common, num_samples=data_cfg.train_samples, seed=seed)
+        val = dataset_class(**common, num_samples=data_cfg.val_samples, seed=data_cfg.val_seed)
+        test = dataset_class(**common, num_samples=data_cfg.test_samples, seed=data_cfg.test_seed)
         kwargs = make_dataloader_kwargs(data_cfg, seed)
         train_loader = DataLoader(train, batch_size=data_cfg.batch_size,
                                   shuffle=bool(data_cfg.shuffle), **kwargs)
@@ -118,6 +125,8 @@ class ActionTokenV2Runner(BaseRunner):
         test_loader = DataLoader(test, batch_size=int(data_cfg.test_batch_size or eval_batch),
                                  shuffle=False, **make_dataloader_kwargs(data_cfg, seed + 2))
         metadata = {"source": "synthetic_mano_transition", "beta": 0, "fps": 30,
+                    "surface_generation": ("batch_mano" if dataset_class
+                                           is ManoTransitionParameterDataset else "precomputed"),
                     "train_samples": len(train), "val_samples": len(val),
                     "test_samples": len(test)}
         return (train_loader, val_loader, test_loader, metadata,
@@ -125,6 +134,31 @@ class ActionTokenV2Runner(BaseRunner):
 
     def build_model(self, model_cfg):
         return self.build_model_from_config(model_cfg)
+
+    def prepare_batch(self, batch: Any) -> Any:
+        batch = super().prepare_batch(batch)
+        if "patch_flow_internal" in batch:
+            return batch
+        if self._mano_layer is None:
+            self._mano_layer = MANO(
+                str(self.cfg.meta.mano_path), is_rhand=str(self.cfg.meta.side) == "right",
+                use_pca=True, num_pca_comps=int(self.cfg.meta.num_pca_comps),
+                flat_hand_mean=True).to(self.device).eval().requires_grad_(False)
+            self._mano_faces = torch.as_tensor(
+                self._mano_layer.faces.astype("int64"), device=self.device)
+        pose = batch["mano_pose"].float()
+        after = pose + batch["mano_pose_delta"].float()
+        both = torch.stack((pose, after), 1).reshape(-1, pose.shape[-1])
+        zeros3 = torch.zeros(len(both), 3, device=pose.device)
+        with torch.no_grad():
+            output = self._mano_layer(hand_pose=both, betas=torch.zeros(len(both), 10,
+                                      device=pose.device), global_orient=zeros3, transl=zeros3)
+            surface = face_centers(
+                output.vertices - output.joints[:, :1], self._mano_faces).float()
+            surface = surface.reshape(len(pose), 2, -1, 3)
+            dense_flow = (surface[:, 1] - surface[:, 0]) * float(self.cfg.meta.motion_scale)
+            batch["patch_flow_internal"] = gather_points(dense_flow, batch["patch_knn_idx"])
+        return batch
 
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode="train"):
         output = model(batch)
@@ -140,6 +174,8 @@ class ActionTokenV2Runner(BaseRunner):
                    "action/dense_flow_epe_mm": ((pred - target) / scale).norm(dim=-1).mean() * 1000,
                    "action/token_variance": tokens.var(dim=1, unbiased=False).mean(),
                    "action/token_l2_norm": tokens.norm(dim=-1).mean()}
+        if "clip_fraction" in batch:
+            metrics["action/clip_fraction"] = batch["clip_fraction"].float().mean()
         speed = target.norm(dim=-1)
         quantiles = torch.quantile(speed.flatten(),
                                    torch.tensor([1 / 3, 2 / 3], device=speed.device))

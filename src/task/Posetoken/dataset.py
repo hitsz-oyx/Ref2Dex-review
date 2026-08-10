@@ -107,3 +107,48 @@ class SyntheticManoPoseDataset(Dataset):
             "side_id": torch.tensor(self.side == "right", dtype=torch.long),
             "sample_id": torch.tensor(index, dtype=torch.long),
         }
+
+
+class ManoPoseParameterDataset(Dataset):
+    """大规模训练只保存 MANO 参数，surface 由 Runner 按 batch 生成。"""
+
+    def __init__(self, *, mano_path: str | Path, side: str, num_samples: int, seed: int,
+                 num_pca_comps: int = 24, num_patches: int = 64, patch_size: int = 32,
+                 beta_std: float = 0.0, pose_group_size: int = 1, **_: object) -> None:
+        super().__init__()
+        self.side = str(side)
+        group_size = int(pose_group_size)
+        if group_size < 1:
+            raise ValueError("pose_group_size 必须为正整数")
+        unique_count = (int(num_samples) + group_size - 1) // group_size
+        self.pose_parameters = sample_mano_pose(
+            unique_count, int(num_pca_comps), int(seed)).repeat_interleave(
+                group_size, 0)[:int(num_samples)]
+        generator = torch.Generator().manual_seed(int(seed) + 100003)
+        self.betas = (torch.randn(int(num_samples), 10, generator=generator)
+                      * float(beta_std)).clamp(-2, 2)
+        self.pose_group_id = torch.arange(int(num_samples)) // group_size
+
+        layer = MANO(str(mano_path), is_rhand=self.side == "right", use_pca=True,
+                     num_pca_comps=int(num_pca_comps), flat_hand_mean=True)
+        layer.eval().requires_grad_(False)
+        faces = torch.as_tensor(layer.faces.astype(np.int64))
+        with torch.no_grad():
+            zero = layer(hand_pose=torch.zeros(1, int(num_pca_comps)),
+                         betas=torch.zeros(1, 10), global_orient=torch.zeros(1, 3),
+                         transl=torch.zeros(1, 3))
+        self.hand_cano_points = face_centers(
+            zero.vertices - zero.joints[:, :1], faces)[0].float()
+        self.patch_knn_idx = build_canonical_patch_map(
+            self.hand_cano_points, num_patches, patch_size)
+
+    def __len__(self) -> int:
+        return len(self.pose_parameters)
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        return {"hand_cano_points": self.hand_cano_points,
+                "patch_knn_idx": self.patch_knn_idx,
+                "mano_pose": self.pose_parameters[index], "mano_beta": self.betas[index],
+                "pose_group_id": self.pose_group_id[index],
+                "side_id": torch.tensor(self.side == "right", dtype=torch.long),
+                "sample_id": torch.tensor(index, dtype=torch.long)}

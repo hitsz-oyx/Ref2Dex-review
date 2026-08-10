@@ -9,7 +9,7 @@ import torch
 from torch import nn
 
 from src.task.Cm.dense_token import FrozenDenseTokenEncoder
-from src.task.Actiontoken.model import DynamicActionEncoder
+from src.task.Actiontoken.model import DynamicActionEncoder, FlowActionEncoder
 from src.task.InteractionDynamics.uni3d import Uni3DWorldEncoder, gather_points
 from src.task.Posetoken.model import StaticPoseEncoder
 
@@ -651,35 +651,50 @@ class PretrainedActionAdapter(nn.Module):
     """冻结的 PoseToken/ActionToken 编码器，不读取任何 world 信息。"""
     def __init__(self, meta: Any) -> None:
         super().__init__()
+        self.flow_v2 = getattr(meta, "action_encoder_mode", "pretrained") == "flow_v2"
         pose_meta = SimpleNamespace(
             model_dim=meta.model_dim, global_dim=128, attention_heads=meta.attention_heads,
             patch_size=meta.patch_size, num_patches=meta.num_hand_patches,
             num_hand_points=meta.num_hand_points)
         self.pose_encoder = StaticPoseEncoder(SimpleNamespace(meta=pose_meta))
-        pose_path, action_path = Path(meta.pose_encoder_checkpoint), Path(meta.action_encoder_checkpoint)
-        if not pose_path.is_file() or not action_path.is_file():
+        pose_path = None if meta.pose_encoder_checkpoint is None else Path(meta.pose_encoder_checkpoint)
+        action_path = Path(meta.action_encoder_checkpoint)
+        if not action_path.is_file() or (not self.flow_v2 and (pose_path is None or not pose_path.is_file())):
             raise FileNotFoundError(f"V14 pretrained token checkpoint missing: {pose_path}, {action_path}")
-        pose_incompatible = self.pose_encoder.load_state_dict(
-            torch.load(pose_path, map_location="cpu")["pose_encoder"], strict=False)
-        invalid_missing = [key for key in pose_incompatible.missing_keys
-                           if not key.startswith(("local_decoder.", "global_decoder."))]
-        if invalid_missing or pose_incompatible.unexpected_keys:
-            raise RuntimeError(f"PoseEncoder export mismatch: missing={invalid_missing}, "
-                               f"unexpected={pose_incompatible.unexpected_keys}")
-        self.dynamic_action = DynamicActionEncoder(
-            meta.model_dim, 128, meta.attention_heads, meta.action_temporal_layers, meta.patch_size)
         action_payload = torch.load(action_path, map_location="cpu")
-        action_state = action_payload.get("dynamic_action_encoder")
-        if action_state is None:
-            action_state = {key[len("dynamic."):]: value
-                            for key, value in action_payload.get("model", {}).items()
-                            if key.startswith("dynamic.")}
-        action_incompatible = self.dynamic_action.load_state_dict(action_state, strict=False)
-        invalid_action_missing = [key for key in action_incompatible.missing_keys
-                                  if not key.startswith("flow_decoder.")]
-        if invalid_action_missing or action_incompatible.unexpected_keys:
-            raise RuntimeError(f"ActionEncoder export mismatch: missing={invalid_action_missing}, "
-                               f"unexpected={action_incompatible.unexpected_keys}")
+        if self.flow_v2:
+            self.pose_encoder = nn.Identity()
+            self.dynamic_action = FlowActionEncoder(meta.model_dim, meta.patch_size)
+            action_state = action_payload.get("action_encoder")
+            if action_state is None:
+                action_state = {key[len("flow_action.encoder."):]: value
+                                for key, value in action_payload.get("model", {}).items()
+                                if key.startswith("flow_action.encoder.")}
+            incompatible = self.dynamic_action.encoder.load_state_dict(action_state, strict=True)
+            if incompatible.missing_keys or incompatible.unexpected_keys:
+                raise RuntimeError(f"ActionEncoder V2 export mismatch: {incompatible}")
+        else:
+            assert pose_path is not None
+            pose_incompatible = self.pose_encoder.load_state_dict(
+                torch.load(pose_path, map_location="cpu")["pose_encoder"], strict=False)
+            invalid_missing = [key for key in pose_incompatible.missing_keys
+                               if not key.startswith(("local_decoder.", "global_decoder."))]
+            if invalid_missing or pose_incompatible.unexpected_keys:
+                raise RuntimeError(f"PoseEncoder export mismatch: missing={invalid_missing}, "
+                                   f"unexpected={pose_incompatible.unexpected_keys}")
+            self.dynamic_action = DynamicActionEncoder(
+                meta.model_dim, 128, meta.attention_heads, meta.action_temporal_layers, meta.patch_size)
+            action_state = action_payload.get("dynamic_action_encoder")
+            if action_state is None:
+                action_state = {key[len("dynamic."):]: value
+                                for key, value in action_payload.get("model", {}).items()
+                                if key.startswith("dynamic.")}
+            action_incompatible = self.dynamic_action.load_state_dict(action_state, strict=False)
+            invalid_action_missing = [key for key in action_incompatible.missing_keys
+                                      if not key.startswith("flow_decoder.")]
+            if invalid_action_missing or action_incompatible.unexpected_keys:
+                raise RuntimeError(f"ActionEncoder export mismatch: missing={invalid_action_missing}, "
+                                   f"unexpected={action_incompatible.unexpected_keys}")
         self.pose_encoder.requires_grad_(False).eval()
         self.dynamic_action.requires_grad_(not bool(meta.freeze_action_encoder))
         if bool(meta.freeze_action_encoder):
@@ -694,6 +709,15 @@ class PretrainedActionAdapter(nn.Module):
 
     def forward(self, hand_local_sequence: torch.Tensor, hand_cano_points: torch.Tensor,
                 patch_knn_idx: torch.Tensor) -> torch.Tensor:
+        if self.flow_v2:
+            flow = torch.diff(hand_local_sequence, dim=1) * 100.0
+            patch_flow = torch.stack(
+                [gather_points(flow[:, step], patch_knn_idx) for step in range(flow.shape[1])], 1)
+            batch, steps, patches, size, _ = patch_flow.shape
+            with torch.no_grad():
+                return self.dynamic_action.encode(
+                    patch_flow.reshape(batch * steps, patches, size, 3)).reshape(
+                        batch, steps, patches, -1)
         batch, frames, count, _ = hand_local_sequence.shape
         pose_batch = {
             "hand_points_root": hand_local_sequence.reshape(batch * frames, count, 3),
@@ -789,6 +813,8 @@ class PretrainedTokenInteractionModel(nn.Module):
             CrossAttentionBlock(meta.model_dim, meta.attention_heads)
             for _ in range(meta.action_world_layers)])
         self.effect = CmEffectHead(meta.model_dim, meta.attention_heads, self.motion_scale)
+        self.contact_head = nn.Sequential(nn.Linear(meta.model_dim, meta.model_dim), nn.GELU(),
+                                          nn.Linear(meta.model_dim, meta.num_obj_patches))
         self.action_intervention_mode = "normal"
 
     def train(self, mode: bool = True):
@@ -866,6 +892,8 @@ class PretrainedTokenInteractionModel(nn.Module):
         cm = query.reshape(batch_size, steps, count, dim)
         assert attention is not None
         effect = self.effect(cm, batch["effect_obj_points_object"])
+        effect["pred_contact_matrix"] = self.contact_head(cm[:, -1, 1:]).sigmoid()
+        effect["obj_patch_centers_object"] = world["obj_patch_centers_object"]
         valid = batch["effect_obj_valid_mask"][:, None, :, None].to(effect["pred_obj_disp_chunk"].dtype)
         effect["pred_obj_disp_chunk"] = effect["pred_obj_disp_chunk"] * valid
         return {"raw_action_tokens": raw, "cm_tokens": cm,

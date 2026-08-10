@@ -67,6 +67,12 @@ def evaluate_interventions(runner: InteractionDynamicsRunner, split: str) -> dic
             "ade_mm": metrics[f"{prefix}object/ade_mm"],
             "fde_mm": metrics[f"{prefix}object/fde_mm"],
         }
+        if f"{prefix}contact/mse" in metrics:
+            results[mode].update({
+                "contact_mse": metrics[f"{prefix}contact/mse"],
+                "contact_relative_improvement": metrics[f"{prefix}contact/relative_improvement"],
+                "contact_f1": metrics[f"{prefix}contact/f1"],
+            })
     return results
 
 

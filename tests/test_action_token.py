@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 import torch
 
-from src.task.Actiontoken.generator import sample_pose_pairs, sample_smooth_pose_trajectory
+from src.task.Actiontoken.generator import (ManoTransitionParameterDataset, sample_pose_pairs,
+                                            sample_smooth_pose_trajectory)
 from src.task.Actiontoken.model import DynamicActionEncoder, FlowActionEncoder
 from src.task.Actiontoken.probes import OddProbe
 
@@ -66,3 +67,16 @@ def test_v2_flow_encoder_shape_static_and_reverse_contract():
                                torch.zeros_like(static["action_tokens"]))
     torch.testing.assert_close(static["pred_dense_flow_internal"],
                                torch.zeros_like(static["pred_dense_flow_internal"]))
+
+
+def test_v21_parameter_dataset_has_no_precomputed_flow_and_tracks_clipping():
+    dataset = ManoTransitionParameterDataset(
+        mano_path="dataset/arctic/data/body_models/mano", side="right",
+        num_samples=8, seed=7, num_pca_comps=24, num_patches=64, patch_size=32,
+        motion_stds=(.02, .06, .12), motion_probs=(.4, .4, .2), sparse_probability=.5)
+    assert not hasattr(dataset, "patch_flow")
+    sample = dataset[0]
+    assert sample["mano_pose"].shape == (24,)
+    assert sample["mano_pose_delta"].shape == (24,)
+    assert 0 <= sample["clip_fraction"] <= 1
+    assert sample["patch_knn_idx"].shape == (64, 32)

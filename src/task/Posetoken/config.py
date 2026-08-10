@@ -34,6 +34,7 @@ class Config(TaskConfig):
         val_seed = 43
         test_seed = 44
         generation_batch_size = 256
+        on_the_fly = False
         beta_std = 0.0
         train_pose_group_size = 1
         eval_pose_group_size = 1
@@ -65,3 +66,5 @@ def validate_config(cfg: TaskConfig) -> None:
         raise ValueError("model_dim 必须能被 attention_heads 整除")
     if str(cfg.meta.side) not in {"left", "right"}:
         raise ValueError("meta.side 必须是 left 或 right")
+    if bool(getattr(cfg.data, "on_the_fly", False)) and int(cfg.data.num_workers) < 0:
+        raise ValueError("data.num_workers 不能为负数")

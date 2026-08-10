@@ -227,6 +227,7 @@ class InteractionDynamicsDataset(Dataset):
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
             "action_hand_points_local_sequence": hand_local.astype(np.float32),
+            "future_hand_points_object_endpoint": hand_future_object[-1].astype(np.float32),
             "action_hand_cano_points": canonical,
             "action_patch_knn_idx": self._action_atlas[atlas_key],
             "action_hand_root_increment_pose": hand_root_increment.astype(np.float32),

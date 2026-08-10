@@ -67,3 +67,29 @@ MANO 1538 个 face centers 具有稳定 correspondence，动作点流可由两�
 
 **下一步**
 大规模预训练前改为 parameter-only、batch 内 MANO forward；随后把 RootToken 作为独立模块，并用 V2 checkpoint 重做 InteractionDynamics articulation intervention。
+
+## 实验：ActionToken V2.1 parameter-only 100k scaling
+
+**假设**
+冻结 V2 flow-only 架构，只把 pose pair 数据改为 parameter-only 并在 GPU 按 batch 执行 MANO，可以覆盖 100k transitions 而不让 patch flow 常驻 RAM，并保持已有 reconstruction 与解析方向性质。
+
+**观察到的失败 / 现象**
+旧数据集每个样本常驻 `64×32×3` FP32 flow，100k 仅 flow 就约 2.4 GB，且生成阶段还需要完整 MANO surface 临时内存。
+
+**诊断**
+synthetic 数据只需固定保存 `theta_t` 和 clamp 后的 `delta_theta`；一个 batch 的前后姿态可合并为 `[B×2,24]`，一次 MANO forward 后解析相减和 atlas gather，无需修改 ActionEncoder。
+
+**改动**
+新增 `ManoTransitionParameterDataset` 和 Runner batch MANO 路径；新增 component `clip_fraction` 指标。正式配置使用 100k train、固定 10k val/test、batch 256、20 epochs、W&B online，模型与 dense flow MSE 不变。
+
+**结果**
+512/256 smoke 正常完成，clip fraction 约 `0.1%`，static/reverse 残差为 0。2026-08-11 在 GPU 5 启动正式 run `b4sl1mgp`，总计 7820 steps。epoch 1 val improvement 为 `84.12%`；epoch 3 为 `93.22%`、EPE `0.03888 mm`，吞吐约 25k–29k samples/s，训练正常。
+
+**决策**
+保留 V2.1 scalable data path，继续完成 100k run；不修改 `FlowActionEncoder`。
+
+**下一步**
+训练结束后用 best checkpoint 评估固定 test，和 4k baseline 的 `95.29%` improvement / `0.02757 mm` EPE 对比，再导出 `action_encoder_v2_large.pt`。
+
+**阶段更新（2026-08-11）**
+100k run 完成全部 7820 steps，固定 test improvement `98.765%`、RMSE `0.000781 cm`、EPE `0.006325 mm`，明显优于 4k baseline；static/reverse 残差仍为 0。已在 GPU 5 启动 500k unique transitions XL run：batch 512、20 epochs、19540 steps，W&B run `t7rwipjs`。

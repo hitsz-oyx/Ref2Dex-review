@@ -1,0 +1,37 @@
+_base_: src.task.Actiontoken.config:Config
+runner_class: src.task.Actiontoken.runner.ActionTokenV2Runner
+model:
+  class_path: src.task.Actiontoken.model.ActionTokenV2Model
+data:
+  train_samples: 500000
+  val_samples: 10000
+  test_samples: 10000
+  val_seed: 43
+  test_seed: 44
+  on_the_fly: true
+  motion_stds: [0.02, 0.06, 0.12]
+  motion_probs: [0.4, 0.4, 0.2]
+  sparse_probability: 0.5
+  batch_size: 512
+  val_batch_size: 512
+  test_batch_size: 512
+  num_workers: 4
+  persistent_workers: true
+  shuffle: true
+train:
+  epochs: 20
+  lr: 0.0005
+  weight_decay: 0.0001
+  scheduler: cosine
+  warmup_ratio: 0.02
+  amp: true
+  amp_dtype: bfloat16
+  log_every_steps: 100
+  eval_every_epochs: 1
+  save_every_epochs: 2
+  max_to_keep: 5
+wandb:
+  mode: online
+  group: actiontoken-v21-scale
+  name: actiontoken-v21-xl500k
+  tags: [action-token, flow-only, xl, 500k, parameter-only]

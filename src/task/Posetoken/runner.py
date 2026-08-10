@@ -10,10 +10,16 @@ from src.base import BaseRunner, RunnerOutput
 from src.base.checkpoint import load_checkpoint
 from src.base.data import make_dataloader_kwargs
 from src.task.InteractionDynamics.uni3d import gather_points
-from src.task.Posetoken.dataset import SyntheticManoPoseDataset
+from src.task.Posetoken.dataset import (MANO, ManoPoseParameterDataset,
+                                        SyntheticManoPoseDataset, face_centers)
 
 
 class PoseTokenRunner(BaseRunner):
+    def __init__(self, *args, **kwargs):
+        self._mano_layer = None
+        self._mano_faces = None
+        super().__init__(*args, **kwargs)
+
     def make_dataloaders(self, data_cfg: Any, seed: int):
         common = dict(
             mano_path=self.cfg.meta.mano_path, side=self.cfg.meta.side,
@@ -21,13 +27,15 @@ class PoseTokenRunner(BaseRunner):
             num_patches=self.cfg.meta.num_patches, patch_size=self.cfg.meta.patch_size,
             generation_batch_size=data_cfg.generation_batch_size,
             beta_std=data_cfg.beta_std)
-        train = SyntheticManoPoseDataset(
+        dataset_class = (ManoPoseParameterDataset if bool(getattr(data_cfg, "on_the_fly", False))
+                         else SyntheticManoPoseDataset)
+        train = dataset_class(
             **common, num_samples=data_cfg.train_samples, seed=seed,
             pose_group_size=data_cfg.train_pose_group_size)
-        val = SyntheticManoPoseDataset(
+        val = dataset_class(
             **common, num_samples=data_cfg.val_samples, seed=data_cfg.val_seed,
             pose_group_size=data_cfg.eval_pose_group_size)
-        test = SyntheticManoPoseDataset(
+        test = dataset_class(
             **common, num_samples=data_cfg.test_samples, seed=data_cfg.test_seed,
             pose_group_size=data_cfg.eval_pose_group_size)
         kwargs = make_dataloader_kwargs(data_cfg, seed)
@@ -38,7 +46,11 @@ class PoseTokenRunner(BaseRunner):
                                 **make_dataloader_kwargs(data_cfg, seed + 1))
         test_loader = DataLoader(test, batch_size=int(data_cfg.test_batch_size or eval_batch),
                                  shuffle=False, **make_dataloader_kwargs(data_cfg, seed + 2))
-        metadata = {"data_source": "synthetic_mano", "morphology": "beta_zero",
+        metadata = {"data_source": "synthetic_mano",
+                    "morphology": ("random_beta_to_zero" if float(data_cfg.beta_std) > 0
+                                   else "beta_zero"),
+                    "surface_generation": ("batch_mano" if dataset_class is ManoPoseParameterDataset
+                                           else "precomputed"),
                     "side": str(self.cfg.meta.side), "train_samples": len(train),
                     "val_samples": len(val), "test_samples": len(test)}
         return (train_loader, val_loader, test_loader, metadata,
@@ -51,6 +63,31 @@ class PoseTokenRunner(BaseRunner):
             payload = load_checkpoint(checkpoint, map_location="cpu")
             model.load_state_dict(payload["model"])
         return model
+
+    def prepare_batch(self, batch: Any) -> Any:
+        batch = super().prepare_batch(batch)
+        if "hand_points_root" in batch:
+            return batch
+        if self._mano_layer is None:
+            self._mano_layer = MANO(
+                str(self.cfg.meta.mano_path), is_rhand=str(self.cfg.meta.side) == "right",
+                use_pca=True, num_pca_comps=int(self.cfg.meta.num_pca_comps),
+                flat_hand_mean=True).to(self.device).eval().requires_grad_(False)
+            self._mano_faces = torch.as_tensor(
+                self._mano_layer.faces.astype("int64"), device=self.device)
+        pose = batch["mano_pose"].float()
+        beta = batch["mano_beta"].float()
+        zeros3 = torch.zeros(len(pose), 3, device=pose.device)
+        with torch.no_grad():
+            current = self._mano_layer(hand_pose=pose, betas=beta,
+                                       global_orient=zeros3, transl=zeros3)
+            target = self._mano_layer(hand_pose=pose, betas=torch.zeros_like(beta),
+                                      global_orient=zeros3, transl=zeros3)
+            batch["hand_points_root"] = face_centers(
+                current.vertices - current.joints[:, :1], self._mano_faces).float()
+            batch["hand_target_points_root"] = face_centers(
+                target.vertices - target.joints[:, :1], self._mano_faces).float()
+        return batch
 
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor],
              mode: str = "train") -> RunnerOutput:

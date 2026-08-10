@@ -35,6 +35,7 @@ class Config(TaskConfig):
         val_seed = 43
         test_seed = 44
         generation_batch_size = 128
+        on_the_fly = False
         velocity_decay = 0.9
         velocity_std = 0.035
         batch_size = 16
@@ -65,6 +66,8 @@ def validate_config(cfg: TaskConfig) -> None:
             raise ValueError("V2 motion mixture 必须包含 small/medium/large 三组")
         if abs(sum(float(value) for value in cfg.data.motion_probs) - 1) > 1e-6:
             raise ValueError("V2 motion_probs 之和必须为 1")
+        if bool(getattr(cfg.data, "on_the_fly", False)) and int(cfg.data.num_workers) < 0:
+            raise ValueError("data.num_workers 不能为负数")
         return
     if int(cfg.meta.chunk_len) != 8:
         raise ValueError("ActionToken V1 固定使用 8 transitions")

@@ -48,6 +48,7 @@ class Config(TaskConfig):
         action_encoder_mode = "legacy"
         freeze_pose_encoder = True
         freeze_action_encoder = True
+        contact_sigma_m = 0.01
 
     class model(TaskConfig.model):
         class_path = "src.task.InteractionDynamics.model.InteractionDynamicsModel"
@@ -90,6 +91,7 @@ class Config(TaskConfig):
         action_root_translation_loss_weight = 0.0
         action_root_rotation_loss_weight = 0.0
         static_pose_reconstruction_loss_weight = 0.0
+        contact_loss_weight = 0.0
         amp = True
         amp_dtype = "bfloat16"
         metric_for_best = "val/object/ade_mm"

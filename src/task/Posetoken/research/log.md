@@ -58,5 +58,28 @@ V2 随机 beta，并以相同 theta、beta=0 surface 为 target，直接验证 m
 **决策**
 保留 V1 初始化 + beta=0 reconstruction target；撤回显式 consistency loss。V2 的 global normalization 通过，local normalization 结论不充分。
 
+## 实验：PoseToken parameter-only 规模化预训练
+
+**假设**
+保持现有 PoseToken 架构不变，只把 synthetic 数据改为 parameter-only、batch 内 MANO forward，即可在不让 surface 常驻 RAM 的情况下扩展至 100k/200k 两阶段训练。
+
+**观察到的失败 / 现象**
+旧 `SyntheticManoPoseDataset` 在初始化时同时保存 input/target `[N,1538,3]` surface，不适合 10 万级以上样本。GRAB stage5 cache 没有可直接构造同 pose、beta=0 target 的 MANO pose 参数，因此当前不伪造真实 OOD normalized reconstruction 指标；V14 已确认真实 GRAB surface 接口可以运行。
+
+**改动**
+新增只保存 pose/beta 的 `ManoPoseParameterDataset`，Runner 在 GPU 上按 batch 生成 random-beta input 与 beta=0 target。新增 100k V1 Stage 1 和 200k V2 Stage 2 在线 W&B 配置；模型和 reconstruction loss 不变。
+
+**结果**
+256/128 smoke 使用 batch 128 正常完成训练、验证和反向传播。2026-08-11 已在 GPU 4 启动 Stage 1：100k poses、20 epochs、总计 15640 steps，W&B online run `aic01stf`。约 step 700 时 dense/global improvement 已为约 58.8%/58.0%，吞吐约 6k samples/s，训练正常。
+
+**决策**
+保留 parameter-only 路径并继续 Stage 1。Stage 2 必须等待 Stage 1 best checkpoint，再以该 checkpoint 初始化，不能随机启动。
+
+**下一步**
+Stage 1 完成后检查 test reconstruction 与 collapse diagnostics，再启动 200k morphology normalization Stage 2，并导出最终 encoder-only checkpoint。
+
+**阶段更新（2026-08-11）**
+Stage 1 完成全部 15640 steps。best checkpoint 在固定 test 上 dense/global improvement 为 `94.51%/97.61%`，EPE `0.5755 mm`，global variance/cosine 为 `0.3049/0.1989`，无 collapse。已从该 best checkpoint 在 GPU 4 启动 200k morphology Stage 2：20 epochs、31260 steps，W&B run `nacz9ssg`。
+
 **下一步**
 先在 GRAB/ARCTIC 上做真实姿态 OOD reconstruction；再针对 local token 比较 subject-neutral atlas 输入或从 token 中线性 probe beta，避免仅凭 synthetic pair ratio 下结论。

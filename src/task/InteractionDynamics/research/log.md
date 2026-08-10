@@ -620,3 +620,32 @@ Dataset 直接从 cache 的 canonical hand surface 构建独立 `64×32` action 
 
 **决策**
 保留 V14 最小实现和 intervention 工具，但判定核心科学验收未通过。按指导不运行 small20、不解冻 ActionEncoder、不增加 slots。下一步若继续，应先对 A→W 与 Effect Query 做 root/articulation 显式分支归因，寻找局部 token 被单 query 汇聚抵消的位置。
+
+## 实验：V15 ActionToken V2 与终点接触监督
+
+**假设**
+冻结的 ActionToken V2 flow encoder 提供更纯粹的局部运动表示；从 endpoint articulation Cm 预测 object-patch/hand-patch soft contact，应在 32 个训练 chunk 上明显优于全零预测，并对 articulation token 的 patch identity 敏感。
+
+**观察到的失败 / 现象**
+V14 的物体 SE(3) 可充分拟合，但 articulation-zero/mean/shuffle 几乎不改变结果，Effect 主要依赖 RootToken。需要一个直接约束局部手物对应关系的监督。
+
+**改动**
+V14 主路径改接冻结的 ActionToken V2 flow encoder：对 9 帧 wrist-local surface 求 8 个相邻 dense flow，按预训练约定乘 100 并用固定 `64×32` atlas 编码。Dataset 返回未来终点手点；Runner 以当前 world object patch center 到未来 endpoint hand patch 内 32 点的最近距离构造 `sigma=1 cm` Gaussian soft contact。模型仅从 `Cm[:, -1, 1:]` 经 `384→384→64` sigmoid head 预测 `64×64` contact，使用 MSE 权重 1；V14 刚体 SE(3) 路径保持不变。
+
+**结果**
+controlled overfit 产物为 `outputs/interactiondynamics/interaction_dynamics_20260811_004602`。在最低预算 840 steps 后主动停止：contact MSE 为 `0.002946`，zero MSE 为 `0.003121`，只改善 `4.63%`，F1 为 0。latest checkpoint 的完整 train-set normal MSE 为 `0.00294766`、相对改善 `4.80%`；articulation-zero/mean/shuffle 分别为 `0.00294766/0.00294770/0.00294770`，cross-sample 为 `0.00294767`，没有可测的 identity 敏感性。目标 active fraction 约 `0.4%`，模型收敛到近零预测。
+
+**诊断**
+V15 当前 contact 定义极度稀疏，未加权 MSE 的最优捷径是预测全零；因此既未达到指导要求的 50% overfit 改善，也未通过 shuffle intervention。该结果不能支持“ActionToken V2 经 Cm 学到局部接触对应”的结论。
+
+**决策**
+保留最小实现作为可复查失败基线。按用户要求，无论门控结果仍启动全量 GRAB 观察性训练：`CUDA_VISIBLE_DEVICES=6,7` 的单个双卡 DDP run，W&B run `4d6a1wk7`，输出 `outputs/interactiondynamics/interaction_dynamics_20260811_005150`，`world_size=2`、global batch 8、计划 15030 steps。该运行不视为门控通过。
+
+全量训练已正常完成 30 epoch / 15030 steps，共用时 2956 秒（约 49.3 分钟），训练集 4001 chunks、验证集 1595 chunks，按 sequence group 划分为 16/4 组。验证轨迹从 epoch 1 的 ADE/FDE `28.74/48.53 mm` 改善至最终 `20.88/34.87 mm`；最佳 ADE 为 epoch 16 的 `20.24 mm`，对应 FDE `33.96 mm`。最终训练 ADE/FDE 为 `6.96/11.25 mm`，说明刚体 effect 能拟合，但存在明显训练—验证差距。总验证 loss 最低点在 epoch 6（`0.22195`），之后最终回升至 `0.25302`。
+
+接触分支没有随规模化训练变好。配置按 `val/contact/mse` 选择 best，因此 `best.pt` 停留在 epoch 1：MSE `0.00530083`，相对固定 zero MSE `0.00542484` 仅改善 `2.29%`；最终 MSE 为 `0.00534916`，改善缩小到 `1.40%`，precision/recall/F1 始终为 0。最终训练 contact MSE `0.00412905`，相对训练 zero MSE `0.00430433` 改善约 `4.07%`。这与 controlled overfit 的近零解一致：扩大数据和训练预算没有绕过 `0.59%` train / `0.73%` val active fraction 导致的监督不平衡。
+
+因此全量结果只支持“V15 刚体轨迹分支可训练”，不支持“ActionToken V2 经 Cm 学到了局部接触对应”。W&B 在线记录：`https://wandb.ai/hitsz-oyx/ref2dex/runs/4d6a1wk7`。
+
+**下一步**
+先在同一 32-chunk controlled overfit 上处理接触监督不平衡（正样本加权或按每个 object patch 归一化），要求显著超过 zero baseline 且 F1 非零；通过后再重复 articulation shuffle 验收，不直接继续扩大训练。

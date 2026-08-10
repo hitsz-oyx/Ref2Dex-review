@@ -133,3 +133,41 @@ class SyntheticManoTransitionDataset(Dataset):
                 "patch_knn_idx": self.patch_knn_idx,
                 "mano_pose": self.pose[index], "mano_pose_delta": self.delta[index],
                 "sample_id": torch.tensor(index, dtype=torch.long)}
+
+
+class ManoTransitionParameterDataset(Dataset):
+    """大规模 V2 数据：只保存 pose pair 参数，batch 内再执行 MANO。"""
+
+    def __init__(self, *, mano_path: str | Path, side: str, num_samples: int, seed: int,
+                 num_pca_comps: int, num_patches: int, patch_size: int,
+                 motion_stds: tuple[float, float, float],
+                 motion_probs: tuple[float, float, float], sparse_probability: float,
+                 **_: object) -> None:
+        self.side = str(side)
+        pose, requested_delta = sample_pose_pairs(
+            num_samples, num_pca_comps, seed, motion_stds, motion_probs, sparse_probability)
+        after = (pose + requested_delta).clamp(-2.5, 2.5)
+        self.pose = pose
+        self.delta = after - pose
+        self.clip_fraction = (after != pose + requested_delta).float().mean(-1)
+
+        layer = MANO(str(mano_path), is_rhand=self.side == "right", use_pca=True,
+                     num_pca_comps=num_pca_comps, flat_hand_mean=True)
+        layer.eval().requires_grad_(False)
+        faces = torch.as_tensor(layer.faces.astype(np.int64))
+        with torch.no_grad():
+            zero = layer(hand_pose=torch.zeros(1, num_pca_comps), betas=torch.zeros(1, 10),
+                         global_orient=torch.zeros(1, 3), transl=torch.zeros(1, 3))
+        self.canonical = face_centers(zero.vertices - zero.joints[:, :1], faces)[0].float()
+        self.patch_knn_idx = build_canonical_patch_map(
+            self.canonical, num_patches, patch_size)
+
+    def __len__(self):
+        return len(self.pose)
+
+    def __getitem__(self, index):
+        return {"hand_cano_points": self.canonical,
+                "patch_knn_idx": self.patch_knn_idx,
+                "mano_pose": self.pose[index], "mano_pose_delta": self.delta[index],
+                "clip_fraction": self.clip_fraction[index],
+                "sample_id": torch.tensor(index, dtype=torch.long)}

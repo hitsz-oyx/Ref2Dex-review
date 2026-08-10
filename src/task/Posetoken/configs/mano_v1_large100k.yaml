@@ -1,0 +1,37 @@
+_base_: src.task.Posetoken.config:Config
+
+data:
+  train_samples: 100000
+  val_samples: 5000
+  test_samples: 5000
+  val_seed: 43
+  test_seed: 44
+  on_the_fly: true
+  beta_std: 0.0
+  train_pose_group_size: 1
+  eval_pose_group_size: 1
+  batch_size: 128
+  val_batch_size: 256
+  test_batch_size: 256
+  num_workers: 4
+  persistent_workers: true
+  shuffle: true
+
+train:
+  epochs: 20
+  lr: 0.001
+  weight_decay: 0.05
+  scheduler: cosine
+  warmup_ratio: 0.02
+  amp: true
+  amp_dtype: bfloat16
+  log_every_steps: 100
+  eval_every_epochs: 1
+  save_every_epochs: 2
+  max_to_keep: 5
+
+wandb:
+  mode: online
+  group: posetoken-v2-large
+  name: posetoken-v1-large100k-stage1
+  tags: [pose-token, synthetic-mano, large, stage1, beta-zero]

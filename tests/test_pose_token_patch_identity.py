@@ -26,3 +26,15 @@ def test_morphology_pairs_share_pose_target_but_have_different_inputs():
                                second["hand_target_points_root"])
     assert not torch.allclose(first["hand_points_root"], second["hand_points_root"])
     assert torch.equal(first["patch_knn_idx"], second["patch_knn_idx"])
+
+
+def test_parameter_dataset_keeps_only_mano_parameters_and_pair_identity():
+    from src.task.Posetoken.dataset import ManoPoseParameterDataset
+    dataset = ManoPoseParameterDataset(
+        mano_path="dataset/arctic/data/body_models/mano", side="right",
+        num_samples=2, seed=9, beta_std=.75, pose_group_size=2)
+    assert not hasattr(dataset, "hand_points_root")
+    first, second = dataset[0], dataset[1]
+    torch.testing.assert_close(first["mano_pose"], second["mano_pose"])
+    assert not torch.allclose(first["mano_beta"], second["mano_beta"])
+    assert first["patch_knn_idx"].shape == (64, 32)

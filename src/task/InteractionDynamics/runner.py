@@ -201,6 +201,15 @@ def trajectory_statistics(pred_m: torch.Tensor, gt_m: torch.Tensor,
     return result
 
 
+def endpoint_contact_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
+                            sigma_m: float) -> torch.Tensor:
+    hand = gather_points(batch["future_hand_points_object_endpoint"].float(),
+                         batch["action_patch_knn_idx"])
+    obj = prediction["obj_patch_centers_object"].float()
+    distance = torch.linalg.vector_norm(hand[:, :, :, None] - obj[:, None, None], dim=-1).amin(2)
+    return torch.exp(-distance.square() / (2.0 * float(sigma_m) ** 2))
+
+
 def se3_statistics_and_loss(prediction: dict[str, torch.Tensor],
                             gt_increment_pose: torch.Tensor,
                             motion_scale: float) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
@@ -430,6 +439,13 @@ class InteractionDynamicsRunner(BaseRunner):
             prediction, batch["obj_increment_pose_gt"], scale)
         loss = (float(self.cfg.train.se3_translation_loss_weight) * translation_loss
                 + float(self.cfg.train.se3_rotation_loss_weight) * rotation_loss)
+        contact_target = None
+        if "pred_contact_matrix" in prediction:
+            contact_target = endpoint_contact_target(
+                batch, prediction, float(self.cfg.meta.contact_sigma_m))
+            contact_prediction = prediction["pred_contact_matrix"].float()
+            contact_loss = torch.nn.functional.mse_loss(contact_prediction, contact_target)
+            loss = loss + float(self.cfg.train.contact_loss_weight) * contact_loss
         cm = prediction["cm_tokens"].float()
         spatial = cm - cm.mean(2, keepdim=True)
         temporal = cm - cm.mean(1, keepdim=True)
@@ -451,4 +467,23 @@ class InteractionDynamicsRunner(BaseRunner):
         }
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(se3_metrics)
+        if contact_target is not None:
+            contact_prediction = prediction["pred_contact_matrix"].float()
+            zero_mse = contact_target.square().mean()
+            active_gt = contact_target > .5
+            active_pred = contact_prediction > .5
+            true_positive = (active_gt & active_pred).sum().float()
+            precision = true_positive / active_pred.sum().clamp_min(1)
+            recall = true_positive / active_gt.sum().clamp_min(1)
+            metrics.update({
+                "loss/contact": contact_loss,
+                "contact/mse": contact_loss,
+                "contact/zero_mse": zero_mse,
+                "contact/relative_improvement": 1 - contact_loss / zero_mse.clamp_min(1e-8),
+                "contact/mae": torch.nn.functional.l1_loss(contact_prediction, contact_target),
+                "contact/precision": precision,
+                "contact/recall": recall,
+                "contact/f1": 2 * precision * recall / (precision + recall).clamp_min(1e-8),
+                "contact/active_fraction": active_gt.float().mean(),
+            })
         return RunnerOutput(loss=loss, metrics=metrics, batch_size=pred.shape[0])
