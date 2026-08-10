@@ -277,7 +277,9 @@ class InteractionDynamicsRunner(BaseRunner):
                                            prediction["object_to_action_attention"]))
         if "interaction_field" in prediction:
             metrics.update(field_statistics(
-                prediction["interaction_field"], prediction["interaction_field_descriptor"],
+                prediction.get("se3_interaction_field", prediction["interaction_field"]),
+                prediction.get("se3_interaction_field_descriptor",
+                               prediction["interaction_field_descriptor"]),
                 prediction["hand_to_object_soft_weights"]))
         edge = prediction["relative_interaction_tokens"]
         edge_centered = edge - edge.mean(1, keepdim=True)

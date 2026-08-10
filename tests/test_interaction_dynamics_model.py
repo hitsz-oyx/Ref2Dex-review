@@ -53,6 +53,7 @@ def test_forward_backward_without_future_object_input():
     assert output["action_tokens_temporal"].shape == (batch, 8, 4, 48)
     assert output["interaction_field"].shape == (batch, 8, 4, 128)
     assert output["interaction_field_descriptor"].shape == (batch, 8, 4, 5)
+    assert output["se3_interaction_field"].shape == (batch, 8, 4, 128)
     assert output["pred_obj_increment_rotation_matrix"].shape == (batch, 8, 3, 3)
     assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()
@@ -62,6 +63,36 @@ def test_forward_backward_without_future_object_input():
     assert model.world.patch_encoder.local[0].weight.grad is not None
     assert not any(parameter.requires_grad for parameter in model.dense_encoder.parameters())
     assert not any(key.startswith("dense_encoder.") for key in model.state_dict())
+
+
+def test_global_action_ablation_removes_object_indexed_field_and_descriptor():
+    meta = SimpleNamespace(model_dim=48, attention_heads=6, num_hand_patches=4,
+        num_obj_patches=4, patch_size=8, chunk_len=8, action_temporal_layers=2,
+        action_world_layers=2, motion_scale=100., dense_checkpoint="unused",
+        uni3d_checkpoint="missing", use_v7_field=True, field_ablation="global_action_only")
+    model = InteractionDynamicsModel(SimpleNamespace(meta=meta), dense_encoder=FakeDense(),
+                                     load_uni3d=False, world_depth=1)
+    batch, hand_count, object_count, effect_count = 2, 32, 48, 12
+    normals = lambda *shape: torch.nn.functional.normalize(torch.randn(*shape, 3), dim=-1)
+    output = model(
+        world_hand_points_object=torch.randn(batch, hand_count, 3),
+        world_hand_normals_object=normals(batch, hand_count),
+        world_obj_points_object=torch.randn(batch, object_count, 3),
+        world_obj_normals_object=normals(batch, object_count),
+        action_hand_points_hand=torch.randn(batch, hand_count, 3),
+        action_hand_normals_hand=normals(batch, hand_count),
+        hand_disp_chunk=torch.randn(batch, 8, hand_count, 3) * .01,
+        action_hand_disp_chunk_object=torch.randn(batch, 8, hand_count, 3) * .01,
+        dense_obj_points_hand=torch.randn(batch, effect_count, 3),
+        dense_obj_normals_hand=normals(batch, effect_count),
+        dense_hand_points_hand=torch.randn(batch, hand_count, 3),
+        dense_hand_normals_hand=normals(batch, hand_count),
+        effect_obj_points_object=torch.randn(batch, effect_count, 3),
+        effect_obj_normals_object=normals(batch, effect_count),
+        effect_obj_valid_mask=torch.ones(batch, effect_count, dtype=torch.bool))
+    field = output["se3_interaction_field"]
+    assert torch.allclose(field, field[:, :, :1].expand_as(field))
+    assert torch.count_nonzero(output["se3_interaction_field_descriptor"]) == 0
 
 
 def test_effect_decoder_routes_patch_motion_by_nearest_center():

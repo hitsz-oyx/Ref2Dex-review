@@ -274,6 +274,9 @@ class InteractionDynamicsModel(nn.Module):
         self.motion_scale = float(meta.motion_scale)
         self.action_local_gain = float(getattr(meta, "action_local_gain", 1.0))
         self.use_v7_field = bool(getattr(meta, "use_v7_field", False))
+        self.field_ablation = str(getattr(meta, "field_ablation", "full"))
+        if self.field_ablation not in {"full", "no_descriptor", "global_action_only"}:
+            raise ValueError(f"Unsupported field_ablation: {self.field_ablation}")
         self.dense_encoder = dense_encoder or FrozenDenseTokenEncoder(meta.dense_checkpoint)
         self.dense_encoder.requires_grad_(False).eval()
         dense_dim = int(self.dense_encoder.token_dim)
@@ -388,8 +391,17 @@ class InteractionDynamicsModel(nn.Module):
             action_temporal, world["world_obj_tokens"], action["hand_patch_center_object"],
             world["obj_patch_centers_object"], hand_patch_normal_object,
             obj_patch_normal_object, hand_patch_disp_object)
-        se3 = self.se3_dynamics(field["interaction_field"],
-                                field["interaction_field_descriptor"],
+        se3_field = field["interaction_field"]
+        se3_descriptor = field["interaction_field_descriptor"]
+        if self.field_ablation == "no_descriptor":
+            se3_descriptor = torch.zeros_like(se3_descriptor)
+        elif self.field_ablation == "global_action_only":
+            global_action = torch.nn.functional.gelu(
+                self.interaction_field.action_proj(action_temporal.mean(2)))
+            global_action = self.interaction_field.norm(global_action)
+            se3_field = global_action[:, :, None].expand_as(se3_field)
+            se3_descriptor = torch.zeros_like(se3_descriptor)
+        se3 = self.se3_dynamics(se3_field, se3_descriptor,
                                 world["world_obj_tokens"], effect_obj_points_object)
         # No object residual: object tokens only locate canonical interaction queries.
         interaction, object_attention = self.canonicalizer(world["world_obj_tokens"], action_context, residual=False)
@@ -421,6 +433,8 @@ class InteractionDynamicsModel(nn.Module):
         pred_obj_disp = (se3["pred_obj_disp_chunk_se3"] if self.use_v7_field
                          else effect["pred_obj_disp_chunk"])
         return {**world, **action, **effect, **field, **se3,
+                "se3_interaction_field": se3_field,
+                "se3_interaction_field_descriptor": se3_descriptor,
                 "pred_obj_disp_chunk": pred_obj_disp,
                 "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,

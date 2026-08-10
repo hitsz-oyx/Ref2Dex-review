@@ -426,3 +426,66 @@ V6 patch-edge 的验证/测试增量 relative RMSE 为 0.275/0.240 cm，差于 z
 
 **下一步**
 优先完成 V7 action/descriptor/global-only 消融以定位 8.2% test ADE 改善来源；只有找到比 zero 更可预测的 interaction-specific target 后，再重启 dense bottleneck 研究。
+
+## 实验：V9 global-action-only 对 V7 局部场归因
+
+**假设**
+若 V7 的 object-indexed spatiotemporal field 确实编码了不可替代的局部 interaction，移除空间 field 与显式 `[rho,a_n,a_t]` descriptor、只保留全局 temporal action 和 object context 后，验证与测试 ADE 应明显退化。
+
+**观察到的失败 / 现象**
+V7 测试 ADE 比 zero-flow 改善 8.2%，但 V8 已证明提高局部几何分辨率不能改善 relative target。尚不清楚 V7 收益来自 local field，还是来自更匹配刚体数据的 SE(3) head 与全局 motion correlation。
+
+**改动**
+增加 `field_ablation`。`global_action_only` 保留与 V7 相同的 Action Encoder、world cross-attention、object tokens、SE(3) head、loss 和 small20 配置；仅将 temporal action 在 64 个 hand patches 上取均值并投影，再复制到全部 object positions，同时把 field descriptor 清零。送入 SE(3) head 的 spatial feature variance 和 descriptor variance 因而严格为 0。
+
+**结果**
+训练产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_112110`，5 epochs / 1920 steps，最佳 checkpoint 位于 step 1536。各轮验证 ADE 为 48.29、46.20、46.26、45.41、45.68 mm；最佳验证 ADE/FDE 为 45.41/77.51 mm，优于 full-field 的 46.70 mm。最佳 checkpoint 测试 ADE/FDE 为 42.29/73.38 mm，full-field 为 42.08/73.09 mm，仅退化 0.21/0.29 mm（ADE 约 0.5%）。测试 translation/rotation error 为 0.957 cm/2.628°，full-field 为 0.953 cm/2.572°。global-only 测试 field spatial variance 和 descriptor variance 均为 0。
+
+**诊断**
+局部场被完全消除后，验证反而改善，测试仅有远小于跨实验波动的轻微退化；因此没有证据表明 V7 使用了不可替代的 object-indexed local interaction。V7 的有效部分是逐步 SE(3) 刚体归纳偏置，以及包含 world context 的全局 temporal action conditioning。原 8.2% test 改善不能作为 mechanism latent 已成立的证据。
+
+**决策**
+保留 `global_action_only` 作为新的强 effect baseline，并保留 full-field 作对照；降低 full-field 的研究优先级。暂不做 descriptor-only 调权、dense compressor 或增加 field 分辨率。
+
+**下一步**
+先设计 interaction-rich sampling 或能区分“相同全局 hand transport、不同局部接触机制”的对照任务。只有局部模型能稳定超过 global-action-only 时，再研究可压缩的 interaction bottleneck `C`。
+
+## 实验：V9 global C 监督的 MANO self-inverse
+
+**假设**
+即使 V9 的 C 主要表示全局 temporal action，它仍可能作为可微监督，从当前 MANO 手初始化恢复未来 8 帧动作，从而先打通 human self-inverse 到后续 robot FK 所需的优化链路。
+
+**改动**
+实现 `inverse_mano.py`。脚本根据 cache 的 `source_raw_file/raw_frame_id/side` 回到 GRAB raw 参数，加载对应 subject v_template 的左右手 MANO。冻结 V9 encoder，以原始 human future action 的 `[8,128]` global C 为 teacher；将未来 MANO pose、global orientation、translation 全部初始化为当前帧，优化 C MSE 加时间平滑先验。GT future hand points 不进入 loss，只计算 ADE/FDE。
+
+**结果**
+test sample 0、200 steps、Adam lr 0.003、smooth weight 0.01 时，C RMSE 从 0.2377 降至 0.00953；hand-point ADE 从静止基线 27.52 mm 降至 10.88 mm，FDE 从 50.43 mm 降至 10.63 mm。产物为 `output/InteractionDynamics/mano_inverse/test_000_smooth.npz`。高学习率 0.03、smooth weight 1e-4 的对照虽然将 C RMSE 降到 0.118，但 ADE/FDE 恶化到 82.97/252.04 mm。
+
+**诊断**
+C→MANO 的梯度链和 raw/cache 帧对应均已打通。C 监督含有可恢复动作的信息，但 inverse 明显欠约束：弱先验允许错误 MANO 轨迹匹配更低的 C loss。合理的时间先验不是可选鲁棒性，而是决定重建是否可信的必要约束。
+
+**决策**
+保留 MANO self-inverse 工具，并将稳定的 lr 0.003、smooth weight 0.01 设为默认。当前只通过单样本 sanity check，不宣称 split-level 泛化。
+
+**下一步**
+批量运行多个 test chunks，报告成功率和 ADE/FDE 分布；增加 C-only、C+smooth 和 oracle hand trajectory 三组对照后，再接 Robot FK。
+
+## 实验：V10 Action token 的 global/local linear probe
+
+**假设**
+V9 只证明 object-indexed field 不必要，并不能证明 64 个 hand-patch Action tokens 已经坍缩。若 Action Encoder 仍保留手指局部动作，冻结表示上的线性 probe 应能在未见序列上预测去除全局均值后的 patch-local hand flow，并优于 zero predictor。
+
+**改动**
+新增 `action_probe.py`。在冻结 V9 best checkpoint 上一次性提取 small20 train/val/test 的 `action_context_tokens` 和稳定 KNN patch flow，将 target 精确分解为每步 global mean 与 zero-mean local residual。分别拟合 full、global、local 三个 affine ridge probe；ridge 从 0.001–100 中仅按 validation RMSE 选择，随后固定评估 test。主 encoder 不更新。
+
+**结果**
+Action token 的 train spatial variance 为 2.370，跨 patch pairwise cosine 为 0.721，未发生 collapse。global probe 选择 ridge 1，训练/验证/测试 RMSE 为 0.601/1.556/1.666 cm，对应相对 zero 改善 85.2%/67.0%/60.4%。local residual probe 选择 ridge 100，RMSE 为 0.297/0.427/0.452 cm，相对 zero 改善 44.9%/16.4%/22.8%。full-flow probe 选择 ridge 100，验证改善 20.1%，测试只改善 3.1%。结果保存在 `output/InteractionDynamics/action_probe/v9_small20.json`。
+
+**诊断**
+Action Encoder 明显保留全局运动，也保留较弱但可跨 sequence 线性读出的 patch-local residual。因此 V9 的结论应限定为“SE(3) effect head 不需要空间 field”，不能扩展为“Action representation 已全局坍缩”。full-flow 指标被大尺度 global motion 主导，无法单独衡量局部信息保存程度。
+
+**决策**
+保留 probe 工具。当前 checkpoint 已通过 local-information sanity check，不立即打开旧 `action_loss_weight=1`；旧 head 重建 raw flow 的目标不够针对性。若后续训练 action-information loss，应拆分 global mean head 和 local residual head，并分别报告相对 zero 的改善。
+
+**下一步**
+在 MANO self-inverse 中比较只监督 V9 global C 与同时监督 patch-level Action tokens，检查 local Action 信息能否进一步降低手指局部重建误差；这比直接重训旧 raw action head更接近 RL prior 需求。

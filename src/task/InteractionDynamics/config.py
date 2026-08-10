@@ -34,6 +34,7 @@ class Config(TaskConfig):
         use_v7_field = False
         field_dim = 128
         field_sigma_m = 0.05
+        field_ablation = "full"
         dense_edge_knn = 4
         dense_edge_dim = 64
         dense_edge_sigma_m = 0.02
