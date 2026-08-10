@@ -177,6 +177,14 @@ class InteractionDynamicsDataset(Dataset):
         world_obj = transform_points(obj_world_0, obj_pose)
         action_hand = transform_points(hand_world_0, hand_pose)
         hand_future = transform_points(data["hand_points_world"][future], hand_pose)
+        hand_poses = data["hand_root_pose_world"]
+        hand_local = np.stack([
+            transform_points(data["hand_points_world"][frame], hand_poses[frame])
+            for frame in np.concatenate([[current], future])
+        ])
+        hand_articulation_increment = np.diff(hand_local, axis=0)
+        hand_previous_pose = hand_poses[np.concatenate([[current], future[:-1]])]
+        hand_root_increment = np.linalg.inv(hand_previous_pose) @ hand_poses[future]
         hand_future_object = transform_points(data["hand_points_world"][future], obj_pose)
         obj_future = transform_points(data["obj_points_world"][future], obj_pose)
         obj_normals_future = transform_normals(data["obj_normals_world"][future], obj_pose)
@@ -207,7 +215,12 @@ class InteractionDynamicsDataset(Dataset):
             "world_obj_normals_object": transform_normals(data["obj_normals_world"][current], obj_pose),
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
+            "action_hand_points_local_sequence": hand_local.astype(np.float32),
+            "action_hand_root_increment_pose": hand_root_increment.astype(np.float32),
             "hand_disp_chunk": hand_future - action_hand[None],
+            # V12-A targets remove wrist SE(3) before differencing stable MANO vertices.
+            "hand_articulation_increment_gt": hand_articulation_increment.astype(np.float32),
+            "hand_root_increment_pose_gt": hand_root_increment.astype(np.float32),
             "action_hand_disp_chunk_object": hand_future_object - world_hand[None],
             # Runner-side mechanism diagnostics/supervision use this target in the
             # current object frame. It is deliberately absent from model.forward.

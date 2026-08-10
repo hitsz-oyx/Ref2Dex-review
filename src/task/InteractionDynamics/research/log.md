@@ -538,3 +538,45 @@ SE(3) 解析链、尺度和容量没有阻止拟合；“无法过拟合”的�
 
 **决策**
 不修改 ADE 或 SE(3) 坐标实现，也不以扩大 decoder 容量为下一步。后续比较必须同时报告 controlled-overfit ADE、zero-relative improvement、逐步 EPE，并在相同 sequence 数与训练预算下对齐 Cm/InteractionDynamics；模型研究优先恢复近场局部 action 条件，而不是继续只用 global mean `C`。
+
+## 实验：V12-A wrist 与局部关节动作分解监督
+
+**假设**
+现有 ActionToken 已包含手指局部动作，只是累计 raw flow 被 wrist 刚体运动主导；将监督拆成相邻 wrist SE(3) 和各帧 wrist frame 下的局部关节流，应同时超过各自零预测基线。
+
+**观察到的失败 / 现象**
+V10 local linear probe 只有 22.8% 改善，V11 的 object-centric local-motion 解码在 20 epochs 后仍差于零预测。现有 `action_reconstruction` 只预测累计 patch mean flow，且 V9/V11 配置将其权重设为零。
+
+**改动**
+Dataset 新增相邻 `hand_root_increment_pose_gt`，并把每帧完整 MANO surface 分别变换到自己的 wrist frame 后做稳定顶点差分，得到 `hand_articulation_increment_gt`。不修改 ActionEncoder 输入；从 `[B,8,64,D]` temporal ActionToken 逐 patch 解码 articulated flow，并从 patch 均值解码 root translation 与 rotation。三条 loss 独立配置和记录，物体 SE(3) 主路径保持 V9 global-action-only。
+
+**结果**
+运行 `outputs/interactiondynamics/interaction_dynamics_20260810_171704`，small20 共 5 epochs / 1920 steps，耗时 10:06。局部关节流验证 RMSE 从 epoch 1 的 0.0928 cm 降到 epoch 4 最佳 0.0586 cm，但仍差于 zero 0.0393 cm；epoch 5 回升到 0.0987 cm。最佳 checkpoint 的 test 局部流为 0.0599 cm，zero 为 0.0354 cm。wrist translation 验证/test 为 0.2648/0.2555 cm，明显优于 zero 0.6892/0.6637 cm；test wrist rotation error 为 2.75°。test object ADE/FDE 为 42.72/74.35 mm，略弱于 V9 的 42.29/73.38 mm。
+
+**诊断**
+目标分解是有效的：root motion 的可预测性与 local articulation 的失败被清楚隔离。现有 encoder 直接读取当前姿态和相对当前帧的 8 步累计位移，确实更容易编码全局刚体运动；只增加正确 local loss 能持续降低误差，但在相同训练预算下仍无法跨序列胜过极强的近零动作基线。结果支持 V12 文档提出的 static pose 与相邻 pose-pair 编码动机。
+
+**决策**
+保留 V12-A 作为诊断基线，不继续仅调整当前 cumulative encoder 的辅助 loss 权重。下一实验进入 V12-B/C：显式编码每帧 canonical static surface，再由相邻 pose representation 构造 incremental ActionToken。
+
+## 实验：V12-B/C static pose-pair incremental ActionToken
+
+**假设**
+将每帧手表面放入各自 wrist frame，先编码 static local/global PoseToken，再由相邻 pose pair 构造 ActionToken，可以避免 cumulative flow 的 root-motion 主导，并使局部关节流跨序列优于零预测。
+
+**观察到的失败 / 现象**
+V12-A 的 wrist motion 可泛化，但 articulated flow test 0.0599 cm 仍差于 zero 0.0354 cm，说明仅给旧 cumulative encoder 增加正确监督不够。
+
+**改动**
+Dataset 输出当前加未来共 9 帧 wrist-local stable MANO surface 和 8 个 wrist SE(3) increment。共享 static encoder 在当前 World hand 的稳定 KNN 上产生 64 个 PoseToken 和 global mean code；pair encoder 融合前后 PoseToken、差分、global codes、wrist increment，以及相邻 patch 点差的 mean/max/min，再经 temporal Transformer 得到 8 步 ActionToken。static head 重建 64 个 wrist-local patch centers。由于 articulation target RMS 仅约 0.01–0.05 cm，decoder 使用零初始化并将该 loss 权重设为 100；static loss 权重为 0.01。
+
+**结果**
+最终 controlled overfit 为 `outputs/interactiondynamics/interaction_dynamics_20260810_174654`：32 chunks、400 steps、1:52。epoch 50 articulation 为 0.00990 cm，优于 zero 0.01197 cm（改善 17.3%）；static patch-center 为 2.910 cm，优于 centered baseline 2.969 cm；object ADE/FDE 为 3.11/4.15 mm。此前随机初始化或 raw-MSE 同权会让小幅 articulation 梯度被淹没，均未通过 overfit，已撤回。
+
+small20 产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_174924`，5 epochs / 1920 steps，耗时 10:03。按 validation articulation 选择 epoch 4：validation 为 0.01330 cm，zero 0.03930 cm，改善 66.2%；test 为 0.01173 cm，zero 0.03537 cm，改善 66.8%。test wrist translation 为 0.2698 cm，zero 0.6637 cm，改善 59.4%；rotation error 2.17°。validation static patch-center 为 2.763 cm，略优于 centered baseline 2.800 cm；test 为 3.184 cm，差于 baseline 2.943 cm。test object ADE/FDE 为 45.07/78.57 mm，弱于 V9 的 42.29/73.38 mm。
+
+**诊断**
+V12 的主要表示假设成立：相邻 wrist-frame surface motion 能形成跨 sequence 可读的详细 ActionToken，且比 V12-A 有大幅改善。static pose 在 validation 通过、test 失败，符合不同 subject morphology 混入 wrist-local surface 的风险。object effect 没同步改善，是因为当前仍使用 `global_action_only`，将 64 个详细 ActionToken 池化后送入 SE(3)；interaction tokens 的 test cosine 仍为 0.9993。
+
+**决策**
+保留 V12-B/C 作为新的 ActionEncoder 主候选。下一步不再调整 action reconstruction，而是分开处理两个问题：用 neutral deformation 或 MANO PCA pose 消除 static code 的 morphology；让 interaction/effect 显式消费 local incremental ActionToken，并用 object ADE 与 intervention 验证。

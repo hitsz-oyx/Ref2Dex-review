@@ -29,6 +29,49 @@ def patch_motion_target(displacement_m: torch.Tensor, knn_idx: torch.Tensor,
                         for step in range(displacement_m.shape[1])], 1) * motion_scale
 
 
+def action_decomposition_losses(
+        batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor], motion_scale: float
+        ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    """V12-A adjacent wrist SE(3) and wrist-frame articulated patch-flow losses."""
+    articulation_target = patch_motion_target(
+        batch["hand_articulation_increment_gt"].float(), prediction["hand_knn_idx"], motion_scale)
+    articulation = torch.nn.functional.mse_loss(
+        prediction["pred_hand_articulation_increment_internal"].float(), articulation_target)
+    zero_articulation = articulation_target.square().mean()
+    root_target = batch["hand_root_increment_pose_gt"].float()
+    translation_target = root_target[..., :3, 3] * motion_scale
+    translation = torch.nn.functional.mse_loss(
+        prediction["pred_hand_root_increment_translation_internal"].float(), translation_target)
+    zero_translation = translation_target.square().mean()
+    rotation = torch.nn.functional.mse_loss(
+        prediction["pred_hand_root_increment_rotation_matrix"].float(), root_target[..., :3, :3])
+    relative_rotation = (prediction["pred_hand_root_increment_rotation_matrix"].float()
+                         .transpose(-1, -2) @ root_target[..., :3, :3])
+    cosine = ((relative_rotation.diagonal(dim1=-2, dim2=-1).sum(-1) - 1) / 2).clamp(
+        -1 + 1e-7, 1 - 1e-7)
+    return articulation, translation, rotation, {
+        "action/articulation_rmse_cm": articulation.sqrt(),
+        "action/zero_articulation_rmse_cm": zero_articulation.sqrt(),
+        "action/root_translation_rmse_cm": translation.sqrt(),
+        "action/zero_root_translation_rmse_cm": zero_translation.sqrt(),
+        "action/root_rotation_error_deg": torch.acos(cosine).mean() * (180 / torch.pi),
+    }
+
+
+def static_pose_reconstruction_loss(
+        batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor], motion_scale: float
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+    target = torch.stack([
+        gather_points(batch["action_hand_points_local_sequence"][:, step].float(),
+                      prediction["hand_knn_idx"])
+        for step in range(batch["action_hand_points_local_sequence"].shape[1])
+    ], 1).mean(3) * motion_scale
+    prediction_points = prediction["pred_hand_pose_patch_center_internal"].float()
+    loss = torch.nn.functional.mse_loss(prediction_points, target)
+    zero = (target - target.mean(dim=2, keepdim=True)).square().mean()
+    return loss, zero
+
+
 def object_centric_action_field_target(
         batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
         sigma_m: float, motion_scale: float = 100.0) -> torch.Tensor:
@@ -306,13 +349,32 @@ class InteractionDynamicsRunner(BaseRunner):
         else:
             action_field_loss = pred.new_zeros(())
             action_field_metrics = {}
+        articulation_weight = float(self.cfg.train.action_articulation_loss_weight)
+        root_translation_weight = float(self.cfg.train.action_root_translation_loss_weight)
+        root_rotation_weight = float(self.cfg.train.action_root_rotation_loss_weight)
+        if articulation_weight or root_translation_weight or root_rotation_weight:
+            articulation_loss, root_translation_loss, root_rotation_loss, action_metrics = (
+                action_decomposition_losses(batch, prediction, scale))
+        else:
+            articulation_loss = root_translation_loss = root_rotation_loss = pred.new_zeros(())
+            action_metrics = {}
+        static_pose_weight = float(self.cfg.train.static_pose_reconstruction_loss_weight)
+        if static_pose_weight:
+            static_pose_loss, static_pose_zero = static_pose_reconstruction_loss(
+                batch, prediction, scale)
+        else:
+            static_pose_loss = static_pose_zero = pred.new_zeros(())
         loss = (float(self.cfg.train.effect_loss_weight) * effect_loss
                 + float(self.cfg.train.se3_translation_loss_weight) * translation_loss
                 + float(self.cfg.train.se3_rotation_loss_weight) * rotation_loss
                 + float(self.cfg.train.action_loss_weight) * action_loss
                 + float(self.cfg.train.patch_effect_loss_weight) * patch_effect_loss
                 + float(self.cfg.train.relative_loss_weight) * relative_loss
-                + action_field_weight * action_field_loss)
+                + action_field_weight * action_field_loss
+                + articulation_weight * articulation_loss
+                + root_translation_weight * root_translation_loss
+                + root_rotation_weight * root_rotation_loss)
+        loss = loss + static_pose_weight * static_pose_loss
         metrics: dict[str, Any] = {"loss": loss, "loss/effect": effect_loss,
                                   "loss/action": action_loss,
                                   "loss/patch_effect": patch_effect_loss,
@@ -320,6 +382,10 @@ class InteractionDynamicsRunner(BaseRunner):
                                   "loss/se3_translation": translation_loss,
                                   "loss/se3_rotation": rotation_loss,
                                   "loss/interaction_reconstruction": action_field_loss,
+                                  "loss/action_articulation": articulation_loss,
+                                  "loss/action_root_translation": root_translation_loss,
+                                  "loss/action_root_rotation": root_rotation_loss,
+                                  "loss/static_pose_reconstruction": static_pose_loss,
                                   "relative/rmse_cm": relative_loss.sqrt(),
                                   "relative/zero_rmse_cm": relative_zero_loss.sqrt(),
                                   "relative/edge_fraction": (
@@ -328,6 +394,10 @@ class InteractionDynamicsRunner(BaseRunner):
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(se3_metrics)
         metrics.update(action_field_metrics)
+        metrics.update(action_metrics)
+        if static_pose_weight:
+            metrics["pose/reconstruction_rmse_cm"] = static_pose_loss.sqrt()
+            metrics["pose/centered_zero_rmse_cm"] = static_pose_zero.sqrt()
         metrics.update(collapse_statistics(prediction["interaction_tokens"],
                                            prediction["object_to_action_attention"]))
         if "interaction_field" in prediction:

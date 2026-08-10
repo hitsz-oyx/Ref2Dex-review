@@ -73,6 +73,64 @@ class ActionEncoder(nn.Module):
                 "hand_patch_center_object": centers_object}
 
 
+class PosePairActionEncoder(nn.Module):
+    """Canonical static surface tokens followed by adjacent-pose action tokens."""
+    def __init__(self, dim: int, heads: int, chunk_len: int, temporal_layers: int,
+                 patch_size: int) -> None:
+        super().__init__()
+        self.patch_size = int(patch_size)
+        self.pose = nn.Sequential(nn.Linear(6, 128), nn.GELU(), nn.Linear(128, dim))
+        self.pose_decoder = nn.Linear(dim, 3)
+        self.pair = nn.Sequential(nn.Linear(dim * 5 + 12, dim * 2), nn.GELU(),
+                                  nn.Linear(dim * 2, dim))
+        self.local_motion = nn.Sequential(nn.Linear(9, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.time_embed = nn.Parameter(torch.empty(1, chunk_len, 1, dim))
+        layer = nn.TransformerEncoderLayer(dim, heads, dim * 4, batch_first=True,
+                                           norm_first=True, activation="gelu")
+        self.temporal = nn.TransformerEncoder(layer, temporal_layers, norm=nn.LayerNorm(dim))
+        nn.init.normal_(self.time_embed, std=.02)
+        nn.init.zeros_(self.pose_decoder.weight)
+        nn.init.zeros_(self.pose_decoder.bias)
+
+    def forward(self, points_sequence: torch.Tensor, root_increment: torch.Tensor,
+                hand_points_object: torch.Tensor, hand_knn_idx: torch.Tensor,
+                motion_scale: float) -> dict[str, torch.Tensor]:
+        patches = torch.stack([
+            gather_points(points_sequence[:, step], hand_knn_idx)
+            for step in range(points_sequence.shape[1])
+        ], 1)
+        centers = patches.mean(3)
+        pose = self.pose(torch.cat([patches - centers[:, :, :, None], patches], -1)).amax(3)
+        global_pose = pose.mean(2)
+        steps = points_sequence.shape[1] - 1
+        root_feature = torch.cat([
+            root_increment[..., :3, 3] * motion_scale,
+            root_increment[..., :3, :3].reshape(*root_increment.shape[:-2], 9),
+        ], -1)
+        pair = torch.cat([
+            pose[:, :-1], pose[:, 1:], pose[:, 1:] - pose[:, :-1],
+            global_pose[:, :-1, None].expand(-1, -1, pose.shape[2], -1),
+            global_pose[:, 1:, None].expand(-1, -1, pose.shape[2], -1),
+            root_feature[:, :, None].expand(-1, -1, pose.shape[2], -1),
+        ], -1)
+        point_increment = (patches[:, 1:] - patches[:, :-1]) * motion_scale
+        motion_feature = torch.cat([
+            point_increment.mean(3), point_increment.amax(3), point_increment.amin(3)], -1)
+        action = self.pair(pair) + self.local_motion(motion_feature) + self.time_embed[:, :steps]
+        batch, _, patch_count, dim = action.shape
+        action = self.temporal(action.permute(0, 2, 1, 3).reshape(
+            batch * patch_count, steps, dim)).reshape(
+                batch, patch_count, steps, dim).permute(0, 2, 1, 3)
+        return {
+            "action_tokens": action.mean(1), "action_tokens_temporal": action,
+            "pose_tokens": pose, "global_pose_code": global_pose,
+            "pred_hand_pose_patch_center_internal": self.pose_decoder(pose),
+            "hand_patch_center_hand": centers[:, 0],
+            "hand_patch_center_object": gather_points(
+                hand_points_object, hand_knn_idx).mean(2),
+        }
+
+
 def axis_angle_to_matrix(vector: torch.Tensor) -> torch.Tensor:
     """Differentiable Rodrigues map with a stable zero-angle limit."""
     x, y, z = vector.unbind(-1)
@@ -288,6 +346,11 @@ class InteractionDynamicsModel(nn.Module):
         self.world_dense_gate = nn.Parameter(torch.tensor(-4.0))
         self.action = ActionEncoder(meta.model_dim, meta.attention_heads, meta.chunk_len,
                                     meta.action_temporal_layers, dense_dim)
+        self.pose_pair_action = bool(getattr(meta, "pose_pair_action", False))
+        if self.pose_pair_action:
+            self.pose_pair_encoder = PosePairActionEncoder(
+                meta.model_dim, meta.attention_heads, meta.chunk_len,
+                meta.action_temporal_layers, meta.patch_size)
         self.action_world = nn.ModuleList(
             [CrossAttentionBlock(meta.model_dim, meta.attention_heads) for _ in range(meta.action_world_layers)])
         self.canonicalizer = CrossAttentionBlock(meta.model_dim, meta.attention_heads)
@@ -305,6 +368,16 @@ class InteractionDynamicsModel(nn.Module):
             self.interaction_reconstruction_head = nn.Sequential(
                 nn.Linear(field_dim + meta.model_dim, field_dim), nn.GELU(),
                 nn.Linear(field_dim, 6))
+        self.action_decomposition_reconstruction = bool(
+            getattr(meta, "action_decomposition_reconstruction", False))
+        if self.action_decomposition_reconstruction:
+            self.action_articulation_head = nn.Linear(meta.model_dim, 3)
+            self.action_root_head = nn.Sequential(
+                nn.Linear(meta.model_dim, meta.model_dim), nn.GELU(), nn.Linear(meta.model_dim, 6))
+            nn.init.zeros_(self.action_articulation_head.weight)
+            nn.init.zeros_(self.action_articulation_head.bias)
+            nn.init.zeros_(self.action_root_head[-1].weight)
+            nn.init.zeros_(self.action_root_head[-1].bias)
         self.action_reconstruction = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.patch_effect = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.effect = EffectDecoder(meta.model_dim, meta.attention_heads, meta.chunk_len, dense_dim)
@@ -332,6 +405,8 @@ class InteractionDynamicsModel(nn.Module):
                 world_obj_normals_object: torch.Tensor | None = None,
                 action_hand_points_hand: torch.Tensor | None = None,
                 action_hand_normals_hand: torch.Tensor | None = None,
+                action_hand_points_local_sequence: torch.Tensor | None = None,
+                action_hand_root_increment_pose: torch.Tensor | None = None,
                 hand_disp_chunk: torch.Tensor | None = None,
                 action_hand_disp_chunk_object: torch.Tensor | None = None,
                 dense_obj_points_hand: torch.Tensor | None = None,
@@ -345,6 +420,7 @@ class InteractionDynamicsModel(nn.Module):
             return self.forward(**{key: batch[key] for key in (
                 "world_hand_points_object", "world_hand_normals_object", "world_obj_points_object",
                 "world_obj_normals_object", "action_hand_points_hand", "action_hand_normals_hand",
+                "action_hand_points_local_sequence", "action_hand_root_increment_pose",
                 "hand_disp_chunk", "action_hand_disp_chunk_object",
                 "dense_obj_points_hand", "dense_obj_normals_hand",
                 "dense_hand_points_hand", "dense_hand_normals_hand", "effect_obj_points_object",
@@ -372,8 +448,14 @@ class InteractionDynamicsModel(nn.Module):
         world_hand = world["world_hand_tokens"] + self.world_dense_gate.sigmoid() * self.world_dense_adapter(
             torch.cat([dense_patch, contact_patch], -1))
         world_tokens = torch.cat([world_hand, world["world_obj_tokens"]], 1)
-        action = self.action(action_hand_points_hand, action_hand_normals_hand, hand_disp_chunk,
-                             world_hand_points_object, world["hand_knn_idx"], z_hand, contact, self.motion_scale)
+        if self.pose_pair_action:
+            action = self.pose_pair_encoder(
+                action_hand_points_local_sequence, action_hand_root_increment_pose,
+                world_hand_points_object, world["hand_knn_idx"], self.motion_scale)
+        else:
+            action = self.action(action_hand_points_hand, action_hand_normals_hand, hand_disp_chunk,
+                                 world_hand_points_object, world["hand_knn_idx"], z_hand, contact,
+                                 self.motion_scale)
         action_context = action["action_tokens"]
         action_attention = None
         for block in self.action_world:
@@ -383,6 +465,15 @@ class InteractionDynamicsModel(nn.Module):
             action_context - action_mean)
         action_temporal = action["action_tokens_temporal"] + (
             action_context - action["action_tokens"])[:, None]
+        action_decomposition = {}
+        if self.action_decomposition_reconstruction:
+            root = self.action_root_head(action_temporal.mean(2))
+            action_decomposition = {
+                "pred_hand_articulation_increment_internal": self.action_articulation_head(
+                    action_temporal),
+                "pred_hand_root_increment_translation_internal": root[..., :3],
+                "pred_hand_root_increment_rotation_matrix": axis_angle_to_matrix(root[..., 3:]),
+            }
         hand_patch_disp_object = torch.stack([
             gather_points(action_hand_disp_chunk_object[:, step], world["hand_knn_idx"]).mean(2)
             for step in range(action_hand_disp_chunk_object.shape[1])
@@ -447,6 +538,7 @@ class InteractionDynamicsModel(nn.Module):
         pred_obj_disp = (se3["pred_obj_disp_chunk_se3"] if self.use_v7_field
                          else effect["pred_obj_disp_chunk"])
         return {**world, **action, **effect, **field, **se3, **reconstruction,
+                **action_decomposition,
                 "se3_interaction_field": se3_field,
                 "se3_interaction_field_descriptor": se3_descriptor,
                 "global_interaction_code": global_c,

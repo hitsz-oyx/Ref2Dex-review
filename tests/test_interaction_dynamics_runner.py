@@ -1,10 +1,34 @@
 import torch
 
 from src.task.InteractionDynamics.runner import (
-    dense_relative_motion_target, field_statistics, masked_effect_mse, masked_relative_mse,
+    action_decomposition_losses, dense_relative_motion_target, field_statistics,
+    masked_effect_mse, masked_relative_mse,
     patch_motion_target, relative_motion_target,
     trajectory_statistics,
 )
+
+
+def test_action_decomposition_separates_root_and_articulation():
+    pose = torch.eye(4).reshape(1, 1, 4, 4).repeat(1, 2, 1, 1)
+    pose[..., :3, 3] = torch.tensor([[[.01, 0., 0.], [.02, 0., 0.]]])
+    batch = {
+        "hand_articulation_increment_gt": torch.tensor([
+            [[[.001, 0., 0.], [.003, 0., 0.]],
+             [[.002, 0., 0.], [.004, 0., 0.]]]]),
+        "hand_root_increment_pose_gt": pose,
+    }
+    prediction = {
+        "hand_knn_idx": torch.tensor([[[0, 1]]]),
+        "pred_hand_articulation_increment_internal": torch.tensor([[[[.2, 0., 0.]], [[.3, 0., 0.]]]]),
+        "pred_hand_root_increment_translation_internal": torch.tensor([[[1., 0., 0.], [2., 0., 0.]]]),
+        "pred_hand_root_increment_rotation_matrix": torch.eye(3).reshape(1, 1, 3, 3).repeat(1, 2, 1, 1),
+    }
+    articulation, translation, rotation, metrics = action_decomposition_losses(
+        batch, prediction, 100.)
+    assert torch.allclose(articulation, torch.tensor(0.))
+    assert torch.allclose(translation, torch.tensor(0.))
+    assert torch.allclose(rotation, torch.tensor(0.))
+    assert metrics["action/zero_articulation_rmse_cm"] > 0
 
 
 def test_internal_centimeter_mse_and_metrics():

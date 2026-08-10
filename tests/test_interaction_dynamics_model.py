@@ -5,7 +5,7 @@ from torch import nn
 
 from src.task.InteractionDynamics.model import (
     DenseEdgeInteractionModel, EffectDecoder, InteractionDynamicsModel, SE3DynamicsHead,
-    SpatiotemporalInteractionField, axis_angle_to_matrix,
+    PosePairActionEncoder, SpatiotemporalInteractionField, axis_angle_to_matrix,
 )
 
 
@@ -24,7 +24,7 @@ def test_forward_backward_without_future_object_input():
     meta = SimpleNamespace(model_dim=48, attention_heads=6, num_hand_patches=4,
         num_obj_patches=4, patch_size=8, chunk_len=8, action_temporal_layers=2,
         action_world_layers=2, motion_scale=100., dense_checkpoint="unused", uni3d_checkpoint="missing",
-        interaction_reconstruction=True)
+        interaction_reconstruction=True, action_decomposition_reconstruction=True)
     model = InteractionDynamicsModel(SimpleNamespace(meta=meta), dense_encoder=FakeDense(),
                                      load_uni3d=False, world_depth=1)
     batch, hand_count, object_count, effect_count = 2, 32, 48, 12
@@ -57,6 +57,9 @@ def test_forward_backward_without_future_object_input():
     assert output["se3_interaction_field"].shape == (batch, 8, 4, 128)
     assert output["global_interaction_code"].shape == (batch, 8, 128)
     assert output["pred_object_centric_action_field"].shape == (batch, 8, 4, 6)
+    assert output["pred_hand_articulation_increment_internal"].shape == (batch, 8, 4, 3)
+    assert output["pred_hand_root_increment_translation_internal"].shape == (batch, 8, 3)
+    assert output["pred_hand_root_increment_rotation_matrix"].shape == (batch, 8, 3, 3)
     assert output["pred_obj_increment_rotation_matrix"].shape == (batch, 8, 3, 3)
     assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()
@@ -96,6 +99,19 @@ def test_global_action_ablation_removes_object_indexed_field_and_descriptor():
     field = output["se3_interaction_field"]
     assert torch.allclose(field, field[:, :, :1].expand_as(field))
     assert torch.count_nonzero(output["se3_interaction_field_descriptor"]) == 0
+
+
+def test_pose_pair_encoder_builds_static_and_incremental_tokens():
+    encoder = PosePairActionEncoder(dim=24, heads=4, chunk_len=8, temporal_layers=1,
+                                    patch_size=4)
+    points = torch.randn(2, 9, 16, 3)
+    root = torch.eye(4).reshape(1, 1, 4, 4).repeat(2, 8, 1, 1)
+    knn = torch.arange(16).reshape(1, 4, 4).repeat(2, 1, 1)
+    output = encoder(points, root, torch.randn(2, 16, 3), knn, 100.)
+    assert output["pose_tokens"].shape == (2, 9, 4, 24)
+    assert output["global_pose_code"].shape == (2, 9, 24)
+    assert output["action_tokens_temporal"].shape == (2, 8, 4, 24)
+    assert output["pred_hand_pose_patch_center_internal"].shape == (2, 9, 4, 3)
 
 
 def test_effect_decoder_routes_patch_motion_by_nearest_center():
