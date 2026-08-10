@@ -1,0 +1,22 @@
+_base_: src.task.Actiontoken.config:Config
+data:
+  train_samples: 32
+  val_samples: 32
+  test_samples: 128
+  val_seed: 42
+  test_seed: 44
+  batch_size: 4
+  num_workers: 0
+  shuffle: false
+train:
+  epochs: 750
+  lr: 0.001
+  weight_decay: 0.0
+  scheduler: null
+  grad_clip_norm: null
+  amp: true
+  amp_dtype: bfloat16
+  log_every_steps: 20
+  save_every_epochs: 50
+wandb:
+  mode: offline
