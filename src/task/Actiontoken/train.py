@@ -2,7 +2,7 @@ import argparse
 
 from src.base import cleanup_distributed, load_config
 from src.task.Actiontoken.config import validate_config
-from src.task.Actiontoken.runner import ActionTokenRunner
+from src.task.Actiontoken.runner import ActionTokenRunner, ActionTokenV2Runner
 
 
 def main():
@@ -16,7 +16,9 @@ def main():
         cfg.train.device = args.device
     validate_config(cfg)
     try:
-        ActionTokenRunner(cfg, mode="train").run()
+        runner_class = (ActionTokenV2Runner if str(cfg.model.class_path).endswith("ActionTokenV2Model")
+                        else ActionTokenRunner)
+        runner_class(cfg, mode="train").run()
     finally:
         cleanup_distributed()
 

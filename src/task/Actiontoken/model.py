@@ -87,3 +87,40 @@ class ActionTokenModel(nn.Module):
         output = self.dynamic(local, global_pose)
         return {**output, "pose_tokens_sequence": local,
                 "global_pose_token_sequence": global_pose}
+
+
+class FlowActionEncoder(nn.Module):
+    """V2：从一个 root-local patch flow 独立编码 articulation action。"""
+
+    def __init__(self, dim: int = 384, patch_size: int = 32) -> None:
+        super().__init__()
+        width = 256
+        self.encoder = nn.Sequential(nn.Linear(patch_size * 3, width), nn.GELU(),
+                                     nn.Linear(width, dim))
+        self.decoder = nn.Sequential(nn.Linear(dim, width), nn.GELU(),
+                                     nn.Linear(width, patch_size * 3))
+        self.patch_size = patch_size
+
+    def encode(self, flow: torch.Tensor) -> torch.Tensor:
+        x = flow.flatten(-2)
+        return .5 * (self.encoder(x) - self.encoder(-x))
+
+    def decode(self, token: torch.Tensor) -> torch.Tensor:
+        flow = .5 * (self.decoder(token) - self.decoder(-token))
+        return flow.reshape(*token.shape[:-1], self.patch_size, 3)
+
+    def forward(self, flow: torch.Tensor) -> dict[str, torch.Tensor]:
+        token = self.encode(flow)
+        return {"action_tokens": token,
+                "pred_dense_flow_internal": self.decode(token)}
+
+
+class ActionTokenV2Model(nn.Module):
+    """不依赖 PoseToken、trajectory length 或 temporal context 的 V2 模型。"""
+
+    def __init__(self, cfg: Any) -> None:
+        super().__init__()
+        self.flow_action = FlowActionEncoder(cfg.meta.model_dim, cfg.meta.patch_size)
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return self.flow_action(batch["patch_flow_internal"].float())

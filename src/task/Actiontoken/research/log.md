@@ -44,3 +44,26 @@ A 训练 4000 steps，RMSE `0.00199 cm`、EPE `0.02772 mm`、相对 zero 改善 
 
 **决策**
 保留 frozen PoseToken、pair readout 和解析反对称约束；下一实验优先把 temporal 分支改为 pair flow 上的小残差修正，避免覆盖已被 A/B 证明可读的局部运动。暂不扩大数据、不做 RootToken、不回接 InteractionDynamics。
+
+## 实验：ActionToken V2 纯局部 point-flow 表示
+
+**假设**
+稳定 correspondence 的 root-local dense surface flow 可以由不含 PoseToken 和 temporal context 的 `64×384` ActionToken 压缩，并在未见 pose pairs 上保留局部运动；32-pair controlled overfit 应超过 90% zero-baseline improvement。
+
+**观察到的失败 / 现象**
+V1 temporal 模型只改善约 75%，V1.1 已证明去除时序读出后 PoseToken pair 可达到 92.9%–94.5%。因此继续修补 trajectory encoder 会混淆动作与状态，改为直接验证纯 motion bottleneck。
+
+**诊断**
+MANO 1538 个 face centers 具有稳定 correspondence，动作点流可由两帧各自在 wrist frame 下的 surface 解析相减获得；网络无需重新学习 correspondence 或 subtraction。
+
+**改动**
+保留全部 V1 路径，新增 independent pose-pair generator、small/medium/large 与 sparse PCA motion mixture、`FlowActionEncoder` 和 V2 Runner。每 patch 的 32×3 cm flow 经 `96→256→384` odd encoder，再由 odd decoder 重建；唯一 loss 为 dense flow MSE。新增 overfit/small 配置和 V2 encoder-only 导出 schema。
+
+**结果**
+32 transitions 实验 `outputs/actiontoken/action_token_20260810_232906` 训练 4000 steps / 44 秒，最终 val RMSE `0.00190 cm`、zero `0.04376 cm`、改善 `94.85%`、EPE `0.0192 mm`。4096/1024/1024 实验 `outputs/actiontoken/action_token_20260810_233002` 训练 3200 steps / 27 秒；独立 test seed 的 RMSE `0.003059 cm`、zero `0.065341 cm`、改善 `95.286%`、EPE `0.02757 mm`，slow/medium/fast RMSE 为 `0.000878/0.003193/0.008553 cm`。两组 static/reverse token 与 flow 残差均为 0。
+
+**决策**
+保留 V2，纯局部 motion compression 假设通过 controlled overfit 和 unseen-pair generalization。导出 `output/Actiontoken/research/action_encoder_v2_flow.pt`，不提交权重；不再给 ActionEncoder 增加 Transformer、Pose conditioning 或 interaction 信息。
+
+**下一步**
+大规模预训练前改为 parameter-only、batch 内 MANO forward；随后把 RootToken 作为独立模块，并用 V2 checkpoint 重做 InteractionDynamics articulation intervention。

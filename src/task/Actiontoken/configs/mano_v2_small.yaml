@@ -1,0 +1,28 @@
+_base_: src.task.Actiontoken.config:Config
+runner_class: src.task.Actiontoken.runner.ActionTokenV2Runner
+model:
+  class_path: src.task.Actiontoken.model.ActionTokenV2Model
+data:
+  train_samples: 4096
+  val_samples: 1024
+  test_samples: 1024
+  val_seed: 43
+  test_seed: 44
+  generation_batch_size: 256
+  motion_stds: [0.02, 0.06, 0.12]
+  motion_probs: [0.4, 0.4, 0.2]
+  sparse_probability: 0.5
+  batch_size: 64
+  num_workers: 0
+  shuffle: true
+train:
+  epochs: 50
+  lr: 0.001
+  weight_decay: 0.0001
+  scheduler: cosine
+  amp: true
+  amp_dtype: bfloat16
+  log_every_steps: 20
+  save_every_epochs: 5
+wandb:
+  mode: offline

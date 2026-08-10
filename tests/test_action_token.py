@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import torch
 
-from src.task.Actiontoken.generator import sample_smooth_pose_trajectory
-from src.task.Actiontoken.model import DynamicActionEncoder
+from src.task.Actiontoken.generator import sample_pose_pairs, sample_smooth_pose_trajectory
+from src.task.Actiontoken.model import DynamicActionEncoder, FlowActionEncoder
 from src.task.Actiontoken.probes import OddProbe
 
 
@@ -41,3 +41,28 @@ def test_probe_is_analytically_odd():
     first, second = torch.randn(4, 3, 12), torch.randn(4, 3, 12)
     torch.testing.assert_close(probe(first, first), torch.zeros(4, 3, 6))
     torch.testing.assert_close(probe(first, second), -probe(second, first))
+
+
+def test_v2_pose_pair_sampling_is_deterministic_and_contains_sparse_motion():
+    first = sample_pose_pairs(32, 24, 9, (.02, .06, .12), (.4, .4, .2), .5)
+    second = sample_pose_pairs(32, 24, 9, (.02, .06, .12), (.4, .4, .2), .5)
+    torch.testing.assert_close(first[0], second[0])
+    torch.testing.assert_close(first[1], second[1])
+    assert (first[1].ne(0).sum(-1) <= 5).any()
+
+
+def test_v2_flow_encoder_shape_static_and_reverse_contract():
+    encoder = FlowActionEncoder(dim=24, patch_size=5).eval()
+    flow = torch.randn(2, 7, 5, 3)
+    forward = encoder(flow)
+    reverse = encoder(-flow)
+    static = encoder(torch.zeros_like(flow))
+    assert forward["action_tokens"].shape == (2, 7, 24)
+    assert forward["pred_dense_flow_internal"].shape == flow.shape
+    torch.testing.assert_close(reverse["action_tokens"], -forward["action_tokens"])
+    torch.testing.assert_close(reverse["pred_dense_flow_internal"],
+                               -forward["pred_dense_flow_internal"])
+    torch.testing.assert_close(static["action_tokens"],
+                               torch.zeros_like(static["action_tokens"]))
+    torch.testing.assert_close(static["pred_dense_flow_internal"],
+                               torch.zeros_like(static["pred_dense_flow_internal"]))

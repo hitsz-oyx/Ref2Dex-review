@@ -1,4 +1,4 @@
-"""平滑 synthetic MANO articulation trajectory。"""
+"""Synthetic MANO articulation trajectory 与单步动作数据。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -66,4 +66,70 @@ class SyntheticManoActionDataset(Dataset):
                 "hand_cano_points": self.canonical,
                 "patch_knn_idx": self.patch_knn_idx,
                 "mano_pose_sequence": self.poses[index],
+                "sample_id": torch.tensor(index, dtype=torch.long)}
+
+
+def sample_pose_pairs(count: int, components: int, seed: int,
+                      motion_stds: tuple[float, float, float],
+                      motion_probs: tuple[float, float, float],
+                      sparse_probability: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """采样独立 pose pair；混合动作尺度并包含稀疏 PCA 分量运动。"""
+    generator = torch.Generator().manual_seed(int(seed))
+    pose = sample_mano_pose(count, components, seed)
+    category = torch.multinomial(torch.tensor(motion_probs), count, replacement=True,
+                                 generator=generator)
+    std = torch.tensor(motion_stds)[category, None]
+    delta = torch.randn(count, components, generator=generator) * std
+    sparse = torch.rand(count, generator=generator) < float(sparse_probability)
+    for row in sparse.nonzero(as_tuple=False).flatten().tolist():
+        keep = int(torch.randint(1, min(5, components) + 1, (), generator=generator))
+        active = torch.randperm(components, generator=generator)[:keep]
+        mask = torch.zeros(components, dtype=torch.bool)
+        mask[active] = True
+        delta[row, ~mask] = 0
+    return pose, delta
+
+
+class SyntheticManoTransitionDataset(Dataset):
+    """V2 单 transition 数据；所有 surface 都在各自 wrist/root frame。"""
+
+    def __init__(self, *, mano_path: str | Path, side: str, num_samples: int, seed: int,
+                 num_pca_comps: int, num_patches: int, patch_size: int,
+                 generation_batch_size: int, motion_stds: tuple[float, float, float],
+                 motion_probs: tuple[float, float, float], sparse_probability: float,
+                 motion_scale: float) -> None:
+        layer = MANO(str(mano_path), is_rhand=side == "right", use_pca=True,
+                     num_pca_comps=num_pca_comps, flat_hand_mean=True)
+        layer.eval().requires_grad_(False)
+        faces = torch.as_tensor(layer.faces.astype(np.int64))
+        pose, delta = sample_pose_pairs(num_samples, num_pca_comps, seed, motion_stds,
+                                        motion_probs, sparse_probability)
+        after_pose = (pose + delta).clamp(-2.5, 2.5)
+        all_pose = torch.stack((pose, after_pose), 1).reshape(-1, num_pca_comps)
+        surfaces = []
+        with torch.no_grad():
+            for start in range(0, len(all_pose), generation_batch_size):
+                current = all_pose[start:start + generation_batch_size]
+                output = layer(hand_pose=current, betas=torch.zeros(len(current), 10),
+                               global_orient=torch.zeros(len(current), 3),
+                               transl=torch.zeros(len(current), 3))
+                surfaces.append(face_centers(output.vertices - output.joints[:, :1], faces).float())
+            zero = layer(hand_pose=torch.zeros(1, num_pca_comps), betas=torch.zeros(1, 10),
+                         global_orient=torch.zeros(1, 3), transl=torch.zeros(1, 3))
+        canonical = face_centers(zero.vertices - zero.joints[:, :1], faces)[0].float()
+        pair = torch.cat(surfaces).reshape(num_samples, 2, -1, 3)
+        patch_idx = build_canonical_patch_map(canonical, num_patches, patch_size)
+        dense_flow = (pair[:, 1] - pair[:, 0]) * float(motion_scale)
+        self.patch_flow = dense_flow[:, patch_idx]
+        self.pose = pose
+        self.delta = after_pose - pose
+        self.patch_knn_idx = patch_idx
+
+    def __len__(self):
+        return len(self.pose)
+
+    def __getitem__(self, index):
+        return {"patch_flow_internal": self.patch_flow[index],
+                "patch_knn_idx": self.patch_knn_idx,
+                "mano_pose": self.pose[index], "mano_pose_delta": self.delta[index],
                 "sample_id": torch.tensor(index, dtype=torch.long)}
