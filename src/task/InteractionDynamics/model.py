@@ -131,6 +131,10 @@ class InteractionDynamicsModel(nn.Module):
         self.action_world = nn.ModuleList(
             [CrossAttentionBlock(meta.model_dim, meta.attention_heads) for _ in range(meta.action_world_layers)])
         self.canonicalizer = CrossAttentionBlock(meta.model_dim, meta.attention_heads)
+        self.edge_fusion = nn.Sequential(
+            nn.Linear(meta.model_dim * 2 + 7, meta.model_dim), nn.GELU(),
+            nn.Linear(meta.model_dim, meta.model_dim), nn.LayerNorm(meta.model_dim))
+        self.relative_motion = nn.Linear(meta.model_dim, meta.chunk_len * 4)
         self.action_reconstruction = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.patch_effect = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.effect = EffectDecoder(meta.model_dim, meta.attention_heads, meta.chunk_len, dense_dim)
@@ -208,6 +212,22 @@ class InteractionDynamicsModel(nn.Module):
         interaction, object_attention = self.canonicalizer(world["world_obj_tokens"], action_context, residual=False)
         interaction = nn.functional.layer_norm(interaction, (interaction.shape[-1],))
         batch_size = interaction.shape[0]
+        obj_centers = world["obj_patch_centers_object"]
+        hand_centers = action["hand_patch_center_object"]
+        nearest_obj = torch.cdist(hand_centers.float(), obj_centers.float()).argmin(-1)
+        batch_index = torch.arange(batch_size, device=interaction.device)[:, None]
+        paired_obj_token = world["world_obj_tokens"][batch_index, nearest_obj]
+        paired_obj_center = obj_centers[batch_index, nearest_obj]
+        obj_patch_normal = gather_points(world_obj_normals_object, world["obj_knn_idx"]).mean(2)
+        obj_patch_normal = nn.functional.normalize(obj_patch_normal, dim=-1)
+        paired_obj_normal = obj_patch_normal[batch_index, nearest_obj]
+        relative_xyz = hand_centers - paired_obj_center
+        edge_geometry = torch.cat([relative_xyz, paired_obj_normal,
+                                   relative_xyz.norm(dim=-1, keepdim=True)], -1)
+        relative_interaction = self.edge_fusion(torch.cat(
+            [action_context, paired_obj_token, edge_geometry], -1))
+        pred_relative_motion_internal = self.relative_motion(relative_interaction).reshape(
+            batch_size, -1, self.effect.time_embed.shape[1], 4).transpose(1, 2)
         pred_hand_patch_disp_internal = self.action_reconstruction(action_context).reshape(
             batch_size, -1, self.effect.time_embed.shape[1], 3).transpose(1, 2)
         pred_obj_patch_disp_internal = self.patch_effect(interaction).reshape(
@@ -217,6 +237,10 @@ class InteractionDynamicsModel(nn.Module):
                              pred_obj_patch_disp_internal, effect_obj_valid_mask, self.motion_scale)
         return {**world, **action, **effect, "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,
+                "relative_interaction_tokens": relative_interaction,
+                "relative_nearest_obj_patch": nearest_obj,
+                "relative_edge_distance_m": relative_xyz.norm(dim=-1),
+                "pred_relative_motion_internal": pred_relative_motion_internal,
                 "pred_hand_patch_disp_internal": pred_hand_patch_disp_internal,
                 "pred_obj_patch_disp_internal": pred_obj_patch_disp_internal,
                 "action_to_world_attention": action_attention,

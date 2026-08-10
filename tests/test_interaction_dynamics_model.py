@@ -44,6 +44,8 @@ def test_forward_backward_without_future_object_input():
     assert output["pred_obj_disp_chunk"].shape == (batch, 8, effect_count, 3)
     assert output["pred_hand_patch_disp_internal"].shape == (batch, 8, 4, 3)
     assert output["pred_obj_patch_disp_internal"].shape == (batch, 8, 4, 3)
+    assert output["relative_interaction_tokens"].shape == (batch, 4, 48)
+    assert output["pred_relative_motion_internal"].shape == (batch, 8, 4, 4)
     assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()
     assert model.action.spatial[0].weight.grad is not None

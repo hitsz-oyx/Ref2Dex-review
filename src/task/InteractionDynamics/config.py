@@ -59,6 +59,8 @@ class Config(TaskConfig):
         grad_clip_norm = 1.0
         action_loss_weight = 1.0
         patch_effect_loss_weight = 1.0
+        relative_loss_weight = 0.0
+        relative_edge_radius_cm = 5.0
         amp = True
         amp_dtype = "bfloat16"
         metric_for_best = "val/object/ade_mm"

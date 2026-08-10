@@ -177,6 +177,7 @@ class InteractionDynamicsDataset(Dataset):
         world_obj = transform_points(obj_world_0, obj_pose)
         action_hand = transform_points(hand_world_0, hand_pose)
         hand_future = transform_points(data["hand_points_world"][future], hand_pose)
+        hand_future_object = transform_points(data["hand_points_world"][future], obj_pose)
         obj_future = transform_points(data["obj_points_world"][future], obj_pose)
 
         raw_frame = int(data["raw_frame_id"][current])
@@ -203,6 +204,9 @@ class InteractionDynamicsDataset(Dataset):
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
             "hand_disp_chunk": hand_future - action_hand[None],
+            # Runner-side mechanism diagnostics/supervision use this target in the
+            # current object frame. It is deliberately absent from model.forward.
+            "hand_disp_chunk_object_gt": hand_future_object - world_hand[None],
             "dense_obj_points_hand": dense_obj,
             "dense_obj_normals_hand": dense_normals,
             "dense_hand_points_hand": action_hand,

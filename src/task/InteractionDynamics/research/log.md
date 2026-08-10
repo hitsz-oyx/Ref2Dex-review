@@ -309,3 +309,48 @@ V4 已将 patch prediction 接入 dense 主链，但 shuffle 仍几乎不影响 
 
 **下一步**
 将表示拆分为全局 object motion/SE(3) 与 hand-patch mechanism；object-patch 表示只在有 local residual/contact 等信息性目标时使用。
+
+## 实验：V5 hand-object 相对轨迹先验统计
+
+**假设**
+对 hand patch 与当前最近 object patch 的共同运动作差后，法向/切向相对运动应比 raw patch flow 含有更强的跨局部差异，因而更适合定义 interaction mechanism。
+
+**观察到的失败 / 现象**
+V4 的 hand/object raw patch target 只有约 1%–3% 局部能量，无法辨识相同刚体效果背后的不同手部作用方式。
+
+**改动**
+Dataset 增加仅供 Runner 监督与诊断使用的 current-object-frame future hand displacement，不加入模型 forward。新增只读 `relative_diagnostics.py`：复用 Uni3D patch index，为每个 hand patch 固定匹配当前最近 object patch，统计未来 8 步累计距离变化、法向/切向相对运动，以及 2 cm 接触状态转移。
+
+**结果**
+验证集法向/切向相对运动的跨边局部能量比例为 33.11%/22.16%，测试集为 41.58%/37.49%；相比 raw hand/object patch flow 的 1.16%/1.01%（验证）和 1.90%/3.30%（测试）明显更强。距离变化局部能量仅为 2.92%/3.20%。2 cm 阈值下验证/测试接触占比为 9.45%/17.86%，接触建立或解除只占全部 edge-step 的 0.98%/1.26%。切向累计相对运动中位数为 0.58/0.59 cm。
+
+**诊断**
+共同 global transport 被相对运动有效抵消，`v_n/v_t` 确实提供了 raw flow 缺失的局部辨识信号。距离变化仍主要受样本级共同分量控制；硬 contact transition 很稀疏，第一版若以分类为主会面临严重类别不均衡。
+
+**决策**
+保留相对轨迹诊断和数据 target，判定 V5 值得进入最小训练原型。训练时优先直接监督法向/切向相对运动，距离只作辅助，不先加入 contact classification。
+
+**下一步**
+构造 hand→object 局部 edge token 和 `v_n/v_t` 预测头，在 small20 上比较 target 拟合、token 局部差异与 effect consistency。
+
+## 实验：V5 最近邻 edge token 直接监督
+
+**假设**
+将 hand patch 的 action-context、当前最近 object patch token 和相对几何融合成 edge token，并直接监督未来累计法向/切向相对运动，可以学习不坍缩且能跨序列预测 mechanism 的表示。
+
+**改动**
+新增 64 个 hand→nearest-object edge token 和 `[8,64,4]` 的 `[v_n,v_t]` 预测头。V5 配置保留 effect consistency，关闭 raw hand/object patch 辅助损失。先监督全部最近邻边，再按 V5 建议仅监督当前距离小于 5 cm 的近场边；不加入稀疏 contact classification，也不调 loss 权重。
+
+**结果**
+全部 edge 实验位于 `outputs/interactiondynamics/interaction_dynamics_20260810_001729`。5 epochs 后最佳验证/测试 relative RMSE 为 1.389/1.178 cm，差于 zero predictor 的 1.370/1.110 cm；effect ADE 为 49.96/45.31 mm。
+
+5 cm edge 实验位于 `outputs/interactiondynamics/interaction_dynamics_20260810_002606`，最佳 checkpoint 为 step 768。验证/测试有效 edge 占 38.66%/56.35%；relative RMSE 为 0.999/0.874 cm，仍差于 masked zero 的 0.968/0.841 cm。effect ADE 为 48.77/44.10 mm。edge token variance/cosine 为验证 0.125/0.871、测试 0.155/0.840，未发生坍缩。
+
+**诊断**
+排除远距离 edge 可降低 target 绝对误差，却不能使相对轨迹预测优于零基线。当前失败不是 token collapse，也不是单纯由远处非交互手部区域污染；更可能来自固定 current-frame 最近邻无法描述未来 correspondence、累计轨迹 MSE 受重尾样本影响，或 small20 跨序列 mechanism 本身难以从当前输入泛化。
+
+**决策**
+保留 edge-token 和 5 cm mask 实现作为 V5 明确负对照，不接入 Effect Decoder，不继续调 loss 权重或扩大数据规模。
+
+**下一步**
+先分解近场 target 的逐步增量、重尾程度和 correspondence 稳定性；只有诊断支持时，再最小测试逐帧匹配或 robust relative loss。

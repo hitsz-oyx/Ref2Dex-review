@@ -29,6 +29,39 @@ def patch_motion_target(displacement_m: torch.Tensor, knn_idx: torch.Tensor,
                         for step in range(displacement_m.shape[1])], 1) * motion_scale
 
 
+def relative_motion_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
+                           motion_scale: float = 100.0) -> torch.Tensor:
+    """Return hand->nearest-object edge [normal scalar, tangent xyz] trajectories in cm."""
+    hand_motion = patch_motion_target(batch["hand_disp_chunk_object_gt"].float(),
+                                      prediction["hand_knn_idx"], motion_scale)
+    obj_motion_all = patch_motion_target(batch["obj_disp_chunk_gt"].float(),
+                                         prediction["obj_knn_idx"], motion_scale)
+    nearest = prediction["relative_nearest_obj_patch"]
+    obj_motion = obj_motion_all[
+        torch.arange(obj_motion_all.shape[0], device=obj_motion_all.device)[:, None, None],
+        torch.arange(obj_motion_all.shape[1], device=obj_motion_all.device)[None, :, None],
+        nearest[:, None, :],
+    ]
+    obj_normal = gather_points(batch["world_obj_normals_object"].float(),
+                               prediction["obj_knn_idx"]).mean(2)
+    obj_normal = torch.nn.functional.normalize(obj_normal, dim=-1)
+    paired_normal = obj_normal[
+        torch.arange(obj_normal.shape[0], device=obj_normal.device)[:, None], nearest]
+    relative = hand_motion - obj_motion
+    normal = (relative * paired_normal[:, None]).sum(-1, keepdim=True)
+    tangent = relative - normal * paired_normal[:, None]
+    return torch.cat([normal, tangent], -1)
+
+
+def masked_relative_mse(prediction: torch.Tensor, target: torch.Tensor,
+                        edge_distance_m: torch.Tensor, radius_cm: float) -> torch.Tensor:
+    edge_mask = edge_distance_m * 100.0 < radius_cm
+    mask = edge_mask[:, None, :, None].expand_as(target)
+    if not mask.any():
+        raise RuntimeError(f"InteractionDynamics batch has no hand-object edge within {radius_cm:g} cm")
+    return (prediction - target).square()[mask].mean()
+
+
 def trajectory_statistics(pred_m: torch.Tensor, gt_m: torch.Tensor,
                           valid: torch.Tensor) -> dict[str, torch.Tensor]:
     error_mm = torch.linalg.vector_norm(pred_m - gt_m, dim=-1) * 1000.0
@@ -104,12 +137,34 @@ class InteractionDynamicsRunner(BaseRunner):
             prediction["pred_hand_patch_disp_internal"].float(), action_target)
         patch_effect_loss = torch.nn.functional.mse_loss(
             prediction["pred_obj_patch_disp_internal"].float(), patch_effect_target)
+        relative_target = relative_motion_target(batch, prediction, scale)
+        edge_radius_cm = float(self.cfg.train.relative_edge_radius_cm)
+        relative_loss = masked_relative_mse(
+            prediction["pred_relative_motion_internal"].float(), relative_target,
+            prediction["relative_edge_distance_m"], edge_radius_cm)
+        relative_zero_loss = masked_relative_mse(
+            torch.zeros_like(relative_target), relative_target,
+            prediction["relative_edge_distance_m"], edge_radius_cm)
         loss = (effect_loss + float(self.cfg.train.action_loss_weight) * action_loss
-                + float(self.cfg.train.patch_effect_loss_weight) * patch_effect_loss)
+                + float(self.cfg.train.patch_effect_loss_weight) * patch_effect_loss
+                + float(self.cfg.train.relative_loss_weight) * relative_loss)
         metrics: dict[str, Any] = {"loss": loss, "loss/effect": effect_loss,
                                   "loss/action": action_loss,
-                                  "loss/patch_effect": patch_effect_loss}
+                                  "loss/patch_effect": patch_effect_loss,
+                                  "loss/relative": relative_loss,
+                                  "relative/rmse_cm": relative_loss.sqrt(),
+                                  "relative/zero_rmse_cm": relative_zero_loss.sqrt(),
+                                  "relative/edge_fraction": (
+                                      prediction["relative_edge_distance_m"] * 100.0 < edge_radius_cm
+                                  ).float().mean()}
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(collapse_statistics(prediction["interaction_tokens"],
                                            prediction["object_to_action_attention"]))
+        edge = prediction["relative_interaction_tokens"]
+        edge_centered = edge - edge.mean(1, keepdim=True)
+        edge_normalized = torch.nn.functional.normalize(edge, dim=-1)
+        edge_similarity = edge_normalized @ edge_normalized.transpose(1, 2)
+        off_diagonal = ~torch.eye(edge.shape[1], dtype=torch.bool, device=edge.device)
+        metrics["relative/feature_variance"] = edge_centered.square().mean()
+        metrics["relative/pairwise_cosine"] = edge_similarity[:, off_diagonal].mean()
         return RunnerOutput(loss=loss, metrics=metrics, batch_size=pred.shape[0])
