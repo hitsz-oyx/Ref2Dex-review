@@ -29,6 +29,49 @@ def patch_motion_target(displacement_m: torch.Tensor, knn_idx: torch.Tensor,
                         for step in range(displacement_m.shape[1])], 1) * motion_scale
 
 
+def object_centric_action_field_target(
+        batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
+        sigma_m: float, motion_scale: float = 100.0) -> torch.Tensor:
+    """Body-index-free [density, distance, local normal/tangent motion] at object patches."""
+    hand_position = (batch["world_hand_points_object"].float()[:, None]
+                     + batch["action_hand_disp_chunk_object"].float())
+    object_center = prediction["obj_patch_centers_object"].float()
+    object_normal = gather_points(batch["world_obj_normals_object"].float(),
+                                  prediction["obj_knn_idx"]).mean(2)
+    object_normal = torch.nn.functional.normalize(object_normal, dim=-1)
+    relative = hand_position[:, :, None] - object_center[:, None, :, None]
+    distance = relative.norm(dim=-1)
+    weights = torch.exp(-distance.square() / (2.0 * sigma_m ** 2))
+    density = weights.mean(-1, keepdim=True)
+    nearest_distance = distance.amin(-1, keepdim=True) * motion_scale
+    hand_motion = batch["action_hand_disp_chunk_object"].float()
+    local_motion = hand_motion - hand_motion.mean(2, keepdim=True)
+    normalized = weights / weights.sum(-1, keepdim=True).clamp_min(1e-8)
+    local = (normalized[..., None] * local_motion[:, :, None]).sum(3) * motion_scale
+    normal = (local * object_normal[:, None]).sum(-1, keepdim=True)
+    tangent = local - normal * object_normal[:, None]
+    return torch.cat([density, nearest_distance, normal, tangent], -1)
+
+
+def action_field_losses(prediction: torch.Tensor, target: torch.Tensor
+                        ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Equalize density, distance and local-motion groups instead of raw 6-D scales."""
+    density = torch.nn.functional.mse_loss(prediction[..., :1], target[..., :1])
+    distance = torch.nn.functional.mse_loss(prediction[..., 1:2], target[..., 1:2])
+    motion = torch.nn.functional.mse_loss(prediction[..., 2:], target[..., 2:])
+    zero_density = target[..., :1].square().mean()
+    zero_distance = target[..., 1:2].square().mean()
+    zero_motion = target[..., 2:].square().mean()
+    return (density + distance + motion) / 3.0, {
+        "interaction_field/rmse_density": density.sqrt(),
+        "interaction_field/zero_rmse_density": zero_density.sqrt(),
+        "interaction_field/rmse_distance_cm": distance.sqrt(),
+        "interaction_field/zero_rmse_distance_cm": zero_distance.sqrt(),
+        "interaction_field/rmse_local_motion_cm": motion.sqrt(),
+        "interaction_field/zero_rmse_local_motion_cm": zero_motion.sqrt(),
+    }
+
+
 def relative_motion_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
                            motion_scale: float = 100.0,
                            mode: str = "cumulative_fixed") -> torch.Tensor:
@@ -254,18 +297,29 @@ class InteractionDynamicsRunner(BaseRunner):
             prediction["relative_edge_distance_m"], edge_radius_cm)
         translation_loss, rotation_loss, se3_metrics = se3_statistics_and_loss(
             prediction, batch["obj_increment_pose_gt"], scale)
+        action_field_weight = float(self.cfg.train.interaction_reconstruction_loss_weight)
+        if action_field_weight:
+            action_field_target = object_centric_action_field_target(
+                batch, prediction, float(self.cfg.meta.field_sigma_m), scale)
+            action_field_loss, action_field_metrics = action_field_losses(
+                prediction["pred_object_centric_action_field"].float(), action_field_target)
+        else:
+            action_field_loss = pred.new_zeros(())
+            action_field_metrics = {}
         loss = (float(self.cfg.train.effect_loss_weight) * effect_loss
                 + float(self.cfg.train.se3_translation_loss_weight) * translation_loss
                 + float(self.cfg.train.se3_rotation_loss_weight) * rotation_loss
                 + float(self.cfg.train.action_loss_weight) * action_loss
                 + float(self.cfg.train.patch_effect_loss_weight) * patch_effect_loss
-                + float(self.cfg.train.relative_loss_weight) * relative_loss)
+                + float(self.cfg.train.relative_loss_weight) * relative_loss
+                + action_field_weight * action_field_loss)
         metrics: dict[str, Any] = {"loss": loss, "loss/effect": effect_loss,
                                   "loss/action": action_loss,
                                   "loss/patch_effect": patch_effect_loss,
                                   "loss/relative": relative_loss,
                                   "loss/se3_translation": translation_loss,
                                   "loss/se3_rotation": rotation_loss,
+                                  "loss/interaction_reconstruction": action_field_loss,
                                   "relative/rmse_cm": relative_loss.sqrt(),
                                   "relative/zero_rmse_cm": relative_zero_loss.sqrt(),
                                   "relative/edge_fraction": (
@@ -273,6 +327,7 @@ class InteractionDynamicsRunner(BaseRunner):
                                   ).float().mean()}
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(se3_metrics)
+        metrics.update(action_field_metrics)
         metrics.update(collapse_statistics(prediction["interaction_tokens"],
                                            prediction["object_to_action_attention"]))
         if "interaction_field" in prediction:

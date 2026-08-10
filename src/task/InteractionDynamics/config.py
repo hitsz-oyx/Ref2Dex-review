@@ -35,6 +35,7 @@ class Config(TaskConfig):
         field_dim = 128
         field_sigma_m = 0.05
         field_ablation = "full"
+        interaction_reconstruction = False
         dense_edge_knn = 4
         dense_edge_dim = 64
         dense_edge_sigma_m = 0.02
@@ -73,6 +74,7 @@ class Config(TaskConfig):
         se3_translation_loss_weight = 0.0
         se3_rotation_loss_weight = 0.0
         dense_relative_loss_weight = 0.0
+        interaction_reconstruction_loss_weight = 0.0
         amp = True
         amp_dtype = "bfloat16"
         metric_for_best = "val/object/ade_mm"

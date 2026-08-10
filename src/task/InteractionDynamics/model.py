@@ -299,6 +299,12 @@ class InteractionDynamicsModel(nn.Module):
         self.interaction_field = SpatiotemporalInteractionField(
             meta.model_dim, field_dim, float(getattr(meta, "field_sigma_m", 0.05)))
         self.se3_dynamics = SE3DynamicsHead(meta.model_dim, field_dim, self.motion_scale)
+        self.interaction_reconstruction = bool(
+            getattr(meta, "interaction_reconstruction", False))
+        if self.interaction_reconstruction:
+            self.interaction_reconstruction_head = nn.Sequential(
+                nn.Linear(field_dim + meta.model_dim, field_dim), nn.GELU(),
+                nn.Linear(field_dim, 6))
         self.action_reconstruction = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.patch_effect = nn.Linear(meta.model_dim, meta.chunk_len * 3)
         self.effect = EffectDecoder(meta.model_dim, meta.attention_heads, meta.chunk_len, dense_dim)
@@ -403,6 +409,14 @@ class InteractionDynamicsModel(nn.Module):
             se3_descriptor = torch.zeros_like(se3_descriptor)
         se3 = self.se3_dynamics(se3_field, se3_descriptor,
                                 world["world_obj_tokens"], effect_obj_points_object)
+        global_c = se3_field.mean(2)
+        reconstruction = {}
+        if self.interaction_reconstruction:
+            reconstruction["pred_object_centric_action_field"] = self.interaction_reconstruction_head(
+                torch.cat([
+                    global_c[:, :, None].expand(-1, -1, world["world_obj_tokens"].shape[1], -1),
+                    world["world_obj_tokens"][:, None].expand(-1, global_c.shape[1], -1, -1),
+                ], -1))
         # No object residual: object tokens only locate canonical interaction queries.
         interaction, object_attention = self.canonicalizer(world["world_obj_tokens"], action_context, residual=False)
         interaction = nn.functional.layer_norm(interaction, (interaction.shape[-1],))
@@ -432,9 +446,10 @@ class InteractionDynamicsModel(nn.Module):
                              pred_obj_patch_disp_internal, effect_obj_valid_mask, self.motion_scale)
         pred_obj_disp = (se3["pred_obj_disp_chunk_se3"] if self.use_v7_field
                          else effect["pred_obj_disp_chunk"])
-        return {**world, **action, **effect, **field, **se3,
+        return {**world, **action, **effect, **field, **se3, **reconstruction,
                 "se3_interaction_field": se3_field,
                 "se3_interaction_field_descriptor": se3_descriptor,
+                "global_interaction_code": global_c,
                 "pred_obj_disp_chunk": pred_obj_disp,
                 "world_hand_tokens": world_hand, "world_tokens": world_tokens,
                 "action_context_tokens": action_context, "interaction_tokens": interaction,

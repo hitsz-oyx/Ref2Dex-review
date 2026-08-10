@@ -23,7 +23,8 @@ class FakeDense(nn.Module):
 def test_forward_backward_without_future_object_input():
     meta = SimpleNamespace(model_dim=48, attention_heads=6, num_hand_patches=4,
         num_obj_patches=4, patch_size=8, chunk_len=8, action_temporal_layers=2,
-        action_world_layers=2, motion_scale=100., dense_checkpoint="unused", uni3d_checkpoint="missing")
+        action_world_layers=2, motion_scale=100., dense_checkpoint="unused", uni3d_checkpoint="missing",
+        interaction_reconstruction=True)
     model = InteractionDynamicsModel(SimpleNamespace(meta=meta), dense_encoder=FakeDense(),
                                      load_uni3d=False, world_depth=1)
     batch, hand_count, object_count, effect_count = 2, 32, 48, 12
@@ -54,6 +55,8 @@ def test_forward_backward_without_future_object_input():
     assert output["interaction_field"].shape == (batch, 8, 4, 128)
     assert output["interaction_field_descriptor"].shape == (batch, 8, 4, 5)
     assert output["se3_interaction_field"].shape == (batch, 8, 4, 128)
+    assert output["global_interaction_code"].shape == (batch, 8, 128)
+    assert output["pred_object_centric_action_field"].shape == (batch, 8, 4, 6)
     assert output["pred_obj_increment_rotation_matrix"].shape == (batch, 8, 3, 3)
     assert output["effect_patch_index"].shape == (batch, effect_count)
     output["pred_obj_disp_internal"].square().mean().backward()

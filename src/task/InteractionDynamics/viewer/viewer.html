@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>InteractionDynamics Viewer</title>
+  <style>
+    html,body,#stage{margin:0;width:100%;height:100%;overflow:hidden;background:#080a10;color:#e8e8ee;font:12px ui-monospace,monospace}
+    #panel{position:absolute;z-index:2;top:10px;right:10px;width:330px;padding:12px;background:#111521e8;border:1px solid #343b4f;border-radius:7px}
+    h3{margin:0 0 10px;color:#ffd27a}.row{display:flex;gap:6px;align-items:center;margin:7px 0}.row>*{min-width:0}
+    button,select,input{background:#202637;color:#eee;border:1px solid #48516a;border-radius:4px;padding:6px;font:inherit}button{cursor:pointer}button.active{background:#ffd27a;color:#111}
+    input[type=range]{flex:1}.grow{flex:1}#status{white-space:pre-wrap;color:#aeb8ce;line-height:1.45}.err{color:#ff8b8b}.legend span{margin-right:9px}.gt{color:#62e391}.pred{color:#ff7272}.cur{color:#b8bcc8}.hand{color:#56d9ec}
+  </style>
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body><div id="stage"></div><div id="panel">
+  <h3>InteractionDynamics Viewer</h3>
+  <div class="row"><button id="effect-tab" class="active">物体点流</button><button id="mano-tab">MANO 恢复</button></div>
+  <section id="effect-controls">
+    <div class="row">样本 <input id="sample" class="grow" type="number" min="0" value="0"><button id="load-effect">加载</button></div>
+    <div class="row">未来步 <input id="effect-step" type="range" min="0" max="7" value="7"><b id="effect-step-label">8</b></div>
+    <div class="row"><label><input id="show-lines" type="checkbox" checked>点流线</label><label><input id="show-hand" type="checkbox" checked>手轨迹</label></div>
+  </section>
+  <section id="mano-controls" hidden>
+    <div class="row"><select id="mano-file" class="grow"></select><button id="load-mano">加载</button></div>
+    <div class="row">未来步 <input id="mano-step" type="range" min="0" max="7" value="7"><b id="mano-step-label">8</b></div>
+    <div class="row"><label><input id="show-initial" type="checkbox">静止初始化</label></div>
+  </section>
+  <div class="legend"><span class="cur">● 当前</span><span class="gt">● GT</span><span class="pred">● 预测</span><span class="hand">● 手</span></div>
+  <div id="status">正在连接服务……</div>
+</div>
+<script type="module">
+import * as THREE from 'three'; import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+const stage=document.querySelector('#stage'), renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setSize(innerWidth,innerHeight); renderer.setPixelRatio(devicePixelRatio); stage.appendChild(renderer.domElement);
+const scene=new THREE.Scene(), camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.001,20); camera.position.set(.45,.35,.45); const orbit=new OrbitControls(camera,renderer.domElement); orbit.target.set(0,0,0);
+scene.add(new THREE.GridHelper(.6,12,0x34394b,0x202536));
+function cloud(color,size=.003){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(),3));return new THREE.Points(g,new THREE.PointsMaterial({color,size,sizeAttenuation:true}))}
+function lines(color){const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array(),3));return new THREE.LineSegments(g,new THREE.LineBasicMaterial({color,transparent:true,opacity:.45}))}
+const cur=cloud(0xb8bcc8),gt=cloud(0x62e391),pred=cloud(0xff7272),hand0=cloud(0xffd27a),hand1=cloud(0x56d9ec),initial=cloud(0xa97bff),gtLine=lines(0x62e391),predLine=lines(0xff7272);scene.add(cur,gt,pred,hand0,hand1,initial,gtLine,predLine);
+let mode='effect',effect=null,mano=null;
+const $=s=>document.querySelector(s), status=(s,e=false)=>{$('#status').textContent=s;$('#status').className=e?'err':''};
+function slice(flat,step,count){return new Float32Array(flat.slice(step*count*3,(step+1)*count*3))}
+function setPoints(obj,array){obj.geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(array),3));obj.geometry.computeBoundingSphere()}
+function setFlow(obj,a,b){const out=new Float32Array(a.length*2);for(let i=0;i<a.length;i+=3){out.set(a.slice(i,i+3),i*2);out.set(b.slice(i,i+3),i*2+3)}setPoints(obj,out)}
+function fit(...arrays){const box=new THREE.Box3();arrays.forEach(a=>{for(let i=0;i<a.length;i+=3)box.expandByPoint(new THREE.Vector3(a[i],a[i+1],a[i+2]))});if(box.isEmpty())return;const c=box.getCenter(new THREE.Vector3()),r=Math.max(box.getSize(new THREE.Vector3()).length(),.08);orbit.target.copy(c);camera.position.copy(c).add(new THREE.Vector3(r,r*.75,r));orbit.update()}
+function renderEffect(refit=false){if(!effect)return;const s=+$('#effect-step').value,n=effect.current.length/3,g=slice(effect.gt,s,n),p=slice(effect.pred,s,n),hf=slice(effect.hand_future,s,effect.hand_current.length/3);setPoints(cur,effect.current);setPoints(gt,g);setPoints(pred,p);setPoints(hand0,effect.hand_current);setPoints(hand1,hf);initial.visible=false;gtLine.visible=predLine.visible=$('#show-lines').checked;hand0.visible=hand1.visible=$('#show-hand').checked;setFlow(gtLine,effect.current,g);setFlow(predLine,effect.current,p);$('#effect-step-label').textContent=s+1;status(`sample=${effect.index} raw=${effect.raw_frame}\nADE=${effect.ade_mm.toFixed(2)} mm  step ${s+1} EPE=${effect.step_epe_mm[s].toFixed(2)} mm`);if(refit)fit(effect.current,g,p,effect.hand_current)}
+function renderMano(refit=false){if(!mano)return;const s=+$('#mano-step').value,n=mano.gt.length/8/3,g=slice(mano.gt,s,n),p=slice(mano.optimized,s,n),i=slice(mano.initial,s,n);setPoints(cur,new Float32Array());setPoints(gt,g);setPoints(pred,p);setPoints(initial,i);initial.visible=$('#show-initial').checked;hand0.visible=hand1.visible=gtLine.visible=predLine.visible=false;$('#mano-step-label').textContent=s+1;status(`${mano.name} side=${mano.side}\nADE=${mano.ade_mm.toFixed(2)} mm  step ${s+1} EPE=${mano.step_epe_mm[s].toFixed(2)} mm`);if(refit)fit(g,p,i)}
+async function get(url){const r=await fetch(url);const j=await r.json();if(!r.ok)throw Error(j.error||r.statusText);return j}
+async function loadEffect(){try{status('正在运行推理……');effect=await get(`/api/effect?index=${+$('#sample').value}`);renderEffect(true)}catch(e){status(e.message,true)}}
+async function loadMano(){try{mano=await get(`/api/mano?name=${encodeURIComponent($('#mano-file').value)}`);renderMano(true)}catch(e){status(e.message,true)}}
+function tab(next){mode=next;$('#effect-tab').classList.toggle('active',next==='effect');$('#mano-tab').classList.toggle('active',next==='mano');$('#effect-controls').hidden=next!=='effect';$('#mano-controls').hidden=next!=='mano';next==='effect'?renderEffect(true):renderMano(true)}
+$('#effect-tab').onclick=()=>tab('effect');$('#mano-tab').onclick=()=>tab('mano');$('#load-effect').onclick=loadEffect;$('#load-mano').onclick=loadMano;$('#effect-step').oninput=()=>renderEffect();$('#mano-step').oninput=()=>renderMano();$('#show-lines').onchange=()=>renderEffect();$('#show-hand').onchange=()=>renderEffect();$('#show-initial').onchange=()=>renderMano();
+addEventListener('keydown',e=>{if(e.key==='ArrowRight'&&mode==='effect'){$('#sample').value=+$('#sample').value+1;loadEffect()}if(e.key==='ArrowLeft'&&mode==='effect'){$('#sample').value=Math.max(0,+$('#sample').value-1);loadEffect()}});addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});(function loop(){requestAnimationFrame(loop);renderer.render(scene,camera)})();
+try{const info=await get('/api/info');$('#sample').max=info.num_samples-1;info.mano_files.forEach(f=>$('#mano-file').add(new Option(f,f)));await loadEffect()}catch(e){status(e.message,true)}
+</script></body></html>

@@ -489,3 +489,52 @@ Action Encoder 明显保留全局运动，也保留较弱但可跨 sequence 线�
 
 **下一步**
 在 MANO self-inverse 中比较只监督 V9 global C 与同时监督 patch-level Action tokens，检查 local Action 信息能否进一步降低手指局部重建误差；这比直接重训旧 raw action head更接近 RL prior 需求。
+
+## 实验：V11 object-centric body action field 辅助监督
+
+**假设**
+由全局时序 `C` 和 object tokens 重建不依赖 MANO 身份的 `[rho,d,v_n^local,v_t^local]` 场，可以保护局部执行体动作信息，同时不损害 SE(3) effect 泛化。
+
+**观察到的失败 / 现象**
+V9 的 Action local probe 在 test 上优于零预测 22.8%，但局部信息明显弱于 global 信息；直接重建 MANO 又会引入 human-specific 语义。
+
+**改动**
+保持 V9 global-action-only 与 SE(3) 路径不变。新增 `C + object world token → 6D field` MLP。target 使用完整 1538 点 future hand surface：5 cm Gaussian density、最近距离，以及将累计 hand displacement 减去全手均值后按 object normal 分解的局部法向/切向运动。三组 loss 等权，均不使用 future object motion、MANO joint、finger ID 或 hand point identity。
+
+**结果**
+训练产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_134059`。先训练 5 epochs / 1920 steps，再从 latest checkpoint 续训到总计 20 epochs / 7680 steps；实测耗时分别为 10:02 和 30:53，总计 40:55。按 object ADE 选择的 checkpoint 仍是 epoch 1：验证 48.42 mm，test ADE/FDE 45.71/79.40 mm。
+
+local-motion 验证 RMSE 从 epoch 1 的 0.321 cm 下降，在 epoch 15 达到全程最好 0.242 cm，但仍差于 zero 0.223 cm；epoch 20 为 0.253 cm。使用 epoch 15 checkpoint 评估 test，density 为 0.136（zero 0.311）、distance 为 2.083 cm（zero 5.882 cm）、local-motion 为 0.277 cm（zero 0.243 cm），object ADE/FDE 为 44.41/79.28 mm。长训练比 epoch 1 的 test ADE 45.71 mm 有恢复，但仍弱于 V9 的 42.29/73.38 mm。
+
+epoch 1 Action token spatial variance/cosine 为 1.030/0.760，local probe test 相对 zero 改善 34.0%。epoch 15 为 1.718/0.674，local probe 验证/test 改善 21.5%/26.1%，仍高于 V10 的 16.4%/22.8%，但优势明显缩小；global probe test 改善回到 60.5%，与 V10 的 60.4% 相同。
+
+**诊断**
+5 epochs 时训练尚未收敛，不能据此断言最终负优化；20-epoch 结果确认 local target 继续改善到 epoch 15，但随后平台波动，始终未超过 zero。辅助监督确实改变了 Action Encoder，并略微增加其线性可读局部信息；decoder 仍主要学会 density/distance 这类静态几何。object effect 长训练只部分恢复且始终弱于 V9，因此现有证据支持“固定 small20 下存在目标冲突”，但不外推为该监督在更大数据上必然负优化。
+
+**决策**
+保留 V11 实现和配置作为部分正向、整体未通过的对照。结论以完整 20 epochs 为准，不再称 5-epoch 结果已经收敛。当前不调 loss 权重：V11 的 field-zero 与 effect 两项验收仍失败，简单降权不能解决 target 可预测性。
+
+**下一步**
+先对 local-motion target 做 conditional-mean / 邻近区域 mask 诊断，确认远离物体处的 Gaussian 归一化是否把微弱、无意义的运动放大；只有 target 本身存在可超过零的强基线后，再测试近场 masked local loss 或与 SE(3) 梯度解耦。
+
+## 实验：V9 SE(3) controlled overfit 与 Cm 误差口径对齐
+
+**假设**
+small20 上约 30–45 mm 的 train/test ADE 可能来自 SE(3) 坐标链或模型容量错误；若是如此，V9 在与原 V1 相同的 32 chunks、400 steps 下也无法充分过拟合。
+
+**观察到的失败 / 现象**
+V9 small20 训练 5 epochs 的 train ADE 为 29.03 mm，V11 为 43.60 mm；而 Cm full-GRAB 实验最终 train EPE 为 8.31 mm，容易被理解为 InteractionDynamics 连训练集也学不好。
+
+**改动**
+不改代码。使用 V9 `global_action_only`、SE(3) translation/rotation loss 和原 overfit 数据设置，固定 32 chunks、batch size 4，训练 50 epochs / 400 steps；无验证集和辅助 interaction loss。
+
+**结果**
+产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_140302`。约 200 steps 时单 batch ADE 已为 2.2–2.5 mm；400 steps 的 epoch ADE/FDE 为 1.277/1.598 mm，最后 batch 为 1.378/1.511 mm，translation error 为 0.040 cm、rotation error 为 0.444°。V9 因而能够比原 V1 的 6.71/12.43 mm 更充分地记住相同规模数据。
+
+Cm 的可比 full-GRAB 结果使用 1068 条 train sequences、20 epochs / 226780 steps，最终 train EPE 为 8.31 mm；验证 stride 1–10 的 endpoint EPE 为 2.64–18.45 mm，平均 10.40 mm。它还只从当前手部 5 cm 内采 object points，并以校准尺度的 vector Huber 直接预测单个 endpoint flow。InteractionDynamics small20 只有 12 条 train sequences、5 epochs / 1920 steps，ADE 是未来 8 个累计时刻的平均，并由 8 个增量 SE(3) 复合得到。
+
+**诊断**
+SE(3) 解析链、尺度和容量没有阻止拟合；“无法过拟合”的判断来自把 small20 多序列训练均值当成 controlled overfit，并与 Cm 的大数据长训练 endpoint EPE 直接比较。剩余差距主要是未见 sequence 泛化：当前 V9 将 64 个 action patches 全局平均为 `C`，会丢掉 Cm 直接使用完整 1538 点 endpoint hand flow 与近场 object geometry 时保留的接触机制；同时逐步 SE(3) 的小误差会沿 8 步累计。V11 在 small20 上观察到目标冲突，但不是基础路径学不动。
+
+**决策**
+不修改 ADE 或 SE(3) 坐标实现，也不以扩大 decoder 容量为下一步。后续比较必须同时报告 controlled-overfit ADE、zero-relative improvement、逐步 EPE，并在相同 sequence 数与训练预算下对齐 Cm/InteractionDynamics；模型研究优先恢复近场局部 action 条件，而不是继续只用 global mean `C`。
