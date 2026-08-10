@@ -47,6 +47,24 @@ def test_relative_motion_target_removes_shared_motion_and_splits_normal_tangent(
     assert torch.allclose(target[0, 0, 0], torch.tensor([1., 0., 2., 0.]))
 
 
+def test_increment_relative_target_differences_cumulative_motion():
+    batch = {
+        "hand_disp_chunk_object_gt": torch.tensor([
+            [[[.02, .03, 0.], [.02, .03, 0.]], [[.05, .07, 0.], [.05, .07, 0.]]]]),
+        "obj_disp_chunk_gt": torch.tensor([
+            [[[.01, .01, 0.], [.01, .01, 0.]], [[.02, .02, 0.], [.02, .02, 0.]]]]),
+        "world_obj_normals_object": torch.tensor([[[1., 0., 0.], [1., 0., 0.]]]),
+        "obj_normals_chunk_object_gt": torch.tensor([
+            [[[1., 0., 0.], [1., 0., 0.]], [[1., 0., 0.], [1., 0., 0.]]]]),
+    }
+    prediction = {
+        "hand_knn_idx": torch.tensor([[[0, 1]]]), "obj_knn_idx": torch.tensor([[[0, 1]]]),
+        "relative_nearest_obj_patch": torch.tensor([[0]]),
+    }
+    target = relative_motion_target(batch, prediction, mode="increment_fixed")
+    assert torch.allclose(target[0, :, 0], torch.tensor([[1., 0., 2., 0.], [2., 0., 3., 0.]]))
+
+
 def test_masked_relative_mse_ignores_far_edges():
     target = torch.tensor([[[[1., 0., 0., 0.], [100., 0., 0., 0.]]]])
     distance = torch.tensor([[.01, .10]])

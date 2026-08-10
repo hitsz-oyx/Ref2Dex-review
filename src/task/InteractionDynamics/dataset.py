@@ -179,6 +179,7 @@ class InteractionDynamicsDataset(Dataset):
         hand_future = transform_points(data["hand_points_world"][future], hand_pose)
         hand_future_object = transform_points(data["hand_points_world"][future], obj_pose)
         obj_future = transform_points(data["obj_points_world"][future], obj_pose)
+        obj_normals_future = transform_normals(data["obj_normals_world"][future], obj_pose)
 
         raw_frame = int(data["raw_frame_id"][current])
         seed = stable_frame_seed(base_seed=self.base_seed, seq_id=str(data["seq_id"].item()),
@@ -217,6 +218,7 @@ class InteractionDynamicsDataset(Dataset):
             # Full stable-index object target is used only by Runner-side patch
             # supervision; it is deliberately absent from model.forward inputs.
             "obj_disp_chunk_gt": obj_disp,
+            "obj_normals_chunk_object_gt": obj_normals_future,
             "effect_obj_valid_mask": valid,
             "effect_obj_idx": selected.astype(np.int64),
         }

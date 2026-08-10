@@ -42,6 +42,7 @@ def test_chunk_shapes_and_correspondence(tmp_path):
     assert sample["world_obj_points_object"].shape == (4096, 3)
     assert sample["hand_disp_chunk"].shape == (8, 1538, 3)
     assert sample["hand_disp_chunk_object_gt"].shape == (8, 1538, 3)
+    assert sample["obj_normals_chunk_object_gt"].shape == (8, 4096, 3)
     assert sample["effect_obj_disp_gt"].shape == (8, 512, 3)
     np.testing.assert_allclose(sample["hand_disp_chunk"][0, :, 0], .002, atol=1e-7)
     np.testing.assert_allclose(sample["hand_disp_chunk"][7, :, 0], .016, atol=1e-7)

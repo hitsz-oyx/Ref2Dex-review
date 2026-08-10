@@ -354,3 +354,29 @@ Dataset 增加仅供 Runner 监督与诊断使用的 current-object-frame future
 
 **下一步**
 先分解近场 target 的逐步增量、重尾程度和 correspondence 稳定性；只有诊断支持时，再最小测试逐帧匹配或 robust relative loss。
+
+## 实验：V6 correspondence、mask 与逐步增量
+
+**假设**
+V5 打不过零预测可能来自固定 current-frame nearest 在未来失效、current-near mask 漏掉接触建立，以及累计 target 的重尾；逐步增量可能是最小可预测 target。
+
+**改动**
+Dataset 增加仅供 Runner/诊断使用的 future object normals。新增 `correspondence_diagnostics.py`，使用稳定 patch point index 重建未来 patch centers，逐帧计算 nearest object patch；比较 fixed/dynamic correspondence、current-near/chunk-active mask，以及 fixed cumulative、fixed increment、dynamic increment 的分布。随后只改变一个变量，在相同 small20、5 cm current mask、MSE 和网络上训练 `increment_fixed` 5 epochs。
+
+**结果**
+验证/测试分别有 51.57%/53.83% edge 至少换过一次最近 patch，fixed 逐帧匹配率为 68.29%/66.11%，平均切换 0.83/0.88 次。current-near mask 占 38.66%/56.35%，chunk-active 占 43.89%/60.28%，即漏掉 active edges 的 11.91%/6.51%。
+
+逐步增量把 current-near RMS 从累计 target 的 1.331/1.179 cm 降至 0.352/0.300 cm，但重尾比 `q99/q50` 仍为 19.53/22.21。dynamic increment 的 RMS 为 0.354/0.299 cm，与 fixed increment 几乎相同。
+
+训练产物为 `outputs/interactiondynamics/interaction_dynamics_20260810_084655`，最佳 effect checkpoint 位于 step 192。验证/测试 relative RMSE 为 0.275/0.240 cm，仍差于 zero predictor 的 0.247/0.206 cm；effect ADE 为 48.62/43.51 mm。各 epoch 验证 relative RMSE 均未优于 zero。
+
+dominant-hand summary 的 8,488 个候选窗口中保留 5,770（67.98%）；主要排除 1,836 个双方不活跃窗口（21.63%）和 841 个双手协作窗口（9.91%）。
+
+**诊断**
+固定 correspondence 确实经常失效，静态 mask 也会漏掉接触建立，但它们不是当前误差分布的唯一主因：动态/固定增量统计近似，而单独改成增量仍不优于 zero。直接加入“全量”还会引入大量双方不活跃窗口；真正可能补充 mechanism 多样性的是 bilateral-active 子集。
+
+**决策**
+保留诊断工具、future normals target 和 increment 配置作为负对照。不继续做仅替换 dynamic nearest 的 5-epoch 低信息量训练，也不调 relative loss 权重。
+
+**下一步**
+重新设计 interaction-change 与 bilateral-active 数据采样，并先建立条件均值等强基线；目标在新采样上可预测后，再训练 mechanism representation。

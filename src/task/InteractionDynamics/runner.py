@@ -30,7 +30,8 @@ def patch_motion_target(displacement_m: torch.Tensor, knn_idx: torch.Tensor,
 
 
 def relative_motion_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
-                           motion_scale: float = 100.0) -> torch.Tensor:
+                           motion_scale: float = 100.0,
+                           mode: str = "cumulative_fixed") -> torch.Tensor:
     """Return hand->nearest-object edge [normal scalar, tangent xyz] trajectories in cm."""
     hand_motion = patch_motion_target(batch["hand_disp_chunk_object_gt"].float(),
                                       prediction["hand_knn_idx"], motion_scale)
@@ -47,9 +48,28 @@ def relative_motion_target(batch: dict[str, torch.Tensor], prediction: dict[str,
     obj_normal = torch.nn.functional.normalize(obj_normal, dim=-1)
     paired_normal = obj_normal[
         torch.arange(obj_normal.shape[0], device=obj_normal.device)[:, None], nearest]
-    relative = hand_motion - obj_motion
-    normal = (relative * paired_normal[:, None]).sum(-1, keepdim=True)
-    tangent = relative - normal * paired_normal[:, None]
+    if mode == "cumulative_fixed":
+        relative = hand_motion - obj_motion
+        normal_basis = paired_normal[:, None]
+    elif mode == "increment_fixed":
+        hand_increment = torch.diff(hand_motion, dim=1, prepend=torch.zeros_like(hand_motion[:, :1]))
+        obj_increment = torch.diff(obj_motion, dim=1, prepend=torch.zeros_like(obj_motion[:, :1]))
+        relative = hand_increment - obj_increment
+        future_normals = torch.stack([
+            gather_points(batch["obj_normals_chunk_object_gt"][:, step].float(),
+                          prediction["obj_knn_idx"]).mean(2)
+            for step in range(relative.shape[1])
+        ], 1)
+        future_normals = torch.nn.functional.normalize(future_normals, dim=-1)
+        normal_basis = future_normals[
+            torch.arange(future_normals.shape[0], device=future_normals.device)[:, None, None],
+            torch.arange(future_normals.shape[1], device=future_normals.device)[None, :, None],
+            nearest[:, None, :],
+        ]
+    else:
+        raise ValueError(f"Unsupported relative target mode: {mode}")
+    normal = (relative * normal_basis).sum(-1, keepdim=True)
+    tangent = relative - normal * normal_basis
     return torch.cat([normal, tangent], -1)
 
 
@@ -137,7 +157,8 @@ class InteractionDynamicsRunner(BaseRunner):
             prediction["pred_hand_patch_disp_internal"].float(), action_target)
         patch_effect_loss = torch.nn.functional.mse_loss(
             prediction["pred_obj_patch_disp_internal"].float(), patch_effect_target)
-        relative_target = relative_motion_target(batch, prediction, scale)
+        relative_target = relative_motion_target(
+            batch, prediction, scale, str(self.cfg.train.relative_target_mode))
         edge_radius_cm = float(self.cfg.train.relative_edge_radius_cm)
         relative_loss = masked_relative_mse(
             prediction["pred_relative_motion_internal"].float(), relative_target,
