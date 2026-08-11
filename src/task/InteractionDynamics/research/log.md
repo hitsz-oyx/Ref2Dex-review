@@ -795,3 +795,25 @@ MLP 对 1-sample 带来明显改善，证明输出 head 表达是一个真实瓶
 
 **决策**
 保留 pointwise MLP head，但判定 32-chunk gate 未通过。按 V16.3 停止 512-chunk 泛化、PCA 重跑、K=16/4 sweep、reconstructed-Y inverse 和 C-space metric；下一实验只调查 K=8 在 32 chunks 上的 train reconstruction 瓶颈。
+
+## 实验：V16.4 Object-Effect 条件交互场扩散
+
+**假设**
+冻结的解析 Y 可作为 knowledge target；在单物体 16 个 chunks 上，条件扩散应能学习 `p(Y|O,E)`，且 correct Effect 生成应优于 shuffled/zero Effect。
+
+**改动**
+暂停 Y compression。将 `r[9,M,3]、d[9,M]、u[8,M,3]` 按 anchor 整理为 `[M,60]` 并按通道标准化。Object encoder 对 128 个 FPS anchors 的 `[xyz,normal]` 做 pointwise MLP，同时 max-pool global token；Effect 使用 8 个相邻 object SE(3) 的 `[translation_cm, rotation_vector]`。6 层、256 维 Transformer 对 noisy Y 做 self-attention，并 cross-attend `[global object, 8 effect tokens]`。模型只读取 anchor coordinate/local geometry，不含 index embedding；训练时逐样本随机打乱 anchors。
+
+**观察到的失败 / 现象**
+1000 steps 后 noise MSE 已从 `1.411` 降至约 `0.05–0.13`，但 ancestral DDPM 采样累积误差，生成达到上千厘米。单变量改为确定性 DDIM 并裁剪标准化 clean prediction 后数值稳定，网络与 loss 不变。
+
+**结果**
+16 chunks 来自同一 sequence 的时间均匀位置；15/16 chunks 有正接触，contact active fraction `1.237%`。Effect translation 三轴 std 为 `1.210/0.925/1.196 cm`，rotation std 为 `0.0128/0.0106/0.0299 rad`，shuffle Effect RMSE `0.936`，因此 condition 并非近似常量；shuffle Y 自身的 `r/d/u` RMSE 为 `5.758/9.406/1.342 cm`、F1 `0.101`。
+
+4000 steps 后训练 noise MSE 可达 `0.011–0.05`。DDIM correct Effect 生成 `r/d/u=4.725/7.628/1.168 cm`、contact F1 `0.0287`；shuffled Effect 为 `4.750/7.773/1.183 cm`、F1 `0.0366`；zero Effect 为 `4.823/7.777/1.179 cm`、F1 `0.0325`。固定噪声 denoise 在 `t=50` 的 correct/shuffle/zero MSE 为 `0.01948/0.02122/0.02080`，存在很弱的中噪声条件依赖；`t=99` 为 `0.01226/0.01216/0.01203`，纯噪声端没有 correct condition 优势。
+
+**诊断**
+epsilon prediction 训练问题本身可优化，permutation-equivariant 路径和采样数值也已打通；但网络在高噪声端学习近似 unconditional prior，无法从纯噪声依靠 Effect 选择对应 interaction mode。生成虽略优于 shuffle-Y 的 raw RMSE baseline，但 contact 与 condition sensitivity 都未通过。
+
+**决策**
+保留最小 conditional diffusion、DDIM 稳定采样和 intervention 诊断作为失败基线。Gate A（生成接近训练 Y）与 Gate B（correct condition 明显优于干预）均未通过；按 V16.4 不进行 Object intervention、unseen-object、generated-Y MANO inverse、Robot FK 或大规模训练。下一实验应只针对高噪声条件依赖，不同时修改 Object/Effect encoder 与 backbone。
