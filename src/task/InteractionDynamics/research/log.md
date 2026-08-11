@@ -715,11 +715,15 @@ current-frame repeat 的 stationary ADE 平均约 `109.3 mm`。Interaction 最�
 
 candidate beta 固定方向偏移 `0.75/1.5/2.0` 时，Interaction 将初始 ADE `8.40/13.53/14.15 mm` 降至 `3.90/7.73/8.41 mm`，contact F1 为 `0.974/0.937/0.937`；Action 最终 ADE 为 `8.46/15.03/14.56 mm`，contact F1 为 `0.746/0.493/0.537`。
 
+进一步先对 controlled set 的 32 chunks 解析筛选：13 个存在正接触，最高 active fraction 为 `12.01%`，其余 19 个为 0。选取 6 个不同序列的有接触样本，在统一 beta offset `1.5` 下成对比较。Interaction 最终 ADE 平均 `7.323 mm`、r/u RMSE `0.417/0.225 cm`、contact F1 平均/中位数 `0.918/0.939`；Action 最终 ADE `15.560 mm`、r/u RMSE `1.103/0.844 cm`、contact F1 `0.400/0.397`。6/6 样本的 Interaction F1 均高于 Action，且 Interaction 均改善初始 ADE，Action 则 6/6 恶化。
+
+固定相同初始化、只把 beta 方向种子从 `43` 改为 `143` 后，6 个样本的 Interaction/Action 平均 ADE 为 `2.440/8.369 mm`，r RMSE 为 `0.131/0.636 cm`，u RMSE 为 `0.052/0.730 cm`，contact F1 为 `0.947/0.632`。两个 beta 方向合计 12 对实验中，Interaction contact F1 为 12/12 更高；方向 143 对两种方法都更容易，但没有改变排序。
+
 **诊断**
-Full 的局部结果确认 autograd、MANO forward、单位与 object-frame 坐标链有效。Y 对物体附近 interaction 的约束明显强于 ActionToken，且跨 morphology 的 contact 保真更稳定。Y 已接近而 MANO 表面仍有差异，符合其主动忽略远离物体自由度的设计；repeat 的大误差则同时包含 500 步优化 basin 限制。无正接触样本上 F1=0 本身没有判别力，后续需同时报告 target active fraction。
+Full 的局部结果确认 autograd、MANO forward、单位与 object-frame 坐标链有效。Y 对物体附近 interaction 的约束明显强于 ActionToken，且跨 morphology 的 contact 保真优势已在 6 个序列上重复。跨 morphology 的 surface ADE 同时包含不可消除的形态差异，不能替代 Y/contact 主指标。Y 已接近而 MANO 表面仍有差异，符合其主动忽略远离物体自由度的设计；repeat 的大误差则同时包含 500 步优化 basin 限制。无正接触样本上 F1=0 本身没有判别力，后续需同时报告 target active fraction。
 
 **决策**
-保留解析 Y、self-inverse 和 cross-beta 路径。判定 local-gradient gate 通过、Interaction 的 50% improvement gate 通过；Full repeat 的严格 3 mm gate 为 3/5，尚非全样本稳定。当前证据支持扩大 cross-morphology 样本量，但不把 exact MANO reconstruction 当作 Y 的唯一成败标准。
+保留解析 Y、self-inverse 和 cross-beta 路径。判定 local-gradient gate 通过、Interaction 的 50% improvement gate 通过；Full repeat 的严格 3 mm gate 为 3/5，尚非全样本稳定。cross-morphology 优势已跨 6 个序列、2 个 beta 方向重复，当前证据支持继续到可视化和不同真实 subject，但不把 exact MANO reconstruction 当作 Y 的唯一成败标准。
 
 **下一步**
-在更多有实际接触的多序列 chunk 上重复 cross-beta，并分别统计 Y/contact 保真与 trajectory 等价解；之后再决定是否进入 Robot FK。
+在更多 subject 或 beta 方向上重复 cross-morphology，并可视化 Y matching 得到的等价手型；之后再决定是否进入 Robot FK。

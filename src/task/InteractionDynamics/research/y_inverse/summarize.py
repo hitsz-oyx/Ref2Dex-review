@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    groups: dict[tuple[str, str, float], list[dict[str, float]]] = defaultdict(list)
+    groups: dict[tuple[str, str, float, int], list[dict[str, float]]] = defaultdict(list)
     for path in sorted(parse_args().input_dir.glob("sample*.npz")):
         with np.load(path, allow_pickle=False) as payload:
             history = json.loads(str(payload["history_json"].item()))
@@ -26,14 +26,17 @@ def main() -> None:
             row["file"] = path.name
             beta_offset = (float(payload["candidate_beta_offset"].item())
                            if "candidate_beta_offset" in payload.files else 0.0)
+            beta_seed = (int(payload["candidate_beta_seed"].item())
+                         if "candidate_beta_seed" in payload.files else 43)
             groups[(str(payload["initialization"].item()),
-                    str(payload["target"].item()), beta_offset)].append(row)
+                    str(payload["target"].item()), beta_offset, beta_seed)].append(row)
 
     fields = ("surface_ade_mm", "surface_fde_mm", "joint_mpjpe_mm",
               "wrist_error_mm", "tip_mpjpe_mm", "r_rmse_cm", "u_rmse_cm",
               "g_rmse", "contact_f1")
-    for (initialization, target, beta_offset), rows in sorted(groups.items()):
-        print(f"\n{initialization}/{target}/beta_offset={beta_offset:g}（n={len(rows)}）")
+    for (initialization, target, beta_offset, beta_seed), rows in sorted(groups.items()):
+        print(f"\n{initialization}/{target}/beta_offset={beta_offset:g}"
+              f"/beta_seed={beta_seed}（n={len(rows)}）")
         for row in rows:
             print(f"  {row['file']}: ADE={row['surface_ade_mm']:.4f} mm, "
                   f"FDE={row['surface_fde_mm']:.4f} mm, "

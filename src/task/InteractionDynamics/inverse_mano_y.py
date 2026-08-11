@@ -83,6 +83,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=.003)
     parser.add_argument("--tau-m", type=float, default=.015)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--beta-seed", type=int, default=43,
+                        help="candidate beta 偏移方向种子，与优化初始化种子独立")
     parser.add_argument(
         "--candidate-beta-offset", type=float, default=0.0,
         help="沿固定随机 MANO beta 方向偏移 candidate morphology；0 表示 self-inverse")
@@ -134,7 +136,7 @@ def main() -> None:
     else:
         beta_np = np.broadcast_to(beta_np, (9, beta_np.shape[-1])).copy()
     teacher_betas = torch.from_numpy(beta_np).to(device)
-    beta_generator = torch.Generator(device=device).manual_seed(args.seed + 1)
+    beta_generator = torch.Generator(device=device).manual_seed(args.beta_seed)
     beta_direction = torch.randn(
         teacher_betas.shape[-1], generator=beta_generator, device=device)
     beta_direction = beta_direction / beta_direction.square().mean().sqrt()
@@ -246,8 +248,10 @@ def main() -> None:
     np.savez_compressed(
         args.output, source_raw_file=np.asarray(source_raw_file), side=np.asarray(side),
         current_raw_frame=np.asarray(raw_ids[0]), target=np.asarray(args.target),
+        future_raw_frames=np.asarray(raw_ids[1:], np.int64),
         initialization=np.asarray(args.init), anchors_object=anchors.detach().cpu().numpy(),
         candidate_beta_offset=np.asarray(args.candidate_beta_offset, np.float32),
+        candidate_beta_seed=np.asarray(args.beta_seed, np.int64),
         teacher_betas=teacher_betas.detach().cpu().numpy(),
         candidate_betas=candidate_betas.detach().cpu().numpy(),
         initial_points_world=initial_surface.cpu().numpy(),

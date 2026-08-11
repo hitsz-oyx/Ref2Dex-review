@@ -70,8 +70,15 @@ def mano_payload(path: Path) -> dict:
         history = json.loads(str(data["history_json"].item())) if "history_json" in data else []
         return {
             "name": path.name, "side": str(data["side"].item()) if "side" in data else "",
+            "num_frames": int(gt.shape[0]),
             "current_raw_frame": int(data["current_raw_frame"]) if "current_raw_frame" in data else None,
             "future_raw_frames": data["future_raw_frames"].tolist() if "future_raw_frames" in data else [],
+            "target": str(data["target"].item()) if "target" in data else "",
+            "initialization": str(data["initialization"].item()) if "initialization" in data else "",
+            "candidate_beta_offset": (float(data["candidate_beta_offset"].item())
+                                      if "candidate_beta_offset" in data else 0.0),
+            "candidate_beta_seed": (int(data["candidate_beta_seed"].item())
+                                    if "candidate_beta_seed" in data else 43),
             "initial": flat(initial), "optimized": flat(optimized), "gt": flat(gt),
             "step_epe_mm": error.mean(1).tolist(), "ade_mm": float(error.mean()),
             "history": history,
