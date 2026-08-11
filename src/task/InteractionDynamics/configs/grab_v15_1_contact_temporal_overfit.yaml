@@ -1,0 +1,7 @@
+_base_: src/task/InteractionDynamics/configs/grab_v15_1_contact_balanced_overfit.yaml
+meta:
+  contact_temporal_readout: true
+wandb:
+  mode: offline
+  name: interaction-dynamics-v15-1-contact-temporal-overfit
+  tags: [interaction-dynamics, v15-1, contact, aligned-endpoint, balanced, temporal, overfit]

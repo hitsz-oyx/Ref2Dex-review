@@ -6,19 +6,29 @@ from src.task.InteractionDynamics.runner import (
     patch_motion_target, relative_motion_target,
     trajectory_statistics,
     endpoint_contact_target,
+    balanced_contact_mse,
 )
 
 
-def test_endpoint_contact_target_uses_future_hand_and_object_patch_centers():
+def test_endpoint_contact_target_uses_future_hand_and_future_object_patch_centers():
     batch = {
         "future_hand_points_object_endpoint": torch.tensor([[[0., 0., 0.], [.1, 0., 0.]]]),
         "action_patch_knn_idx": torch.tensor([[[0], [1]]]),
+        "world_obj_points_object": torch.tensor([[[.3, 0., 0.], [.4, 0., 0.]]]),
+        "obj_disp_chunk_gt": torch.tensor([[[[-.3, 0., 0.], [-.2, 0., 0.]]]]),
     }
-    prediction = {"obj_patch_centers_object": torch.tensor([[[0., 0., 0.], [.2, 0., 0.]]])}
+    prediction = {"obj_knn_idx": torch.tensor([[[0], [1]]])}
     target = endpoint_contact_target(batch, prediction, .01)
     assert target.shape == (1, 2, 2)
     torch.testing.assert_close(target[0, 0, 0], torch.tensor(1.))
     assert target[0, 0, 1] < 1e-6
+
+
+def test_balanced_contact_mse_upweights_sparse_positive_region():
+    target = torch.tensor([0., 0., 0., 1.])
+    prediction = torch.zeros_like(target)
+    assert torch.allclose(balanced_contact_mse(prediction, target, 1), torch.tensor(.25))
+    assert torch.allclose(balanced_contact_mse(prediction, target, 3), torch.tensor(.5))
 
 
 def test_action_decomposition_separates_root_and_articulation():

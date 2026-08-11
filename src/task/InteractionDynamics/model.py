@@ -815,6 +815,11 @@ class PretrainedTokenInteractionModel(nn.Module):
         self.effect = CmEffectHead(meta.model_dim, meta.attention_heads, self.motion_scale)
         self.contact_head = nn.Sequential(nn.Linear(meta.model_dim, meta.model_dim), nn.GELU(),
                                           nn.Linear(meta.model_dim, meta.num_obj_patches))
+        self.contact_temporal_readout = bool(getattr(meta, "contact_temporal_readout", False))
+        if self.contact_temporal_readout:
+            self.contact_time_embedding = nn.Parameter(
+                torch.randn(1, meta.chunk_len, 1, meta.model_dim) * .02)
+            self.contact_temporal_score = nn.Linear(meta.model_dim, 1)
         self.action_intervention_mode = "normal"
 
     def train(self, mode: bool = True):
@@ -892,8 +897,16 @@ class PretrainedTokenInteractionModel(nn.Module):
         cm = query.reshape(batch_size, steps, count, dim)
         assert attention is not None
         effect = self.effect(cm, batch["effect_obj_points_object"])
-        effect["pred_contact_matrix"] = self.contact_head(cm[:, -1, 1:]).sigmoid()
+        contact_feature = cm[:, -1, 1:]
+        if self.contact_temporal_readout:
+            articulation_cm = cm[:, :, 1:]
+            temporal_weight = self.contact_temporal_score(
+                articulation_cm + self.contact_time_embedding).softmax(dim=1)
+            contact_feature = (temporal_weight * articulation_cm).sum(1)
+            effect["contact_temporal_weight"] = temporal_weight.squeeze(-1)
+        effect["pred_contact_matrix"] = self.contact_head(contact_feature).sigmoid()
         effect["obj_patch_centers_object"] = world["obj_patch_centers_object"]
+        effect["obj_knn_idx"] = world["obj_knn_idx"]
         valid = batch["effect_obj_valid_mask"][:, None, :, None].to(effect["pred_obj_disp_chunk"].dtype)
         effect["pred_obj_disp_chunk"] = effect["pred_obj_disp_chunk"] * valid
         return {"raw_action_tokens": raw, "cm_tokens": cm,

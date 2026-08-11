@@ -203,11 +203,24 @@ def trajectory_statistics(pred_m: torch.Tensor, gt_m: torch.Tensor,
 
 def endpoint_contact_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
                             sigma_m: float) -> torch.Tensor:
+    """Endpoint contact in the current-object frame, using endpoint geometry on both sides."""
     hand = gather_points(batch["future_hand_points_object_endpoint"].float(),
                          batch["action_patch_knn_idx"])
-    obj = prediction["obj_patch_centers_object"].float()
+    object_endpoint = (batch["world_obj_points_object"].float()
+                       + batch["obj_disp_chunk_gt"][:, -1].float())
+    obj = gather_points(object_endpoint, prediction["obj_knn_idx"]).mean(2)
     distance = torch.linalg.vector_norm(hand[:, :, :, None] - obj[:, None, None], dim=-1).amin(2)
     return torch.exp(-distance.square() / (2.0 * float(sigma_m) ** 2))
+
+
+def balanced_contact_mse(prediction: torch.Tensor, target: torch.Tensor,
+                         positive_weight: float) -> torch.Tensor:
+    """MSE with an explicit weight for the sparse target region C > 0.5."""
+    if positive_weight < 1:
+        raise ValueError("contact_positive_weight must be >= 1")
+    weights = torch.ones_like(target)
+    weights = torch.where(target > .5, weights * float(positive_weight), weights)
+    return ((prediction - target).square() * weights).sum() / weights.sum()
 
 
 def se3_statistics_and_loss(prediction: dict[str, torch.Tensor],
@@ -444,7 +457,9 @@ class InteractionDynamicsRunner(BaseRunner):
             contact_target = endpoint_contact_target(
                 batch, prediction, float(self.cfg.meta.contact_sigma_m))
             contact_prediction = prediction["pred_contact_matrix"].float()
-            contact_loss = torch.nn.functional.mse_loss(contact_prediction, contact_target)
+            contact_loss = balanced_contact_mse(
+                contact_prediction, contact_target,
+                float(getattr(self.cfg.train, "contact_positive_weight", 1.0)))
             loss = loss + float(self.cfg.train.contact_loss_weight) * contact_loss
         cm = prediction["cm_tokens"].float()
         spatial = cm - cm.mean(2, keepdim=True)
@@ -469,6 +484,7 @@ class InteractionDynamicsRunner(BaseRunner):
         metrics.update(se3_metrics)
         if contact_target is not None:
             contact_prediction = prediction["pred_contact_matrix"].float()
+            contact_mse = torch.nn.functional.mse_loss(contact_prediction, contact_target)
             zero_mse = contact_target.square().mean()
             active_gt = contact_target > .5
             active_pred = contact_prediction > .5
@@ -477,9 +493,10 @@ class InteractionDynamicsRunner(BaseRunner):
             recall = true_positive / active_gt.sum().clamp_min(1)
             metrics.update({
                 "loss/contact": contact_loss,
-                "contact/mse": contact_loss,
+                "contact/balanced_mse": contact_loss,
+                "contact/mse": contact_mse,
                 "contact/zero_mse": zero_mse,
-                "contact/relative_improvement": 1 - contact_loss / zero_mse.clamp_min(1e-8),
+                "contact/relative_improvement": 1 - contact_mse / zero_mse.clamp_min(1e-8),
                 "contact/mae": torch.nn.functional.l1_loss(contact_prediction, contact_target),
                 "contact/precision": precision,
                 "contact/recall": recall,

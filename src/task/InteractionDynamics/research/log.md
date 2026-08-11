@@ -649,3 +649,27 @@ V15 当前 contact 定义极度稀疏，未加权 MSE 的最优捷径是预测�
 
 **下一步**
 先在同一 32-chunk controlled overfit 上处理接触监督不平衡（正样本加权或按每个 object patch 归一化），要求显著超过 zero baseline 且 F1 非零；通过后再重复 articulation shuffle 验收，不直接继续扩大训练。
+
+## 实验：V15.1 endpoint 时间对齐、oracle 与 8-step readout
+
+**假设**
+V15 用 `H(t+8)` 对 `O(t)` 构造 contact，物体运动会使 GT 错位；修正为 `H(t+8)` 对 `O(t+8)` 后，若 endpoint oracle 可拟合而 Cm 仍失败，则瓶颈在不平衡和 Cm readout，而非 GT/loss 本身。
+
+**改动**
+Runner 使用 `world_obj_points_object + obj_disp_chunk_gt[:, -1]` 得到当前物体系下的 endpoint object points，再沿 World encoder 的稳定 `obj_knn_idx` 聚合 patch center。新增诊断脚本输出新旧 contact 热图和 endpoint-distance MLP oracle。为后续对照增加可关闭的 `contact_positive_weight`，以及对每个 hand patch 的 8 个 Cm 加入 time embedding 后做 softmax attention 的有序 readout；冻结 ActionToken 不变。
+
+**结果**
+32 chunks 中，旧/对齐 GT active fraction 为 `0.412%/0.481%`，zero MSE 为 `0.003180/0.003716`，object endpoint 平均移动 `9.20 mm`。500-step endpoint-distance oracle 的 MSE 为 `2.998e-6`，相对 zero 改善 `99.92%`，precision/recall/F1 为 `0.991/1.000/0.995`，证明对齐后 GT 和 MSE 可拟合。热图保存在 `output/research/InteractionDynamics/v15_1_contact_alignment/contact_alignment.png`。
+
+仅修时间对齐的原 V15 运行 `interaction_dynamics_20260811_074943`，1504 steps 后 train contact MSE `0.003480`，zero `0.003716`，改善 `6.34%`，F1 仍为 0；ADE `1.48 mm`。`200×` 正区域加权运行 `interaction_dynamics_20260811_075726`，最佳 F1 为 `0.457`（precision `0.314`、recall `0.847`），但 raw MSE `0.004876` 差于 zero，说明过强权重把近零解改成了高 recall/低 precision 解。
+
+8-step 有序 readout 运行 `interaction_dynamics_20260811_080156`，最佳 F1 `0.462`（precision `0.301`、recall `0.993`），raw MSE `0.005385`，相对只用最后一步的 F1 只增加 `0.004`。best checkpoint 的 normal/articulation-zero/mean/shuffle/cross-sample F1 为 `0.4615/0.4381/0.4560/0.4588/0.4595`；shuffle 只下降 `0.0027`，未通过 identity 验收。
+
+**诊断**
+时间错位是明确 bug，但不是 V15 失败的主要原因。正区域加权证明 Cm 可以输出非零 contact，但当前表示/readout 不能精确定位 patch correspondence；简单按 patch 汇聚 8 步也未弥合与 oracle 的差距。
+
+**决策**
+保留 endpoint 时间对齐修复、诊断/oracle 脚本和两个可关闭的对照开关。加权和 8-step readout 都不视为科学验收通过，不启动全量训练。
+
+**下一步**
+若继续，先在 oracle 和 Cm 之间加入 endpoint hand/object patch geometry 的受控对照，并对正区域权重做小范围定量扫描；验收同时要求 raw MSE 优于 zero 且 shuffle 明显退化。
