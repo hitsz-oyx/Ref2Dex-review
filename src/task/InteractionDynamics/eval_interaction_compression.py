@@ -48,16 +48,34 @@ def make_dataset(config_path: str) -> InteractionDynamicsDataset:
 def sample_y(dataset: InteractionDynamicsDataset, index: int,
              device: torch.device, tau_m: float) -> torch.Tensor:
     sample = dataset[index]
-    hand0 = torch.as_tensor(sample["world_hand_points_object"], device=device)
-    displacement = torch.as_tensor(sample["action_hand_disp_chunk_object"], device=device)
-    hand = torch.cat([hand0[None], hand0[None] + displacement], dim=0)
+    hand = torch.as_tensor(sample["action_hand_points_object_sequence"], device=device)
     obj = torch.as_tensor(sample["world_obj_points_object"], device=device)
     anchors = obj[deterministic_fps(obj[None], 128)[0]]
     return pack_y(build_interaction_y(hand, anchors, tau_m)).cpu()
 
 
+def _uniform_limit(indices: list[int], limit: int) -> list[int]:
+    if len(indices) <= limit:
+        return indices
+    positions = np.linspace(0, len(indices) - 1, num=limit)
+    return [indices[int(round(position))] for position in positions]
+
+
+def _round_robin(groups: list[list[int]], limit: int) -> list[int]:
+    result: list[int] = []
+    for offset in range(max(map(len, groups), default=0)):
+        for group in groups:
+            if offset < len(group):
+                result.append(group[offset])
+                if len(result) == limit:
+                    return result
+    return result
+
+
 def sequence_disjoint_indices(dataset: InteractionDynamicsDataset, seed: int,
-                              max_train: int, max_eval: int) -> tuple[list[int], list[int]]:
+                              max_train: int, max_eval: int,
+                              max_train_per_sequence: int = 32,
+                              max_eval_per_sequence: int = 16) -> tuple[list[int], list[int]]:
     groups: dict[str, list[int]] = {}
     for index in range(len(dataset)):
         path, _ = dataset.sample_location(index)
@@ -65,10 +83,12 @@ def sequence_disjoint_indices(dataset: InteractionDynamicsDataset, seed: int,
     names = sorted(groups)
     np.random.default_rng(seed).shuffle(names)
     boundary = max(1, int(.8 * len(names)))
-    train = [i for name in names[:boundary] for i in groups[name]][:max_train]
-    evaluate = [i for name in names[boundary:] for i in groups[name]][:max_eval]
-    if len(train) <= 1024:
-        raise ValueError("PCA-1024 至少需要 1025 个 sequence-disjoint 训练 chunks")
+    train_groups = [_uniform_limit(groups[name], max_train_per_sequence)
+                    for name in names[:boundary]]
+    eval_groups = [_uniform_limit(groups[name], max_eval_per_sequence)
+                   for name in names[boundary:]]
+    train = _round_robin(train_groups, max_train)
+    evaluate = _round_robin(eval_groups, max_eval)
     return train, evaluate
 
 
@@ -95,6 +115,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="src/task/InteractionDynamics/configs/grab_v15_contact_full.yaml")
     parser.add_argument("--max-train", type=int, default=1280)
     parser.add_argument("--max-eval", type=int, default=256)
+    parser.add_argument("--max-train-per-sequence", type=int, default=32)
+    parser.add_argument("--max-eval-per-sequence", type=int, default=16)
     parser.add_argument("--dims", type=int, nargs="+", default=[256, 512, 1024])
     parser.add_argument("--tau-m", type=float, default=.015)
     parser.add_argument("--seed", type=int, default=42)
@@ -108,7 +130,10 @@ def main() -> None:
     device = torch.device(args.device)
     dataset = make_dataset(args.config)
     train_indices, eval_indices = sequence_disjoint_indices(
-        dataset, args.seed, args.max_train, args.max_eval)
+        dataset, args.seed, args.max_train, args.max_eval,
+        args.max_train_per_sequence, args.max_eval_per_sequence)
+    if len(train_indices) <= max(args.dims):
+        raise ValueError(f"PCA-{max(args.dims)} 至少需要 {max(args.dims) + 1} 个训练 chunks")
     train = torch.stack([sample_y(dataset, i, device, args.tau_m) for i in train_indices])
     evaluate = torch.stack([sample_y(dataset, i, device, args.tau_m) for i in eval_indices])
     mean = train.mean(0)

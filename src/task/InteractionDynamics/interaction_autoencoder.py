@@ -21,8 +21,10 @@ class InteractionAutoencoder(nn.Module):
             dim, heads, dim_feedforward=4 * dim, batch_first=True, norm_first=True)
         self.latent_transformer = nn.TransformerEncoder(layer, 1)
         self.decoder_attention = nn.MultiheadAttention(dim, heads, batch_first=True)
-        self.geometry_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, 4))
-        self.motion_head = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, 3))
+        self.geometry_head = nn.Sequential(
+            nn.LayerNorm(dim), nn.Linear(dim, 4 * dim), nn.GELU(), nn.Linear(4 * dim, 4))
+        self.motion_head = nn.Sequential(
+            nn.LayerNorm(dim), nn.Linear(dim, 4 * dim), nn.GELU(), nn.Linear(4 * dim, 3))
 
     @staticmethod
     def _expand_anchor_time(anchors_cm: torch.Tensor, frames: int) -> tuple[torch.Tensor, torch.Tensor]:

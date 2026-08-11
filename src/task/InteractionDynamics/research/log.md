@@ -762,3 +762,36 @@ PCA 暴露了跨物体 flatten anchor index 缺乏固定语义的问题。slot �
 
 **决策**
 保留 PCA 和最小 autoencoder 作为失败基线，不运行 K=16/4 sweep、不做 reconstructed-Y MANO inverse、不进入 latent metric。下一步只先解决 K=8 controlled overfit。
+
+## 实验：V16.3 Teacher 数据链 parity 与 sequence-balanced sampling
+
+**假设**
+Phase B 使用固定 current-object-frame 构造未来手点，与 inverse 使用逐帧动态 object frame 的 Y-Teacher V1 不一致；同时按 sequence 串接后截断会造成样本组成偏置。
+
+**改动**
+Dataset 新增 `action_hand_points_object_sequence[9,1538,3]`，每帧使用自身 `obj_root_pose_world`；PCA 和 autoencoder 只消费该字段。train/eval 先按 sequence disjoint 划分，再对每序列分别做 32/16 个时间均匀限额，最后 round-robin 组成总样本。新增 raw MANO↔Dataset parity 诊断。正式 `PretrainedActionAdapter` 移除冻结 encoder forward 外层的 `no_grad`，参数冻结不变、输入梯度保留。
+
+**结果**
+真实 sample 0 上，raw MANO 与 Dataset 的 object-frame surface 最大绝对差 `1.776e-7 m`；`r/d/u` 最大差分别 `2.198e-7/6.333e-8/6.359e-8 m`，通过 `<1e-5 m` parity gate。聚焦测试验证动态物体系能消除 hand-object 共同平移、均匀限额与 round-robin 顺序正确、冻结 shared flow adapter 后输入梯度非零。
+
+full 配置在 80/20 sequence split 后实际为 16/4 个 train/eval sequences。请求 512/128 时，在每序列 32/16 上限下实际得到 492/64 chunks；train 每序列 12–32 个、eval 固定 16 个，sequence overlap 为 0。采样器不会为了凑满总数突破单序列上限。
+
+**决策**
+保留动态物体系字段、balanced sampling 和 shared adapter 梯度修复。V16.2 旧 compression 泛化结果因 teacher 定义与采样不一致而作废，不再用于判断 C。
+
+## 实验：V16.3 K=8 的 1→4→32 controlled overfit
+
+**假设**
+统一 Teacher 后，如果 1-sample 仍无法拟合，则首要瓶颈在 decoder 表达或优化，而不是 K=8 latent capacity。
+
+**改动**
+固定 K=8、128 维 slots、`L_r+L_d+L_u` 和 `lr=1e-3`。先复跑原线性输出 head，再只把 geometry/motion head 改为 `128→512→output` pointwise MLP；不改变 encoder、slot 数或 loss。
+
+**结果**
+旧线性 head 的 1/4/32 训练 `r/d/u` 分别为 `0.352/0.199/0.0476`、`0.529/0.299/0.0683`、`0.522/0.416/0.101 cm`，未通过最小 gate。MLP head 的 1-sample 在 3000 steps 后为 `0.0485/0.0355/0.0138 cm`、contact F1 `0.800`；4-sample 为 `0.103/0.0741/0.0187 cm`、F1 `0.522`。32-sample 训练 500 epochs / 4000 steps 后为 `0.447/0.363/0.0621 cm`、F1 `0.0817`。
+
+**诊断**
+MLP 对 1-sample 带来明显改善，证明输出 head 表达是一个真实瓶颈；但误差随样本数快速上升，32-sample 仍远未充分拟合。当前证据不足以区分 K=8 容量、latent routing 和优化三者，也不能评价 unseen-sequence 泛化。
+
+**决策**
+保留 pointwise MLP head，但判定 32-chunk gate 未通过。按 V16.3 停止 512-chunk 泛化、PCA 重跑、K=16/4 sweep、reconstructed-Y inverse 和 C-space metric；下一实验只调查 K=8 在 32 chunks 上的 train reconstruction 瓶颈。

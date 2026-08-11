@@ -714,10 +714,9 @@ class PretrainedActionAdapter(nn.Module):
             patch_flow = torch.stack(
                 [gather_points(flow[:, step], patch_knn_idx) for step in range(flow.shape[1])], 1)
             batch, steps, patches, size, _ = patch_flow.shape
-            with torch.no_grad():
-                return self.dynamic_action.encode(
-                    patch_flow.reshape(batch * steps, patches, size, 3)).reshape(
-                        batch, steps, patches, -1)
+            return self.dynamic_action.encode(
+                patch_flow.reshape(batch * steps, patches, size, 3)).reshape(
+                    batch, steps, patches, -1)
         batch, frames, count, _ = hand_local_sequence.shape
         pose_batch = {
             "hand_points_root": hand_local_sequence.reshape(batch * frames, count, 3),
@@ -726,14 +725,10 @@ class PretrainedActionAdapter(nn.Module):
             "patch_knn_idx": patch_knn_idx[:, None].expand(-1, frames, -1, -1).reshape(
                 batch * frames, *patch_knn_idx.shape[1:]),
         }
-        with torch.no_grad():
-            pose = self.pose_encoder(pose_batch)
+        pose = self.pose_encoder(pose_batch)
         local = pose["pose_tokens"].reshape(batch, frames, -1, pose["pose_tokens"].shape[-1])
         global_pose = pose["global_pose_token"].reshape(batch, frames, -1)
-        if any(parameter.requires_grad for parameter in self.dynamic_action.parameters()):
-            return self.dynamic_action(local, global_pose)["action_tokens"]
-        with torch.no_grad():
-            return self.dynamic_action(local, global_pose)["action_tokens"]
+        return self.dynamic_action(local, global_pose)["action_tokens"]
 
 
 class RootActionEncoder(nn.Module):

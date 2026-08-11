@@ -20,9 +20,7 @@ def materialize(dataset, indices: list[int], device: torch.device,
                                   "relative_distance", "relative_motion"]}
     for index in indices:
         sample = dataset[index]
-        hand0 = torch.as_tensor(sample["world_hand_points_object"], device=device)
-        displacement = torch.as_tensor(sample["action_hand_disp_chunk_object"], device=device)
-        hand = torch.cat([hand0[None], hand0[None] + displacement], 0)
+        hand = torch.as_tensor(sample["action_hand_points_object_sequence"], device=device)
         obj = torch.as_tensor(sample["world_obj_points_object"], device=device)
         anchors = obj[deterministic_fps(obj[None], 128)[0]]
         y = build_interaction_y(hand, anchors, tau_m)
@@ -72,6 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dim", type=int, default=128)
     parser.add_argument("--max-train", type=int, default=512)
     parser.add_argument("--max-eval", type=int, default=128)
+    parser.add_argument("--max-train-per-sequence", type=int, default=32)
+    parser.add_argument("--max-eval-per-sequence", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
@@ -88,8 +88,8 @@ def main() -> None:
     device = torch.device(args.device)
     dataset = make_dataset(args.config)
     train_indices, eval_indices = sequence_disjoint_indices(
-        dataset, args.seed, max(args.max_train, 1025), args.max_eval)
-    train_indices = train_indices[:args.max_train]
+        dataset, args.seed, args.max_train, args.max_eval,
+        args.max_train_per_sequence, args.max_eval_per_sequence)
     train = materialize(dataset, train_indices, device, args.tau_m)
     validation = materialize(dataset, eval_indices, device, args.tau_m)
     model = InteractionAutoencoder(args.slots, args.dim).to(device)

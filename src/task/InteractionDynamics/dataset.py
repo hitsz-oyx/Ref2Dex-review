@@ -192,6 +192,11 @@ class InteractionDynamicsDataset(Dataset):
         hand_previous_pose = hand_poses[np.concatenate([[current], future[:-1]])]
         hand_root_increment = np.linalg.inv(hand_previous_pose) @ hand_poses[future]
         hand_future_object = transform_points(data["hand_points_world"][future], obj_pose)
+        object_frame_ids = np.concatenate([[current], future])
+        hand_object_sequence = np.stack([
+            transform_points(data["hand_points_world"][frame], data["obj_root_pose_world"][frame])
+            for frame in object_frame_ids
+        ])
         obj_future = transform_points(data["obj_points_world"][future], obj_pose)
         obj_normals_future = transform_normals(data["obj_normals_world"][future], obj_pose)
         object_poses = data["obj_root_pose_world"]
@@ -227,6 +232,9 @@ class InteractionDynamicsDataset(Dataset):
             "action_hand_points_hand": action_hand,
             "action_hand_normals_hand": transform_normals(data["hand_normals_world"][current], hand_pose),
             "action_hand_points_local_sequence": hand_local.astype(np.float32),
+            # Y-Teacher V1 uses each frame's own dynamic object frame. This is
+            # deliberately distinct from current-object-frame effect targets.
+            "action_hand_points_object_sequence": hand_object_sequence.astype(np.float32),
             "future_hand_points_object_endpoint": hand_future_object[-1].astype(np.float32),
             "action_hand_cano_points": canonical,
             "action_patch_knn_idx": self._action_atlas[atlas_key],

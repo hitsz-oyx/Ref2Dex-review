@@ -45,6 +45,7 @@ def test_chunk_shapes_and_correspondence(tmp_path):
     assert sample["hand_articulation_increment_gt"].shape == (8, 1538, 3)
     assert sample["hand_root_increment_pose_gt"].shape == (8, 4, 4)
     assert sample["action_hand_points_local_sequence"].shape == (9, 1538, 3)
+    assert sample["action_hand_points_object_sequence"].shape == (9, 1538, 3)
     assert sample["action_hand_root_increment_pose"].shape == (8, 4, 4)
     assert sample["action_hand_cano_points"].shape == (1538, 3)
     assert sample["action_patch_knn_idx"].shape == (64, 32)
@@ -58,6 +59,26 @@ def test_chunk_shapes_and_correspondence(tmp_path):
     np.testing.assert_allclose(sample["hand_articulation_increment_gt"][:, :, 0], .002, atol=1e-7)
     np.testing.assert_allclose(sample["effect_obj_disp_gt"][7, :, 1], .008, atol=1e-7)
     assert sample["future_raw_frame_ids"].tolist() == list(range(4, 36, 4))
+
+
+def test_dynamic_object_frame_sequence_removes_joint_translation(tmp_path):
+    path = _write_sequence(tmp_path)
+    shared_path = path.parent / "shared.npz"
+    with np.load(shared_path, allow_pickle=False) as payload:
+        shared = {key: np.asarray(payload[key]) for key in payload.files}
+    with np.load(path, allow_pickle=False) as payload:
+        hand = {key: np.asarray(payload[key]) for key in payload.files}
+    translation = np.arange(10, dtype=np.float32)[:, None] * np.array([[.01, 0, 0]], np.float32)
+    shared["obj_root_pose_world"][:, :3, 3] = translation
+    shared["obj_points_world"] += translation[:, None]
+    hand["hand_points_world"] += translation[:, None]
+    np.savez(shared_path, **shared)
+    np.savez(path, **hand)
+    sequence = InteractionDynamicsDataset(tmp_path, file_list=[path])[0][
+        "action_hand_points_object_sequence"]
+    expected = np.broadcast_to(
+        np.arange(9, dtype=np.float32)[:, None] * .002, sequence[:, :, 0].shape)
+    np.testing.assert_allclose(sequence[:, :, 0], expected, atol=1e-6)
 
 
 def test_max_samples_per_sequence_balances_files(tmp_path):
