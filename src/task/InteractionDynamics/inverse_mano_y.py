@@ -1,4 +1,4 @@
-"""用 V16.1 解析 interaction field 或 ActionToken 监督执行 MANO self-inverse。"""
+"""用 Y-Teacher V1 或公平的完整 Action baseline 执行 MANO inverse。"""
 from __future__ import annotations
 
 import argparse
@@ -57,10 +57,28 @@ def action_tokens(encoder: FlowActionEncoder, hand_local: torch.Tensor,
     return encoder.encode(patch_flow)
 
 
-def binary_contact_metrics(pred_r: torch.Tensor, gt_r: torch.Tensor,
+def root_increments(global_orient: torch.Tensor,
+                    wrist_world: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """相邻 wrist frame 下的 root translation(cm) 与 rotation increment。"""
+    rotation = axis_angle_to_matrix(global_orient)
+    translation = torch.einsum(
+        "ti,tij->tj", wrist_world[1:] - wrist_world[:-1], rotation[:-1]) * 100.0
+    relative_rotation = rotation[:-1].transpose(-1, -2) @ rotation[1:]
+    return translation, matrix_to_axis_angle(relative_rotation)
+
+
+def local_articulation(surface_world: torch.Tensor, wrist_world: torch.Tensor,
+                       global_orient: torch.Tensor) -> torch.Tensor:
+    rotation = axis_angle_to_matrix(global_orient)
+    hand_local = torch.einsum(
+        "tni,tij->tnj", surface_world - wrist_world[:, None], rotation)
+    return torch.diff(hand_local, dim=0) * 100.0
+
+
+def binary_contact_metrics(pred_d: torch.Tensor, gt_d: torch.Tensor,
                            sigma_m: float = .01) -> dict[str, float]:
-    pred = torch.exp(-pred_r.square().sum(-1) / (2 * sigma_m ** 2)) > .5
-    target = torch.exp(-gt_r.square().sum(-1) / (2 * sigma_m ** 2)) > .5
+    pred = torch.exp(-pred_d.square() / (2 * sigma_m ** 2)) > .5
+    target = torch.exp(-gt_d.square() / (2 * sigma_m ** 2)) > .5
     tp = (pred & target).sum().float()
     precision = tp / pred.sum().clamp_min(1)
     recall = tp / target.sum().clamp_min(1)
@@ -76,7 +94,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="src/task/InteractionDynamics/configs/grab_v16_object_contact_diverse_overfit.yaml")
     parser.add_argument("--split", choices=["train", "val", "test"], default="train")
     parser.add_argument("--sample-index", type=int, default=0)
-    parser.add_argument("--target", choices=["r", "u", "interaction", "full", "action"],
+    parser.add_argument("--target", choices=[
+        "r", "r_d", "u", "interaction", "interaction_v2", "full", "action",
+        "direct_action", "action_token_full"],
                         default="interaction")
     parser.add_argument("--init", choices=["noise", "repeat"], default="noise")
     parser.add_argument("--steps", type=int, default=500)
@@ -156,6 +176,10 @@ def main() -> None:
         gt_y = build_interaction_y(gt_surface_object, anchors, args.tau_m)
         gt_root = root_feature(gt_orient, gt_output.joints[:, 0], object_poses)
         gt_tips = gt_output.vertices[:, TIP_VERTEX_INDEX.to(device)]
+        gt_root_translation, gt_root_rotation = root_increments(
+            gt_orient, gt_output.joints[:, 0])
+        gt_articulation = local_articulation(
+            gt_surface_world, gt_output.joints[:, 0], gt_orient)
 
     generator = torch.Generator(device=device).manual_seed(args.seed)
     if args.init == "noise":
@@ -175,7 +199,7 @@ def main() -> None:
 
     action_encoder = None
     gt_action = None
-    if args.target == "action":
+    if args.target in {"action", "action_token_full"}:
         action_encoder = load_action_encoder(cfg.meta.action_encoder_checkpoint,
                                              cfg.meta.model_dim, device)
         gt_hand_rotation = axis_angle_to_matrix(gt_orient)
@@ -200,23 +224,44 @@ def main() -> None:
             100 * pred_y["relative_geometry"], 100 * gt_y["relative_geometry"])
         loss_u = torch.nn.functional.mse_loss(
             100 * pred_y["relative_motion"], 100 * gt_y["relative_motion"])
+        loss_d = torch.nn.functional.mse_loss(
+            100 * pred_y["relative_distance"], 100 * gt_y["relative_distance"])
         pred_root = root_feature(all_orient, output.joints[:, 0], object_poses)
         loss_g = torch.nn.functional.mse_loss(pred_root[1:], gt_root[1:])
+        pred_root_translation, pred_root_rotation = root_increments(
+            all_orient, output.joints[:, 0])
+        loss_root_translation = torch.nn.functional.mse_loss(
+            pred_root_translation, gt_root_translation)
+        loss_root_rotation = torch.nn.functional.mse_loss(
+            pred_root_rotation, gt_root_rotation)
+        loss_articulation = torch.nn.functional.mse_loss(
+            local_articulation(surface_world, output.joints[:, 0], all_orient),
+            gt_articulation)
+        loss_root = loss_root_translation + loss_root_rotation
         if args.target == "r":
             loss = loss_r
+        elif args.target == "r_d":
+            loss = loss_r + loss_d
         elif args.target == "u":
             loss = loss_u
         elif args.target == "interaction":
             loss = loss_r + loss_u
+        elif args.target == "interaction_v2":
+            loss = loss_r + loss_d + loss_u
         elif args.target == "full":
-            loss = loss_r + loss_u + loss_g
+            loss = loss_r + loss_d + loss_u + loss_g
+        elif args.target == "direct_action":
+            loss = loss_root + loss_articulation
         else:
             assert action_encoder is not None and gt_action is not None
             hand_rotation = axis_angle_to_matrix(all_orient)
             hand_local = torch.einsum(
                 "tni,tij->tnj", surface_world - output.joints[:, None, 0], hand_rotation)
-            loss = torch.nn.functional.mse_loss(
+            loss_action_token = torch.nn.functional.mse_loss(
                 action_tokens(action_encoder, hand_local, action_patch_knn), gt_action)
+            loss = loss_action_token
+            if args.target == "action_token_full":
+                loss = loss + loss_root
         if step == 0:
             initial_surface = surface_world.detach().clone()
         error_mm = (surface_world[1:] - gt_surface_world[1:]).norm(dim=-1) * 1000
@@ -226,14 +271,18 @@ def main() -> None:
             row = {
                 "step": step, "loss": float(loss.detach()),
                 "r_rmse_cm": float(loss_r.detach().sqrt()),
+                "d_rmse_cm": float(loss_d.detach().sqrt()),
                 "u_rmse_cm": float(loss_u.detach().sqrt()),
                 "g_rmse": float(loss_g.detach().sqrt()),
+                "root_translation_rmse_cm": float(loss_root_translation.detach().sqrt()),
+                "root_rotation_rmse_rad": float(loss_root_rotation.detach().sqrt()),
+                "articulation_rmse_cm": float(loss_articulation.detach().sqrt()),
                 "surface_ade_mm": float(error_mm.mean()),
                 "surface_fde_mm": float(error_mm[-1].mean()),
                 "joint_mpjpe_mm": float(joint_error_mm.mean()),
                 "wrist_error_mm": float(joint_error_mm[:, 0].mean()),
                 "tip_mpjpe_mm": float(tip_error_mm.mean()),
-                **binary_contact_metrics(pred_y["relative_geometry"], gt_y["relative_geometry"]),
+                **binary_contact_metrics(pred_y["relative_distance"], gt_y["relative_distance"]),
             }
             history.append(row)
             print(json.dumps(row, ensure_ascii=False))

@@ -58,7 +58,7 @@ def main() -> None:
         hand_object = transform_to_object(hand_world, poses)
         y = build_interaction_y(hand_object, anchors, args.tau_m)
         contact = torch.exp(
-            -y["relative_geometry"].square().sum(-1) / (2 * args.sigma_m ** 2)) > .5
+            -y["relative_distance"].square() / (2 * args.sigma_m ** 2)) > .5
         rows.append((float(contact.float().mean()), index, seq_id, raw_frame))
 
     for active, index, seq_id, raw_frame in sorted(rows, reverse=True):

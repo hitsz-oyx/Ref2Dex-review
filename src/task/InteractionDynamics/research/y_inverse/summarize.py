@@ -1,4 +1,4 @@
-"""汇总 V16.1 MANO self-inverse 产物，输出按初始化和目标分组的指标。"""
+"""汇总 V16.1/V16.2 MANO inverse 产物，输出按初始化和目标分组的指标。"""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     groups: dict[tuple[str, str, float, int], list[dict[str, float]]] = defaultdict(list)
-    for path in sorted(parse_args().input_dir.glob("sample*.npz")):
+    for path in sorted(parse_args().input_dir.rglob("*.npz")):
         with np.load(path, allow_pickle=False) as payload:
             history = json.loads(str(payload["history_json"].item()))
             row = history[-1]
@@ -32,7 +32,7 @@ def main() -> None:
                     str(payload["target"].item()), beta_offset, beta_seed)].append(row)
 
     fields = ("surface_ade_mm", "surface_fde_mm", "joint_mpjpe_mm",
-              "wrist_error_mm", "tip_mpjpe_mm", "r_rmse_cm", "u_rmse_cm",
+              "wrist_error_mm", "tip_mpjpe_mm", "r_rmse_cm", "d_rmse_cm", "u_rmse_cm",
               "g_rmse", "contact_f1")
     for (initialization, target, beta_offset, beta_seed), rows in sorted(groups.items()):
         print(f"\n{initialization}/{target}/beta_offset={beta_offset:g}"
@@ -40,9 +40,11 @@ def main() -> None:
         for row in rows:
             print(f"  {row['file']}: ADE={row['surface_ade_mm']:.4f} mm, "
                   f"FDE={row['surface_fde_mm']:.4f} mm, "
-                  f"Y=({row['r_rmse_cm']:.5f}, {row['u_rmse_cm']:.5f}) cm, "
+                  f"Y=({row['r_rmse_cm']:.5f}, {row.get('d_rmse_cm', float('nan')):.5f}, "
+                  f"{row['u_rmse_cm']:.5f}) cm, "
                   f"F1={row['contact_f1']:.4f}")
-        mean = {field: float(np.mean([row[field] for row in rows])) for field in fields}
+        mean = {field: float(np.mean([row[field] for row in rows if field in row]))
+                for field in fields if any(field in row for row in rows)}
         print("  均值: " + ", ".join(f"{key}={value:.5f}" for key, value in mean.items()))
 
 

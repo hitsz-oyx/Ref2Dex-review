@@ -727,3 +727,38 @@ Full 的局部结果确认 autograd、MANO forward、单位与 object-frame 坐�
 
 **下一步**
 在更多 subject 或 beta 方向上重复 cross-morphology，并可视化 Y matching 得到的等价手型；之后再决定是否进入 Robot FK。
+
+## 实验：V16.2 Y-Teacher V1 收尾与公平 Action 对照
+
+**假设**
+补充 terminal `r_8` 和真实 soft distance `d` 后，解析 Y 不破坏局部 inverse，并在不同 morphology 下比完整动作模仿更稳定地保持目标 interaction。
+
+**改动**
+Teacher 冻结为 `r[9,128,3]`、`d[9,128]`、`u[8,128,3]`，统一使用 cm loss，contact 由 `exp(-d²/(2σ²))` 派生。新增 Direct Full Action（root 相邻 SE(3)+wrist-local surface increment）和 ActionToken+Root；冻结 Action encoder 参数但不在 candidate forward 使用 `no_grad`，保留输入梯度。
+
+**结果**
+同一样本 GT+noise 500 steps：`r/r+d/Y/Full` ADE 为 `0.577/0.665/0.697/0.168 mm`，FDE 为 `0.329/0.460/0.533/0.263 mm`。current repeat 的 stationary ADE 为 `11.389 mm`；Direct Action、ActionToken+Root、Y、Full 最终 ADE 为 `0.133/0.126/0.967/0.638 mm`。
+
+candidate beta offset 1.5、6 个序列×2 个 beta 方向共 12 对中，Y / Direct Action / ActionToken+Root 的 contact F1 均值为 `0.619/0.228/0.228`，future ADE 为 `5.725/9.526/9.509 mm`，tip MPJPE 为 `3.838/12.102/12.070 mm`。Y 的 `d/r RMSE、ADE、tip MPJPE` 均 12/12 优于两种 Action，contact F1 为 9/12 更高、3/12 平局；平局来自按旧 `|r|` 筛选但按新 `d` 评价后没有正接触的样本。
+
+**决策**
+Y-Teacher V1 的定义、梯度和跨 morphology interaction 优势通过 Phase A 最小验证，予以冻结。后续 contact-active 样本必须按 `d` 重新筛选。
+
+## 实验：V16.2 PCA 与 K=8 压缩原型
+
+**假设**
+coordinate-conditioned slot autoencoder 能以 8×128 scalars 压缩 Y，并超过忽略 anchor coordinate 对应关系的 flatten PCA。
+
+**改动**
+新增 sequence-disjoint GRAB Y 采样、PCA-256/512/1024 baseline，以及 1 层 latent cross-attention、1 层 self-attention、coordinate-conditioned decoder 的 K=8 原型。训练和验证只使用 `L_r+L_d+L_u`。
+
+**结果**
+PCA 使用 1280 train / 256 unseen-sequence chunks。256/512/1024 维的 `r RMSE` 为 `1.547/1.473/1.346 cm`，`d RMSE` 为 `1.632/1.579/1.494 cm`，`u RMSE` 为 `0.251/0.240/0.262 cm`，contact F1 为 `0.007/0.005/0.021`。
+
+K=8 首版 512 chunks、20 epochs 的验证 `r/d/u=3.002/3.044/0.909 cm`、F1 `0.003`，差于 PCA。32-chunk controlled overfit 将学习率从 `1e-4` 提到 `1e-3` 并训练 500 epochs / 4000 steps 后，训练 `r/d/u=0.617/0.337/0.092 cm`、contact F1 `0.212`；仍未达到近似 oracle reconstruction，未通过压缩 gate。
+
+**诊断**
+PCA 暴露了跨物体 flatten anchor index 缺乏固定语义的问题。slot 原型梯度和输入梯度成立，但当前单层 decoder/优化尚不能在 32 chunks 上充分拟合；因此验证失败不能解释为“Y 不可压缩”，也不能声称 compact C 已成立。
+
+**决策**
+保留 PCA 和最小 autoencoder 作为失败基线，不运行 K=16/4 sweep、不做 reconstructed-Y MANO inverse、不进入 latent metric。下一步只先解决 K=8 controlled overfit。
