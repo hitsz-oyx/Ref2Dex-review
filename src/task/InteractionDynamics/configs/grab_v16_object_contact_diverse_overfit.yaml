@@ -1,0 +1,7 @@
+_base_: src/task/InteractionDynamics/configs/grab_v16_object_contact_overfit.yaml
+data:
+  # 每个序列均匀取至多两个 chunk，避免连续窗口拥有近乎相同的接触目标。
+  max_samples_per_sequence: 2
+wandb:
+  name: interaction-dynamics-v16-object-contact-diverse-overfit
+  tags: [interaction-dynamics, v16, object-centric, contact, diverse, overfit]

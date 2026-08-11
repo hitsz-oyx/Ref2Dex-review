@@ -50,6 +50,10 @@ class Config(TaskConfig):
         freeze_action_encoder = True
         contact_sigma_m = 0.01
         contact_temporal_readout = False
+        object_contact_field = False
+        object_contact_spatial_bias = False
+        object_contact_spatial_sigma_m = 0.05
+        freeze_world_batchnorm = False
 
     class model(TaskConfig.model):
         class_path = "src.task.InteractionDynamics.model.InteractionDynamicsModel"

@@ -673,3 +673,53 @@ Runner 使用 `world_obj_points_object + obj_disp_chunk_gt[:, -1]` 得到当前�
 
 **下一步**
 若继续，先在 oracle 和 Cm 之间加入 endpoint hand/object patch geometry 的受控对照，并对正区域权重做小范围定量扫描；验收同时要求 raw MSE 优于 zero 且 shuffle 明显退化。
+
+## 实验：V16 object-centric interaction field
+
+**假设**
+让当前 object patch 逐步查询带动态手位置的冻结 ActionToken V2，并直接监督 endpoint object-contact field，可以绕过 V15 的 hand-indexed readout 瓶颈，并建立可测的 articulation 依赖。
+
+**观察到的失败 / 现象**
+首轮连续 32 chunks 在训练态达到 MSE `3.49e-4`、F1 `0.994`，但 eval running stats 下 MSE `0.08746`、F1 `0`。只把 world encoder 的两个 BatchNorm 切回 batch stats 即恢复训练指标，证明小批量 BatchNorm 形成了无效捷径。固定预训练 running stats 后，连续集 best MSE 为 `2.22e-4`、F1 `0.991`，但 articulation-zero 和 cross-sample 几乎不恶化。
+
+**诊断**
+连续集的 32 个窗口来自同一序列；将 GT 跨样本 roll 后 MSE 仅 `2.68e-4`、F1 仍为 `0.986`，因此干预没有信息量。每序列均匀取 2 个窗口后仍为 32 样本，cross-sample GT MSE 增至 `0.07237`、F1 降为 0；仅凭当前几何的 oracle 相对 zero 只改善 `0.77%`。
+
+**改动**
+新增 `[B,8,64,384]` object-centric field：object token 加当前位置编码后查询 articulation token，手 patch 位置使用当前位置加逐步 action displacement；RootToken 不进入接触分支。endpoint head 输出 `[B,64]`，target 为 V15.1 对齐接触矩阵沿 hand 维取 max，使用未加权 MSE。V16 配置固定 world BatchNorm running stats，并增加每序列最多 2 个窗口的多序列对照配置和两个诊断脚本。
+
+**结果**
+有效运行 `outputs/interactiondynamics/interaction_dynamics_20260811_111422` 使用 32 chunks、1200 steps，耗时 10:37。best checkpoint（step 1184）normal MSE `9.87e-5`，zero MSE `0.036186`，改善 `99.72%`，F1 `1.0`。articulation-zero MSE `2.01e-4`、F1 `0.961`，相对 normal 恶化 `103%`；cross-sample MSE `7.51e-4`、F1 `0.920`，恶化 `660%`。articulation-mean MSE `1.30e-4`；patch shuffle MSE `9.94e-5`，基本不变。
+
+**决策**
+保留 V16 最小结构、BatchNorm 固定和多序列 controlled sampling。V16 已通过 object-contact 可拟合性、非零 F1、articulation-zero 与 cross-sample 方向性门槛；但 patch shuffle 仍不敏感，因此只说明模型使用样本级 articulation 内容，尚不能声称使用了 hand-patch identity，也不据此启动全量训练。
+
+**下一步**
+在同一多序列集合上检查 object→action attention 与动态位置编码消融，解释为何 zero/cross 有效而 patch shuffle 无效，再决定是否加入空间 attention bias。
+
+## 实验：V16.1 解析 Interaction Field 与 MANO self-inverse
+
+**假设**
+object-frame 的解析动态场 `Y=[r,u]` 比冻结 ActionToken 更适合约束物体附近交互；加入 wrist-object 相对位姿 `G` 后应能排除 MANO 梯度、坐标和优化实现错误。
+
+**观察到的失败 / 现象**
+learned contact/Cm 的监督与表示瓶颈互相耦合，无法判断 interaction target 本身是否足以驱动执行体优化。
+
+**改动**
+新增纯 PyTorch soft correspondence、relative geometry `r` 和由时刻 t 权重跟踪的 relative motion `u`，使用 128 个 object-frame FPS anchors 和 `tau=1.5 cm`。固定首帧与 GT beta，优化未来 8 帧 MANO pose/root；比较 `r/u/r+u/G+r+u` 和冻结 ActionToken V2。Adam 学习率 `0.003`、500 步、无 smoothness。另增加固定 beta 方向偏移的 cross-morphology 对照和结果汇总脚本。
+
+**结果**
+5 个不同序列 chunk 的 GT+有界噪声中，Full ADE 为 `0.312/0.620/0.241/0.717/0.326 mm`，平均 `0.443 mm`，5/5 通过 1 mm local-gradient gate。Interaction ADE 为 `0.705/2.290/0.668/2.636/1.052 mm`，对应 Y 的 r/u RMSE 均约 `0.004–0.010 cm`；表面未完全重合的样本仍可非常接近目标 Y。
+
+current-frame repeat 的 stationary ADE 平均约 `109.3 mm`。Interaction 最终 ADE 为 `0.974/40.426/1.814/20.680/2.670 mm`，平均 `13.313 mm`，所有样本均改善超过 50%，但两个超远初始化在 500 步内未进入好 basin。Full 为 `0.657/9.107/1.023/5.143/1.333 mm`，平均 `3.453 mm`，3/5 达到 3 mm。Action baseline 平均 ADE `112.005 mm`，与 stationary 基本相同。单样本消融中 r-only ADE `2.675 mm` 但 FDE 保持 `16.726 mm`，因为当前定义的 `r_t` 不直接观察最后一帧；u-only ADE/FDE 为 `2.707/3.857 mm`。
+
+candidate beta 固定方向偏移 `0.75/1.5/2.0` 时，Interaction 将初始 ADE `8.40/13.53/14.15 mm` 降至 `3.90/7.73/8.41 mm`，contact F1 为 `0.974/0.937/0.937`；Action 最终 ADE 为 `8.46/15.03/14.56 mm`，contact F1 为 `0.746/0.493/0.537`。
+
+**诊断**
+Full 的局部结果确认 autograd、MANO forward、单位与 object-frame 坐标链有效。Y 对物体附近 interaction 的约束明显强于 ActionToken，且跨 morphology 的 contact 保真更稳定。Y 已接近而 MANO 表面仍有差异，符合其主动忽略远离物体自由度的设计；repeat 的大误差则同时包含 500 步优化 basin 限制。无正接触样本上 F1=0 本身没有判别力，后续需同时报告 target active fraction。
+
+**决策**
+保留解析 Y、self-inverse 和 cross-beta 路径。判定 local-gradient gate 通过、Interaction 的 50% improvement gate 通过；Full repeat 的严格 3 mm gate 为 3/5，尚非全样本稳定。当前证据支持扩大 cross-morphology 样本量，但不把 exact MANO reconstruction 当作 Y 的唯一成败标准。
+
+**下一步**
+在更多有实际接触的多序列 chunk 上重复 cross-beta，并分别统计 Y/contact 保真与 trajectory 等价解；之后再决定是否进入 Robot FK。

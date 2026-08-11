@@ -223,6 +223,12 @@ def balanced_contact_mse(prediction: torch.Tensor, target: torch.Tensor,
     return ((prediction - target).square() * weights).sum() / weights.sum()
 
 
+def object_contact_target(batch: dict[str, torch.Tensor], prediction: dict[str, torch.Tensor],
+                          sigma_m: float) -> torch.Tensor:
+    """V16 object-indexed contact: any hand patch contacting each object patch."""
+    return endpoint_contact_target(batch, prediction, sigma_m).amax(dim=1)
+
+
 def se3_statistics_and_loss(prediction: dict[str, torch.Tensor],
                             gt_increment_pose: torch.Tensor,
                             motion_scale: float) -> tuple[torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
@@ -453,10 +459,12 @@ class InteractionDynamicsRunner(BaseRunner):
         loss = (float(self.cfg.train.se3_translation_loss_weight) * translation_loss
                 + float(self.cfg.train.se3_rotation_loss_weight) * rotation_loss)
         contact_target = None
-        if "pred_contact_matrix" in prediction:
-            contact_target = endpoint_contact_target(
+        is_object_contact = "pred_object_contact" in prediction
+        if "pred_contact_matrix" in prediction or is_object_contact:
+            contact_target = (object_contact_target if is_object_contact else endpoint_contact_target)(
                 batch, prediction, float(self.cfg.meta.contact_sigma_m))
-            contact_prediction = prediction["pred_contact_matrix"].float()
+            contact_prediction = prediction[
+                "pred_object_contact" if is_object_contact else "pred_contact_matrix"].float()
             contact_loss = balanced_contact_mse(
                 contact_prediction, contact_target,
                 float(getattr(self.cfg.train, "contact_positive_weight", 1.0)))
@@ -483,7 +491,8 @@ class InteractionDynamicsRunner(BaseRunner):
         metrics.update(trajectory_statistics(pred, gt, valid))
         metrics.update(se3_metrics)
         if contact_target is not None:
-            contact_prediction = prediction["pred_contact_matrix"].float()
+            contact_prediction = prediction[
+                "pred_object_contact" if is_object_contact else "pred_contact_matrix"].float()
             contact_mse = torch.nn.functional.mse_loss(contact_prediction, contact_target)
             zero_mse = contact_target.square().mean()
             active_gt = contact_target > .5
@@ -502,5 +511,10 @@ class InteractionDynamicsRunner(BaseRunner):
                 "contact/recall": recall,
                 "contact/f1": 2 * precision * recall / (precision + recall).clamp_min(1e-8),
                 "contact/active_fraction": active_gt.float().mean(),
+                "contact/prediction_active_fraction": active_pred.float().mean(),
             })
+            if is_object_contact:
+                metrics.update({f"object_contact/{key.split('/', 1)[1]}": value
+                                for key, value in list(metrics.items())
+                                if key.startswith("contact/")})
         return RunnerOutput(loss=loss, metrics=metrics, batch_size=pred.shape[0])

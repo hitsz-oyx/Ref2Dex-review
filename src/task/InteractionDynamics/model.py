@@ -820,12 +820,31 @@ class PretrainedTokenInteractionModel(nn.Module):
             self.contact_time_embedding = nn.Parameter(
                 torch.randn(1, meta.chunk_len, 1, meta.model_dim) * .02)
             self.contact_temporal_score = nn.Linear(meta.model_dim, 1)
+        self.object_contact_field = bool(getattr(meta, "object_contact_field", False))
+        self.object_contact_spatial_bias = bool(
+            getattr(meta, "object_contact_spatial_bias", False))
+        self.object_contact_spatial_sigma_m = float(
+            getattr(meta, "object_contact_spatial_sigma_m", .05))
+        self.freeze_world_batchnorm = bool(getattr(meta, "freeze_world_batchnorm", False))
+        if self.object_contact_field:
+            self.object_contact_hand_position = nn.Sequential(
+                nn.Linear(3, meta.model_dim), nn.GELU(), nn.Linear(meta.model_dim, meta.model_dim))
+            self.object_contact_object_position = nn.Sequential(
+                nn.Linear(3, meta.model_dim), nn.GELU(), nn.Linear(meta.model_dim, meta.model_dim))
+            self.object_action_interaction = CrossAttentionBlock(
+                meta.model_dim, meta.attention_heads)
+            self.object_contact_head = nn.Sequential(
+                nn.Linear(meta.model_dim, meta.model_dim), nn.GELU(), nn.Linear(meta.model_dim, 1))
         self.action_intervention_mode = "normal"
 
     def train(self, mode: bool = True):
         super().train(mode)
         self.dense_encoder.eval()
         self.action_adapter.train(mode)
+        if self.freeze_world_batchnorm:
+            for module in self.world.modules():
+                if isinstance(module, nn.modules.batchnorm._BatchNorm):
+                    module.eval()
         return self
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
@@ -897,14 +916,47 @@ class PretrainedTokenInteractionModel(nn.Module):
         cm = query.reshape(batch_size, steps, count, dim)
         assert attention is not None
         effect = self.effect(cm, batch["effect_obj_points_object"])
-        contact_feature = cm[:, -1, 1:]
-        if self.contact_temporal_readout:
-            articulation_cm = cm[:, :, 1:]
-            temporal_weight = self.contact_temporal_score(
-                articulation_cm + self.contact_time_embedding).softmax(dim=1)
-            contact_feature = (temporal_weight * articulation_cm).sum(1)
-            effect["contact_temporal_weight"] = temporal_weight.squeeze(-1)
-        effect["pred_contact_matrix"] = self.contact_head(contact_feature).sigmoid()
+        if self.object_contact_field:
+            articulation_action = raw[:, :, 1:]
+            hand_patch_disp = torch.stack([
+                gather_points(batch["action_hand_disp_chunk_object"][:, step],
+                              batch["action_patch_knn_idx"]).mean(2)
+                for step in range(steps)
+            ], 1)
+            dynamic_hand_position = action_patch[:, None] + hand_patch_disp
+            action_context = articulation_action + self.object_contact_hand_position(
+                dynamic_hand_position)
+            object_query = (world["world_obj_tokens"] + self.object_contact_object_position(
+                world["obj_patch_centers_object"]))[:, None].expand(-1, steps, -1, -1)
+            object_count = object_query.shape[2]
+            attention_bias = None
+            if self.object_contact_spatial_bias:
+                distance = torch.linalg.vector_norm(
+                    world["obj_patch_centers_object"][:, None, :, None]
+                    - dynamic_hand_position[:, :, None], dim=-1)
+                heads = self.object_action_interaction.attn.num_heads
+                attention_bias = (-distance / self.object_contact_spatial_sigma_m)[:, :, None].expand(
+                    -1, -1, heads, -1, -1).reshape(
+                        batch_size * steps * heads, object_count, articulation_action.shape[2])
+            object_cm, object_attention = self.object_action_interaction(
+                object_query.reshape(batch_size * steps, object_count, dim),
+                action_context.reshape(batch_size * steps, articulation_action.shape[2], dim),
+                attention_bias=attention_bias)
+            object_cm = object_cm.reshape(batch_size, steps, object_count, dim)
+            effect["object_cm_tokens"] = object_cm
+            effect["object_to_action_attention"] = object_attention.reshape(
+                batch_size, steps, *object_attention.shape[1:])
+            effect["pred_object_contact"] = self.object_contact_head(
+                object_cm[:, -1]).squeeze(-1).sigmoid()
+        else:
+            contact_feature = cm[:, -1, 1:]
+            if self.contact_temporal_readout:
+                articulation_cm = cm[:, :, 1:]
+                temporal_weight = self.contact_temporal_score(
+                    articulation_cm + self.contact_time_embedding).softmax(dim=1)
+                contact_feature = (temporal_weight * articulation_cm).sum(1)
+                effect["contact_temporal_weight"] = temporal_weight.squeeze(-1)
+            effect["pred_contact_matrix"] = self.contact_head(contact_feature).sigmoid()
         effect["obj_patch_centers_object"] = world["obj_patch_centers_object"]
         effect["obj_knn_idx"] = world["obj_knn_idx"]
         valid = batch["effect_obj_valid_mask"][:, None, :, None].to(effect["pred_obj_disp_chunk"].dtype)

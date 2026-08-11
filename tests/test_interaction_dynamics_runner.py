@@ -7,6 +7,7 @@ from src.task.InteractionDynamics.runner import (
     trajectory_statistics,
     endpoint_contact_target,
     balanced_contact_mse,
+    object_contact_target,
 )
 
 
@@ -29,6 +30,19 @@ def test_balanced_contact_mse_upweights_sparse_positive_region():
     prediction = torch.zeros_like(target)
     assert torch.allclose(balanced_contact_mse(prediction, target, 1), torch.tensor(.25))
     assert torch.allclose(balanced_contact_mse(prediction, target, 3), torch.tensor(.5))
+
+
+def test_object_contact_target_max_pools_hand_patch_dimension():
+    batch = {
+        "future_hand_points_object_endpoint": torch.tensor([[[0., 0., 0.], [.1, 0., 0.]]]),
+        "action_patch_knn_idx": torch.tensor([[[0], [1]]]),
+        "world_obj_points_object": torch.tensor([[[.3, 0., 0.], [.4, 0., 0.]]]),
+        "obj_disp_chunk_gt": torch.tensor([[[[-.3, 0., 0.], [-.2, 0., 0.]]]]),
+    }
+    target = object_contact_target(batch, {"obj_knn_idx": torch.tensor([[[0], [1]]])}, .01)
+    assert target.shape == (1, 2)
+    torch.testing.assert_close(target[0, 0], torch.tensor(1.))
+    assert target[0, 1] < 1e-6
 
 
 def test_action_decomposition_separates_root_and_articulation():

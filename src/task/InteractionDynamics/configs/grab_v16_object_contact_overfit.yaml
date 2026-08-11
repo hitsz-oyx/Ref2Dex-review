@@ -1,0 +1,17 @@
+_base_: src/task/InteractionDynamics/configs/grab_v15_contact_overfit.yaml
+meta:
+  object_contact_field: true
+  object_contact_spatial_bias: false
+  object_contact_spatial_sigma_m: 0.05
+  freeze_world_batchnorm: true
+  contact_temporal_readout: false
+train:
+  epochs: 150
+  contact_positive_weight: 1.0
+  save_every_epochs: 50
+  metric_for_best: train/object_contact/mse
+  lower_is_better: true
+wandb:
+  mode: offline
+  name: interaction-dynamics-v16-object-contact-overfit
+  tags: [interaction-dynamics, v16, object-centric, contact, overfit]
