@@ -817,3 +817,22 @@ epsilon prediction 训练问题本身可优化，permutation-equivariant 路径�
 
 **决策**
 保留最小 conditional diffusion、DDIM 稳定采样和 intervention 诊断作为失败基线。Gate A（生成接近训练 Y）与 Gate B（correct condition 明显优于干预）均未通过；按 V16.4 不进行 Object intervention、unseen-object、generated-Y MANO inverse、Robot FK 或大规模训练。下一实验应只针对高噪声条件依赖，不同时修改 Object/Effect encoder 与 backbone。
+## 实验：V16.5 当前状态条件的短时 Interaction Diffusion
+
+**假设**
+V16.4 从纯噪声生成完整交互场时容易退化为无条件先验；将干净的当前 `S_t=[r_t,d_t]` 作为 condition，只生成 `H=4` 的 `[u_t,S_{t+1},...,u_{t+3},S_{t+4}]`，应改善 controlled generation，并使 correct state 明显优于 shuffle/zero state。
+
+**观察到的失败 / 现象**
+V16.4 的 16-chunk 实验虽能把 noise MSE 降低，但 correct Effect 生成的 `r/d/u` 仍为 `4.725/7.628/1.168 cm`，且 Effect 干预差异很弱。
+
+**诊断**
+V16.5 的 state 干预表明模型确实读取当前交互状态，但 generated future 仍差于 persistence baseline；Effect 数据也具有足够变化，因此当前失败不能归因于常量条件。主要问题仍是 epsilon predictor 从纯噪声端恢复精确 future 的生成质量，而不是 state condition 完全被忽略。
+
+**改动**
+新增 `H` 可配置的 state/future packing、`32` 邻域局部 object PointMLP、无 anchor index embedding 的 permutation-equivariant self-attention，以及由 diffusion timestep 和 endpoint SE(3) 联合调制全部 block 的 AdaLN。训练随机同步置换 anchors，并加入 correct/shuffle/zero state 与 Effect 的固定噪声生成干预。新增 persistence 与条件多样性诊断。
+
+**结果**
+16 个单序列均匀 chunk、4000 steps 后 noise MSE 从 `1.468` 降至 `0.00879`。correct 生成 `u/r/d RMSE=0.793/2.424/3.497 cm`，contact F1 `0.0919`；state shuffle 为 `0.866/3.054/4.181 cm`、F1 `0.0680`，state zero 为 `0.862/3.405/5.134 cm`、F1 `0.0289`。Effect shuffle/zero 与 correct 基本相同。persistence baseline 为 `0.688/1.660/2.646 cm`、F1 `0.6968`，仍明显更好。Effect shuffle RMSE `3.852`，state/future shuffle RMSE 为 `1.383/2.853`，排除条件无变化的解释。
+
+**决策**
+保留 state-conditioned 数据定义、局部 object encoder 和 AdaLN 实现作为下一轮诊断基础。Gate B 的 current-state dependency 成立，但 Gate A 未超过 persistence，Gate C Effect dependency 未成立；按顺序停止，不做 object intervention、多 seed、MANO 或 Robot inverse。
