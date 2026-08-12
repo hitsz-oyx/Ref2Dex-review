@@ -836,3 +836,22 @@ V16.5 的 state 干预表明模型确实读取当前交互状态，但 generated
 
 **决策**
 保留 state-conditioned 数据定义、局部 object encoder 和 AdaLN 实现作为下一轮诊断基础。Gate B 的 current-state dependency 成立，但 Gate A 未超过 persistence，Gate C Effect dependency 未成立；按顺序停止，不做 object intervention、多 seed、MANO 或 Robot inverse。
+## 实验：V16.6 Active + Next Meaningful Effect
+
+**假设**
+V16.5 endpoint Effect 缺少任务是否 active 以及 approach 阶段尚未发生的 future meaningful motion；改用 `G=[active,next meaningful 4-step SE(3)]` 后，模型应在 interaction-changing 时刻表现出 Goal dependency，并在 dynamic subset 超过 persistence。
+
+**观察到的失败 / 现象**
+首版按首次进入 10 cm 近场定义 active，把 `airplane_fly_1` 从 117 cm 持续接近物体的 approach 错标为 inactive；active 终点也遗漏 release 后 withdraw。该 sanity 未通过，未用于训练。
+
+**诊断**
+active interval 必须同时向前回溯持续接近段、向后延伸持续远离段。修正后选用 `cup_lift`：active `[25,872]`，frame 25 手物距离 `112.6 cm`、object 当前静止但 `k*=78`，正确表达 approach；inactive-before/after Goal 严格为零。3-frame object motion 分布支持 `0.2 cm / 1°` 阈值。32 样本的 future-persistence change 为 `0.069–0.489 cm`，故以 `δ=0.2 cm` 得到 16 dynamic/16 static。
+
+**改动**
+新增只读取完整 object pose 的 next meaningful motion extraction、active interval 几何标注、分阶段 32-frame sampler、25D Goal encoder 和 V16.5 同构 AdaLN diffusion。加入 state shuffle、motion shuffle/zero、active zero/flip、dynamic/static persistence 指标，以及在 Goal dependency 失败后按指导运行的 active-only 对 active+motion deterministic clean regression。
+
+**结果**
+32-chunk、4000-step diffusion noise MSE 从 `1.276` 降至 `0.01535`。correct dynamic `u/r/d=0.207/41.295/68.082 cm`、F1 `0`，远差于 persistence 的 `0.132/0.472/0.252 cm`、F1 `0.807`；motion shuffle/zero 和 active zero 与 correct 基本相同。State shuffle 的 dynamic `r/d=46.584/78.283 cm`，保留弱 state dependency。clean regression 的 active-only dynamic `r/d=1.605/2.755 cm`；active+motion 为 `1.590/2.332 cm`，motion shuffle 后退化至 `2.386/3.646 cm`，说明 `Xi` 具有可读辨识度，但 clean prediction 仍差于 persistence。
+
+**决策**
+保留 Goal extraction、active interval sanity 和分层评估。Gate B/C/D 未通过，V16.6 formulation 尚未成立；证据指向 absolute-future diffusion generation 是主要瓶颈，而非 motion Goal 完全无信息。按本轮范围停止，不实现 residual diffusion、inverse 或大规模训练。
