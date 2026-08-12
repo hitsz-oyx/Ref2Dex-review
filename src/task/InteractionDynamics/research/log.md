@@ -917,3 +917,46 @@ half-high-10k 的 t70/t90 oracle 为 `0.120/0.183`，优于 uniform-10k 的 `0.1
 
 **决策**
 保留 10k uniform 训练和正规 skipping，默认优先 uniform-10k；half-high 与 x0 auxiliary 仅作为失败/归因选项保留。当前最佳 uniform-10k + 10-step 为 `u/r/d=0.097/0.307/0.150 cm`，已接近但尚未达到指导建议的 `r≤0.30,d≤0.14 cm`，因此不扩大数据。下一步应继续聚焦高噪声条件映射与训练波动，而不是增加 sampler steps 或 contact loss。
+
+## 实验：V17 Full-Data 启动审计与训练配置
+
+**假设**
+V16 的 residual/Goal formulation 在完整自然 demonstration 分布上可以跨未见 sequence 泛化；正式训练前先排除 chunk split 泄漏、数据阶段缺失和不合理 global batch。
+
+**诊断**
+旧 full manifest 含 25 个 dominant-hand 文件但只对应 20 个 demonstration 目录；按 hand 文件 split 会让同一 demonstration 的 left/right 泄漏。V17 改为以 `path.parent` 为 sequence 单元，固定 seed 42 得到 16/2/2 demonstration，hand 文件和 chunk 均无跨 split 重叠。manifest 仅用于确定 dominant hand 文件集合，不沿用其窗口筛选；每个文件恢复全部合法 frame。
+
+**改动**
+新增 full-frame Dataset、固定 sequence split、train-only normalization、BF16 四卡 DDP、DistributedSampler、deterministic/diffusion 联合训练、25-step validation、best/latest checkpoint 和 wandb online。因在线 NPZ/Y 构造使 smoke 极慢，增加语义不变的 tensor shard cache；cache 和 checkpoint 均放在忽略的 output 下。
+
+**结果**
+合法 chunks 为 train/val/test `7909/1471/1159`。各 split 均匀审计 512 个样本：train active/dynamic ratio `95.9%/60.4%`，val `97.5%/67.4%`，test `94.3%/89.3%`；train residual RMS median/mean/p90 为 `0.287/1.396/5.729 cm`。距离分桶覆盖 `<10、10–30、30–60、60–100、>100 cm`，未据此重采样。
+
+单卡 BF16 纯模型 probe 从 batch 8 到 768 均可运行，1024 OOM；batch 512/768 reserved memory 为 `12.53/18.73 GB`，吞吐已接近饱和。真实四卡短优化比较 global batch 128/256 与 LR `1e-4/2e-4` 后，global batch 256、LR `2e-4` 的最佳 validation dynamic `r+d≈9.43 cm`，优于 global batch 128 的约 `10.88 cm` 和 LR `1e-4` 的约 `9.92 cm`。
+
+**决策**
+正式配置选 per-GPU batch 64、global batch 256、LR `2e-4`、BF16、30 epochs、uniform v-prediction、25-step DDIM。短优化尚未超过 validation persistence `r+d≈8.27 cm`，这不作为 500-step probe 的停止条件；正式训练将按 best validation checkpoint 判断 V17 Gate。
+
+## 实验：V17 Full-Data 正式训练与 sequence-disjoint 测试
+
+**假设**
+controlled32 上成立的 residual 与 Goal dependency 能迁移到完整自然帧分布，并在未见 sequence 的 dynamic subset 上超过 persistence。
+
+**观察到的失败 / 现象**
+四卡 BF16 正式训练 30 epochs、930 optimizer steps，训练 MSE 持续下降，但 validation 指标在中后期恶化。按 diffusion validation dynamic `r+d` 选出的最佳 checkpoint 位于 epoch 21，而不是 epoch 30。
+
+**改动**
+使用 V17 固定 16/2/2 demonstration split 同时训练 deterministic residual 与 uniform v-diffusion；正式 W&B 使用 online 模式。新增独立 `eval_v17.py`，在 test split 汇报 overall/dynamic/static/active/inactive、30/60/100 cm 远场，并用同一 initial noise 比较 correct、motion zero/shuffle/reverse 和 active zero。
+
+**结果**
+正式训练每 epoch 约 `11.8 s`，总训练主体约 `5.9 min`；W&B run 为 `hzdly89j`。最佳 epoch 21 的 validation dynamic persistence `u/r/d=1.424/3.706/4.565 cm`、F1 `0.508`；deterministic 为 `1.854/4.675/5.103 cm`、F1 `0.351`；diffusion 为 `1.564/4.008/4.676 cm`、F1 `0.135`。扩散 `r+d=8.684 cm`，差于 persistence 的 `8.271 cm`。
+
+独立 test 共 1159 帧，其中 dynamic 占约 `89.6%`。dynamic persistence `u/r/d=1.529/3.905/4.570 cm`、F1 `0.347`；deterministic correct 为 `1.808/4.636/5.935 cm`、F1 `0.188`；diffusion correct 为 `1.677/4.303/5.158 cm`、F1 `0.043`。30 cm 远场上 persistence/diffusion correct 的 `r/d` 分别为 `6.441/7.825` 与 `6.415/7.941 cm`，没有稳定优势。
+
+Goal 干预也未通过。test dynamic-active 上 diffusion correct 的 `r/d=4.311/5.158 cm`；motion zero 为 `4.237/5.258`，shuffle 为 `4.345/5.178`，reverse 为 `4.836/5.600`，active zero 反而改善到 `3.998/4.703 cm`。模型对 reverse 有响应，但正确 Goal 并非性能必要条件，且 active 标志形成了有害依赖。deterministic 同样在 active zero 后由 `4.681/5.987` 改善到 `4.205/5.070 cm`。
+
+**诊断**
+V16 controlled set 的局部低误差没有转化为跨 demonstration 泛化。训练目标可被拟合，但模型在 validation/test 上既未超过 persistence，也没有学到可靠的自然分布 Goal dependency；active zero 改善排除了“只是生成随机性掩盖干预效果”的解释，因为 deterministic 分支也出现相同方向。当前主要问题是跨 sequence 分布与 Goal 条件泛化，不是继续增加 sampler steps。
+
+**决策**
+V17 Gate 未通过，不进入 inverse / C inference，不把当前 full-data checkpoint 作为可用 Interaction Knowledge。保留 sequence-disjoint full-frame 数据链路、DDP/W&B 训练和分层评估工具，供下一轮针对泛化失败做最小诊断。
