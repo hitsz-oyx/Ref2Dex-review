@@ -3,6 +3,9 @@ from pytorch3d.transforms import axis_angle_to_matrix
 
 from src.task.InteractionDynamics.mano_hand_transition import ManoHandTransition
 from src.task.InteractionDynamics.research.v18_4.build_mano_h_cache import delta_h, hand_state
+from src.task.InteractionDynamics.interaction_field import build_interaction_y
+from src.task.InteractionDynamics.mano_y_decoder_v18_5 import build_interaction_y_batched, pack_batched_future
+from src.task.InteractionDynamics.state_interaction_diffusion import pack_state_future
 
 
 def test_mano_h_object_frame_translation_and_rotation() -> None:
@@ -25,3 +28,19 @@ def test_mano_h_transition_shape_and_gradient() -> None:
     assert output.shape == (2, 8, 30)
     output.square().mean().backward()
     assert all(parameter.grad is not None for parameter in model.parameters())
+
+
+def test_batched_chunked_y_matches_frozen_teacher_and_has_gradient() -> None:
+    torch.manual_seed(3)
+    hand = (torch.randn(2, 9, 40, 3) * .03).requires_grad_()
+    anchors = torch.randn(2, 13, 3) * .02
+    batched = build_interaction_y_batched(hand, anchors, anchor_chunk=5)
+    future = pack_batched_future(batched)
+    expected = []
+    for index in range(2):
+        y = {key: 100 * value for key, value in
+             build_interaction_y(hand[index], anchors[index], .015).items()}
+        expected.append(pack_state_future(y, 8)[1])
+    assert torch.allclose(future, torch.stack(expected), atol=2e-5)
+    future.square().mean().backward()
+    assert hand.grad is not None and torch.isfinite(hand.grad).all()

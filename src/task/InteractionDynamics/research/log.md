@@ -1084,3 +1084,25 @@ V18 free-Y test RMSE 约 `0.972 cm` 且 stable success `85.7%`，但约 30% anch
 
 **决策**
 保留 MANO-H 数据链、模型和 evaluator，但当前 deterministic checkpoint 不替换 V18。实验回答了核心权衡：完整 realizability 可以由构造获得，但 2048-window deterministic regression 相比 free-Y 明显损失 interaction accuracy 和 formation，符合 conditional mean / 多模态平均化，也伴随 sequence 泛化不足。下一步若继续，应固定同一 H 表示和数据链，最小比较 H-space stochastic model；不先加 Y auxiliary 掩盖问题，也不回到单纯 cone penalty。
+
+## 实验：V18.5 MANO-constrained Y supervision
+
+**假设**
+V18.4 formation 失败不一定来自 MANO-H 表示，而可能来自逐维模仿唯一 GT human H 的错误目标。保留 H 作为合法手的内部结构变量，改为只优化 `H→MANO→Y` 的 interaction residual，应恢复 stable grasp，同时保持 MANO realizability。
+
+**观察到的失败 / 现象**
+V18.4 controlled32 可以把 Y 拟合到约 `0.01 cm`，但 2048-window test 的 stable/formation stable 只有 `2.34%/1.63%`，尽管 terminal contact 均值并非 0。这表明参数化和容量成立，而 H imitation 在跨 sequence 下产生了不满足 interaction 目标的平均轨迹。
+
+**诊断**
+新增与 frozen Teacher 完全同公式的 batched/chunked Y，按 16 个 anchors 分块。4 个 GT H 样本经 structured decoder 的最大/平均 Y parity error 为 `3.97e-4/2.45e-5 cm`；随机输出执行 Y loss backward 后模型梯度 finite 且 nonzero，Gate 0 通过。MANO layer 以 `subject:side` 为稳定 key 缓存，batch 内分组 forward/scatter，继续使用 sequence-specific GRAB template。
+
+**改动**
+保持 V18.4 的 current H、normalized `ΔH[8,30]`、模型、object frame、beta、数据和 1500-step 预算。删除 H-GT MSE；预测 H 经可微 MANO forward 与 batched interaction field 得到 future Y，再以 train-only V18 residual std 优化 Y residual MSE。没有加入 ActionToken、diffusion、contact/stable auxiliary、cone loss 或新 condition。实现了可选的 3σ barrier，但本轮权重保持 0；checkpoint 使用 validation `r+u+d` 与 terminal-contact mean error 的联合分数。
+
+**结果**
+Controlled32 最佳 checkpoint 的 `r/u/d=0.0580/0.0378/0.0437 cm`、contact F1 `0.968`、stable `90.6%`、formation stable `83.3%`，Gate 1 通过；normalized H 超过 3σ 仅 `0.065%`。
+
+2048 train、1500 steps 的最佳 checkpoint 为 step 1250。均匀覆盖 512 test 窗口上，`r/u/d=1.595/0.508/1.479 cm`、F1 `0.606`、stable `51.0%`、formation stable `37.4%`。为与 V18.4 已记录的“前 512”口径严格对齐，另在相同前 512 test 上评估：V18.5 `r/u/d=1.324/0.411/1.202 cm`、F1 `0.622`、stable `57.2%`、formation stable `49.4%`；V18.4 分别为 `1.460/0.666/1.288 cm`、`0.585`、`2.34%`、`1.63%`。V18.5 terminal contact 均值为 `25.16`，且 `r/d` violation 严格为 0。Test normalized H mean/max abs 为 `0.261/5.10`，超过 3σ 的元素只占 `0.024%`，无需启用 prior。
+
+**决策**
+保留 V18.5 structured decoder 与纯 Y supervision。单变量替换监督后 formation 从约 2% 恢复到 49%，支持“H 应是内部合法性变量，而不是必须复制 GT human pose”的核心假设；V18.4 的失败不能简单归因于 MANO-H 过强。当前中等规模 V18.5 仍弱于 full-data free-Y epoch40 的 `85.7%` stable，且均匀 test 的 spatial RMSE 约 `1.5 cm`；因此尚不替换 V18。下一步可先扩大同一 deterministic baseline 判断数据效应，再决定是否需要 H-space stochastic model；不应重新加入强 H-GT loss。

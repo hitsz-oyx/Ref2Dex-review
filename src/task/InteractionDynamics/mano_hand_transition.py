@@ -28,11 +28,15 @@ class CachedManoHDataset(Dataset):
         shard_index = bisect.bisect_right(self.offsets, index) - 1
         local = index - self.offsets[shard_index]
         shard = self.shards[shard_index]
-        keys = ("state", "future", "anchors_cm", "object_patches", "current_h",
+        keys = ("state", "future", "residual", "anchors_cm", "object_patches", "current_h",
                 "future_delta_h", "frame", "grasp_frame", "frames_to_grasp",
                 "betas", "raw_frame_ids", "object_rotation", "object_translation",
                 "global_orient", "hand_pose", "transl")
-        return {key: shard[key][local] for key in keys}
+        item = {key: shard[key][local] for key in keys}
+        item.update({"side": shard["side"], "source_raw_file": shard["source_raw_file"],
+                     "mano_key": str(Path(shard["source_hand_cache"]).parent.parent.name)
+                     + ":" + shard["side"]})
+        return item
 
 
 class ManoHandTransition(nn.Module):
