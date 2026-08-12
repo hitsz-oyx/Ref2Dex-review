@@ -39,6 +39,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--log-every", type=int, default=200)
     parser.add_argument("--sample-every", type=int, default=500)
+    parser.add_argument("--timestep-sampling", choices=["uniform", "half_high"], default="uniform")
+    parser.add_argument("--high-noise-start", type=int, default=70)
+    parser.add_argument("--x0-aux-high-weight", type=float, default=0.)
     parser.add_argument("--indices-from", type=Path)
     parser.add_argument("--clean-baseline", type=Path)
     parser.add_argument("--device", default="cuda")
@@ -100,6 +103,10 @@ def main() -> None:
     for step in range(1, args.train_steps + 1):
         index = torch.randint(len(residual), (args.batch_size,), generator=cpu_generator)
         timestep = torch.randint(args.diffusion_steps, (args.batch_size,), device=device)
+        if args.timestep_sampling == "half_high":
+            use_high = torch.rand(args.batch_size, device=device) < .5
+            timestep[use_high] = torch.randint(
+                args.high_noise_start, args.diffusion_steps, (int(use_high.sum()),), device=device)
         noise = torch.randn_like(normalized["residual"][index])
         scale = alpha_bar[timestep][:, None, None]
         noisy, target_v = make_v_target(normalized["residual"][index], noise, scale)
@@ -110,13 +117,24 @@ def main() -> None:
         prediction = model(gather(noisy), gather(normalized["state"][index]),
                            gather(normalized["anchors"][index]),
                            gather(normalized["patches"][index]), normalized["goal"][index], timestep)
-        loss = torch.nn.functional.mse_loss(prediction, gather(target_v))
+        loss_v = torch.nn.functional.mse_loss(prediction, gather(target_v))
+        loss = loss_v
+        loss_x0 = torch.zeros((), device=device)
+        if args.x0_aux_high_weight:
+            predicted_x0, _ = recover_x0_noise(
+                gather(noisy), prediction, scale)
+            per_sample = (predicted_x0 - gather(normalized["residual"][index])).square().mean((1, 2))
+            high = timestep >= args.high_noise_start
+            if high.any():
+                loss_x0 = per_sample[high].mean()
+                loss = loss + args.x0_aux_high_weight * loss_x0
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
         optimizer.step()
         if step == 1 or step % args.log_every == 0:
-            row = {"step": step, "v_mse": float(loss.detach())}
+            row = {"step": step, "loss": float(loss.detach()),
+                   "v_mse": float(loss_v.detach()), "x0_aux_mse": float(loss_x0.detach())}
             history.append(row)
             print(json.dumps(row), flush=True)
         if step % args.sample_every == 0:
@@ -174,6 +192,8 @@ def main() -> None:
     clean_baseline = (torch.load(args.clean_baseline, map_location="cpu")["metrics"]["correct"]
                       if args.clean_baseline else None)
     summary = {"sequence": metadata["path"], "frames": metadata["frames"],
+               "timestep_sampling": args.timestep_sampling,
+               "x0_aux_high_weight": args.x0_aux_high_weight,
                "v16_7_deterministic": clean_baseline, "metrics": metrics,
                "oracle_denoising_rmse_norm": oracle,
                "sampling_stability": {"finite": True,

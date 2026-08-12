@@ -60,28 +60,35 @@ def sample_residual_v(model: ResidualInteractionDiffusion, state: torch.Tensor,
                       anchors_cm: torch.Tensor, patches: torch.Tensor, goal: torch.Tensor,
                       steps: int, initial_noise: torch.Tensor | None = None,
                       generator: torch.Generator | None = None,
-                      trace_every: int = 0) -> tuple[torch.Tensor, list[dict]]:
+                      trace_every: int = 0, sampling_steps: int | None = None
+                      ) -> tuple[torch.Tensor, list[dict]]:
     """无 clamp、eta=0 的 deterministic DDIM-like v sampler。"""
     _, alpha_bar = cosine_schedule(steps, anchors_cm.device)
     value = (torch.randn((*anchors_cm.shape[:2], model.residual_dim), device=anchors_cm.device,
                          generator=generator) if initial_noise is None else initial_noise.clone())
     trace = []
     clean = value
-    for index in reversed(range(steps)):
+    sampling_steps = steps if sampling_steps is None else sampling_steps
+    if not 1 <= sampling_steps <= steps:
+        raise ValueError("sampling_steps must be in [1, diffusion_steps]")
+    indices = torch.linspace(steps - 1, 0, sampling_steps, device=anchors_cm.device).round().long()
+    indices = torch.unique_consecutive(indices).tolist()
+    for position, index in enumerate(indices):
         timestep = torch.full((len(value),), index, device=value.device, dtype=torch.long)
         velocity = model(value, state, anchors_cm, patches, goal, timestep)
         scale = alpha_bar[index].reshape(1, 1, 1)
         clean, noise = recover_x0_noise(value, velocity, scale)
         if not torch.isfinite(clean).all():
             raise FloatingPointError(f"non-finite x0 prediction at timestep {index}")
-        if trace_every and (index % trace_every == 0 or index == steps - 1):
+        if trace_every and (index % trace_every == 0 or position == 0 or position == len(indices) - 1):
             trace.append({"timestep": index, "xt_rms": float(value.square().mean().sqrt()),
                           "xt_abs_max": float(value.abs().max()),
                           "x0_rms": float(clean.square().mean().sqrt()),
                           "x0_abs_max": float(clean.abs().max())})
-        if index:
-            value = (alpha_bar[index - 1].sqrt() * clean
-                     + (1 - alpha_bar[index - 1]).sqrt() * noise)
+        if position + 1 < len(indices):
+            next_index = indices[position + 1]
+            value = (alpha_bar[next_index].sqrt() * clean
+                     + (1 - alpha_bar[next_index]).sqrt() * noise)
         else:
             value = clean
     return value, trace

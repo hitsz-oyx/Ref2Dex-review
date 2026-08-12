@@ -899,3 +899,21 @@ dynamic-active correct `u/r/d=0.032/0.222/0.089 cm`；motion zero 为 `0.132/0.5
 
 **决策**
 保留 v-prediction、无 clamp sampler、训练中采样和 oracle/stability 诊断。Gate 0/1/2 通过，Gate 3 未通过，V16.8 尚不能认定达到 clean residual 的 controlled 精度；按指导停止，不扩大数据、不验证 diversity、不进入 inverse。下一步若继续，应只调查 high-noise denoising 与迭代 sampling 的精度损失。
+
+## 实验：V16.9 高噪声训练与采样误差归因
+
+**假设**
+V16.8 与 clean V16.7 的差距主要来自 4000 steps 不足、高噪声条件训练不足和多步误差累积。按单变量顺序比较 uniform-10k、50% uniform + 50% `t∈[70,99]`、固定 checkpoint 的 100/50/25/10-step skipping；前三项仍不足时才加入 `t≥70` 的 x0 auxiliary loss。
+
+**改动**
+训练入口新增 uniform/half-high timestep sampling 和可选 high-noise x0 auxiliary。v sampler 支持使用原 100-step alpha schedule 的正规 timestep skipping，不通过截断循环近似；新增 oracle skipping 测试、训练配置对照和固定 seed sampling-step 诊断。所有实验继续核对 V16.7 的完全相同 32 indices。
+
+**结果**
+uniform 从 4k 延长到 10k 后，100-step dynamic `u/r/d` 从 `0.124/0.403/0.178` 改善到 `0.101/0.321/0.147 cm`，F1 从 `0.724` 到 `0.879`；t90 oracle 从 `0.368` 降到 `0.297`。四 seed dynamic `r/d=0.325±0.016/0.147±0.009 cm`，明显比 4k 的 `0.377±0.055/0.171±0.020` 更准且稳定。延长训练是本轮最大有效变量。
+
+half-high-10k 的 t70/t90 oracle 为 `0.120/0.183`，优于 uniform-10k 的 `0.155/0.297`，确认高噪声训练比例会直接改善高噪声 oracle；但最终 dynamic `r/d=0.355/0.199 cm`，差于 uniform，说明 50% high-noise 牺牲了全程平衡。high-noise x0 auxiliary 的 100-step `r/d=0.309/0.164 cm`，r 略好、d 明显差于 uniform，也不构成整体收益。
+
+固定 uniform-10k checkpoint 与 initial noise，100/50/25/10 steps 的 dynamic `r/d` 分别为 `0.321/0.147`、`0.315/0.146`、`0.314/0.145`、`0.307/0.150 cm`。half-high 对应 `0.355/0.199`、`0.353/0.196`、`0.354/0.193`、`0.325/0.161 cm`。减少调用次数仅小幅改善 uniform，说明迭代误差累积存在但不是主要瓶颈。
+
+**决策**
+保留 10k uniform 训练和正规 skipping，默认优先 uniform-10k；half-high 与 x0 auxiliary 仅作为失败/归因选项保留。当前最佳 uniform-10k + 10-step 为 `u/r/d=0.097/0.307/0.150 cm`，已接近但尚未达到指导建议的 `r≤0.30,d≤0.14 cm`，因此不扩大数据。下一步应继续聚焦高噪声条件映射与训练波动，而不是增加 sampler steps 或 contact loss。

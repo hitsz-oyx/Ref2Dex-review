@@ -48,3 +48,21 @@ def test_oracle_velocity_sampler_recovers_clean():
                                       initial_noise=torch.randn_like(clean), trace_every=1)
     assert torch.allclose(result, clean, atol=2e-5)
     assert all(torch.isfinite(torch.tensor(list(row.values()))).all() for row in trace)
+
+
+def test_oracle_velocity_sampler_recovers_clean_with_skipping():
+    torch.manual_seed(3)
+    clean = torch.randn(1, 128, 28)
+    class Oracle(torch.nn.Module):
+        residual_dim = 28
+        def forward(self, value, state, anchors, patches, goal, timestep):
+            from src.task.InteractionDynamics.interaction_diffusion import cosine_schedule
+            _, schedule = cosine_schedule(100, value.device)
+            alpha = schedule[timestep][:, None, None]
+            noise = (value - alpha.sqrt() * clean) / (1 - alpha).sqrt()
+            return alpha.sqrt() * noise - (1 - alpha).sqrt() * clean
+    result, _ = sample_residual_v(
+        Oracle(), torch.zeros(1, 128, 4), torch.zeros(1, 128, 3),
+        torch.zeros(1, 128, 32, 6), torch.zeros(1, 25), 100,
+        initial_noise=torch.randn_like(clean), sampling_steps=10)
+    assert torch.allclose(result, clean, atol=2e-5)
