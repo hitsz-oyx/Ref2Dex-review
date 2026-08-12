@@ -1064,3 +1064,23 @@ Test 原始 `r/d` 联合 RMSE 为 `1.262 cm`；raise-d、shrink-r、联合锥投
 
 **决策**
 保留解析锥投影作为诊断和可选安全约束，但不把它当作生成质量修复。`r/d` 违例是真实且稳定的 off-manifold 信号，不过单纯满足必要不等式不足以恢复 GT 或接触语义；下一实验应比较训练期 cone penalty 与保证约束的参数化，并继续以 trajectory/contact/MANO inverse 判断，而不能只看违例率归零。
+
+## 实验：V18.4 MANO-H deterministic transition baseline
+
+**假设**
+把 future generation 从自由 Y 改成 object-frame MANO wrist/PCA residual，可由构造保证整条轨迹属于同一只合法 MANO 手；若 deterministic H regression 仍能保持 formation，则可以较小 interaction 代价消除 V18 的 off-manifold 问题。
+
+**观察到的失败 / 现象**
+V18 free-Y test RMSE 约 `0.972 cm` 且 stable success `85.7%`，但约 30% anchor-step 违反 `||r||≤d`，300-step MANO inverse 子集也全部存在 persistent gap。V18.3 的解析锥投影只改善约 1% RMSE，不能恢复共享手流形。
+
+**诊断**
+新 cache 沿用 V18 event、split、窗口和动态 object frame，并额外保存 `current_h[33]`、`future_delta_h[8,30]`、beta、side、raw frame ids 与 object transforms。GT H→MANO surface→Y 在 train/val/test 的最大绝对 parity error 分别为 `3.73e-4/3.51e-4/3.09e-4 cm`，均值约 `6–7e-5 cm`，Gate 0 通过。前 32 个 train 窗口训练 1500 steps 后，H translation/rotation/PCA RMSE 为 `0.0079 cm/3.85e-4 rad/0.0020`；回到 Y 后 `r/u/d=0.0099/0.0119/0.0075 cm`、contact F1 `0.996`、stable success `87.5%`，Gate 1 通过。
+
+**改动**
+新增独立 MANO-H cache builder、Dataset、复用 V18 anchor/state/object encoder 与 AdaLN block 的 deterministic transition model、仅 normalized H residual MSE 的训练入口，以及无需 inverse optimization 的 MANO-forward Y evaluator。没有修改旧 V18 cache，没有加入 diffusion、ActionToken、Y/contact/smoothness auxiliary 或训练时 MANO forward。按用户要求不使用全量训练，只取前 2048 个 train 窗口训练 1500 steps；val/test 各评估 512 个窗口。
+
+**结果**
+中等规模模型从 step 250 起 validation H error 未随 train loss 持续下降：最佳 translation/rotation/PCA RMSE 为 `2.743 cm/0.191 rad/0.493`，到 step 1500 仍为 `2.774/0.205/0.515`，存在明显跨 sequence 泛化差距。最佳 checkpoint 的 val `r/u/d=1.465/0.707/1.343 cm`、contact F1 `0.579`、stable success `0.59%`；test 为 `1.460/0.666/1.288 cm`、F1 `0.585`、stable success `2.34%`。Test formation 的 `r/u/d=1.526/0.618/1.295 cm`、F1 `0.479`、stable success `1.63%`。预测 terminal contact 均值仍为 `25.9`，但 stable success 极低，说明不是简单地完全无接触，而是 deterministic H trajectory 的接触与低相对速度没有同时成立。所有预测 Y 均由 MANO forward 构造，`r/d` violation 为 0 且天然共享同一手流形。
+
+**决策**
+保留 MANO-H 数据链、模型和 evaluator，但当前 deterministic checkpoint 不替换 V18。实验回答了核心权衡：完整 realizability 可以由构造获得，但 2048-window deterministic regression 相比 free-Y 明显损失 interaction accuracy 和 formation，符合 conditional mean / 多模态平均化，也伴随 sequence 泛化不足。下一步若继续，应固定同一 H 表示和数据链，最小比较 H-space stochastic model；不先加 Y auxiliary 掩盖问题，也不回到单纯 cone penalty。
