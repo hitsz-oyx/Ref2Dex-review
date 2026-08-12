@@ -1026,3 +1026,21 @@ V18 仍处于欠训练；延长到约 10k steps 并联合轨迹 RMSE、稳定成
 
 **决策**
 保留长训 checkpoint、阶段化/接触分布/单双手分组评估和 MANO 可实现性脚本；当前推荐 epoch 40，而非 epoch 45、50 或最后一轮。延长训练本身没有稳定收益，且生成 Y 与 MANO 流形仍有约 `0.65 cm` 的额外差距。下一步优先扩大 inverse 样本数并研究可实现性约束，不再盲目增加 epochs。
+
+## 实验：V18.2 全量 Y 一致性与可实现性诊断
+
+**假设**
+V18.1 生成 Y 难以 MANO inverse，可能来自当前手重复初始化的 optimization basin，也可能来自独立生成的 `r/d/u` 内部冲突或 spatial Y 本身离开真实手流形。固定 epoch 40，通过全量解析约束、三种 inverse loss 和三种初始化区分原因。
+
+**改动**
+保持 V18 模型、数据、Y 定义和 checkpoint 不变，新建独立 V18.2 脚本。对 val/test 各 2035 windows 检查 `max(0,||r||-d)` 与 `||u-Δr||`；MANO inverse 支持 `r/rd/rdu`、current-repeat/GT-future/四路 multistart、独立 GPU shard、逐样本 component RMSE 和 contact precision/recall/F1。validation 的 GT-current p95 用作对应 loss mode 的可实现阈值。
+
+**结果**
+解析审计中 GT val/test 的 `||r||≤d` 违例率均严格为 0；epoch 40 生成 Y 的 val/test 违例率为 `31.9%/29.9%`，平均违例 `0.106/0.101 cm`。Test formation/transition/maintenance 分别为 `35.4%/26.4%/26.8%`，formation 平均违例 `0.140 cm`。`u-Δr` 的 test mean：GT/生成总体为 `0.344/0.523 cm`，formation 为 `0.420/0.607`，maintenance 为 `0.219/0.465 cm`；生成结果时序偏差更大，但该量只作相对统计。
+
+按原 300-step 配置估算完整矩阵约需 40 GPU 小时。本轮为保持完整 val/test 覆盖，先以 50 steps、八卡独立 shard 跑完 val 2035 个 GT-current 和 test 2035 个完整 12-cell 矩阵。此时 GT-val p95 阈值仍宽达 r/rd/rdu `1.684/1.644/1.332 cm`，使 test direct rate 为 `94.7%/94.5%/94.4%`；该结果主要反映 50-step GT inverse 自身未收敛，不能解释为 generated Y 可实现。全量 test current-repeat 的 r-only r RMSE `0.847 cm`；rd 的 r/d RMSE `0.868/0.715 cm`；rdu 的 r/d/u RMSE `0.860/0.701/0.282 cm`、contact F1 `0.676`。GT-future 在 rd 下改善到 `0.596/0.447 cm`，但仍远高于充分优化的 GT 阈值；multistart 与 current-repeat 接近。
+
+为校准步数效应，另用 300 steps 跑 16 个 val GT 与 16 个 test 完整矩阵。GT-val p95 收紧到 r/rd/rdu `0.133/0.139/0.084 cm`；16 个 generated test 在三种 loss 下 direct/basin-rescued 均为 0，persistent gap 均为 100%。对应 current-repeat r-only r RMSE `0.733 cm`；rd 的 r/d 为 `0.753/0.497 cm`；rdu 的 r/d/u 为 `0.744/0.496/0.161 cm`。GT-future 和 multistart 没有把任何样本救到真实阈值内。
+
+**决策**
+保留全量解析审计、分片 inverse 和统一汇总工具。解析恒等式已直接证明生成 `r,d` 冲突；充分优化子集又显示合理初始化不能消除 gap，因此当前主因更接近 generated spatial Y off-manifold，而不是单纯 inverse basin。50-step 全量分类只保留为预算/收敛诊断，不作为 realizability 结论。下一步优先尝试只生成 `r` 或从 `r` 解析/辅助派生 `d`；在解决 `r/d` 一致性前，不增加 inverse 初始化复杂度，也不先针对 `u` 加新 loss。

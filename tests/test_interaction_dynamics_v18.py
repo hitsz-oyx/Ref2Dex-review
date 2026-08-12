@@ -3,6 +3,8 @@ import torch
 from src.task.InteractionDynamics.dataset_grasp_v18 import _rigid_world_to_reference
 from src.task.InteractionDynamics.eval_grasp_v18 import subset_masks, trajectory_statistics
 from src.task.InteractionDynamics.grasp_interaction_diffusion import GraspInteractionDiffusion
+from src.task.InteractionDynamics.research.v18_2.audit_y_consistency import unpack
+from src.task.InteractionDynamics.research.v18_2.eval_y_realizability_full import target_loss
 
 
 def test_v18_rigid_alignment_recovers_reference():
@@ -40,3 +42,20 @@ def test_v18_1_formation_transition_maintenance_masks():
     assert masks["formation"].tolist()==[True,False,False]
     assert masks["transition"].tolist()==[False,True,False]
     assert masks["maintenance"].tolist()==[False,False,True]
+
+
+def test_v18_2_unpack_temporal_consistency():
+    state=torch.zeros(1,2,4)
+    values=torch.zeros(1,2,8,7)
+    values[:,:,0,3:6]=1.; values[:,:,0,:3]=1.
+    _,_,error=unpack(state,values.flatten(-2))
+    assert torch.allclose(error[:,:,0],torch.zeros(1,2))
+
+
+def test_v18_2_target_loss_modes_select_components():
+    target=torch.zeros(1,2,56); prediction=target.clone().reshape(1,2,8,7)
+    prediction[...,0:3]=3.; prediction[...,3:6]=2.; prediction[...,6]=1.
+    prediction=prediction.flatten(-2)
+    assert torch.allclose(target_loss(prediction,target,"r"),torch.tensor([4.]))
+    assert target_loss(prediction,target,"rd").item()==3.25
+    assert torch.allclose(target_loss(prediction,target,"rdu"),torch.tensor([40/7]))
