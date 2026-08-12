@@ -1,0 +1,15 @@
+data:
+  root: data/processed_data/stage4/data/grab
+  events: output/research/InteractionDynamics/v18/gate0/events.json
+  cache_root: output/research/InteractionDynamics/v18/cache
+  split_seed: 42
+model: {horizon: 8, dim: 256, heads: 8, layers: 6}
+diffusion: {steps: 100, sampling_steps: 10, prediction_type: v, timestep_sampling: uniform}
+training:
+  epochs: 30
+  per_gpu_batch: 64
+  lr: 0.0002
+  weight_decay: 0.0001
+  precision: bf16
+  num_workers: 4
+seed: 42

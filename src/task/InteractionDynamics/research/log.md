@@ -984,3 +984,27 @@ Time-to-effect 最佳 epoch 22：validation dynamic `r/d=3.818/4.110 cm`，`r+d=
 
 **决策**
 `τ` 对稀少的较长等待帧确实携带信息，但没有形成跨 split 的整体收益；“缺少 time-to-effect 是 V17 整体失败主因”的假设不成立，当前实现不作为默认 Goal 保留。保留时间元数据、分桶评估和 deterministic-only 训练入口作为诊断工具。下一步若继续，应先调查为何 `τ=0` 占主导以及 active/meaningful-motion 的语义，而不是继续增加时间编码容量。
+
+## 实验：V18 Stable-Grasp Interaction Diffusion
+
+**假设**
+V17 跨 demonstration 失败来自把 Goal、active 与 object effect 混入条件。若只保留当前 `Y=[r,d]`、物体局部几何和 stable-grasp 成功 demonstration 的数据分布，无 Goal residual v-diffusion 应能生成进入或维持稳定抓取的 H=8 Y trajectory。
+
+**观察到的失败 / 现象**
+V17 使用的 manifest 只覆盖约 20 个 demonstrations，不能代表 full GRAB；V18 改用 stage4 已缓存的全部左右手。原 stage4 shared schema 没有 object pose，因此利用 4096 个有稳定 correspondence 的刚体 object points 做 SVD 配准，恢复每帧动态 object frame。聚焦测试中跨帧刚体对齐误差小于 `1e-5 m`。
+
+**诊断**
+Gate 0 使用 `contact anchors≥4`、`u RMS<0.3 cm/frame` 连续 6 帧，并要求随后 30 帧内物体平移超过 1 cm 或旋转超过 5°。扫描 1335 个 demonstrations、2670 个手文件后得到 1857 个手事件，覆盖 1320 个 demonstrations；left/right 事件为 `619/1238`。`t_g` min/median/mean/p90/max 为 `25/60/85.3/158.4/714`；onset contact anchor 数为 `4/15/20.1/42/113`，stable `u` 为 `0.019/0.235/0.221/0.288/0.300 cm/frame`。随机检查 20 个 `t_g` 的接触与速度时序，大多数位于接触跃升且相对速度降到阈值的位置，未见普遍的短暂停触误标；少数裁剪序列开始时已处于接触。
+
+**改动**
+每个事件使用 `t_g-8...t_g-1` 八个进入/稳定窗口及 `t_g/t_g+2/t_g+4` 三个 maintenance 窗口，严格按 demonstration 80/10/10 split，得到 train/val/test `1487/185/185` events 和 `16357/2035/2035` samples。新增无 Goal 的 H=8 v-prediction AdaLN diffusion、10-step skipping、四卡 BF16 DDP、stable/persistence/K=8/diversity/初始未接触子集评估。本轮没有使用 active、time-to-effect、Action/PoseToken、effect、CFG、MANO inverse 或 W&B。
+
+**结果**
+Gate 1 controlled32 训练 3000 steps 后，single-sample RMSE 从 step 500 的 `0.580` 降到 `0.143 cm`；GT/persistence/diffusion stable success 为 `87.5%/43.8%/87.5%`，terminal `u RMS=0.200 cm/frame`，采样全程 finite，Gate 1 通过。
+
+Gate 2 四卡训练 30 epochs、1920 steps，每 epoch 约 `8.8 s`。按 validation RMSE 选择的 epoch 29 在 test 上 single/best-of-8 RMSE 为 `0.970/0.874 cm`，相对 best-of-1 改善 `9.9%`；pairwise trajectory RMS 为 `0.562 cm`，说明 K=8 并非完全相同。GT/persistence/diffusion 单次 stable success 为 `77.3%/61.9%/65.5%`，diffusion any-of-8 为 `88.4%`。在 776 个初始 contact anchors 少于 4 的真正 formation 样本上，GT/persistence/diffusion 单次 success 为 `62.5%/0%/33.9%`，diffusion any-of-8 达 `70.1%`。因此模型确实能从未接触状态形成抓取，而不只是复制 persistence。
+
+单独按 validation stable success 会选 epoch 1：test 单次/any-of-8 success 达 `92.7%/94.7%`，formation 为 `80.8%/86.2%`，但平均 terminal contact 达 `42.4` anchors、RMSE `1.949 cm`、pairwise RMS `1.935 cm`，明显通过过度制造接触投机 operational metric。相比之下 epoch 29 平均 terminal contact 为 `11.1`，更接近数据但成功率较低。
+
+**决策**
+Gate 2 的核心能力通过：best-RMSE 模型在初始未接触子集明显超过 persistence，best-of-8 提升且存在可测多样性，证明 stable-grasp 对齐后的 Y-transition 可以跨 sequence 学习。但 stable success 单指标不适合作为 checkpoint 唯一标准，必须与 trajectory RMSE/contact calibration 联合使用；当前不把 epoch 1 当作可用模型。按 V18 范围停止在 Y-space，不进入 MANO inverse 或物体轨迹 tracking。下一步应先定义不会奖励过度接触的联合选择指标，或把 formation/maintenance 分开报告。
