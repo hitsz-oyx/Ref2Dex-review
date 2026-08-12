@@ -1,0 +1,12 @@
+data:
+  cache_root: output/research/InteractionDynamics/v17/cache
+  time_to_effect_root: output/research/InteractionDynamics/v17_1/time_to_effect
+model: {dim: 256, heads: 8, layers: 6}
+training:
+  epochs: 30
+  per_gpu_batch: 64
+  lr: 0.0002
+  weight_decay: 0.0001
+  precision: bf16
+  num_workers: 4
+seed: 42

@@ -960,3 +960,27 @@ V16 controlled set 的局部低误差没有转化为跨 demonstration 泛化。�
 
 **决策**
 V17 Gate 未通过，不进入 inverse / C inference，不把当前 full-data checkpoint 作为可用 Interaction Knowledge。保留 sequence-disjoint full-frame 数据链路、DDP/W&B 训练和分层评估工具，供下一轮针对泛化失败做最小诊断。
+
+## 实验：V17.1 time-to-effect 条件诊断
+
+**假设**
+V17 的 Goal 只描述下一段 meaningful object motion，没有描述它何时发生；追加 `τ=k*(t)-t` 的 `log(1+τ)` 标量可能改善跨 demonstration 的 deterministic residual 泛化，尤其是长时间 approach 帧。
+
+**观察到的失败 / 现象**
+V17 full-data 中 active ratio 接近常量，active zero 反而改善结果；同时 residual median/mean/p90 为 `0.287/1.396/5.729 cm`，存在重尾。为避免把问题继续归因于 diffusion，本轮只训练 deterministic 分支。
+
+**诊断**
+按 V17 完全相同的样本顺序重新计算 time-to-effect。train/val/test 的有效比例为 `87.2%/97.3%/82.2%`，有效值中位数均为 0，均值为 `4.88/4.26/2.42` 帧，p90 为 `20/18/3` 帧；三者都没有 `τ≥100` 样本。test 的 1159 帧中，`missing/0–10/10–30/30–100` 数量为 `206/877/40/36`。因此当前 meaningful-motion 阈值下，“相同 Goal 距离 effect 数百帧”的预设并不存在，时间分布本身还有明显 split variance。
+
+**改动**
+保持 V17 cache、固定 16/2/2 split、full-frame 分布、MSE、模型宽度和学习率不变。两个模型使用相同的 26 维 Goal 网络：baseline 的最后一维恒为 0，实验组输入由 train-only mean/std 标准化的 `log(1+τ)`，missing 时为 0。两组分别使用两卡 DDP、per-GPU batch 64、global batch 128、BF16、30 epochs，并行训练；没有启用或上传 W&B。checkpoint 均只按 validation dynamic `r+d` 选择。
+
+**结果**
+Baseline 最佳 epoch 4：validation dynamic `r/d=3.758/4.256 cm`，test 为 `3.835/4.466 cm`；均略优于 persistence 的 validation `3.706/4.565` 和 test `3.905/4.570 cm` 的 `r+d` 总分。该结果也说明 V17 原联合 diffusion 训练会影响 deterministic 对照，后续应把两类训练分开解释。
+
+Time-to-effect 最佳 epoch 22：validation dynamic `r/d=3.818/4.110 cm`，`r+d=7.928 cm`，相比 baseline `8.013 cm` 改善 `1.1%`；test 为 `4.097/4.699 cm`，`r+d=8.795 cm`，相比 baseline `8.301 cm` 退化 `6.0%`，并差于 persistence `8.476 cm`。
+
+时间分桶揭示了方向相反的效果。Test `10–30` 桶从 baseline `r/d=6.038/8.260` 改善到 `3.017/4.690 cm`，`30–100` 桶从 `5.372/6.709` 改善到 `4.617/4.224 cm`；但占动态有效样本大多数的 `0–10` 桶从 `2.829/2.632` 恶化到 `3.461/4.195 cm`。Validation 也在两个较长时间桶改善，但整体只得到小幅收益。
+
+**决策**
+`τ` 对稀少的较长等待帧确实携带信息，但没有形成跨 split 的整体收益；“缺少 time-to-effect 是 V17 整体失败主因”的假设不成立，当前实现不作为默认 Goal 保留。保留时间元数据、分桶评估和 deterministic-only 训练入口作为诊断工具。下一步若继续，应先调查为何 `τ=0` 占主导以及 active/meaningful-motion 的语义，而不是继续增加时间编码容量。

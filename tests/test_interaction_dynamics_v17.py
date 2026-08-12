@@ -2,6 +2,8 @@ from pathlib import Path
 import torch
 from src.task.InteractionDynamics.dataset_v17 import split_sequences
 from src.task.InteractionDynamics.eval_v17 import Metrics, masks_for
+from src.task.InteractionDynamics.residual_interaction_regression_v17_1 import temporal_goal
+from src.task.InteractionDynamics.train_v17_1 import bucket_masks, tau_statistics
 
 def test_v17_split_is_sequence_disjoint_and_deterministic():
     paths=[]
@@ -35,3 +37,16 @@ def test_v17_eval_masks_and_exact_metrics():
     assert result["overall"]["u_rmse_cm"]==1.
     assert result["dynamic"]["r_rmse_cm"]==1.
     assert result["far_60cm"]["d_rmse_cm"]==1.
+
+def test_v17_1_temporal_goal_and_buckets():
+    tau=torch.tensor([-1,0,9,10,29,30,99,100])
+    mean,std=tau_statistics(tau)
+    goal=torch.zeros(len(tau),25)
+    baseline=temporal_goal(goal,tau,mean,std,False)
+    temporal=temporal_goal(goal,tau,mean,std,True)
+    assert baseline.shape==temporal.shape==(8,26)
+    assert torch.count_nonzero(baseline)==0
+    assert temporal[0,-1]==0 and temporal[-1,-1]!=0
+    masks=bucket_masks(tau,torch.ones(8,dtype=torch.bool))
+    assert [int(masks[name].sum()) for name in
+            ["missing","0_10","10_30","30_100","100_plus"]]==[1,2,2,2,1]

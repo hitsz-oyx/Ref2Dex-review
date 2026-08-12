@@ -55,6 +55,27 @@ def split_sequences(paths: list[Path], seed: int = 42,
                     expand(order[val_end:]))
 
 
+def time_to_effect_for_paths(data_root: str | Path, paths: list[Path], horizon: int = 4
+                             ) -> torch.Tensor:
+    """按 V17 样本顺序计算 k*(t)-t；inactive 或未来无 effect 时为 -1。"""
+    base = InteractionDynamicsDataset(data_root, file_list=paths)
+    values = []
+    for path in paths:
+        data = base._load(path)
+        poses = torch.from_numpy(np.asarray(data["obj_root_pose_world"], np.float32))
+        meaningful = meaningful_motion_mask(poses, 3, .2, 1.).numpy()
+        if not meaningful.any():
+            continue
+        start, end, _ = estimate_active_interval(data, meaningful)
+        for frame in range(len(poses) - max(8, horizon)):
+            if not start <= frame <= end:
+                values.append(-1)
+                continue
+            candidates = np.flatnonzero(meaningful[frame:])
+            values.append(int(candidates[0]) if len(candidates) else -1)
+    return torch.tensor(values, dtype=torch.long)
+
+
 class V17Dataset(Dataset):
     def __init__(self, data_root: str | Path, paths: list[Path], horizon: int = 4,
                  goal_segment: int = 4, tau_m: float = .015) -> None:
