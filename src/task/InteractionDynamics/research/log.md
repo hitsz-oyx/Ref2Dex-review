@@ -855,3 +855,25 @@ active interval 必须同时向前回溯持续接近段、向后延伸持续远�
 
 **决策**
 保留 Goal extraction、active interval sanity 和分层评估。Gate B/C/D 未通过，V16.6 formulation 尚未成立；证据指向 absolute-future diffusion generation 是主要瓶颈，而非 motion Goal 完全无信息。按本轮范围停止，不实现 residual diffusion、inverse 或大规模训练。
+
+## 实验：V16.7 Clean Persistence Residual Regression
+
+**假设**
+V16.6 的绝对未来目标含有大块已由当前状态确定的静态分量；固定相同数据、Goal 与 backbone，改为预测 `R=F_GT-F_persist`，应更容易在 dynamic subset 超过 persistence，并表现出明确 Goal 依赖。
+
+**观察到的失败 / 现象**
+V16.6 diffusion 的 dynamic `r/d=41.295/68.082 cm`；clean absolute regression 虽能读取 motion Goal，但 dynamic `r/d=1.590/2.332 cm`，仍差于 persistence 的 `0.472/0.252 cm`。
+
+**诊断**
+同一 `cup_lift` 32-frame set 仍为 16 dynamic / 16 static。Residual magnitude 的 min/median/mean/max 为 `0.069/0.194/0.224/0.489 cm`，dynamic/static mean 为 `0.323/0.126 cm`；`u/r/d` residual std 为 `0.103/0.357/0.188 cm`，未见尺度异常。远场诊断中 14 个 `<10 cm` 样本的 anchor-r variance / residual RMS 为 `3.364 cm² / 0.257 cm`，18 个 `>100 cm` 样本为 `7.480 cm² / 0.198 cm`；当前分层采样没有覆盖中间距离，本轮不据此修改输入。
+
+**改动**
+新增无 noisy future、timestep 或 sampler 的 6-layer AdaLN residual regressor，只读取当前 `S`、当前 object anchor/local patch 和 25D Goal。以 residual 自身统计量标准化并使用单一 MSE；最终指标统一在 `F_persist+R_hat` 上计算。加入 motion zero/shuffle/reverse、active zero、dynamic-active 交集、static predicted-residual RMS、精确恢复与 permutation-equivariance 测试。
+
+**结果**
+32 chunks、4000 steps 后，correct dynamic `u/r/d=0.085/0.244/0.109 cm`、F1 `0.884`，全面优于 persistence 的 `0.132/0.472/0.252 cm`、F1 `0.807`，Gate A 通过。static correct `r/d=0.146/0.091 cm`，也优于 persistence 的 `0.182/0.103 cm`；predicted residual RMS 为 `0.103 cm`，GT static residual mean 为 `0.126 cm`，Gate B 通过。
+
+9 个 dynamic-active 样本的 correct `u/r/d=0.013/0.064/0.030 cm`；motion zero 为 `0.119/0.496/0.222`，shuffle 为 `0.127/0.501/0.228`，reverse 为 `0.183/0.686/0.325 cm`，active zero 为 `0.127/0.529/0.252 cm`。强干预均显著恶化，Gate C 通过。inactive correct predicted residual RMS 为 `0.096 cm`，尚未严格趋近零，但未阻碍本轮 controlled gate。
+
+**决策**
+保留 clean residual formulation。它在完全相同数据和 Goal 下首次同时超过 persistence、保持 static，并建立强 motion/active Goal dependency，支持“绝对未来 target 是 V16.6 clean regression 的主要瓶颈”。结论目前只限单序列 controlled overfit；按 V16.7 范围不进入 residual diffusion、扩大数据或 inverse。
