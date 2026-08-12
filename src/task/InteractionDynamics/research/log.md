@@ -877,3 +877,25 @@ V16.6 diffusion 的 dynamic `r/d=41.295/68.082 cm`；clean absolute regression �
 
 **决策**
 保留 clean residual formulation。它在完全相同数据和 Goal 下首次同时超过 persistence、保持 static，并建立强 motion/active Goal dependency，支持“绝对未来 target 是 V16.6 clean regression 的主要瓶颈”。结论目前只限单序列 controlled overfit；按 V16.7 范围不进入 residual diffusion、扩大数据或 inverse。
+
+## 实验：V16.8 v-prediction Conditional Residual Diffusion
+
+**假设**
+V16.7 已证明 residual 可预测；把同一 normalized residual 改为 v-prediction，并使用不除以小 `sqrt(alpha_bar)`、无 x0 clamp 的 deterministic sampler，应能稳定从纯噪声生成 residual，超过 persistence 且接近 clean regression。
+
+**观察到的失败 / 现象**
+旧 V16.6 epsilon diffusion 虽能降低 noise MSE，但 absolute-future 采样达到几十厘米并忽略 Goal。V16.8 训练期间 v-MSE 降至 `0.0543`，而固定四样本 sampling residual RMSE 在 `1.19–1.62` normalized units 波动，再次说明训练 loss 不能代替生成指标。
+
+**诊断**
+通过 V16.7 checkpoint 核对完全相同的 32 个 indices。v transform roundtrip 最大误差小于 `1e-6`；reverse 全程 finite，`x_t RMS` 从约 `1.005` 平稳到 `0.854`，最大 x0 RMS `0.855`，未出现旧 sampler 的尺度爆炸。Oracle denoising 的 t10/30/50/70/90 normalized RMSE 为 `0.062/0.122/0.167/0.214/0.368`：模型有去噪能力，高噪声端精度较弱；pure-noise sampling 的损失主要来自迭代生成而非数值公式错误。
+
+**改动**
+新增 6-layer AdaLN residual v-predictor、v transform/recovery、无 clamp 的 eta=0 sampler。训练每 500 steps 对固定四样本完整采样；最终使用相同 initial noise 比较 correct、motion zero/shuffle/reverse 与 active zero，并记录每 10 timestep 的 stability、oracle denoising 和四 seed 指标。未加入 CFG、加权 loss 或其他 V16.8 禁止项。
+
+**结果**
+4000 steps 后 correct dynamic `u/r/d=0.124/0.403/0.178 cm`、F1 `0.724`，优于 persistence 的 `0.132/0.472/0.252 cm`、F1 `0.807` 中三个 RMSE，Gate 2 通过；但相对 V16.7 `0.085/0.244/0.109 cm`，`r/d` 略高于 `1.5×` 工程线 `0.37/0.17 cm`，Gate 3 未通过。四 seed dynamic `r/d` 均值为 `0.377/0.171 cm`，std `0.055/0.020 cm`，仍位于门槛附近且存在可测随机波动。
+
+dynamic-active correct `u/r/d=0.032/0.222/0.089 cm`；motion zero 为 `0.132/0.537/0.226`，shuffle 为 `0.145/0.536/0.241`，reverse 为 `0.182/0.724/0.329`，active zero 为 `0.137/0.551/0.236 cm`。所有强干预均恶化，表明 Goal dependency 被保留；因 Gate 3 已失败，该事实只作诊断，不改变停止顺序。
+
+**决策**
+保留 v-prediction、无 clamp sampler、训练中采样和 oracle/stability 诊断。Gate 0/1/2 通过，Gate 3 未通过，V16.8 尚不能认定达到 clean residual 的 controlled 精度；按指导停止，不扩大数据、不验证 diversity、不进入 inverse。下一步若继续，应只调查 high-noise denoising 与迭代 sampling 的精度损失。
