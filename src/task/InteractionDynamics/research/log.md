@@ -1008,3 +1008,21 @@ Gate 2 四卡训练 30 epochs、1920 steps，每 epoch 约 `8.8 s`。按 validat
 
 **决策**
 Gate 2 的核心能力通过：best-RMSE 模型在初始未接触子集明显超过 persistence，best-of-8 提升且存在可测多样性，证明 stable-grasp 对齐后的 Y-transition 可以跨 sequence 学习。但 stable success 单指标不适合作为 checkpoint 唯一标准，必须与 trajectory RMSE/contact calibration 联合使用；当前不把 epoch 1 当作可用模型。按 V18 范围停止在 Y-space，不进入 MANO inverse 或物体轨迹 tracking。下一步应先定义不会奖励过度接触的联合选择指标，或把 formation/maintenance 分开报告。
+
+## 实验：V18.1 长训、阶段评估与 Y 可实现性
+
+**假设**
+V18 仍处于欠训练；延长到约 10k steps 并联合轨迹 RMSE、稳定成功率和终端接触分布选择 checkpoint，可以提高抓取形成能力且避免过接触。单/双手事件分组和 MANO inverse 可进一步判断数据混合与 Y-space 生成是否可靠。
+
+**改动**
+在不改变 V18 模型和表示的前提下，从 epoch 30/step 1920 恢复优化器并训练到 epoch 160/step 10240，每 5 epochs 保存 checkpoint。评估新增 formation、transition、maintenance 三段，以及 GT/预测终端接触 mean/median/p10/p90；加入 validation Pareto 筛选、另一只手在 `t_g±2` 的接触审计和按单/双手分组测试。最后固定当前真实手帧，分别对 GT Y 和生成 Y 优化未来 8 帧 MANO 参数。
+
+**结果**
+长训未持续收敛：epoch 40 validation RMSE/stable/contact-mean-error 为 `0.972 cm/79.8%/0.190`，epoch 45 为 `0.947/69.7%/5.725`，epoch 50 为 `1.362/90.3%/1.883`；epoch 160 已退化到 test 前的 validation RMSE `3.404 cm` 且 stable 为 0。测试集 epoch 40 的 single/best-of-8 RMSE 为 `0.972/0.855 cm`，单次/any-of-8 stable 为 `85.7%/95.1%`；终端接触预测 mean/median/p10/p90 为 `29.0/24/9/56`，GT 为 `27.1/23/8/53`，在三个候选中最均衡。formation/transition/maintenance single RMSE 为 `1.136/0.960/0.699 cm`。
+
+1857 个事件按另一只手最大 contact anchors `<4` 分为单手干净 1342 个（72.3%）和双手 515 个（27.7%）。epoch 40 test 单手/双手的 single RMSE 为 `0.898/1.132 cm`，stable 为 `86.6%/82.2%`；双手 GT/预测终端接触均值为 `18.0/22.8`，比单手的 `30.8/31.5` 校准更差，因此暂不删除双手数据，但后续必须保持分组报告。
+
+3 个 test 样本、300-step MANO inverse 中，GT Y 从重复当前手初始化优化到平均 `0.119 cm` RMSE，生成 Y 仅到 `0.771 cm`；逐样本生成结果为 `0.702/0.658/0.953 cm`。同一优化器能近乎恢复 GT，说明生成 Y 的残余误差不能只归因于 inverse 优化失败。
+
+**决策**
+保留长训 checkpoint、阶段化/接触分布/单双手分组评估和 MANO 可实现性脚本；当前推荐 epoch 40，而非 epoch 45、50 或最后一轮。延长训练本身没有稳定收益，且生成 Y 与 MANO 流形仍有约 `0.65 cm` 的额外差距。下一步优先扩大 inverse 样本数并研究可实现性约束，不再盲目增加 epochs。

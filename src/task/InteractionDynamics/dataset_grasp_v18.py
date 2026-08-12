@@ -160,8 +160,9 @@ class GraspV18Dataset(Dataset):
 
 class CachedGraspDataset(Dataset):
     def __init__(self, root: str | Path, split: str) -> None:
-        self.shards = [torch.load(path, map_location="cpu")
-                       for path in sorted((Path(root) / split).glob("*.pt"))]
+        self.paths = sorted((Path(root) / split).glob("*.pt"))
+        self.event_indices = [int(path.stem.rsplit("_", 1)[-1]) for path in self.paths]
+        self.shards = [torch.load(path, map_location="cpu") for path in self.paths]
         if not self.shards: raise ValueError(f"No V18 cache for {split}")
         self.offsets = [0]
         for shard in self.shards: self.offsets.append(self.offsets[-1] + len(shard["state"]))
@@ -169,4 +170,6 @@ class CachedGraspDataset(Dataset):
     def __getitem__(self, index):
         shard = bisect.bisect_right(self.offsets, index) - 1
         local = index - self.offsets[shard]
-        return {key: value[local] for key, value in self.shards[shard].items()}
+        item = {key: value[local] for key, value in self.shards[shard].items()}
+        item["event_index"] = torch.tensor(self.event_indices[shard])
+        return item

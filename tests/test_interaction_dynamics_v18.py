@@ -1,7 +1,7 @@
 import torch
 
 from src.task.InteractionDynamics.dataset_grasp_v18 import _rigid_world_to_reference
-from src.task.InteractionDynamics.eval_grasp_v18 import trajectory_statistics
+from src.task.InteractionDynamics.eval_grasp_v18 import subset_masks, trajectory_statistics
 from src.task.InteractionDynamics.grasp_interaction_diffusion import GraspInteractionDiffusion
 
 
@@ -31,3 +31,12 @@ def test_v18_diffusion_has_no_goal_input():
     output=model(torch.randn(2,8,56),torch.randn(2,8,4),torch.randn(2,8,3),
                  torch.randn(2,8,5,6),torch.tensor([1,2]))
     assert output.shape==(2,8,56)
+
+
+def test_v18_1_formation_transition_maintenance_masks():
+    state=torch.zeros(3,128,4); state[...,3]=3.; state[1:,:5,3]=1.
+    batch={"state":state,"frame":torch.tensor([2,2,5]),"grasp_frame":torch.tensor([5,5,5])}
+    masks=subset_masks(batch)
+    assert masks["formation"].tolist()==[True,False,False]
+    assert masks["transition"].tolist()==[False,True,False]
+    assert masks["maintenance"].tolist()==[False,False,True]

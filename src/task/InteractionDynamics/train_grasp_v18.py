@@ -40,6 +40,8 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int)
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--eval-every", type=int, default=1)
+    parser.add_argument("--resume", type=Path)
+    parser.add_argument("--save-every", type=int, default=5)
     args = parser.parse_args(); config = yaml.safe_load(Path(args.config).read_text())
     rank, world, local = (int(os.getenv(name, default)) for name, default in
                           (("RANK", 0), ("WORLD_SIZE", 1), ("LOCAL_RANK", 0)))
@@ -61,6 +63,12 @@ def main() -> None:
     if world > 1: model = DDP(model, device_ids=[local])
     optimizer = torch.optim.AdamW(model.parameters(), lr=config["training"]["lr"],
                                   weight_decay=config["training"]["weight_decay"])
+    start_epoch = 0; global_step = 0
+    if args.resume:
+        checkpoint = torch.load(args.resume, map_location=device)
+        (model.module if world > 1 else model).load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        start_epoch, global_step = checkpoint["epoch"], checkpoint["global_step"]
     sampler = DistributedSampler(train, world, rank, shuffle=True) if world > 1 else None
     loader = DataLoader(train, batch_size=config["training"]["per_gpu_batch"], sampler=sampler,
                         shuffle=sampler is None, num_workers=config["training"]["num_workers"],
@@ -69,8 +77,9 @@ def main() -> None:
                             shuffle=False, num_workers=2)
     _, alpha_bar = cosine_schedule(config["diffusion"]["steps"], device)
     epochs = args.epochs or config["training"]["epochs"]
-    global_step = 0; best_rmse = float("inf"); best_stable = (-1., float("inf"))
-    for epoch in range(epochs):
+    best_rmse = float("inf"); best_stable = (-1., float("inf"))
+    checkpoint_dir = args.output / "checkpoints"; checkpoint_dir.mkdir(exist_ok=True)
+    for epoch in range(start_epoch, epochs):
         if sampler: sampler.set_epoch(epoch)
         model.train(); started = time.time(); losses = []
         for batch in loader:
@@ -107,6 +116,8 @@ def main() -> None:
                           "stats": {key: value.cpu() for key, value in stats.items()},
                           "config": config, "val": metrics}
             torch.save(checkpoint, args.output / "latest.pt")
+            if (epoch + 1) % args.save_every == 0:
+                torch.save(checkpoint, checkpoint_dir / f"epoch_{epoch + 1:03d}.pt")
             if score < best_rmse:
                 best_rmse = score; torch.save(checkpoint, args.output / "best_rmse.pt")
             stable_key = (metrics["diffusion_stable_success_rate"], -score)
