@@ -1243,3 +1243,22 @@ V20 baseline 的 val-best 位于 step 500：`r/d/v MAE=0.633/0.554/0.229 cm`，�
 
 **决策**
 保留 Direct-H baseline。它相对 Y→H 的 test r/d/v 分别改善约 `11%/29%/13%`，证明额外 inverse mapping 确有代价；但 Direct-H r/d 仍比 Free-Y 差约 `24%/13%`，所以 deterministic H representation/dynamics 也是主要 accuracy bottleneck，不能把 V20.2 失败完全归因于 inverse。Direct-H 明显改善 stable formation，体现结构可实现性的行为收益。暂不进入 V20.4 联合模型；下一步若继续，应扩大 subject/object 覆盖并研究 stochastic H，而不是只增强 deterministic decoder。
+
+## 实验：V20.4 Parallel Y/H Fusion
+
+**假设**
+Free-Y 的 r/d 与接触定位更准，Direct-H 的 v 和整手时序一致性更强；若两者误差互补，冻结分支后的 channel 选择或连续 velocity 插值应同时保留局部几何并改善 stable 行为。
+
+**观察到的失败 / 现象**
+同一 24/6/6 event split 上，Free-Y test `r/d/v RMSE=1.198/0.712/0.307 cm`、stable/formation stable `38.5%/12.5%`；Direct-H 为 `1.492/0.801/0.264 cm`、`79.5%/60.0%`。两者呈现明确 accuracy/structure 权衡。
+
+**诊断与改动**
+新增完全无训练的 Phase 0 evaluator，同时推理冻结 V20 与 V20.3，穷举 YYY 到 HHH 的八种 r/d/v 来源并保持 p 来自 Free-Y；另扫 `α={0,0.1,0.25,0.5,0.75,0.9,1}` 的 velocity 插值，统计逐样本 H 胜率、误差相关性和 oracle。Phase 0 通过后，把 train/val/test 的两分支预测缓存为 312/78/78 samples，只训练读取 `dY,dH,|Δd|,|Δr|,|Δv|,|vY|,|vH|,t` 的 8→32→32→1 gate；loss 只含 normalized v MSE，backbone 与 MANO 均不参与训练。
+
+**结果**
+Phase 0 test 的 `YYH` 保持 Free-Y 的 `r/d RMSE=1.198/0.712 cm` 与 contact F1 `0.691`，v RMSE 降到 `0.264 cm`，stable/formation stable 提到 `55.1%/20.0%`。中间 `α=0.5` 的 v RMSE 为 `0.204 cm`，优于 Free-Y `0.307` 与 H endpoint `0.264 cm`；stable/formation 为 `52.6%/15.0%`。Val 最佳固定点约 `α=0.75`，v RMSE `0.224 cm`。H 在 val/test 均有 `73.1%` 样本的 v error 更低；v error correlation 为 `0.604/0.809`，oracle 相对较优 endpoint 的逐样本 RMSE 仍有 `8.4%/4.7%` 上界。
+
+Phase 1 共 2000 steps，val-best 位于 step 100。learned gate 的 val/test v RMSE 为 `0.238/0.215 cm`，均弱于使用其均值的 constant gate `0.237/0.213 cm`；stable/formation 指标也分别完全相同。Test gate 均值/标准差为 `0.406/0.070`，近场 `d<2 cm` 的均值约 `0.50–0.51`、远场约 `0.40`，但该变化没有产生样本相关泛化收益。梯度 finite/nonzero；缓存机制从构造上保证两个 backbone 不更新。
+
+**决策**
+保留 Parallel Y/H 推理接口与 Phase 0/Phase 1 诊断。Phase 0 的 Hard Fusion 与中间 interpolation Gate 均通过，证明两分支确实互补；当前推荐简单固定 velocity 插值，并用 validation 选择 α。微型 learned gate 没有超过相同均值常数，故不把它作为有效模型增益，也不进入 V20.4 Phase 2 feature adapter。下一步若扩大数据，应重新校准固定 α，并在更多 subject/object 上判断 sample-dependent gate 是否获得足够监督。
