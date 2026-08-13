@@ -13,6 +13,7 @@ class PenetrationResult:
     mean_penetration_mm: float | None
     penetrating_point_ratio: float | None
     valid: bool
+    point_penetration_m: np.ndarray | None = None
 
 
 def _watertight(faces: np.ndarray) -> bool:
@@ -22,7 +23,7 @@ def _watertight(faces: np.ndarray) -> bool:
 
 
 def _point_triangle_distance(points: np.ndarray, triangles: np.ndarray,
-                             point_chunk: int = 128, face_chunk: int = 2048) -> np.ndarray:
+                             point_chunk: int = 32, face_chunk: int = 1024) -> np.ndarray:
     """Ericson closest-point regions 的向量化实现。"""
     result = np.full(len(points), np.inf, np.float64)
     for start in range(0, len(points), point_chunk):
@@ -68,8 +69,8 @@ def _point_triangle_distance(points: np.ndarray, triangles: np.ndarray,
     return result
 
 
-def _inside_mesh(points: np.ndarray, triangles: np.ndarray, point_chunk: int = 128,
-                 face_chunk: int = 4096) -> np.ndarray:
+def _inside_mesh(points: np.ndarray, triangles: np.ndarray, point_chunk: int = 32,
+                 face_chunk: int = 1024) -> np.ndarray:
     """以固定非轴向射线做奇偶相交测试，避免依赖 rtree。"""
     inside = np.zeros(len(points), bool)
     direction = np.array([1., .37139068, .69474659])
@@ -121,4 +122,5 @@ def penetration_from_mesh(hand_points_object: np.ndarray, object_vertices: np.nd
     penetrating = penetration > 1e-7
     return PenetrationResult(p_anchor, float(penetration.max(initial=0) * 1000),
                              float(penetration.mean() * 1000),
-                             float(penetrating.mean()), True)
+                             float(penetrating.mean()), True,
+                             penetration.astype(np.float32))

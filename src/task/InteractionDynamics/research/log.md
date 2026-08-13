@@ -1167,3 +1167,17 @@ V19 把 1538 个 MANO 三角面中心当作 mesh 顶点，却继续使用索引�
 
 **决策**
 保留解析诊断、latch 与 object-follow 系统链路；不修改 Y、不重训、不把 p 加入 stable gate。下一步若要加入 penetration loss 或 gate，应先扩大 GT/pred 分布统计并按 GT percentile 定阈值。
+
+## 实验：V20 causal Field Dynamics controlled gate
+
+**假设**
+移除 `tokens.mean(1)`、`current_h` 与 MANO-H 输出，始终执行 `[B,N,*]→[B,N,*]`，可使 latent field 真正使用 object-anchor 空间身份。
+
+**改动**
+独立新增 causal `Y=[r,d,v,p]`、cache、field Transformer、normalized residual trainer 和 intervention evaluator，不修改 V18/V19。`v_t` 只使用 `h_t-h_{t-1}`；p 由相同 hand surface points 的 mesh penetration 聚合，invalid mesh 通过 mask 排除。网络以 current Y、anchor xyz、local object patch 为逐 anchor 输入，shared pointwise head 输出 `[B,N,8,8]`，无 pooling/global token/current H。新增 causal observed stable API，区别于 V19.2 predicted latch。
+
+**结果**
+单真实 stable event 共 13 个窗口，训练 1200 steps。normal `r/d/v/p MAE=0.167/0.137/0.052/0.023 cm`，persistence 为 `1.202/1.767/0.244/0.075 cm`；输出空间 variance `0.220`，未 collapse。mean-token 的 `r/d/v/p=0.564/0.483/0.086/0.083 cm`，token shuffle 为 `0.686/0.540/0.081/0.113 cm`，均显著退化。同步置换完整 field 后逆置换输出最大误差 `1.43e-6`。上述数字来自修正后的单次 soft aggregation p；初版双重聚合结果未采用。
+
+**决策**
+controlled overfit、空间身份 intervention 和 permutation equivariance Gate 通过，保留 V20 field-native 主干。当前只有单 event，不能声称 unseen sequence 优于 persistence；因此按版本纪律暂不实现 V20.1 MANO projector，下一步应构建小型 sequence-disjoint cache 并完成泛化 Gate。

@@ -40,6 +40,14 @@ class StableDetector:
         return StableState(contact, u_rms, p_max, stable, self.stable_count, self.latched)
 
 
+class CausalStableDetector(StableDetector):
+    """V20 observed latch：输入当前 d_t 与过去→当前 v_t，不读取未来。"""
+
+    def observe(self, d_cm: np.ndarray, v_cm: np.ndarray,
+                p_mm: np.ndarray | None = None) -> StableState:
+        return self.update(GraspObservation(d_cm=d_cm, u_cm=v_cm, p_mm=p_mm))
+
+
 def detect_latch(distance_cm: np.ndarray, motion_cm: np.ndarray,
                  penetration_mm: list[np.ndarray | None] | None = None,
                  consecutive_frames: int = 3) -> tuple[int | None, list[StableState]]:
