@@ -1139,3 +1139,17 @@ V18.5 的 residual std 错把 anchor 与 56 个 channel 一起聚合成 scalar�
 
 **决策**
 保留通用 viewer shell、MANO provider 和最小交互。第一版不加入 ghost、视频导出、内部 loss/latent 热图，也不把 reference trajectory 称为模型输入；等真正引入 object-trajectory condition 或可靠物理 evaluator 后，再扩充对应字段。
+
+## 实验：V19.1 MANO mesh 拓扑修复
+
+**观察到的失败 / 现象**
+V19 把 1538 个 MANO 三角面中心当作 mesh 顶点，却继续使用索引原始 778 个顶点的 MANO faces，导致预测与 GT 都出现错误连线和畸形拓扑。
+
+**改动**
+保持训练和 Y 构造中的 `face_centers` 不变；新增 viewer-only MANO 顶点恢复函数，沿用 structured decoder 的同一 `ΔH→world rotation/translation/pose` 坐标链，直接返回 `output.vertices`。GT 同样直接使用 MANO world vertices。GT 渲染改为绿色半透明实心网格。
+
+**结果**
+预测与 GT 均恢复为每帧 778 vertices、1538 faces，所有 face index 均落在原始顶点范围内；V18.6 test sample 0 的 provider 与 Viser 服务冒烟测试通过。
+
+**决策**
+保留修复。viewer 与训练/Y 链路职责明确分离，后续不能再将 interaction surface points 配合 MANO faces 当作可视化网格。

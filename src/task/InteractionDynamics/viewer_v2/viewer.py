@@ -52,7 +52,7 @@ def main() -> None:
         if sample.gt_hand is not None:
             gt = sample.gt_hand[frame]
             gt_handle = server.scene.add_mesh_simple("/world/hand/gt", gt.vertices, gt.faces,
-                color=(80, 220, 120), opacity=.32, wireframe=True, visible=show_gt.value)
+                color=(80, 220, 120), opacity=.35, wireframe=False, visible=show_gt.value)
         centers = obj.poses[:, :3, 3]
         path_handle = server.scene.add_spline_catmull_rom("/world/object/reference_trajectory",
             centers, color=(255, 170, 40), line_width=2., visible=show_object_path.value)

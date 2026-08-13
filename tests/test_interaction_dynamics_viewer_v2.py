@@ -20,3 +20,12 @@ def test_mano_backend_returns_parameterization_free_frames() -> None:
     assert len(prediction) == 9 and len(gt) == 9
     assert isinstance(prediction[0], HandFrame)
     assert prediction[0].vertices.shape == (5, 3)
+
+
+def test_mano_mesh_faces_index_original_vertices() -> None:
+    """viewer mesh 必须传原始 MANO 顶点，不能传逐面中心。"""
+    vertices = np.zeros((9, 778, 3), np.float32)
+    faces = np.array([[0, 1, 777]], np.int32)
+    frame = ManoBackend().decode_prediction({}, (vertices, faces))[0]
+    assert frame.vertices.shape[0] == 778
+    assert int(frame.faces.max()) < frame.vertices.shape[0]
