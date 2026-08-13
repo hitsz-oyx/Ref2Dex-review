@@ -1262,3 +1262,17 @@ Phase 1 共 2000 steps，val-best 位于 step 100。learned gate 的 val/test v 
 
 **决策**
 保留 Parallel Y/H 推理接口与 Phase 0/Phase 1 诊断。Phase 0 的 Hard Fusion 与中间 interpolation Gate 均通过，证明两分支确实互补；当前推荐简单固定 velocity 插值，并用 validation 选择 α。微型 learned gate 没有超过相同均值常数，故不把它作为有效模型增益，也不进入 V20.4 Phase 2 feature adapter。下一步若扩大数据，应重新校准固定 α，并在更多 subject/object 上判断 sample-dependent gate 是否获得足够监督。
+
+## 实验：V20.5 GT-Y cross-embodiment 三路 viewer
+
+**假设**
+把 GT MANO、由同一 GT causal Y 离线优化的机器人手和 Direct-H MANO 放入统一 canonical object frame，可直接暴露低 Y loss 但姿态、接触或穿透不合理的跨 embodiment case；viewer 应只负责核查，不在线优化。
+
+**诊断与改动**
+扫描 `data/raw_data/robot_hands/dex-urdf`，确认 Allegro、LEAP、Shadow、Barrett 均有实际 URDF/mesh。`graspenv` 没有 URDF/FK 库，因此实现只覆盖 fixed/revolute 与 triangle visual mesh 的最小可微 FK；Allegro 为 16 DoF、21 个 visual、48153 vertices/27258 faces。优化固定采样 128 个 robot visual vertices，最终再生成完整 mesh，避免 `9×128×48153` soft correspondence。V20 cache 使用首帧 reference frame而非零中心 canonical frame；builder 额外读取 raw object pose，把 GT/Pred MANO、anchors 和 Y 的 r/v 统一转入真实 canonical object frame，d 保持不变。viewer 按 `source_raw_file` 建 trajectory index，仅读取离线 cache，支持三路 offset、frame/trajectory/robot 控件、contact/stable 跳转、visibility 和人工标记。
+
+**结果**
+三条 test trajectory 每条缓存 9 帧 GT/Direct-H MANO 和 4 个 Allegro inspect frames。canonical sanity 中 alarmclock object/anchors 均约落在 ±6 cm，修正了旧 reference frame 中约 1 m 的世界平移。300-step alarmclock/camera/cubelarge GT-Y loss 分别 `4.190→0.359`、`347.387→3.863`、`12.681→1.776`；末端 Allegro contact anchors 为 `3/10/6`。alarmclock 仍低于 4-anchor stable 门槛；camera 接触较多但 residual 仍很高。camera 的 Direct-H penetration 因 object mesh watertight 检查无效而显示 N/A。三 trajectory provider 加载通过，Viser 在 `127.0.0.1:8095` 成功启动。
+
+**决策**
+保留 V20.5 数据链、Allegro backend 和三路 viewer，当前只作为人工泛化核查工具。优化 loss 明显下降证明梯度与目标链有效，但三个样本已出现接触不足和高 residual，不把结果解释为 GT-Y 已跨 embodiment 泛化。LEAP/Shadow/Barrett 仅完成资产发现，未生成 optimization cache，因此不宣称支持；下一步应先人工标记更多 Allegro trajectory，再决定扩展 robot backend 或改进 optimizer。
