@@ -30,7 +30,7 @@ class ManoLayers:
 
 def residual_std(dataset) -> torch.Tensor:
     values = torch.cat([dataset[i]["residual"] for i in range(len(dataset))], 0).double()
-    return values.std((0, 1)).float().clamp_min(.05).reshape(1, 1, -1)
+    return values.std(0).float().clamp_min(.05).reshape(1, 1, -1)
 
 
 def move(batch: dict, device: torch.device) -> dict:

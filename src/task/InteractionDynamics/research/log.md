@@ -1106,3 +1106,36 @@ Controlled32 最佳 checkpoint 的 `r/u/d=0.0580/0.0378/0.0437 cm`、contact F1 
 
 **决策**
 保留 V18.5 structured decoder 与纯 Y supervision。单变量替换监督后 formation 从约 2% 恢复到 49%，支持“H 应是内部合法性变量，而不是必须复制 GT human pose”的核心假设；V18.4 的失败不能简单归因于 MANO-H 过强。当前中等规模 V18.5 仍弱于 full-data free-Y epoch40 的 `85.7%` stable，且均匀 test 的 spatial RMSE 约 `1.5 cm`；因此尚不替换 V18。下一步可先扩大同一 deterministic baseline 判断数据效应，再决定是否需要 H-space stochastic model；不应重新加入强 H-GT loss。
+
+## 实验：V18.6 逐 channel normalization 与全量 MANO-Y 训练
+
+**假设**
+V18.5 的 residual std 错把 anchor 与 56 个 channel 一起聚合成 scalar，实际接近 raw Y MSE。恢复 `[56]` 逐 channel normalization 应改善 interaction 与 terminal stable proxy；若中等规模结论保持，再公平扩展到完整 V18 数据。
+
+**观察到的失败 / 现象**
+代码审计确认 `torch.cat(...,0)` 后 tensor 为 `[N×128,56]`，旧 `std((0,1))` 只得到 scalar，而原设计要求 `std(0)`。该问题不否定 V18.5 的 Y-supervision 收益，但改变各 channel 权重，必须单变量复现。
+
+**诊断与改动**
+只把 residual std 改为 `[1,1,56]`，保持 V18.5 的 seed、前 2048 train、512 val/test、1500 steps、模型和 checkpoint criterion。新增 shape 测试。随后构建完整独立 MANO-H cache，覆盖与 V18 完全相同的 train/val/test `16357/2035/2035` windows；parity 仍在约 `1e-4 cm` 量级。新增四卡 DDP/BF16、在线 W&B、全量 validation 和 best/latest checkpoint 的正式训练入口。
+
+**结果**
+逐 channel 版在相同前 512 test 上达到 `r/u/d=1.289/0.373/1.117 cm`、contact F1 `0.630`、terminal 3-frame stable proxy `63.3%`、formation stable `51.8%`；scalar V18.5 对应为 `1.324/0.411/1.202 cm`、`0.622`、`57.2%/49.4%`。Normalized H mean/max abs 为 `0.210/2.525`，无元素超过 3σ，故 prior 继续为 0。
+
+四卡真实 10-step 吞吐压测中，per-GPU batch 8/16/24/32 分别约为 `124/220/265/299 samples/s`，均未 OOM；正式选 batch 32/global 128。完整 epoch 128 optimizer steps、训练主体约 39 秒。按用户更新后的约一小时预算，启动 60 epochs、每 5 epochs 全量 validation 的 W&B online run `yi9wmzf7`。Epoch 5 train loss 已从 epoch 1 的 `1.492` 降到 `0.979`；validation `u/r/d=0.439/1.452/1.345 cm`，terminal contact mean `21.8`，GT `24.1`，训练数值正常。
+
+**决策**
+保留逐 channel normalization，并以它作为 V18.6 full-data 唯一正式配置。正式训练完成 60 epochs/7680 steps，训练主体约 39 分钟；train loss `1.492→0.360`，但 validation 在 epoch 10 最佳并在后续退化，因此采用 epoch 10 而不是最后一轮。完整 2035-window test 的 `u/r/d=0.440/1.392/1.224 cm`、terminal 3-frame stable proxy `72.8%`、formation stable `70.7%`、contact F1 `0.634`、`r/d` violation 0；normalized H 超过 3σ 的比例为 `0.029%`。W&B run `yi9wmzf7` 已完成同步。全量数据显著改善 formation，但仍弱于 free-Y epoch40 的 stable proxy；下一步需把 accuracy/realizability 权衡与下游行为一起判断。
+
+## 实验：V19 通用轨迹抓取 Viewer v2
+
+**假设**
+可视化应面向“reference object trajectory 与 hand grasp/manipulation trajectory”这一通用任务，而不是暴露 `r/u/d` 等内部表示；viewer 与手参数化解耦后，未来可在不修改 UI 的情况下接入 Inspire/Allegro 等 backend。
+
+**改动**
+新增 `viewer_v2/backends.py` 的 `HandFrame/ObjectTrajectory/VisualizationSample/HandBackend` 接口和首个 `ManoBackend`。`prediction_v18_5.py` 独立负责加载 V18.5/V18.6 checkpoint、MANO-H cache、structured decoder，恢复 predicted/GT MANO meshes 和 GRAB canonical object mesh/9-frame world poses。`viewer.py` 只消费通用 mesh frames，使用 Viser 提供 sample/frame slider、Play/Stop、prediction/GT/reference trajectory 显隐和通用指标。当前模型未以任意 object trajectory 为 condition，界面明确标记 `Reference Object Trajectory`。
+
+**结果**
+使用 V18.6 epoch 10 best checkpoint 与 full test cache 的 sample 0 完成 provider smoke：得到 2035-sample provider、9 帧 predicted/GT hand、`19518 vertices/39044 faces` object mesh、`[9,4,4]` object poses。Viser 1.0.30 服务在 `127.0.0.1:8089` 成功启动并创建场景/GUI。当前仓库没有可信的 collision/penetration evaluator，第一版明确显示 N/A；grasp 指标沿用并命名为 terminal grasp proxy，避免冒充物理成功。
+
+**决策**
+保留通用 viewer shell、MANO provider 和最小交互。第一版不加入 ghost、视频导出、内部 loss/latent 热图，也不把 reference trajectory 称为模型输入；等真正引入 object-trajectory condition 或可靠物理 evaluator 后，再扩充对应字段。

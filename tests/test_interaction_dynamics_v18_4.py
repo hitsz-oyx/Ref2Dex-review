@@ -6,6 +6,7 @@ from src.task.InteractionDynamics.research.v18_4.build_mano_h_cache import delta
 from src.task.InteractionDynamics.interaction_field import build_interaction_y
 from src.task.InteractionDynamics.mano_y_decoder_v18_5 import build_interaction_y_batched, pack_batched_future
 from src.task.InteractionDynamics.state_interaction_diffusion import pack_state_future
+from src.task.InteractionDynamics.train_mano_y_v18_5 import residual_std
 
 
 def test_mano_h_object_frame_translation_and_rotation() -> None:
@@ -44,3 +45,14 @@ def test_batched_chunked_y_matches_frozen_teacher_and_has_gradient() -> None:
     assert torch.allclose(future, torch.stack(expected), atol=2e-5)
     future.square().mean().backward()
     assert hand.grad is not None and torch.isfinite(hand.grad).all()
+
+
+def test_v18_6_residual_std_is_per_channel() -> None:
+    class TinyDataset:
+        def __len__(self): return 3
+        def __getitem__(self, index):
+            scale = torch.arange(1, 57).float()
+            return {"residual": torch.randn(5, 56) * scale + index}
+    std = residual_std(TinyDataset())
+    assert std.shape == (1, 1, 56)
+    assert not torch.allclose(std[..., 0], std[..., -1])
