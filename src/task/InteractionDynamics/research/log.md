@@ -1226,3 +1226,20 @@ V20 baseline 的 val-best 位于 step 500：`r/d/v MAE=0.633/0.554/0.229 cm`，�
 
 **决策**
 保留 cache/schema 与真实 validation 修正，判定当前小数据 Stage B 泛化 Gate 不通过，按 V20.2 纪律不运行 Stage C。controlled 结果证明 optimization 可行，但不能证明 learned realizer 泛化；下一步应优先扩大事件与 subject/object 覆盖、改善 early stopping，而不是用联合 field fine-tuning 掩盖 realizer 失败。
+
+## 实验：V20.3 Direct-H parallel baseline
+
+**假设**
+若 V20.2 的主要瓶颈是额外的 predicted `Y→H` inverse mapping，则容量接近但直接从 `(current Y, object, current H)` 预测 `ΔH` 的模型，应在相同 sequence-disjoint split 上明显优于 V20.2；若两者接近，则 deterministic H dynamics 本身才是主瓶颈。
+
+**改动**
+新增 Direct-H：当前 8-channel causal field、anchor 与 object patch 形成 set tokens，8 个 future query 加 current-H embedding 后 cross-attend 该 set，再经两层 temporal Transformer 输出 zero-init normalized `ΔH[8,30]`。不读取 predicted future Y、V20 hidden 或 GT H loss；只使用既有 MANO decoder 的 normalized r/d/v loss与 `1e-4` 3σ prior。新增 No-Y、跨样本 Shuffle-Y、No-object、No-current-H、anchor permutation、stable/formation/contact/penetration 和统一 A/B/C evaluator。
+
+**结果**
+13-window controlled 训练 1000 steps 后 `r/d/v MAE=0.156/0.137/0.065 cm`、RMSE `0.233/0.189/0.090 cm`，gradient 与链路通过，未继续刷分。312/78/78 split 训练 4000 steps，val-best 约在 step 750：`r/d/v RMSE=1.015/0.903/0.259 cm`；No-Y `1.553/1.685/0.361`、Shuffle-Y `1.113/1.083/0.278`、No-object `1.918/1.828/0.714`、No-current-H `1.438/1.506/0.456 cm`，输入依赖成立。test 统一比较：Free-Y `1.198/0.712/0.307`，Direct-H `1.492/0.801/0.264`，V20.2 Y→H `1.682/1.120/0.304 cm`。Direct-H stable/formation stable `79.5%/60.0%`，Free-Y `38.5%/12.5%`，Y→H `78.2%/57.5%`，GT `83.3%/67.5%`；contact F1 分别为 `0.603/0.691/0.533`（Direct/Free/Y→H）。Direct-H 前 12 个 test 的平均最大/平均穿透为 `1.245/0.0115 mm`，permutation 输出最大差 `2.38e-7`，normalized H 无元素超过 3σ。
+
+**可信度检查与诊断**
+全 test GT `ΔH→Y` 每样本最大 parity error 的均值为 `7.25e-4 cm`，但 p95/max 为 `2.02e-3/2.22e-3 cm`，严格 max `<1e-3 cm` Gate 未通过。离群集中在 cubelarge/camera 的 r 单点；对应 d/v 最大仅约 `1e-4–2e-4 cm`、样本平均绝对误差约 `2e-5–4e-5 cm`，符合 float32 MANO/axis-angle 重建数值误差而非坐标或时间错位，远小于模型差距，但不把严格 Gate 记作通过。
+
+**决策**
+保留 Direct-H baseline。它相对 Y→H 的 test r/d/v 分别改善约 `11%/29%/13%`，证明额外 inverse mapping 确有代价；但 Direct-H r/d 仍比 Free-Y 差约 `24%/13%`，所以 deterministic H representation/dynamics 也是主要 accuracy bottleneck，不能把 V20.2 失败完全归因于 inverse。Direct-H 明显改善 stable formation，体现结构可实现性的行为收益。暂不进入 V20.4 联合模型；下一步若继续，应扩大 subject/object 覆盖并研究 stochastic H，而不是只增强 deterministic decoder。
