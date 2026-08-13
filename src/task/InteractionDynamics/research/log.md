@@ -1195,3 +1195,17 @@ sample 0 的 free→GT `r/d/v RMSE=0.346/0.184/0.070 cm`。默认 100 steps、lr
 
 **决策**
 保留 decoder、projector evaluator 与负结果，但 V20.1 optimization Gate 未通过，停止扩展到 4–8 windows。当前证据只能说明零初始化 Adam 存在严重 basin/conditioning 问题，不能据此判定 predicted Y 不可实现，也不支持训练 learned projector。下一步若继续，应先在 oracle GT target 上研究更好的初始化或分阶段/二阶优化，直到能够接近已知 parity 解。
+
+## 实验：V20.2 frozen H realizer regularization
+
+**假设**
+保持 V20 object-indexed `Y→Y` 主路不变，只让 learned realizer 读取 predicted Y、object geometry 与 current H，可绕过 V20.1 零初始化逐样本 Adam 的坏 basin；冻结 realizer 后，MANO feasibility gradient 可在不损害 free field 的前提下微调 V20。
+
+**改动**
+新增逐 future timestep query 的 spatial cross-attention realizer、小 temporal Transformer 与 zero-init `ΔH[8,30]` head；`ΔH=z·std_H`，不使用 GT H loss。Stage B 完全冻结 FieldDynamics 并 stop-gradient predicted Y，只优化 normalized GT `[r,d,v]` realization loss与 `1e-4` 弱 3σ prior。加入 No-Y、跨样本 Shuffle-Y、No-object、No-current-H 消融。Stage C 冻结 realizer，以 `L_field+0.2L_feasible+0.05L_consistency`、field lr `3e-5` 微调 500 steps。
+
+**结果**
+同一 controlled event 共 13 windows。Stage B 2000 steps，最佳约在 step 1750：free→GT `r/d/v RMSE=0.228/0.169/0.073 cm`，realized→GT 为 `0.119/0.089/0.048 cm`，显著优于 V20.1 Adam 的 `1.421/1.250/0.276 cm`。No-Y 为 `0.769/0.923/0.523 cm`，batch Shuffle-Y 为 `0.493/0.656/0.129 cm`；逐样本 evaluator 改为跨样本替换后同样明显退化，说明 normal realizer 确实使用 Y。normalized H 全集 `>3σ` 比例约 `1.35%`、最大约 `4.84σ`。Stage C 500 steps 后，free field 降至 `0.158/0.101/0.039 cm`，realized field 为 `0.105/0.074/0.042 cm`，未发生 field accuracy regression。4 个窗口的 realized/GT stable 大体一致；终点穿透与 GT 同量级，但单个窗口曾出现 realized stable 假阳性，样本太少不能设阈值。
+
+**决策**
+保留 V20.2 Stage B/C：在 controlled overfit 上同时通过 realization、shortcut 和 no-regression Gate，说明 predicted Y 可供 learned MANO realizer 使用，V20.1 的负结果主要是 optimization 方法问题。当前不能外推到 unseen sequence；下一步应构建 sequence-disjoint 多事件 cache，分别验证 realizer 泛化与 frozen-realizer feasibility fine-tuning，而不是继续增加 controlled 容量。
