@@ -14,9 +14,14 @@ from src.task.InteractionDynamics.field_dynamics_v20 import FieldDynamicsTransit
 
 def channel_statistics(dataset) -> tuple[torch.Tensor, torch.Tensor]:
     values = torch.cat([dataset[i]["delta_y"].reshape(-1, 8) for i in range(len(dataset))])
-    valid = torch.cat([dataset[i]["p_valid"].expand(128, 8).reshape(-1) for i in range(len(dataset))])
-    mean, std = values.mean(0), values.std(0).clamp_min(.01)
-    if not bool(valid.any()): mean[7] = 0; std[7] = 1
+    mean = values[:, :7].mean(0); std = values[:, :7].std(0).clamp_min(.01)
+    valid_p = [dataset[i]["delta_y"][..., 7].reshape(-1) for i in range(len(dataset))
+               if bool(dataset[i]["p_valid"])]
+    if valid_p:
+        p = torch.cat(valid_p); p_mean = p.mean().reshape(1); p_std = p.std().clamp_min(.01).reshape(1)
+    else:
+        p_mean = torch.zeros(1); p_std = torch.ones(1)
+    mean = torch.cat([mean, p_mean]); std = torch.cat([std, p_std])
     return mean.reshape(1, 1, 1, 8), std.reshape(1, 1, 1, 8)
 
 
@@ -34,16 +39,19 @@ def evaluate(model, loader, mean, std, device, intervention="normal"):
     absolute = torch.zeros(4, device=device); count = torch.zeros(4, device=device)
     persistence = torch.zeros(4, device=device); spatial = []
     for raw in loader:
-        batch = {k: v.to(device) for k, v in raw.items()}
+        batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in raw.items()}
         pred = model(batch["current_y"], batch["anchors_cm"], batch["object_patches"], intervention)
         pred = pred * std + mean; target = batch["delta_y"]
-        for i, value in enumerate((pred[..., :3]-target[..., :3], pred[..., 3]-target[..., 3],
-                                   pred[..., 4:7]-target[..., 4:7], pred[..., 7]-target[..., 7])):
-            if i == 3:
-                mask = batch["p_valid"][:, None, None].expand_as(value); value = value[mask]
+        values = (pred[..., :3]-target[..., :3], pred[..., 3]-target[..., 3],
+                  pred[..., 4:7]-target[..., 4:7])
+        targets = (target[..., :3], target[..., 3], target[..., 4:7])
+        for i, value in enumerate(values):
             absolute[i] += value.abs().sum(); count[i] += value.numel()
-        for i, value in enumerate((target[..., :3], target[..., 3], target[..., 4:7], target[..., 7])):
+        for i, value in enumerate(targets):
             persistence[i] += value.abs().sum()
+        p_mask = batch["p_valid"][:, None, None].expand_as(target[..., 7])
+        absolute[3] += (pred[..., 7] - target[..., 7])[p_mask].abs().sum()
+        persistence[3] += target[..., 7][p_mask].abs().sum(); count[3] += p_mask.sum()
         spatial.append(pred.var(1).mean())
     names=("r_mae_cm","d_mae_cm","v_mae_cm","p_mae_cm")
     result={name:float(absolute[i]/count[i].clamp_min(1)) for i,name in enumerate(names)}
@@ -66,7 +74,7 @@ def main():
     for step in range(1,args.steps+1):
         try: raw=next(iterator)
         except StopIteration: iterator=iter(loader);raw=next(iterator)
-        batch={k:v.to(device) for k,v in raw.items()}; pred=model(batch["current_y"],batch["anchors_cm"],batch["object_patches"])
+        batch={k:(v.to(device) if torch.is_tensor(v) else v) for k,v in raw.items()}; pred=model(batch["current_y"],batch["anchors_cm"],batch["object_patches"])
         terms,loss=loss_terms(pred,batch["delta_y"],batch["p_valid"],mean,std)
         optimizer.zero_grad(set_to_none=True);loss.backward();optimizer.step()
         if step%args.eval_every==0 or step==args.steps:

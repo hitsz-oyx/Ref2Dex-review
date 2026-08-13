@@ -4,6 +4,8 @@ import torch
 from src.task.InteractionDynamics.field_dynamics_v20 import FieldDynamicsTransition
 from src.task.InteractionDynamics.field_state_v20 import build_causal_field
 from src.task.InteractionDynamics.viewer_v2.stable import CausalStableDetector
+from src.task.InteractionDynamics.train_field_v20 import channel_statistics
+from src.task.InteractionDynamics.mano_field_decoder_v20_1 import build_causal_rdv_batched
 
 
 def test_causal_velocity_uses_current_minus_previous() -> None:
@@ -36,3 +38,20 @@ def test_causal_stable_observation_uses_v_channel() -> None:
     detector = CausalStableDetector(consecutive_frames=1)
     state = detector.observe(np.ones(8), np.full((8, 3), .1))
     assert state.latched and state.u_rms_cm < .3
+
+
+def test_invalid_p_does_not_affect_channel_statistics() -> None:
+    valid = {"delta_y": torch.zeros(2, 2, 8), "p_valid": torch.tensor(True)}
+    valid["delta_y"][..., 7] = 1
+    invalid = {"delta_y": torch.zeros(2, 2, 8), "p_valid": torch.tensor(False)}
+    invalid["delta_y"][..., 7] = 1000
+    mean, std = channel_statistics([valid, invalid])
+    assert float(mean[..., 7]) == 1
+    assert abs(float(std[..., 7]) - .01) < 1e-7
+
+
+def test_batched_causal_field_matches_single_teacher() -> None:
+    torch.manual_seed(1);surface=torch.randn(1,4,7,3)*.01;anchors=torch.randn(1,5,3)*.01
+    batched=build_causal_rdv_batched(surface,anchors)
+    single=build_causal_field(surface[0],anchors[0],torch.zeros(4,7))[...,:7].transpose(0,1)*100
+    torch.testing.assert_close(batched[0],single,atol=1e-5,rtol=1e-5)

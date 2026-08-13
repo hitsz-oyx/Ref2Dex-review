@@ -18,7 +18,8 @@ class CachedFieldV20Dataset(Dataset):
 
     def __len__(self) -> int: return self.offsets[-1]
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, index: int) -> dict:
         shard = bisect.bisect_right(self.offsets, index) - 1
         local = index - self.offsets[shard]
-        return {key: value[local] for key, value in self.shards[shard].items()}
+        return {key: (value[local] if torch.is_tensor(value) else value)
+                for key, value in self.shards[shard].items()}

@@ -12,6 +12,7 @@ from process.GRAB.raw import DEFAULT_GRAB_ROOT, GRABSeqData, load_object_canonic
 from src.task.InteractionDynamics.dataset_grasp_v18 import (
     _rigid_world_to_reference, _transform, load_events, sequence_interaction)
 from src.task.InteractionDynamics.field_state_v20 import build_causal_field, residual_target
+from src.task.InteractionDynamics.research.v18_4.build_mano_h_cache import hand_state, delta_h
 from src.task.InteractionDynamics.penetration import penetration_from_mesh
 from src.task.InteractionDynamics.uni3d import gather_points
 
@@ -51,16 +52,32 @@ def main() -> None:
         field=100*build_causal_field(hand_reference,data["anchors"],penetration)
         rows=[]
         for frame in sample_frames:
+            cache_ids=np.arange(frame,frame+9); frame_raw_ids=raw_ids[cache_ids]
+            def param(name: str, width: int) -> torch.Tensor:
+                return torch.from_numpy(np.asarray(params[name][frame_raw_ids],np.float32).reshape(9,width)).to(args.device)
+            orient,pose,transl=param("global_orient",3),param("hand_pose",24),param("transl",3)
+            beta=np.asarray(params["betas"],np.float32)
+            beta=beta[frame_raw_ids] if beta.ndim>1 else np.broadcast_to(beta,(9,beta.shape[-1])).copy()
+            betas=torch.from_numpy(beta).to(args.device);q,t=rotation[cache_ids],translation[cache_ids]
+            h,h_rotation=hand_state(orient,pose,transl,q,t)
             current=field[frame-1];future=field[frame:frame+8].transpose(0,1)
             points=data["object_object"][frame];knn=data["knn"];anchors=data["anchors"]
             patches=torch.cat([100*(gather_points(points[None],knn[None])-anchors[None,:,None]),
                 gather_points(data["normals_object"][frame][None],knn[None])],-1)[0]
             rows.append({"current_y":current.cpu(),"future_y":future.cpu(),
                 "delta_y":residual_target(current,future).cpu(),"anchors_cm":(100*anchors).cpu(),
-                "object_patches":patches.cpu(),"p_valid":torch.tensor(all(valid[x] for x in range(frame,frame+9)))})
+                "object_patches":patches.cpu(),"p_valid":torch.tensor(all(valid[x] for x in range(frame,frame+9))),
+                "current_h":h[0].cpu(),"future_delta_h":delta_h(h,h_rotation).cpu(),
+                "betas":betas.cpu(),"object_rotation":q.cpu(),"object_translation":t.cpu(),
+                "global_orient":orient.cpu(),"hand_pose":pose.cpu(),"transl":transl.cpu(),
+                "raw_frame_ids":torch.from_numpy(frame_raw_ids)})
         if rows:
             folder=args.output/"train";folder.mkdir(parents=True,exist_ok=True)
-            torch.save({k:torch.stack([row[k] for row in rows]) for k in rows[0]},folder/f"event_{event_index:05d}.pt")
+            payload={k:torch.stack([row[k] for row in rows]) for k in rows[0]}
+            side=str(np.load(event.path)["side"].item());payload.update({"side":side,
+                "source_raw_file":source_raw_file,"source_hand_cache":str(event.path),
+                "mano_key":str(event.path.parent.parent.name)+":"+side})
+            torch.save(payload,folder/f"event_{event_index:05d}.pt")
             print(event_index,len(rows),flush=True)
 
 

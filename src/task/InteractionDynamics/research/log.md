@@ -1181,3 +1181,17 @@ V19 把 1538 个 MANO 三角面中心当作 mesh 顶点，却继续使用索引�
 
 **决策**
 controlled overfit、空间身份 intervention 和 permutation equivariance Gate 通过，保留 V20 field-native 主干。当前只有单 event，不能声称 unseen sequence 优于 persistence；因此按版本纪律暂不实现 V20.1 MANO projector，下一步应构建小型 sequence-disjoint cache 并完成泛化 Gate。
+
+## 实验：V20.1 MANO feasibility projector
+
+**假设**
+冻结 V20 后，从 repeat-current-hand 的零 `ΔH` 初始化优化未来 MANO trajectory，可显著缩小 predicted field 到 MANO 可实现流形的 projection gap，并可能纠正 free-field prediction。
+
+**诊断与改动**
+先修复 V20 p normalization 纳入 invalid 0、persistence p 未使用 valid mask 两个指标问题。为既有 controlled shard 补齐 V18.4 同语义的 MANO metadata；新增可微 `ΔH→MANO surface→causal [r,d,v]` decoder、Adam projector、free/projection/projected 三组指标、causal stable 与 post-hoc penetration。GT `ΔH` decoder parity 最大/平均误差 `4.21e-4/2.70e-5 cm`，低于 `1e-3 cm` Gate，坐标与时间语义通过。
+
+**结果**
+sample 0 的 free→GT `r/d/v RMSE=0.346/0.184/0.070 cm`。默认 100 steps、lr `1e-2` 时 normalized field loss `9.40→1.13`，但 projection gap 仍为 `1.391/1.293/0.251 cm`，projected→GT 恶化到 `1.421/1.250/0.276 cm`；free/projected/GT 均未 stable。projected terminal penetration 为 0，GT 最大/均值为 `0.824/0.0008 mm`，但 interaction 尚未投准，因此不能把无穿透视为成功。延长 predicted target 到 500 steps 后 gap 降至 `0.920/0.446/0.118 cm`，曲线仍缓慢下降。以 GT field 为 oracle target、500 steps、lr `0.05` 且关闭 smooth/prior 后，仍只达到 `r/d/v RMSE=0.835/0.396/0.118 cm`，尽管 GT `ΔH` 已证明是精确解。
+
+**决策**
+保留 decoder、projector evaluator 与负结果，但 V20.1 optimization Gate 未通过，停止扩展到 4–8 windows。当前证据只能说明零初始化 Adam 存在严重 basin/conditioning 问题，不能据此判定 predicted Y 不可实现，也不支持训练 learned projector。下一步若继续，应先在 oracle GT target 上研究更好的初始化或分阶段/二阶优化，直到能够接近已知 parity 解。
