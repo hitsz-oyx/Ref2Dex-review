@@ -2,6 +2,8 @@ import numpy as np
 
 from src.task.InteractionDynamics.viewer_v2.backends import (
     HandFrame, ManoBackend, ObjectTrajectory)
+from src.task.InteractionDynamics.penetration import penetration_from_mesh
+from src.task.InteractionDynamics.viewer_v2.stable import StableDetector, GraspObservation
 
 
 def test_object_trajectory_world_vertices() -> None:
@@ -29,3 +31,22 @@ def test_mano_mesh_faces_index_original_vertices() -> None:
     frame = ManoBackend().decode_prediction({}, (vertices, faces))[0]
     assert frame.vertices.shape[0] == 778
     assert int(frame.faces.max()) < frame.vertices.shape[0]
+
+
+def test_penetration_sign_and_non_watertight_failure() -> None:
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], np.float32)
+    faces = np.array([[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]], np.int32)
+    points = np.array([[.1, .1, .1], [2., 2., 2.], [0., .2, .2]], np.float32)
+    result = penetration_from_mesh(points, vertices, faces, points[:2])
+    assert result.valid and result.max_penetration_mm > 0
+    assert result.penetrating_point_ratio == 1 / 3
+    assert result.p_anchor.shape == (2,)
+    assert not penetration_from_mesh(points, vertices, faces[:-1]).valid
+
+
+def test_stable_detector_requires_consecutive_frames() -> None:
+    detector = StableDetector(consecutive_frames=3)
+    observation = GraspObservation(np.ones(8), np.full((8, 3), .1))
+    states = [detector.update(observation) for _ in range(3)]
+    assert [state.stable_count for state in states] == [1, 2, 3]
+    assert [state.latched for state in states] == [False, False, True]

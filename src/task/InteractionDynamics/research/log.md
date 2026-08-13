@@ -1153,3 +1153,17 @@ V19 把 1538 个 MANO 三角面中心当作 mesh 顶点，却继续使用索引�
 
 **决策**
 保留修复。viewer 与训练/Y 链路职责明确分离，后续不能再将 interaction surface points 配合 MANO faces 当作可视化网格。
+
+## 实验：V19.2 穿透诊断与 stable latch
+
+**假设**
+保持 V18.6 的 `Y={r,d,u}` 与 checkpoint 不变，解析 penetration 可区分正常接触和明显穿模；contact/u 连续事件可把 8 帧抓取形成自然接到完整 object trajectory。
+
+**改动**
+新增 watertight 校验、奇偶射线判内外、精确最近三角面距离与 anchor soft aggregation；非封闭/退化 mesh 明确返回无效。新增连续三帧 `contact anchors>=4 && u_rms<0.3 cm/frame` 的 latch 状态机，penetration 只显示、不进入 gate。provider 通过 hand cache 对应 `shared.npz/raw_frame_id` 恢复完整后续物体轨迹；有 latch 时冻结该帧 object-relative MANO mesh 并刚性跟随，无 latch 时停在第 8 帧。为保持交互加载速度，Pred/GT penetration 当前同口径统计 prediction horizon 末帧。
+
+**结果**
+解析四面体 sanity check 验证内部点为正穿透、外部/表面点无穿透，非 watertight mesh 返回 `valid=False`。V18.6 test sample 0–2 均未 latch，viewer 保持 9 帧；sample 3 在 frame 7 latch，扩展至 68 帧，末帧相对 latch 帧的 object-frame MANO 顶点最大漂移 `6.15e-8 m`。前四个 prediction 末帧最大穿透为 `8.53–11.49 mm`，对应 GT 为 `0–2.18 mm`，初步支持 p 对明显穿模敏感，但不足以确定 gate 阈值。
+
+**决策**
+保留解析诊断、latch 与 object-follow 系统链路；不修改 Y、不重训、不把 p 加入 stable gate。下一步若要加入 penetration loss 或 gate，应先扩大 GT/pred 分布统计并按 GT percentile 定阈值。

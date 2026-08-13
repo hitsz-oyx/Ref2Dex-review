@@ -32,6 +32,11 @@ class VisualizationSample:
     grasp_proxy: Optional[bool]
     collision: Optional[bool] = None
     max_penetration_mm: Optional[float] = None
+    mean_penetration_mm: Optional[float] = None
+    gt_max_penetration_mm: Optional[float] = None
+    gt_mean_penetration_mm: Optional[float] = None
+    latch_frame: Optional[int] = None
+    stable_states: tuple[object, ...] = ()
     label: str = ""
 
 

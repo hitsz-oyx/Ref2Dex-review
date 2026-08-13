@@ -34,6 +34,7 @@ class CachedManoHDataset(Dataset):
                 "global_orient", "hand_pose", "transl")
         item = {key: shard[key][local] for key in keys}
         item.update({"side": shard["side"], "source_raw_file": shard["source_raw_file"],
+                     "source_hand_cache": shard["source_hand_cache"],
                      "mano_key": str(Path(shard["source_hand_cache"]).parent.parent.name)
                      + ":" + shard["side"]})
         return item
