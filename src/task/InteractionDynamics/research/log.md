@@ -1293,3 +1293,17 @@ alarmclock 的 canonical parity r/d/v max abs 为 `9.57e-5/1.34e-5/1.53e-5 cm`�
 
 **Viewer 修正**
 优化器实际缓存了完整 9 帧 robot vertices，但早期 viewer 把仅用于 penetration 的 4 个代表帧误当作 `available`，并在每次换帧时非原子地删除、重建全部 mesh，导致初始帧不显示且播放时闪烁。现将全部 9 帧标记为可视化，并兼容既有 cache；scene 更新使用 Viser atomic batch。该修正不改变优化结果和上述实验结论。
+
+## 实验：V20.7 GenDex GT contact-map 静态 round-trip
+
+**假设**
+如果同一 GT MANO grasp 经 object-side anonymous contact map 能优化出合理 Allegro，而 V20.6 的 `[r,d,v]` 不能形成接触，则主要瓶颈更可能是 Y 对 human-specific surface geometry 的约束，而不是 anonymous representation 本身不足。
+
+**改动与可信度检查**
+固定 alarmclock、seed 0 和后半段 contact mass 最大的第 8 帧；从 canonical object mesh 面积采样 2048 points/face normals，以 1538 个 MANO face centers 严格复现官方 `compute_energy_align_dist()` 生成 GT map，全程使用 meter，不做 `sharp_lift`。复用官方 GenDexGrasp commit `29fe7ef` 的 Allegro `HandModel`、随机初始化与 CMapAdam。官方 `.repeat()` 在 32 particles 时占满 24 GB 后 OOM，因此只将 object 维按 256 点分块；同一 particle 的 energy 最大误差为 0、梯度最大误差 `2.98e-8`。GT map 中 5 个 `C>0.5` 点到 MANO 平均 `8.65 mm`，其余点 `52.50 mm`，坐标/normal sanity 通过。
+
+**结果**
+32 particles、100 steps 的 best particle 为 4。total energy 从 `0.21020` 降至 `0.01404`，contact-map MAE 从 `0.06158` 降至 `0.01042`，官方近似 penetration 从 `1.486 mm` 降至 `0.036 mm`，joint penalty 为 0；完整 robot mesh penetration 为 0。最终 CMap mass/count 为 `113.50/4`，与 GT 的 `107.12/5` 接近；map correlation 为 `0.972`，`C>0.5` 交集/并集为 `3/6`（IoU `0.5`）。GT MANO、旧 GT-Y Allegro、GenDex Allegro 三路静态 Viewer 已打通。
+
+**决策**
+保留该静态 baseline。单个 alarmclock 上，GenDex object-side map 能高精度复现 GT 接触分布，而 V20.6 旧 Y 优化仅形成 1 个 anchor contact，支持“旧 Y 的 human-specific surface correspondence 约束过具体”这一解释。但当前没有 IsaacGym/力闭合稳定性测试，也只有一条轨迹，不能宣称 GenDex grasp 物理成功或普遍优于 Y。
