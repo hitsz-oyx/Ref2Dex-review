@@ -6,6 +6,7 @@ from src.task.InteractionDynamics.field_state_v20 import build_causal_field
 from src.task.InteractionDynamics.viewer_v2.stable import CausalStableDetector
 from src.task.InteractionDynamics.train_field_v20 import channel_statistics
 from src.task.InteractionDynamics.mano_field_decoder_v20_1 import build_causal_rdv_batched
+from src.task.InteractionDynamics.research.v20.build_cache import mano_parameters
 
 
 def test_causal_velocity_uses_current_minus_previous() -> None:
@@ -55,3 +56,13 @@ def test_batched_causal_field_matches_single_teacher() -> None:
     batched=build_causal_rdv_batched(surface,anchors)
     single=build_causal_field(surface[0],anchors[0],torch.zeros(4,7))[...,:7].transpose(0,1)*100
     torch.testing.assert_close(batched[0],single,atol=1e-5,rtol=1e-5)
+
+
+def test_v20_cache_reads_mano_parameters_from_hand() -> None:
+    class Sequence:
+        def get_hand_params(self, side):
+            assert side == "right"
+            return {"hand_pose": "mano"}
+        def get_object_params(self):
+            raise AssertionError("MANO 参数不能从 object 字典读取")
+    assert mano_parameters(Sequence(), "right")["hand_pose"] == "mano"

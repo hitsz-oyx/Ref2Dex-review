@@ -17,9 +17,15 @@ from src.task.InteractionDynamics.penetration import penetration_from_mesh
 from src.task.InteractionDynamics.uni3d import gather_points
 
 
+def mano_parameters(sequence: GRABSeqData, side: str) -> dict[str, np.ndarray]:
+    """MANO 参数必须来自对应 hand，而不是 object parameter 字典。"""
+    return sequence.get_hand_params(side)
+
+
 def main() -> None:
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--events",type=Path,required=True)
     parser.add_argument("--output",type=Path,required=True);parser.add_argument("--event-indices",type=int,nargs="+")
+    parser.add_argument("--split",choices=("train","val","test"),default="train")
     parser.add_argument("--grab-root",type=Path,default=Path(DEFAULT_GRAB_ROOT)/"data")
     parser.add_argument("--device",default="cuda");args=parser.parse_args();events=load_events(args.events)
     selected=args.event_indices or list(range(len(events)))
@@ -33,10 +39,13 @@ def main() -> None:
         rotation,translation=_rigid_world_to_reference(object_world)
         hand_reference=_transform(hand_world,rotation,translation)
         sequence=GRABSeqData(str(args.grab_root/source_raw_file))
+        with np.load(event.path,allow_pickle=False) as hand_cache:
+            side=str(hand_cache["side"].item())
         mesh=load_object_canonical_mesh(sequence.obj_name,str(args.grab_root),"m")
-        params=sequence.get_object_params(); raw_rotation=axis_angle_to_matrix(torch.from_numpy(
-            np.asarray(params["global_orient"][raw_ids],np.float32))).to(args.device)
-        raw_translation=torch.from_numpy(np.asarray(params["transl"][raw_ids],np.float32)).to(args.device)
+        object_params=sequence.get_object_params(); hand_params=mano_parameters(sequence,side)
+        raw_rotation=axis_angle_to_matrix(torch.from_numpy(
+            np.asarray(object_params["global_orient"][raw_ids],np.float32))).to(args.device)
+        raw_translation=torch.from_numpy(np.asarray(object_params["transl"][raw_ids],np.float32)).to(args.device)
         sample_frames=[frame for frame in range(max(1,event.grasp_frame-8),event.grasp_frame+5)
                        if frame+8<len(hand_reference)]
         needed=range(min(sample_frames)-1,max(sample_frames)+9)
@@ -54,9 +63,9 @@ def main() -> None:
         for frame in sample_frames:
             cache_ids=np.arange(frame,frame+9); frame_raw_ids=raw_ids[cache_ids]
             def param(name: str, width: int) -> torch.Tensor:
-                return torch.from_numpy(np.asarray(params[name][frame_raw_ids],np.float32).reshape(9,width)).to(args.device)
+                return torch.from_numpy(np.asarray(hand_params[name][frame_raw_ids],np.float32).reshape(9,width)).to(args.device)
             orient,pose,transl=param("global_orient",3),param("hand_pose",24),param("transl",3)
-            beta=np.asarray(params["betas"],np.float32)
+            beta=np.asarray(hand_params["betas"],np.float32)
             beta=beta[frame_raw_ids] if beta.ndim>1 else np.broadcast_to(beta,(9,beta.shape[-1])).copy()
             betas=torch.from_numpy(beta).to(args.device);q,t=rotation[cache_ids],translation[cache_ids]
             h,h_rotation=hand_state(orient,pose,transl,q,t)
@@ -72,9 +81,9 @@ def main() -> None:
                 "global_orient":orient.cpu(),"hand_pose":pose.cpu(),"transl":transl.cpu(),
                 "raw_frame_ids":torch.from_numpy(frame_raw_ids)})
         if rows:
-            folder=args.output/"train";folder.mkdir(parents=True,exist_ok=True)
+            folder=args.output/args.split;folder.mkdir(parents=True,exist_ok=True)
             payload={k:torch.stack([row[k] for row in rows]) for k in rows[0]}
-            side=str(np.load(event.path)["side"].item());payload.update({"side":side,
+            payload.update({"side":side,
                 "source_raw_file":source_raw_file,"source_hand_cache":str(event.path),
                 "mano_key":str(event.path.parent.parent.name)+":"+side})
             torch.save(payload,folder/f"event_{event_index:05d}.pt")

@@ -22,13 +22,14 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument("--cache",type=Path,required=True)
     p.add_argument("--field-checkpoint",type=Path,required=True);p.add_argument("--realizer-checkpoint",type=Path,required=True)
     p.add_argument("--output",type=Path,required=True);p.add_argument("--samples",type=int,default=4)
+    p.add_argument("--split",choices=("train","val","test"),default="train")
     p.add_argument("--grab-root",type=Path,default=Path(DEFAULT_GRAB_ROOT)/"data")
     p.add_argument("--mano-path",type=Path,default=Path(DEFAULT_MANO_MODEL_DIR));args=p.parse_args()
     device=torch.device("cuda");field,mean,std=load_field(args.field_checkpoint,device)
     payload=torch.load(args.realizer_checkpoint,map_location="cpu");saved=payload["args"]
     realizer=FieldHRealizerV20_2(dim=saved["dim"],temporal_layers=saved["temporal_layers"]).to(device)
     realizer.load_state_dict(payload["model"]);realizer.eval();h_std=payload["h_std"].to(device)
-    dataset=CachedFieldV20Dataset(args.cache,"train");layers=ManoLayers(args.grab_root,args.mano_path,device);rows=[]
+    dataset=CachedFieldV20Dataset(args.cache,args.split);layers=ManoLayers(args.grab_root,args.mano_path,device);rows=[]
     for index,raw in enumerate(DataLoader(dataset,batch_size=1,shuffle=False)):
         if index>=args.samples:break
         batch=move(raw,device);predicted=predict_field(field,batch,mean,std);gt=batch["future_y"]

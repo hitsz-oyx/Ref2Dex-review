@@ -49,7 +49,8 @@ def main():
     p.add_argument("--mano-path",type=Path,default=Path(DEFAULT_MANO_MODEL_DIR));args=p.parse_args()
     torch.manual_seed(42);device=torch.device("cuda");full=CachedFieldV20Dataset(args.cache,"train")
     train=Subset(full,range(min(32,len(full)))) if args.controlled32 else full
-    loader=DataLoader(train,args.batch_size,shuffle=True,num_workers=0);validation=DataLoader(train,args.batch_size,shuffle=False,num_workers=0)
+    validation_dataset=train if args.controlled32 else CachedFieldV20Dataset(args.cache,"val")
+    loader=DataLoader(train,args.batch_size,shuffle=True,num_workers=0);validation=DataLoader(validation_dataset,args.batch_size,shuffle=False,num_workers=0)
     field,realizer,mean,std,h_std,field_args=load_models(args.field_checkpoint,args.realizer_checkpoint,device)
     layers=ManoLayers(args.grab_root,args.mano_path,device);optimizer=torch.optim.AdamW(field.parameters(),lr=args.lr)
     iterator=iter(loader);args.output.mkdir(parents=True,exist_ok=True);best=float("inf")

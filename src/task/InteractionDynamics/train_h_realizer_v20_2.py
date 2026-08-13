@@ -96,7 +96,8 @@ def main():
     full = CachedFieldV20Dataset(args.cache, "train")
     train = Subset(full, range(min(32, len(full)))) if args.controlled32 else full
     loader = DataLoader(train, args.batch_size, shuffle=True, num_workers=0)
-    validation = DataLoader(train, args.batch_size, shuffle=False, num_workers=0)
+    validation_dataset = train if args.controlled32 else CachedFieldV20Dataset(args.cache, "val")
+    validation = DataLoader(validation_dataset, args.batch_size, shuffle=False, num_workers=0)
     h_std = delta_h_std(train).to(device); field, mean, std = load_field(args.field_checkpoint, device)
     realizer = FieldHRealizerV20_2(dim=args.dim, temporal_layers=args.temporal_layers).to(device)
     optimizer = torch.optim.AdamW(realizer.parameters(), lr=args.lr, weight_decay=1e-4)

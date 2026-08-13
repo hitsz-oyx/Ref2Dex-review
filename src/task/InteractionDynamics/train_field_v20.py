@@ -70,7 +70,9 @@ def main():
     full=CachedFieldV20Dataset(args.cache,"train"); train=Subset(full,range(min(32,len(full)))) if args.controlled32 else full
     mean,std=(x.to(device) for x in channel_statistics(train)); model=FieldDynamicsTransition(dim=args.dim,layers=args.layers).to(device)
     optimizer=torch.optim.AdamW(model.parameters(),lr=args.lr); loader=DataLoader(train,args.batch_size,shuffle=True)
-    validation=DataLoader(train,args.batch_size); iterator=iter(loader); args.output.mkdir(parents=True,exist_ok=True)
+    validation_dataset = train if args.controlled32 else CachedFieldV20Dataset(args.cache,"val")
+    validation=DataLoader(validation_dataset,args.batch_size); iterator=iter(loader); args.output.mkdir(parents=True,exist_ok=True)
+    best=float("inf")
     for step in range(1,args.steps+1):
         try: raw=next(iterator)
         except StopIteration: iterator=iter(loader);raw=next(iterator)
@@ -80,7 +82,10 @@ def main():
         if step%args.eval_every==0 or step==args.steps:
             row={"step":step,"loss":float(loss),**{k:float(v) for k,v in terms.items()},
                  "normal":evaluate(model.eval(),validation,mean,std,device)};model.train();print(json.dumps(row),flush=True)
-    torch.save({"model":model.state_dict(),"mean":mean.cpu(),"std":std.cpu(),"args":vars(args)},args.output/"latest.pt")
+            payload={"model":model.state_dict(),"mean":mean.cpu(),"std":std.cpu(),"args":vars(args),"step":step,"validation":row["normal"]}
+            torch.save(payload,args.output/"latest.pt")
+            score=sum(row["normal"][key] for key in ("r_mae_cm","d_mae_cm","v_mae_cm"))
+            if score<best:best=score;torch.save(payload,args.output/"best.pt")
 
 
 if __name__=="__main__":main()

@@ -1209,3 +1209,20 @@ sample 0 的 free→GT `r/d/v RMSE=0.346/0.184/0.070 cm`。默认 100 steps、lr
 
 **决策**
 保留 V20.2 Stage B/C：在 controlled overfit 上同时通过 realization、shortcut 和 no-regression Gate，说明 predicted Y 可供 learned MANO realizer 使用，V20.1 的负结果主要是 optimization 方法问题。当前不能外推到 unseen sequence；下一步应构建 sequence-disjoint 多事件 cache，分别验证 realizer 泛化与 frozen-realizer feasibility fine-tuning，而不是继续增加 controlled 容量。
+
+## 实验：V20.2 小型 sequence-disjoint 泛化 Gate
+
+**假设**
+若 controlled learned realizer 学到的是通用 `Y→MANO-H` realization，而非单事件轨迹记忆，则在事件级互斥的多事件数据上，realized field 应至少不弱于 frozen V20 free field，并保持 normal 明显优于 No-Y/Shuffle-Y。
+
+**观察到的失败 / 现象**
+扩展 cache 时发现 V20 builder 错把 `get_object_params()` 同时用于 object pose 和 MANO hand pose；多事件首次遇到缺少 `hand_pose` 的 object 字典而 fail-fast。另发现非 controlled 的 V20 与 realizer trainer 仍在 train subset 上报告 validation，会使泛化结论失真。
+
+**改动**
+builder 分离 `get_object_params()` 与 `get_hand_params(side)`，增加显式 split 输出；构建 24/6/6 个互斥 train/val/test stable events，共 312/78/78 windows。非 controlled trainer 改为读取真实 `val/` 并按 val 保存 best；evaluator 支持 train/val/test，Stage C 也使用真实 val。
+
+**结果**
+V20 baseline 的 val-best 位于 step 500：`r/d/v MAE=0.633/0.554/0.229 cm`，优于 persistence `1.027/1.205/0.256 cm`，但继续到 4000 steps 出现明显 r/d 过拟合。以该 frozen field 训练 realizer 4000 steps，val-best 同样位于 step 500：free `r/d/v RMSE=0.996/0.737/0.330 cm`，realized 为 `1.018/0.927/0.272 cm`；只改善 v，r/d 退化。No-Y 为 `1.433/1.365/0.374 cm`，Shuffle-Y 为 `1.123/1.100/0.294 cm`，说明模型使用了 Y，但没有形成准确的跨事件 realization。独立 test 上 free 为 `1.198/0.712/0.307 cm`，realized 为 `1.682/1.120/0.304 cm`，r/d 退化更明显。
+
+**决策**
+保留 cache/schema 与真实 validation 修正，判定当前小数据 Stage B 泛化 Gate 不通过，按 V20.2 纪律不运行 Stage C。controlled 结果证明 optimization 可行，但不能证明 learned realizer 泛化；下一步应优先扩大事件与 subject/object 覆盖、改善 early stopping，而不是用联合 field fine-tuning 掩盖 realizer 失败。
