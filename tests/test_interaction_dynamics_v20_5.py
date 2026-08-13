@@ -22,6 +22,20 @@ def test_allegro_fk_shape_limits_and_gradient() -> None:
     vertices.square().mean().backward(); assert q.grad is not None and torch.isfinite(q.grad).all()
 
 
+def test_allegro_fixed_area_surface_samples_shape_and_gradient() -> None:
+    path = scan_robot_assets(ASSETS)["Allegro"]
+    first, second = UrdfHandBackend(path), UrdfHandBackend(path)
+    torch.testing.assert_close(first.surface_samples.visual_index, second.surface_samples.visual_index)
+    torch.testing.assert_close(first.surface_samples.face_index, second.surface_samples.face_index)
+    torch.testing.assert_close(first.surface_samples.barycentric, second.surface_samples.barycentric)
+    torch.testing.assert_close(first.surface_samples.barycentric.sum(-1), torch.ones(1538))
+    q = first.limits.mean(1).repeat(2, 1).requires_grad_()
+    points = first.surface_points(q, torch.zeros(2, 3), torch.zeros(2, 3))
+    assert points.shape == (2, 1538, 3) and points.requires_grad
+    points.square().mean().backward()
+    assert q.grad is not None and torch.isfinite(q.grad).all() and float(q.grad.norm()) > 0
+
+
 def test_representative_frames_are_valid_and_unique() -> None:
     y = torch.zeros(8, 128, 7).transpose(0, 1)
     y[:, 2:, 3] = 3; y[:, :2, 3] = 1

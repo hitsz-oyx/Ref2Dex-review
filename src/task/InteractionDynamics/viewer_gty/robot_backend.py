@@ -57,10 +57,18 @@ class Visual:
     origin: torch.Tensor
 
 
-class UrdfHandBackend:
-    """只实现 V20.5 所需的 fixed/revolute joint 与 triangle visual mesh。"""
+@dataclass(frozen=True)
+class SurfaceSamples:
+    visual_index: torch.Tensor
+    face_index: torch.Tensor
+    barycentric: torch.Tensor
 
-    def __init__(self, urdf: str | Path, device: torch.device | str = "cpu") -> None:
+
+class UrdfHandBackend:
+    """实现 V20.6 所需的 fixed/revolute joint、完整 mesh 与固定表面采样。"""
+
+    def __init__(self, urdf: str | Path, device: torch.device | str = "cpu",
+                 surface_sample_count: int = 1538, surface_sample_seed: int = 0) -> None:
         self.urdf = Path(urdf); self.device = torch.device(device)
         tree = ET.parse(self.urdf); root = tree.getroot(); children = set(); joint_rows = []
         limits, names = [], []
@@ -104,15 +112,32 @@ class UrdfHandBackend:
         for visual in visuals:
             faces.append(visual.faces + offset); offset += len(visual.vertices)
         self.faces = np.concatenate(faces).astype(np.int32)
+        self.visual_triangle_count = len(self.faces)
+        self.surface_sample_count = surface_sample_count; self.surface_sample_seed = surface_sample_seed
+        areas=[]; owners=[]; local_faces=[]
+        for visual_index, visual in enumerate(visuals):
+            face = torch.as_tensor(visual.faces, dtype=torch.long, device=self.device)
+            triangle = visual.vertices[face]
+            areas.append(torch.linalg.cross(triangle[:, 1]-triangle[:, 0],
+                                            triangle[:, 2]-triangle[:, 0]).norm(dim=-1)/2)
+            owners.append(torch.full((len(face),), visual_index, dtype=torch.long, device=self.device))
+            local_faces.append(torch.arange(len(face), dtype=torch.long, device=self.device))
+        area = torch.cat(areas).cpu(); generator = torch.Generator(device="cpu")
+        generator.manual_seed(surface_sample_seed)
+        selected = torch.multinomial(area / area.sum(), surface_sample_count, replacement=True,
+                                     generator=generator)
+        u = torch.rand(surface_sample_count, generator=generator); v = torch.rand(surface_sample_count,
+                                                                                   generator=generator)
+        sqrt_u = u.sqrt(); barycentric = torch.stack((1-sqrt_u, sqrt_u*(1-v), sqrt_u*v), -1)
+        self.surface_samples = SurfaceSamples(torch.cat(owners).cpu()[selected].to(self.device),
+            torch.cat(local_faces).cpu()[selected].to(self.device), barycentric.to(self.device))
 
     @property
     def dof(self) -> int:
         return len(self.joint_names)
 
-    def vertices(self, q: torch.Tensor, root_rotation: torch.Tensor,
-                 root_translation: torch.Tensor,
-                 vertex_indices: torch.Tensor | None = None) -> torch.Tensor:
-        """输入 `q[T,D]`、axis-angle/translation `[T,3]`，返回 `[T,V,3]`。"""
+    def _transforms(self, q: torch.Tensor, root_rotation: torch.Tensor,
+                    root_translation: torch.Tensor) -> dict[str, torch.Tensor]:
         frames = len(q)
 
         def homogeneous(rotation: torch.Tensor, translation: torch.Tensor) -> torch.Tensor:
@@ -137,18 +162,34 @@ class UrdfHandBackend:
                 pending.remove(joint); progress = True
             if not progress:
                 raise ValueError("URDF joint graph 不连通")
-        outputs = []; start = 0
+        return transforms
+
+    def vertices(self, q: torch.Tensor, root_rotation: torch.Tensor,
+                 root_translation: torch.Tensor) -> torch.Tensor:
+        """返回用于 viewer/penetration 的完整 visual mesh `[T,V,3]`。"""
+        transforms = self._transforms(q, root_rotation, root_translation); outputs = []
         for visual in self.visuals:
             transform = transforms[visual.link] @ visual.origin[None]
-            vertices = visual.vertices
-            if vertex_indices is not None:
-                mask = (vertex_indices >= start) & (vertex_indices < start + len(vertices))
-                vertices = vertices[vertex_indices[mask] - start]
-            start += len(visual.vertices)
-            if len(vertices):
-                outputs.append(vertices[None] @ transform[:, :3, :3].transpose(-1, -2)
+            outputs.append(visual.vertices[None] @ transform[:, :3, :3].transpose(-1, -2)
                                + transform[:, None, :3, 3])
         return torch.cat(outputs, 1)
+
+    def surface_points(self, q: torch.Tensor, root_rotation: torch.Tensor,
+                       root_translation: torch.Tensor) -> torch.Tensor:
+        """返回固定 triangle+barycentric 对应的面积均匀表面点 `[T,1538,3]`。"""
+        transforms = self._transforms(q, root_rotation, root_translation)
+        output = torch.empty((len(q), self.surface_sample_count, 3), device=q.device, dtype=q.dtype)
+        for visual_index, visual in enumerate(self.visuals):
+            mask = self.surface_samples.visual_index == visual_index
+            if not mask.any():
+                continue
+            face = torch.as_tensor(visual.faces, dtype=torch.long, device=q.device)
+            triangles = visual.vertices[face[self.surface_samples.face_index[mask]]]
+            local = (triangles * self.surface_samples.barycentric[mask, :, None]).sum(1)
+            transform = transforms[visual.link] @ visual.origin[None]
+            output[:, mask] = (local[None] @ transform[:, :3, :3].transpose(-1, -2)
+                               + transform[:, None, :3, 3])
+        return output
 
     def joint_margin(self, q: torch.Tensor) -> torch.Tensor:
         return torch.minimum(q - self.limits[:, 0], self.limits[:, 1] - q).amin(-1)

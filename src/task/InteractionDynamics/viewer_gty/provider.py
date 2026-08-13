@@ -26,10 +26,16 @@ class GTYComparisonProvider:
     def load(self, index: int, robot: str) -> ComparisonTrajectory:
         row = self._headers[index]; result = row["robot_results"][robot]
         array = lambda value: value.numpy() if torch.is_tensor(value) else np.asarray(value)
+        robot_vertices = array(result["vertices_object"])
+        available = array(result["available"]).astype(bool)
+        # V20.5/V20.6 早期 cache 误把 available 当作“已算 penetration 的代表帧”。
+        # 只要完整九帧 vertices 已存在，所有帧都应可视化，无需重建 cache。
+        if len(robot_vertices) == len(row["raw_frame_ids"]):
+            available = np.ones(len(robot_vertices), dtype=bool)
         return ComparisonTrajectory(self.names[index], row["source_raw_file"], row["object_name"],
             row["subject"], array(row["raw_frame_ids"]), array(row["object_vertices"]),
             array(row["object_faces"]), array(row["gt_vertices_object"]),
             array(row["pred_vertices_object"]), array(row["mano_faces"]), array(row["anchors"]),
             array(row["gt_y"]), array(row["pred_y"]), row["pred_metrics"], robot,
-            array(result["vertices_object"]),
-            array(result["faces"]), array(result["available"]).astype(bool), result["metrics"])
+            robot_vertices, array(result["initial_vertices_object"]),
+            array(result["faces"]), available, result["metrics"])

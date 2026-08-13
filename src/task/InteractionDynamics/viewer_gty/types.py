@@ -24,6 +24,7 @@ class ComparisonTrajectory:
     pred_metrics: dict
     robot_name: str
     robot_vertices: np.ndarray
+    initial_robot_vertices: np.ndarray
     robot_faces: np.ndarray
     robot_available: np.ndarray
     robot_metrics: dict

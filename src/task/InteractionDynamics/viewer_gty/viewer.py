@@ -30,6 +30,7 @@ def main() -> None:
     play = server.gui.add_button("Play"); stop = server.gui.add_button("Stop")
     jump_contact = server.gui.add_button("Jump Contact"); jump_stable = server.gui.add_button("Jump Stable")
     show_gt = server.gui.add_checkbox("Show GT", True); show_robot = server.gui.add_checkbox("Show GT-Y Optimize", True)
+    show_initial_robot = server.gui.add_checkbox("Show Initial Robot", False)
     show_pred = server.gui.add_checkbox("Show Direct-H", True); show_object = server.gui.add_checkbox("Show Object", True)
     show_contacts = server.gui.add_checkbox("Show Contacts", False)
     good = server.gui.add_button("Mark Good"); bad = server.gui.add_button("Mark Bad"); unsure = server.gui.add_button("Mark Unsure")
@@ -42,37 +43,46 @@ def main() -> None:
 
     def render() -> None:
         nonlocal handles
-        for handle in handles: handle.remove()
-        handles = []; sample = state["sample"]; index = min(int(frame.value), sample.frames - 1)
-        panel_offsets = offsets(sample)
-        for name, visible, offset in (("gt", show_gt.value, panel_offsets[0]),
-                                      ("gty_opt", show_robot.value, panel_offsets[1]),
-                                      ("pred_h", show_pred.value, panel_offsets[2])):
-            if show_object.value and visible:
-                handles.append(server.scene.add_mesh_simple(f"/world/{name}/object",
-                    sample.object_vertices + offset, sample.object_faces, color=(180, 180, 180)))
-        handles.append(server.scene.add_mesh_simple("/world/gt/hand", sample.gt_vertices[index] + panel_offsets[0],
-            sample.mano_faces, color=(80, 220, 120), visible=show_gt.value))
-        handles.append(server.scene.add_mesh_simple("/world/pred_h/hand", sample.pred_vertices[index] + panel_offsets[2],
-            sample.mano_faces, color=(80, 160, 255), visible=show_pred.value))
-        robot_ok = bool(sample.robot_available[index])
-        if robot_ok:
-            handles.append(server.scene.add_mesh_simple("/world/gty_opt/hand",
-                sample.robot_vertices[index] + panel_offsets[1], sample.robot_faces,
-                color=(255, 165, 65), visible=show_robot.value))
-        if show_contacts.value:
-            for panel, offset, y in (("gt", panel_offsets[0], sample.gt_y),
-                                     ("pred_h", panel_offsets[2], sample.pred_y)):
-                if index > 0:
-                    points = sample.anchors[y[:, index - 1, 3] < 2] + offset
-                    if len(points): handles.append(server.scene.add_point_cloud(
-                        f"/world/{panel}/contacts", points, colors=(255, 40, 40), point_size=.006))
+        sample = state["sample"]; index = min(int(frame.value), sample.frames - 1)
+        panel_offsets = offsets(sample); robot_ok = bool(sample.robot_available[index])
+        # 删除与重建 scene node 必须作为一个同步批次发送，否则播放时客户端会看到空帧闪烁。
+        with server.atomic():
+            for handle in handles: handle.remove()
+            handles = []
+            for name, visible, offset in (("gt", show_gt.value, panel_offsets[0]),
+                                          ("gty_opt", show_robot.value, panel_offsets[1]),
+                                          ("pred_h", show_pred.value, panel_offsets[2])):
+                if show_object.value and visible:
+                    handles.append(server.scene.add_mesh_simple(f"/world/{name}/object",
+                        sample.object_vertices + offset, sample.object_faces, color=(180, 180, 180)))
+            handles.append(server.scene.add_mesh_simple("/world/gt/hand", sample.gt_vertices[index] + panel_offsets[0],
+                sample.mano_faces, color=(80, 220, 120), visible=show_gt.value))
+            handles.append(server.scene.add_mesh_simple("/world/pred_h/hand", sample.pred_vertices[index] + panel_offsets[2],
+                sample.mano_faces, color=(80, 160, 255), visible=show_pred.value))
+            if robot_ok:
+                handles.append(server.scene.add_mesh_simple("/world/gty_opt/hand",
+                    sample.robot_vertices[index] + panel_offsets[1], sample.robot_faces,
+                    color=(255, 165, 65), visible=show_robot.value))
+                handles.append(server.scene.add_mesh_simple("/world/gty_opt/initial_hand",
+                    sample.initial_robot_vertices[index] + panel_offsets[1], sample.robot_faces,
+                    color=(160, 160, 160), opacity=.25, visible=show_initial_robot.value))
+            if show_contacts.value:
+                for panel, offset, y in (("gt", panel_offsets[0], sample.gt_y),
+                                         ("pred_h", panel_offsets[2], sample.pred_y)):
+                    if index > 0:
+                        points = sample.anchors[y[:, index - 1, 3] < 2] + offset
+                        if len(points): handles.append(server.scene.add_point_cloud(
+                            f"/world/{panel}/contacts", points, colors=(255, 40, 40), point_size=.006))
         metrics = sample.robot_metrics; residual = metrics["y_residual"][index]
         pred_error = None if index == 0 else float(np.sqrt(np.mean((sample.pred_y[:, index-1] - sample.gt_y[:, index-1]) ** 2)))
         status.content = (f"**{sample.source_raw_file}**  \nObject: **{sample.object_name}** | Subject: **{sample.subject}**  \n"
             f"Frame: **{index}/{sample.frames-1}** | raw: **{sample.raw_frame_ids[index]}** | Robot: **{sample.robot_name}**  \n"
             f"GT-Y Optimize: **{'available' if robot_ok else 'Not optimized'}**  \n"
             f"Y residual: **{residual if residual is not None else 'N/A'} cm** | penetration: **{metrics['penetration_mm'][index]} mm**  \n"
+            f"r/d/v RMSE: **{metrics['r_rmse']:.3f}/{metrics['d_rmse']:.3f}/{metrics['v_rmse']:.3f} cm**  \n"
+            f"Root Δt mean/max: **{metrics['root_translation_delta_cm_mean']:.3f}/{metrics['root_translation_delta_cm_max']:.3f} cm**  \n"
+            f"Root ΔR mean/max: **{metrics['root_rotation_delta_deg_mean']:.3f}/{metrics['root_rotation_delta_deg_max']:.3f}°**  \n"
+            f"Joint Δ RMS/max: **{metrics['joint_delta_rms_rad']:.3f}/{metrics['joint_delta_max_rad']:.3f} rad**  \n"
             f"joint margin: **{metrics['joint_limit_margin'][index]:.4f} rad** | contacts: **{metrics['contact_count'][index]}**  \n"
             f"Direct-H field error: **{pred_error if pred_error is not None else 'N/A'} cm** | penetration: **{sample.pred_metrics['penetration_mm'][index]} mm**  \n"
             f"Direct-H contacts: **{None if index == 0 else int((sample.pred_y[:,index-1,3]<2).sum())}**")
@@ -108,7 +118,8 @@ def main() -> None:
         if len(indices): frame.value = int(indices[0]) + 1
     @jump_stable.on_click
     def _(_): frame.value = int(state["sample"].robot_metrics["representative_frames"][-1])
-    for control in (show_gt, show_robot, show_pred, show_object, show_contacts): control.on_update(lambda _: render())
+    for control in (show_gt, show_robot, show_initial_robot, show_pred, show_object, show_contacts):
+        control.on_update(lambda _: render())
 
     def mark(label: str) -> None:
         args.review.parent.mkdir(parents=True, exist_ok=True)

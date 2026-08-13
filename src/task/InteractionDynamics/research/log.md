@@ -1276,3 +1276,20 @@ Phase 1 共 2000 steps，val-best 位于 step 100。learned gate 的 val/test v 
 
 **决策**
 保留 V20.5 数据链、Allegro backend 和三路 viewer，当前只作为人工泛化核查工具。优化 loss 明显下降证明梯度与目标链有效，但三个样本已出现接触不足和高 residual，不把结果解释为 GT-Y 已跨 embodiment 泛化。LEAP/Shadow/Barrett 仅完成资产发现，未生成 optimization cache，因此不宣称支持；下一步应先人工标记更多 Allegro trajectory，再决定扩展 robot backend 或改进 optimizer。
+
+## 实验：V20.6 GT-Y 优化链可信度修正
+
+**假设**
+V20.5 的逐 horizon raw object rotation、`current+future8` 时间切片、128 个稀疏 mesh vertex 与逐帧 GT centroid 初始化会污染跨 embodiment 结论。只修为单一 first-frame canonical transform、严格 previous+8、固定 1538 点面积均匀 mesh surface 和单帧 root 初始化后，才能判断旧 `Y=[r,d,v]` 是否真实约束 Allegro。
+
+**诊断与改动**
+raw MANO 参数重建的 1538 face centers 与 source hand cache max/mean 差仅 `2.38e-7/2.75e-8 m`，排除 MANO 重建误差。修正后的 mesh 链为 `world→逐帧 reference transform→单一 R0,t0 canonical`，而 cache Y 的 r/v 只乘同一个 `R0`；d 不变。目标改为 `current_y + future_y[:7]`，对应 previous/current/future前7共9帧。URDF backend 固定 seed 0，按 27258 个 visual triangles 的面积随机选 1538 个 triangle+barycentric 位置；优化中保持物理位置 correspondence。finger 从 midpoint 初始化，9 帧 root translation 只复制 previous GT centroid 对齐值；增加 full/root/finger CLI、25-step history、分项 loss 和 q/root 变化量，viewer 增加 Initial Robot 与 root/joint 指标。
+
+**结果**
+alarmclock 的 canonical parity r/d/v max abs 为 `9.57e-5/1.34e-5/1.53e-5 cm`，mean abs 为 `3.08e-6/2.94e-6/1.80e-6 cm`，Gate A 通过。固定 surface shape 为 `[9,1538,3]`，对关节可微且重复初始化完全一致。首步 q/root translation/root rotation grad norm 为 `0.671/272.471/4.701`，均 finite/nonzero。300-step full loss `18.270→0.356`；最终 r/d/v RMSE `0.554/0.187/0.170 cm`。root translation mean/max 改变 `3.56/5.88 cm`，root rotation `68.5/78.8°`，joint Δ RMS/max `0.318/0.852 rad`。loss 总体下降但 100–300 steps 有振荡；4 个代表帧 contact anchors 为 `0/0/0/1`、完整 mesh 穿透为 0。Viewer initial/optimized robot 与三路显示 smoke 通过。
+
+**决策**
+保留全部可信度修正，并判定旧 V20.5 三样本数字不可再用于跨手结论。严格链上的单 alarmclock full 优化虽然 Y RMSE 明显下降且手指真实移动，但没有形成有效接触，故该样本的 GT-Y→Allegro realization 失败。root 与 finger 都有大幅变化，尚不能从 full 单实验判断 root shortcut；按 V20.6 纪律不额外跑 root/finger 对照、不扩多 trajectory，也不修改 Y 定义。
+
+**Viewer 修正**
+优化器实际缓存了完整 9 帧 robot vertices，但早期 viewer 把仅用于 penetration 的 4 个代表帧误当作 `available`，并在每次换帧时非原子地删除、重建全部 mesh，导致初始帧不显示且播放时闪烁。现将全部 9 帧标记为可视化，并兼容既有 cache；scene 更新使用 Viser atomic batch。该修正不改变优化结果和上述实验结论。
