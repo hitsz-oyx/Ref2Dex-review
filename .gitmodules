@@ -1,0 +1,3 @@
+[submodule "third_party/PointWorld"]
+	path = third_party/PointWorld
+	url = https://github.com/NVlabs/PointWorld.git
