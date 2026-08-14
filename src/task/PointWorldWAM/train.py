@@ -60,6 +60,16 @@ def move_batch(batch, device: torch.device):
     return {key: value.to(device) if torch.is_tensor(value) else value for key, value in batch.items()}
 
 
+def initialize_model(model_cfg):
+    model = GRABPointWorldForward(model_cfg)
+    if model_cfg.pretrained:
+        report = model.load_pointworld_checkpoint(model_cfg.pointworld_checkpoint)
+    else:
+        report = {"loaded": 0, "backbone_loaded": 0, "missing": 0, "unexpected": 0}
+    report["initialization"] = "pretrained" if model_cfg.pretrained else "scratch"
+    return model, report
+
+
 @torch.no_grad()
 def evaluate_gt_ade(model, loader, device: torch.device) -> float:
     model.eval()
@@ -111,6 +121,7 @@ def evaluate_conditions(model, loader, device: torch.device) -> Dict[str, Dict[s
 def main() -> None:
     parser = argparse.ArgumentParser(description="PointWorldWAM V0 forward overfit")
     parser.add_argument("--config", default="src/task/PointWorldWAM/configs/grab_forward_overfit.yaml")
+    parser.add_argument("--resume", default=None, help="从已有 task checkpoint 续训到 config.train.steps")
     args = parser.parse_args()
     cfg = load_config(args.config)
     random.seed(cfg.seed)
@@ -123,8 +134,14 @@ def main() -> None:
     dataset = build_dataset(cfg.data)
     loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=True, num_workers=0)
     eval_loader = DataLoader(dataset, batch_size=max(2, cfg.train.batch_size), shuffle=False, num_workers=0)
-    model = GRABPointWorldForward(cfg.model)
-    load_report = model.load_pointworld_checkpoint(cfg.model.pointworld_checkpoint)
+    model, load_report = initialize_model(cfg.model)
+    start_step = 0
+    resume_checkpoint = None
+    if args.resume:
+        resume_checkpoint = torch.load(args.resume, map_location="cpu", weights_only=False)
+        model.load_state_dict(resume_checkpoint["model"])
+        start_step = int(resume_checkpoint.get("step", 0))
+        load_report["resume"] = str(Path(args.resume).resolve())
     model.to(device)
 
     adapter_names = ("scene_adapter", "hand_adapter", "time_embed", "hand_type_emb")
@@ -138,13 +155,21 @@ def main() -> None:
         ],
         weight_decay=cfg.train.weight_decay,
     )
+    if resume_checkpoint is not None and "optimizer" in resume_checkpoint:
+        optimizer.load_state_dict(resume_checkpoint["optimizer"])
     output_dir = Path(cfg.train.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    history = []
+    history_path = output_dir / "history.json"
+    history = json.loads(history_path.read_text()) if start_step and history_path.is_file() else []
+    history = [row for row in history if int(row["step"]) <= start_step]
     iterator = iter(loader)
-    best_train_loss = math.inf
-    best_eval_ade = math.inf
-    for step in range(1, cfg.train.steps + 1):
+    best_train_loss = min((row["loss"] for row in history), default=math.inf)
+    summary_path = output_dir / "summary.json"
+    previous_summary = json.loads(summary_path.read_text()) if start_step and summary_path.is_file() else {}
+    best_eval_ade = float(previous_summary.get("best_eval_ade_m", math.inf))
+    if start_step >= cfg.train.steps:
+        raise ValueError(f"resume step={start_step} 必须小于目标 steps={cfg.train.steps}")
+    for step in range(start_step + 1, cfg.train.steps + 1):
         try:
             batch = next(iterator)
         except StopIteration:
@@ -172,12 +197,22 @@ def main() -> None:
             if eval_ade < best_eval_ade:
                 best_eval_ade = eval_ade
                 torch.save(
-                    {"model": model.state_dict(), "config": config_to_dict(cfg), "step": step},
+                    {
+                        "model": model.state_dict(),
+                        "optimizer": optimizer.state_dict(),
+                        "config": config_to_dict(cfg),
+                        "step": step,
+                    },
                     output_dir / "best.pt",
                 )
 
     torch.save(
-        {"model": model.state_dict(), "config": config_to_dict(cfg), "step": cfg.train.steps},
+        {
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "config": config_to_dict(cfg),
+            "step": cfg.train.steps,
+        },
         output_dir / "last.pt",
     )
     condition_metrics = evaluate_conditions(model, eval_loader, device)
@@ -191,8 +226,8 @@ def main() -> None:
         "best_eval_ade_m": best_eval_ade,
         "conditions": condition_metrics,
     }
-    (output_dir / "history.json").write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
-    (output_dir / "summary.json").write_text(
+    history_path.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+    summary_path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))

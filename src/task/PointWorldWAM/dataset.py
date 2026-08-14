@@ -33,6 +33,7 @@ class GRABWindowDataset(Dataset):
         object_points: int = 1024,
         hand_points: int = 256,
         max_sequences: int = 2,
+        sequence_offset: int = 0,
         max_windows: int = 64,
         window_stride: int = 2,
         side: str = "right",
@@ -63,7 +64,8 @@ class GRABWindowDataset(Dataset):
 
         # Overfit 阶段优先选择实际发生刚体运动的 sequence/window，避免静态解占优。
         sequence_scores.sort(key=lambda item: (-item[0], str(item[1])))
-        for _, shared_path, hand_path, per_sequence in sequence_scores[:max_sequences or None]:
+        sequence_stop = sequence_offset + max_sequences if max_sequences else None
+        for _, shared_path, hand_path, per_sequence in sequence_scores[sequence_offset:sequence_stop]:
             for motion, start in per_sequence:
                 candidates.append((motion, shared_path, hand_path, start))
         candidates.sort(key=lambda item: (-item[0], str(item[1]), item[3]))

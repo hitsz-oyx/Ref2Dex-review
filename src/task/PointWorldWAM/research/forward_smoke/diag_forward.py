@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from src.task.PointWorldWAM.config import load_config
 from src.task.PointWorldWAM.dataset import build_dataset
 from src.task.PointWorldWAM.pointworld_forward import GRABPointWorldForward
-from src.task.PointWorldWAM.train import evaluate_conditions
+from src.task.PointWorldWAM.train import evaluate_conditions, initialize_model
 
 
 def main() -> None:
@@ -30,8 +30,7 @@ def main() -> None:
     dataset = build_dataset(cfg.data)
     loader = DataLoader(dataset, batch_size=max(2, cfg.train.batch_size), shuffle=False, num_workers=0)
 
-    initial = GRABPointWorldForward(cfg.model)
-    load_report = initial.load_pointworld_checkpoint(cfg.model.pointworld_checkpoint)
+    initial, load_report = initialize_model(cfg.model)
     initial_metrics = evaluate_conditions(initial.to(device), loader, device)
     del initial
     torch.cuda.empty_cache()

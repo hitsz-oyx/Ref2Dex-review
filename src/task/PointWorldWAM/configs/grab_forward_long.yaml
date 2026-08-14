@@ -30,10 +30,10 @@ loss:
 train:
   device: cuda:0
   batch_size: 1
-  steps: 200
-  log_every: 10
-  eval_every: 25
+  steps: 3000
+  log_every: 100
+  eval_every: 250
   lr_adapter: 0.0001
   lr_pretrained: 0.00001
   weight_decay: 0.000001
-  output_dir: output/exp/pointworld_wam_forward_overfit
+  output_dir: output/exp/pointworld_wam_forward_long/base

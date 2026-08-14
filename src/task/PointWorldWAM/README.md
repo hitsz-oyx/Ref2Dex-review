@@ -51,6 +51,14 @@ PYTHONPATH=. python3 -m src.task.PointWorldWAM.train \
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.forward_smoke.diag_forward
 
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.visualize
+
+# 四卡 long-overfit 与未收敛实验续训
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.run_matrix --gpus 0,1,2,3
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.continue_matrix --gpus 0,1,2
+
+# best checkpoint 统一复算与 held-out sequence 诊断
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.diag_matrix
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.diag_heldout
 ```
 
 训练与诊断产物分别写入 `output/exp/pointworld_wam_forward_overfit/` 和
