@@ -1,0 +1,38 @@
+seed: 42
+
+data:
+  root: data/processed_data/interaction_dynamics_v1/data/grab
+  grab_raw_root: dataset/GRAB/data
+  object_points: 1024
+  debug_max_transitions: 128
+
+model:
+  pointworld_root: third_party/PointWorld
+  pointworld_checkpoint: third_party/PointWorld/pretrained_checkpoints/small-droid/model-best.pt
+  mano_model_dir: dataset/arctic/data/body_models/mano
+  left_vtemplate: dataset/GRAB/data/tools/subject_meshes/male/s1_lhand.ply
+  right_vtemplate: dataset/GRAB/data/tools/subject_meshes/male/s1_rhand.ply
+  ptv3_size: small
+  predictor_dim: 128
+  ptv3_patch_size: 256
+  grid_size: 0.005
+  enable_rpe: true
+  drop_path: 0.0
+  shuffle_orders: false
+
+train:
+  device: cuda:0
+  batch_size: 1
+  steps: 10000
+  log_every: 100
+  eval_every: 500
+  lr_head: 0.0003
+  lr_new: 0.0001
+  lr_backbone: 0.00001
+  weight_decay: 0.000001
+  output_dir: output/exp/pointworld_wam_v1
+
+eval:
+  fm_inference_steps: 10
+  forward_config: src/task/PointWorldWAM/configs/grab_bimanual_forward.yaml
+  forward_checkpoint: output/exp/pointworld_wam_bimanual_forward/best.pt

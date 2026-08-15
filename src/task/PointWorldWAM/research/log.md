@@ -235,3 +235,77 @@ capacity gate。按 V0.2 停止，不运行 V0.2B、V0.3 rollout 或 inverse。
 
 先检验 rigid-consistent head/target parameterization；若 GT one-step 仍不能精确拟合，再加入
 previous object flow 判断 state aliasing，不直接扩展 variable span。
+
+## 实验：V1 双手 MANO action Flow Matching overfit
+
+**假设**
+
+给定当前 object、previous object flow、左右 MANO 和 desired object flow，把 normalized noisy
+relative MANO action 可微还原成 noisy hand point flow，再用共享 PTv3 和独立左右 FM head，
+应能在 128 个 transition 上生成优于 identity 的下一帧双手 surface；通过后再放开全量。
+
+**观察到的失败 / 现象**
+
+默认 Python 没有 `smplx`，但 `graspenv` 同时具备 smplx、PyTorch 2.4.1 和完整 PointWorld
+CUDA 依赖。旧 one-step dataset 是 right-only 且下采样到 256 hand points，不满足 V1。
+
+**诊断**
+
+新增 dataset 使用 `current>=1`、gap=1、current 帧 left/right 至少一手 active 的全部合法集合，
+不按 motion 排序；debug 的 128 个样本用均匀索引覆盖 20 sequences，完整集合为 6652。
+从 raw GRAB 读取每手 global orientation、24D PCA pose、translation、betas，并注入 s1 的左右
+v_template。完整 128 条 debug transition 上，zero action 重建 current surface、GT action 重建
+next surface 的逐样本平均误差均值约 `0.000056–0.000058 mm`，最差 `0.000340 mm`，排除了
+MANO/action target 错位。
+
+**改动**
+
+- 新增双手 WAM dataset，保留 1024 object 与左右各 1538 MANO face centers；
+- relative action 使用 `Δx`、`log(R_t^T R_{t+1})` 和 24D PCA delta，每手 30D；
+- 新增可微 action compose/MANO surface 和左右独立 action normalization；
+- 双手 forward 使用 object xyz/normal/distL/distR/previous flow 与左右 xyz/normal/flow；
+- WAM object token 使用 current/previous/desired flow，hand token 使用 noisy candidate flow；
+- 4100 spatial tokens 共享预训练 PTv3，加入三类 type embedding、noise-time embedding、
+  noisy action embedding与独立左右 FM head；
+- 训练只使用左右 FM MSE，推理使用 10-step Euler；
+- 增加 translation/rotation/PCA/surface、identity/mean/random baseline 和 forward consistency。
+
+**结果**
+
+MANO action chain 的数值一致性通过。双手 forward 5000-step best：
+
+| 条件 | object point error (mm) |
+|---|---:|
+| GT hand flow | 10.09 |
+| static hand flow | 10.17 |
+| shuffled hand flow | 10.20 |
+| zero object flow | 6.53 |
+
+forward 没有学到 action，effect consistency 不能作为可信指标。
+
+WAM 从 5000-step best 续训到 10000 step，fixed-noise FM loss 从 step 500 的 `3.94` 降至
+`1.77`。best 10-step generation：
+
+| 指标 | Left | Right |
+|---|---:|---:|
+| translation (mm) | 6.19 | 8.12 |
+| rotation (deg) | 1.22 | 1.94 |
+| PCA pose RMSE | 0.0446 | 0.1033 |
+| hand surface (mm) | 6.61 | 8.68 |
+| identity surface (mm) | 5.40 | 7.98 |
+| action-mean surface (mm) | 5.50 | 8.03 |
+| random surface (mm) | 10.97 | 13.70 |
+
+双手平均生成 surface error 为 `7.65 mm`。它比 random prior 好，但仍比 identity 差；可视化
+显示生成手型正常，主要误差是下一帧整体位置/姿态。生成/GT hand 经不合格 forward 得到的
+effect error 为 `7.53/7.42 mm`，差异无解释力。
+
+**决策**
+
+保留 V1 完整实现与 128-transition 证据，但判定 debug overfit No-Go。不放开 6652-transition
+全量，不添加 effect loss，也不进入 unified WAM。
+
+**下一步**
+
+先做 action-space direct regression/conditional memorization 上界，并检查 Euler flow path 是否是
+当前主要瓶颈；只有生成 surface 明确优于 identity 后再恢复 full training。

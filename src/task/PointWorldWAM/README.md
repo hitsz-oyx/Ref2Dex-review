@@ -1,6 +1,7 @@
 # PointWorldWAM
 
-本 Task 按 `docs/指导/V0.md`、`V0.1.md` 和 `V0.2.md` 验证 F0：
+本 Task 按 `docs/指导/V0.md`–`V0.2.md` 验证 forward，并按 `docs/指导/V1.md`
+验证双手 inverse Flow Matching：
 
 ```text
 GT MANO/hand point tracks -> rigid object point tracks
@@ -69,7 +70,17 @@ PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.geometry_v1.diag_geometr
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.train_one_step \
   --config src/task/PointWorldWAM/configs/grab_one_step_v02a.yaml
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.one_step_v02a.diag_one_step
+
+# V1 需要同时包含 smplx 与 PointWorld 依赖的 graspenv
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_bimanual_forward \
+  --config src/task/PointWorldWAM/configs/grab_bimanual_forward.yaml
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v1 \
+  --config src/task/PointWorldWAM/configs/grab_wam_v1.yaml
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v1
 ```
 
-训练与诊断产物分别写入 `output/exp/pointworld_wam_forward_overfit/` 和
+训练产物写入 `output/exp/pointworld_wam_*`，诊断产物写入
 `output/research/pointworld_wam/`，均不提交。
