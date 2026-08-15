@@ -80,3 +80,20 @@ InteractionTransfer dataset 内置确定性 `fixed_point_indices`，移除对 Po
 
 **决策**
 保留 V0.4 固化；正式结构 gate 和短训 gate 通过。完整多序列 EPE 与 direct baseline 对比仍属于后续实验。
+
+## 实验：V0.4 direct baseline 与训练后 intervention
+
+**假设**
+同一 transition 上训练 direct `(O,H,ΔH)->ΔO` baseline 后，Cm bottleneck 应达到 `EPE_Cm <= 1.25 EPE_direct`，且 GT action 的 EPE 优于 zero/reverse/shuffle；同时 object-side field 应随 intervention 改变。
+
+**改动**
+新增自包含 `baselines/direct_forward.py` 和 `research/compare_v04.py`。两者使用同一 GRAB dataset、SmoothL1 effect loss 和 100 步 CUDA 训练；比较四种 action 的 EPE，并计算 `D(C_GT,C_variant)`。
+
+**结果**
+Cm loss `0.0416540 -> 0.0131193`，direct loss `0.0384623 -> 0.0057540`。Cm intervention EPE：GT `0.0099098`、zero `0.0404241`、reverse `0.0669083`、shuffle `0.0097842`；direct GT EPE `0.0507196`，因此 `EPE_Cm/EPE_direct=0.195`，通过 1.25 gate。field distance（GT 对比）为 zero `0.0273926`、reverse `0.0488763`、shuffle `0.0005350`。
+
+**诊断**
+Cm 已明显利用 action，GT/zero/reverse 分离且容量 gate 通过；shuffle 与 GT 的 EPE 和 field 距离几乎相同，尚不能声称完整通过 intervention 语义判据。该结果是单序列 overfit，不能替代多序列评估。
+
+**决策**
+保留 direct baseline 和比较脚本；V0.4 生死判据部分通过（容量与 zero/reverse），shuffle 判据不充分，后续需扩大数据和训练再判断。
