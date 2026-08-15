@@ -66,3 +66,17 @@ synthetic intervention：`message_norm(gt)=0.0109645`、`zero=0`、`reverse=0.01
 
 **决策**
 保留 V0.3 修改；实现 gate 和短训 gate 均通过。完整多序列训练及 direct baseline EPE 留待下一实验。
+
+## 实验：V0.4 正式结构与数据入口固化
+
+**假设**
+将 V0 forward 的信息约束正式固化后，当前模型应保持 `ΔH=0 => C_m=0`，且 effect decoder 只从 object points、normals 和聚合后的 object-side field 预测 flow。
+
+**改动**
+InteractionTransfer dataset 内置确定性 `fixed_point_indices`，移除对 PointWorldWAM 的运行时依赖；V0.4 固定 one-step `gap=1`，不接受其他 gap。指导文档同步纳入版本管理。
+
+**结果**
+`graspenv` + RTX 3090 forward 通过：输出 `(1,512,3)`，有效 edge `5868`，`zero-message=0.0`。真实 `s1/airplane_fly_1` cache CUDA 短训 5 步 loss 从 `0.0485412` 降至 `0.0265517`，无 NaN/Inf。
+
+**决策**
+保留 V0.4 固化；正式结构 gate 和短训 gate 通过。完整多序列 EPE 与 direct baseline 对比仍属于后续实验。

@@ -7,7 +7,13 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from src.task.PointWorldWAM.dataset import fixed_point_indices
+
+
+def fixed_point_indices(pool_size: int, count: int) -> np.ndarray:
+    """与 GRAB cache 对齐的确定性跨时间点采样。"""
+    if count > pool_size:
+        raise ValueError(f"采样数 {count} 大于点池 {pool_size}")
+    return np.linspace(0, pool_size - 1, count, dtype=np.int64)
 
 
 @dataclass(frozen=True)
@@ -23,6 +29,8 @@ class GRABOneStepDataset(Dataset):
     """Independent reader for the validated GRAB transition cache."""
     def __init__(self, root: str, sequences: List[str], object_points=512, hand_points=1538,
                  gaps=(1,), max_transitions=0):
+        if tuple(int(gap) for gap in gaps) != (1,):
+            raise ValueError("InteractionTransfer V0.4 固定使用 gap=1")
         candidates = []
         for seq in sequences:
             d = Path(root) / seq
