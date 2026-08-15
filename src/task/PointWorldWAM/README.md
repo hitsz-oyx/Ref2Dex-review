@@ -1,6 +1,6 @@
 # PointWorldWAM
 
-本 Task 按 `docs/指导/V0.md` 和 `docs/指导/V0.1.md` 验证 F0：
+本 Task 按 `docs/指导/V0.md`、`V0.1.md` 和 `V0.2.md` 验证 F0：
 
 ```text
 GT MANO/hand point tracks -> rigid object point tracks
@@ -64,6 +64,11 @@ PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.diag_heldou
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.train \
   --config src/task/PointWorldWAM/configs/grab_forward_geometry_v1.yaml
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.geometry_v1.diag_geometry_v1
+
+# V0.2A one-step capacity test；未达 gate 时不运行 V0.2B
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.train_one_step \
+  --config src/task/PointWorldWAM/configs/grab_one_step_v02a.yaml
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.one_step_v02a.diag_one_step
 ```
 
 训练与诊断产物分别写入 `output/exp/pointworld_wam_forward_overfit/` 和

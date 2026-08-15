@@ -1,0 +1,38 @@
+seed: 42
+
+data:
+  root: data/processed_data/interaction_dynamics_v1/data/grab
+  sequences:
+    - s1/phone_call_1
+    - s1/scissors_use_2
+  object_points: 1024
+  hand_points: 256
+  gaps: [1]
+  max_transitions: 64
+
+model:
+  pointworld_root: third_party/PointWorld
+  pointworld_checkpoint: third_party/PointWorld/pretrained_checkpoints/small-droid/model-best.pt
+  ptv3_size: small
+  predictor_dim: 128
+  ptv3_patch_size: 256
+  grid_size: 0.005
+  enable_rpe: true
+  drop_path: 0.0
+  shuffle_orders: false
+
+loss:
+  huber_delta: 0.01
+
+train:
+  device: cuda:0
+  batch_size: 4
+  eval_batch_size: 8
+  steps: 10000
+  log_every: 100
+  eval_every: 250
+  lr_head: 0.0003
+  lr_new: 0.0001
+  lr_backbone: 0.00001
+  weight_decay: 0.000001
+  output_dir: output/exp/pointworld_wam_one_step_v02a

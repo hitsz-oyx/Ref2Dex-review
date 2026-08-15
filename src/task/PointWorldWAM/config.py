@@ -28,9 +28,9 @@ def load_config(path: str) -> Namespace:
 
     cfg = convert(raw)
     cfg.data.root = str(_resolve_path(cfg.data.root))
-    cfg.model.pointworld_root = str(_resolve_path(cfg.model.pointworld_root))
-    cfg.model.pointworld_checkpoint = str(_resolve_path(cfg.model.pointworld_checkpoint))
-    cfg.model.norm_stats_path = str(_resolve_path(cfg.model.norm_stats_path))
+    for field in ("pointworld_root", "pointworld_checkpoint", "norm_stats_path"):
+        if hasattr(cfg.model, field):
+            setattr(cfg.model, field, str(_resolve_path(getattr(cfg.model, field))))
     cfg.train.output_dir = str(_resolve_path(cfg.train.output_dir))
     return cfg
 

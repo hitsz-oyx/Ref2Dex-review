@@ -177,3 +177,61 @@ V0.1 相对 V0 四项分别改善约 `9.1%/9.8%/8.0%/24.9%`。V0.1 static/shuffl
 
 优先检验 DROID output statistics 与 GRAB displacement 的 domain mismatch，并考虑显式 rigid
 SE(3) target/head；不再把增加训练步数作为主要方案。
+
+## 实验：V0.2A 局部 one-step point-flow capacity
+
+**假设**
+
+把 11 帧联合预测改为 `(P_t,H_t,ΔH_t) -> ΔP_t`，删除 DROID output normalization，
+并将随机初始化 3D head/new modules/pretrained backbone 的学习率拆为 `3e-4/1e-4/1e-5` 后，
+64 个干净右手 transition 应能过拟合到 1–2 mm，同时明显优于 static/shuffled action。
+
+**观察到的失败 / 现象**
+
+旧数据按 object motion 选择窗口并固定 right hand，没有排除 left-hand involvement；旧
+DynamicsPredictor 还固定输出未来 10 帧并依赖 DROID per-timestep statistics，无法直接回答
+单步 GRAB metric flow capacity。
+
+**诊断**
+
+`phone_call_1/scissors_use_2` 分别有 411/241 个 transition 满足相邻两帧都 right 5 cm
+candidate 非空且 left candidate 为空；raw frame gap 恒为 4，对应 `dt=1/30 s`。从两者按
+object motion 选 64 个 transition，其 zero-flow error 为 `37.86 mm`，不是近静态伪任务。
+checkpoint 成功迁移 448 个 PTv3 backbone 和 4 个 FiLM 参数；非 RPE 预训练漏载为 0。
+
+**改动**
+
+- 新增 clean right-hand transition dataset，返回 current geometry、hand/object flow 与真实 dt；
+- object feature 为 xyz/normal/current dist2hand 共 7D，hand feature 为 xyz/normal/flow 共 9D；
+- 保留 V0.1 的 5 mm grid、RPE、DropPath=0、固定 serialization order；
+- 新增随机初始化的 128→128→3 pointwise head，直接输出 meter object flow；
+- 不构建/加载旧 dynamics/log-var head，不读取 DROID statistics；
+- 增加三级 LR、best checkpoint、续训与 GT/static/shuffled/zero-flow 诊断；
+- 从 5000-step best 续训到 10000 step，确认后期平台。
+
+**结果**
+
+best 在 step 9500：
+
+| 条件 | point error (mm) | translation (mm) | rotation (deg) |
+|---|---:|---:|---:|
+| GT hand flow | 5.12 | 4.27 | 3.28 |
+| static action | 24.34 | 24.13 | 4.64 |
+| shuffled action | 19.22 | 18.76 | 3.85 |
+| zero-flow baseline | 37.86 | 37.54 | 8.58 |
+
+GT point error 比 static/shuffled/zero-flow 分别低 `78.9%/73.3%/86.5%`，action
+sensitivity 明确。GT target 的刚体残差为 `4.6e-8 m`，确认 stable point ID/target 正确；
+预测非刚体残差为 `2.27 mm`，严格刚体投影后 point error 为 `4.54 mm`，说明非刚体畸变只
+解释部分误差，整体 SE(3) 仍是主要剩余项。逐 transition error 中位数/P90/max 为
+`4.81/7.76/9.22 mm`，与 motion 相关系数 `-0.09`。
+
+**决策**
+
+保留。局部 temporal formulation 和 action conditioning 有效，但绝对误差未通过 1–2 mm
+capacity gate。按 V0.2 停止，不运行 V0.2B、V0.3 rollout 或 inverse。
+
+**下一步**
+
+先检验 rigid-consistent head/target parameterization；若 GT one-step 仍不能精确拟合，再加入
+previous object flow 判断 state aliasing，不直接扩展 variable span。
