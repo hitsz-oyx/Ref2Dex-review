@@ -1,0 +1,43 @@
+seed: 42
+
+data:
+  root: data/processed_data/interaction_dynamics_v1/data/grab
+  horizon: 11
+  object_points: 1024
+  hand_points: 256
+  max_sequences: 2
+  sequence_offset: 0
+  max_windows: 64
+  window_stride: 2
+  side: right
+
+model:
+  pretrained: true
+  pointworld_root: third_party/PointWorld
+  pointworld_checkpoint: third_party/PointWorld/pretrained_checkpoints/small-droid/model-best.pt
+  norm_stats_path: third_party/PointWorld/stats/droid/norm_stats.json
+  ptv3_size: small
+  predictor_dim: 128
+  ptv3_patch_size: 256
+  grid_size: 0.005
+  enable_rpe: true
+  drop_path: 0.0
+  shuffle_orders: false
+  use_xyz_feature: true
+  dynamics_head_init_scale: 1.0
+
+loss:
+  huber_delta: 0.01
+  motion_epsilon: 0.002
+  motion_weight: 4.0
+
+train:
+  device: cuda:0
+  batch_size: 1
+  steps: 5000
+  log_every: 100
+  eval_every: 250
+  lr_adapter: 0.0001
+  lr_pretrained: 0.00001
+  weight_decay: 0.000001
+  output_dir: output/exp/pointworld_wam_forward_geometry_v1

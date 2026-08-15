@@ -1,6 +1,6 @@
 # PointWorldWAM
 
-本 Task 按 `docs/指导/V0.md` 先验证 F0：
+本 Task 按 `docs/指导/V0.md` 和 `docs/指导/V0.1.md` 验证 F0：
 
 ```text
 GT MANO/hand point tracks -> rigid object point tracks
@@ -59,6 +59,11 @@ PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.continue_ma
 # best checkpoint 统一复算与 held-out sequence 诊断
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.diag_matrix
 PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.long_overfit.diag_heldout
+
+# V0.1 geometry-enhanced 5000-step overfit 与统一复算
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.train \
+  --config src/task/PointWorldWAM/configs/grab_forward_geometry_v1.yaml
+PYTHONPATH=. python3 -m src.task.PointWorldWAM.research.geometry_v1.diag_geometry_v1
 ```
 
 训练与诊断产物分别写入 `output/exp/pointworld_wam_forward_overfit/` 和

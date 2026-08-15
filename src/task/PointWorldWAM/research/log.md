@@ -123,3 +123,57 @@ hand action；但 rotation error 为 `64.27°`，甚至差于 static，刚体旋
 
 若继续 F0，应加入显式 rigid SE(3) target 或刚体一致性/rotation loss，并进行真正的
 sequence-disjoint 训练；继续单纯增加 step 已无依据。
+
+## 实验：V0.1 geometry-enhanced forward overfit
+
+**假设**
+
+在完全相同的 2 sequences、64 windows、1024 object points、256 hand points、11 帧、
+loss 和 optimizer 下，同时加入 xyz feature、RPE、5 mm grid 并关闭 DropPath/order shuffle，
+应把训练集 ADE 从 `16.23 mm` 降到 `<5 mm`，rotation 降到 `5–10°`。
+
+**观察到的失败 / 现象**
+
+PointWorld release 的 `SerializedAttention` 仅支持 FlashAttention，并在 `enable_rpe=True`
+时直接报错，不能仅靠切换官方 builder 参数打开 RPE。
+
+**诊断**
+
+PTv3 已提供 `attention_cls` 注入点，因此在 task 层实现 non-flash RPE attention，复用上游
+padding、serialization 和 relative-position helper，可保持 DynamicsPredictor 及 checkpoint
+key 不变。训练后又核查了 T=11、首帧零 displacement、per-timestep 反归一化与 absolute
+track 恢复路径，未发现 shape/时间轴错位。预测非刚体残差为 `4.88 mm`，但刚体投影后 ADE
+仍为 `14.00 mm`，说明剩余误差主要不是非刚体畸变，而是整体 SE(3) 姿态没有拟合准确。
+
+**改动**
+
+- scene adapter 输入改为 object xyz + normal + 11 帧 dist-to-hand，共 17D；
+- hand adapter 输入改为 hand xyz + normal + velocity + acceleration，共 12D；
+- grid 从 15 mm 改为 5 mm，DropPath 设为 0，关闭 order shuffle；
+- 新增 task-local non-flash RPE attention/builder，上游 PointWorld submodule 不修改；
+- 加载 448 个原有 PTv3 backbone（共 464 个 checkpoint 张量），22 个 RPE table 随机初始化，
+  非 RPE 的预训练骨干漏载为 0；
+- 按指导训练 5000 step，并用 best checkpoint 统一复算 GT/static/shuffled 和刚体投影。
+
+**结果**
+
+best 在 step 4750。两次统一复算存在约 `0.04 mm` 的 CUDA 数值波动，以下记录最后一次：
+
+| Model | ADE (mm) | FDE (mm) | translation (mm) | rotation (deg) |
+|---|---:|---:|---:|---:|
+| V0 original（指导记录） | 16.23 | 28.60 | 24.34 | 26.58 |
+| V0.1 xyz+RPE+5mm | 14.76 | 25.80 | 22.40 | 19.97 |
+
+V0.1 相对 V0 四项分别改善约 `9.1%/9.8%/8.0%/24.9%`。V0.1 static/shuffled ADE
+为 `140.92/149.30 mm`，GT 分别低 `89.53%/90.11%`。轨迹可视化显示中末帧整体姿态
+仍有明显偏差。模型有正向改进，但 ADE 仍大于 10 mm，未通过 `<5 mm` strict gate；rotation
+也未进入 `5–10°`。
+
+**决策**
+
+保留 geometry 实现和结果，但判定 No-Go。本轮不进入 inverse branch。
+
+**下一步**
+
+优先检验 DROID output statistics 与 GRAB displacement 的 domain mismatch，并考虑显式 rigid
+SE(3) target/head；不再把增加训练步数作为主要方案。

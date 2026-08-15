@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 
-def import_upstream_dynamics_predictor(pointworld_root: str):
+def import_upstream_dynamics_predictor(pointworld_root: str, use_dex_builder: bool = False):
     """导入官方 DynamicsPredictor；兼容本机 Python 3.8 的仅导入路径。"""
     root = str(Path(pointworld_root).resolve())
     if root not in sys.path:
@@ -21,9 +21,18 @@ def import_upstream_dynamics_predictor(pointworld_root: str):
         # Python 3.8 解析。DynamicsPredictor 本身不读取它们。
         for name in ("pointworld.norm_stats", "pointworld.losses", "pointworld.metrics"):
             sys.modules.setdefault(name, types.ModuleType(name))
-    from pointworld.base import DynamicsPredictor
+    import pointworld.base as pw_base
 
-    return DynamicsPredictor
+    if not hasattr(pw_base, "_pointworldwam_original_build_ptv3"):
+        pw_base._pointworldwam_original_build_ptv3 = pw_base.build_ptv3
+    if use_dex_builder:
+        from .ptv3_dex import build_dex_ptv3
+
+        pw_base.build_ptv3 = build_dex_ptv3
+    else:
+        pw_base.build_ptv3 = pw_base._pointworldwam_original_build_ptv3
+
+    return pw_base.DynamicsPredictor
 
 
 class AdapterMLP(nn.Module):
@@ -42,16 +51,27 @@ class GRABPointWorldForward(nn.Module):
         super().__init__()
         if cfg.predictor_dim % 2:
             raise ValueError("predictor_dim 必须为偶数")
-        dynamics_cls = import_upstream_dynamics_predictor(cfg.pointworld_root)
+        self.use_xyz_feature = bool(getattr(cfg, "use_xyz_feature", False))
+        use_dex_builder = any(
+            (
+                bool(getattr(cfg, "enable_rpe", False)),
+                float(getattr(cfg, "drop_path", 0.3)) != 0.3,
+                not bool(getattr(cfg, "shuffle_orders", True)),
+            )
+        )
+        dynamics_cls = import_upstream_dynamics_predictor(cfg.pointworld_root, use_dex_builder)
         args = Namespace(
             ptv3_size=cfg.ptv3_size,
             ptv3_patch_size=cfg.ptv3_patch_size,
             grid_size=cfg.grid_size,
+            enable_rpe=bool(getattr(cfg, "enable_rpe", False)),
+            drop_path=float(getattr(cfg, "drop_path", 0.3)),
+            shuffle_orders=bool(getattr(cfg, "shuffle_orders", True)),
             dynamics_head_init_scale=cfg.dynamics_head_init_scale,
         )
         channels = cfg.predictor_dim
-        self.scene_adapter = AdapterMLP(14, channels)
-        self.hand_adapter = AdapterMLP(9, channels)
+        self.scene_adapter = AdapterMLP(17 if self.use_xyz_feature else 14, channels)
+        self.hand_adapter = AdapterMLP(12 if self.use_xyz_feature else 9, channels)
         self.time_embed = nn.Embedding(11, channels)
         self.hand_type_emb = nn.Parameter(torch.zeros(1, 1, 1, channels))
         nn.init.normal_(self.hand_type_emb, std=0.02)
@@ -75,6 +95,7 @@ class GRABPointWorldForward(nn.Module):
         object_normals: torch.Tensor,
         hand_points: torch.Tensor,
         hand_normals: torch.Tensor,
+        use_xyz_feature: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         object0 = object_points[:, 0]
         # [B,T,Nobj,Nhand] 仅用于 1024x256 的 V0；避免引入新的近邻依赖。
@@ -82,12 +103,22 @@ class GRABPointWorldForward(nn.Module):
             [torch.cdist(object0, hand_points[:, step]).amin(dim=-1) for step in range(11)],
             dim=-1,
         )
-        scene_raw = torch.cat([object_normals[:, 0], dist], dim=-1)
+        scene_parts = (
+            [object0, object_normals[:, 0], dist]
+            if use_xyz_feature
+            else [object_normals[:, 0], dist]
+        )
+        scene_raw = torch.cat(scene_parts, dim=-1)
         velocity = torch.zeros_like(hand_points)
         velocity[:, 1:] = hand_points[:, 1:] - hand_points[:, :-1]
         acceleration = torch.zeros_like(hand_points)
         acceleration[:, 1:] = velocity[:, 1:] - velocity[:, :-1]
-        hand_raw = torch.cat([hand_normals, velocity, acceleration], dim=-1)
+        hand_parts = (
+            [hand_points, hand_normals, velocity, acceleration]
+            if use_xyz_feature
+            else [hand_normals, velocity, acceleration]
+        )
+        hand_raw = torch.cat(hand_parts, dim=-1)
         return scene_raw, hand_raw
 
     def forward(
@@ -98,7 +129,7 @@ class GRABPointWorldForward(nn.Module):
         hand_normals: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         scene_raw, hand_raw = self.raw_features(
-            object_points, object_normals, hand_points, hand_normals
+            object_points, object_normals, hand_points, hand_normals, self.use_xyz_feature
         )
         scene_feat = self.scene_adapter(scene_raw)
         hand_feat = self.hand_adapter(hand_raw)
@@ -144,9 +175,17 @@ class GRABPointWorldForward(nn.Module):
         backbone_loaded = sum(key.startswith("dynamics_predictor.predictor_model.") for key in selected)
         if backbone_loaded == 0:
             raise RuntimeError("checkpoint 没有匹配到 PTv3 interaction backbone 参数")
+        missing_rpe = [key for key in missing if ".rpe." in key]
+        missing_pretrained_non_rpe = [
+            key
+            for key in missing
+            if key.startswith("dynamics_predictor.") and ".rpe." not in key
+        ]
         return {
             "loaded": len(selected),
             "backbone_loaded": backbone_loaded,
             "missing": len(missing),
+            "missing_rpe": len(missing_rpe),
+            "missing_pretrained_non_rpe": missing_pretrained_non_rpe,
             "unexpected": len(unexpected),
         }
