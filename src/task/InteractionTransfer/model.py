@@ -4,15 +4,17 @@ import torch
 import torch.nn as nn
 
 from .edge_builder import build_edges
-from .modules import FrozenDenseStateEncoder, RelationEncoder, InteractionMessage, ObjectAggregator, ObjectEffectDecoder
+from .dense_state_encoder import FrozenDenseStateEncoder
+from .modules import RelationEncoder, InteractionMessage, ObjectAggregator, ObjectEffectDecoder
 
 
 class InteractionTransfer(nn.Module):
     """V0 forward model: (O,H,dH) -> relation messages -> dO."""
-    def __init__(self, k=16, radius=0.05, dense_dim=64, relation_dim=64, message_dim=32):
+    def __init__(self, k=16, radius=0.05, dense_checkpoint=None, dense_dim=64, relation_dim=64, message_dim=32):
         super().__init__()
         self.k, self.radius = int(k), float(radius)
-        self.static_encoder = FrozenDenseStateEncoder(dense_dim)
+        self.static_encoder = FrozenDenseStateEncoder(dense_checkpoint or "src/task/Cm/densetoken_ckpt/best.pt")
+        dense_dim = self.static_encoder.output_dim
         self.relation = RelationEncoder(dense_dim, relation_dim)
         self.message = InteractionMessage(relation_dim, message_dim)
         self.aggregate = ObjectAggregator(message_dim, dense_dim)

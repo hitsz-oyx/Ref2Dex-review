@@ -10,7 +10,7 @@ def main():
     h = torch.randn(b, nh, 3) * .1
     on = torch.nn.functional.normalize(torch.randn_like(o), dim=-1)
     hn = torch.nn.functional.normalize(torch.randn_like(h), dim=-1)
-    model = InteractionTransfer(k=5, radius=10.)
+    model = InteractionTransfer(k=5, radius=10., dense_checkpoint="synthetic")
     out = model(o, on, h, hn, torch.randn_like(h) * .01)
     zero = model(o, on, h, hn, torch.zeros_like(h))
     assert out["object_flow"].shape == o.shape

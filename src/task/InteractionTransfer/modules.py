@@ -4,20 +4,6 @@ import torch
 import torch.nn as nn
 
 
-class FrozenDenseStateEncoder(nn.Module):
-    """Small self-contained static encoder; kept frozen as the V0 bootstrap."""
-    def __init__(self, feature_dim: int = 64):
-        super().__init__()
-        self.obj = nn.Sequential(nn.Linear(6, feature_dim), nn.GELU(), nn.Linear(feature_dim, feature_dim))
-        self.hand = nn.Sequential(nn.Linear(6, feature_dim), nn.GELU(), nn.Linear(feature_dim, feature_dim))
-        for p in self.parameters():
-            p.requires_grad_(False)
-        self.eval()
-
-    def forward(self, obj, obj_n, hand, hand_n):
-        return self.obj(torch.cat([obj, obj_n], -1)), self.hand(torch.cat([hand, hand_n], -1))
-
-
 class RelationEncoder(nn.Module):
     def __init__(self, dense_dim=64, relation_dim=64):
         super().__init__()
@@ -46,7 +32,7 @@ class ObjectAggregator(nn.Module):
     def __init__(self, message_dim=32, object_dim=64):
         super().__init__()
         self.score = nn.Sequential(nn.Linear(message_dim, message_dim), nn.GELU(), nn.Linear(message_dim, 1))
-        self.proj = nn.Linear(message_dim, object_dim)
+        self.proj = nn.Linear(message_dim, object_dim, bias=False)
 
     def forward(self, messages, valid):
         logits = self.score(messages).squeeze(-1).masked_fill(~valid, -1e4)
