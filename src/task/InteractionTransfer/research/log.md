@@ -41,3 +41,14 @@ synthetic intervention：`message_norm(gt)=0.0109645`、`zero=0`、`reverse=0.01
 
 **决策**
 保留。数据控制变量和 DenseToken relation prior 已接入；真实 GRAB EPE 对比待提供 cache 路径后运行。
+
+## 实验：真实 cache 路径核查与单样本 forward
+
+**观察**
+仓库已有真实 GRAB cache，并非缺失。PointWorldWAM overfit 配置使用 `data/processed_data/interaction_dynamics_v1/data/grab`；Cm/Stage4 使用 `data/processed_data/stage4/data/grab`。
+
+**结果**
+前者包含 20 个序列；InteractionTransfer 在 `s1/airplane_fly_1` 上按 V0.2 筛选得到有效 transition，读取为 `512 object / 1538 hand`。`graspenv` CUDA forward 输出 shape 为 `(1,512,3)`，全为有限值，有效 edge 数 `127`。
+
+**决策**
+保留。此前“待提供 cache 路径”的结论撤回；下一步可以直接进行真实 cache 的短训和 direct baseline EPE 对比。
