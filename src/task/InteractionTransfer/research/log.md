@@ -97,3 +97,20 @@ Cm 已明显利用 action，GT/zero/reverse 分离且容量 gate 通过；shuffl
 
 **决策**
 保留 direct baseline 和比较脚本；V0.4 生死判据部分通过（容量与 zero/reverse），shuffle 判据不充分，后续需扩大数据和训练再判断。
+
+## 实验：V0.5 relation prior 与 action-field 验证
+
+**假设**
+修正 DenseToken edge/contact head 的 checkpoint 映射并强制 frozen eval 后，relation prior 应确实来自预训练权重；在 sequence-level benchmark 中，cross-sample action 应比 GT 更差，DirectEdge 应提供公平的容量对照。
+
+**改动**
+将 loader 的模块名对齐为 `edge_shared_backbone` / `cross_edge_head`，并对 backbone、edge head、contact head 做严格 missing 检查；覆盖 `train()` 保持整个 DenseToken eval。新增 `diag_action_field.py`、自包含 `DirectEdge` 和 `benchmark_v05.py`，支持 cross-sample、point-shuffle、mean-flow、EPE/translation/rotation 与 object-field distance。
+
+**结果**
+真实 checkpoint 校验：edge head 与 checkpoint 的最大权重差 `0.0`，contact head 最大权重差 `0.0`，encoder training state 为 `False`。`s1/airplane_fly_1` 的 64 个 transition 中 action local ratio 均值 `0.05991`（范围 `0.02543–0.08810`），因此 point-shuffle 是弱干预；DirectEdge 单样本 CUDA forward 输出 `(1,512,3)` 通过。
+
+**观察到的失败 / 现象**
+V0.5 多序列 benchmark 脚本已实现 sequence split 和顺序释放模型显存，但在当前机器上同时进行 PTv3 多序列训练/evaluation 时进程被 OOM 终止，未获得可报告的 held-out EPE。此前 V0.4 单序列结果仍只能作为 overfit capacity evidence。
+
+**决策**
+保留两个 P0 修复、action-field 诊断和 DirectEdge/benchmark 实现；V0.5 的正式 multi-sequence causal gate 尚未完成，不能宣称通过。后续需降低点数/模型显存或分卡后重新运行 benchmark。

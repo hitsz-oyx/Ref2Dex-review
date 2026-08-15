@@ -27,8 +27,8 @@ class FrozenDenseStateEncoder(nn.Module):
             self.num_obj_points, self.num_hand_points = 512, 1538
             self.obj = nn.Sequential(nn.Linear(6, 64), nn.GELU(), nn.Linear(64, 64))
             self.hand = nn.Sequential(nn.Linear(6, 64), nn.GELU(), nn.Linear(64, 64))
-            self.edge_shared = nn.Sequential(nn.Linear(128, 64), nn.GELU())
-            self.cross_head = nn.Linear(64, 1)
+            self.edge_shared_backbone = nn.Sequential(nn.Linear(128, 64), nn.GELU())
+            self.cross_edge_head = nn.Linear(64, 1)
             for p in self.parameters(): p.requires_grad_(False)
             self.eval()
             return
@@ -60,9 +60,9 @@ class FrozenDenseStateEncoder(nn.Module):
             enable_rpe=bool(meta.ptv3_enable_rpe), enable_flash=bool(meta.ptv3_enable_flash),
             upcast_attention=bool(meta.ptv3_upcast_attention), upcast_softmax=bool(meta.ptv3_upcast_softmax),
             cls_mode=False, pdnorm_bn=False, pdnorm_ln=False)
-        self.edge_shared = nn.Sequential(nn.Linear(self.output_dim * 2, self.output_dim), nn.GELU(),
-                                         nn.Linear(self.output_dim, self.output_dim // 2), nn.GELU())
-        self.cross_head = nn.Linear(self.output_dim // 2, 1)
+        self.edge_shared_backbone = nn.Sequential(nn.Linear(self.output_dim * 2, self.output_dim), nn.GELU(),
+                                                  nn.Linear(self.output_dim, self.output_dim // 2), nn.GELU())
+        self.cross_edge_head = nn.Linear(self.output_dim // 2, 1)
         state = data["model"]
         own = self.state_dict()
         selected = {}
@@ -74,10 +74,20 @@ class FrozenDenseStateEncoder(nn.Module):
             if target in own and own[target].shape == value.shape:
                 selected[target] = value
         missing, _ = self.load_state_dict(selected, strict=False)
-        if any(k.startswith("backbone.") for k in missing):
-            raise RuntimeError(f"DenseToken backbone checkpoint incomplete: {len(missing)} missing keys")
+        required_prefixes = ("backbone.", "edge_shared_backbone.", "cross_edge_head.")
+        missing_required = [k for k in missing if k.startswith(required_prefixes)]
+        if missing_required:
+            raise RuntimeError(f"DenseToken checkpoint incomplete: {missing_required[:4]} ({len(missing_required)} missing)")
         self.requires_grad_(False)
         self.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        # The relation prior is frozen in both parameters and stochastic mode.
+        self.training = False
+        for child in self.children():
+            child.train(False)
+        return self
 
     @torch.no_grad()
     def forward(self, obj_points, obj_normals, hand_points, hand_normals):
@@ -118,4 +128,6 @@ class FrozenDenseStateEncoder(nn.Module):
     def edge_features(self, z_obj, z_hand, edge_idx):
         hand_edge = torch.gather(z_hand.unsqueeze(1).expand(-1, z_obj.shape[1], -1, -1), 2,
                                  edge_idx.unsqueeze(-1).expand(-1, -1, -1, z_hand.shape[-1]))
-        return self.edge_shared(torch.cat([z_obj.unsqueeze(2).expand_as(hand_edge), hand_edge], -1)), torch.sigmoid(self.cross_head(self.edge_shared(torch.cat([z_obj.unsqueeze(2).expand_as(hand_edge), hand_edge], -1))).squeeze(-1))
+        edge_input = torch.cat([z_obj.unsqueeze(2).expand_as(hand_edge), hand_edge], -1)
+        edge = self.edge_shared_backbone(edge_input)
+        return edge, torch.sigmoid(self.cross_edge_head(edge).squeeze(-1))
