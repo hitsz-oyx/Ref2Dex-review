@@ -14,8 +14,9 @@ def run():
     hn = torch.nn.functional.normalize(torch.randn_like(h), dim=-1)
     action = torch.randn_like(h) * .01
     model = InteractionTransfer(k=16, radius=.05, dense_checkpoint=None if device.type == "cuda" else "synthetic").to(device).eval()
+    perm = torch.randperm(action.shape[1], device=action.device)
     variants = {"gt": action, "zero": torch.zeros_like(action),
-                "reverse": -action, "shuffle": action.flip(0)}
+                "reverse": -action, "shuffle": action[:, perm]}
     out = {name: model(o, on, h, hn, value) for name, value in variants.items()}
     message_norm = {name: float(value["edge_message"].norm()) for name, value in out.items()}
     effect_delta = {name: float((value["object_flow"] - out["zero"]["object_flow"]).norm()) for name, value in out.items()}

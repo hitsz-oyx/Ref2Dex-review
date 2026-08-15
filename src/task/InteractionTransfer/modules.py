@@ -7,7 +7,7 @@ import torch.nn as nn
 class RelationEncoder(nn.Module):
     def __init__(self, dense_dim=64, relation_dim=64):
         super().__init__()
-        self.net = nn.Sequential(nn.Linear(dense_dim * 2 + 13, relation_dim), nn.GELU(),
+        self.net = nn.Sequential(nn.Linear(dense_dim + 14, relation_dim), nn.GELU(),
                                  nn.Linear(relation_dim, relation_dim), nn.LayerNorm(relation_dim))
 
     def forward(self, dense_edge, geom):

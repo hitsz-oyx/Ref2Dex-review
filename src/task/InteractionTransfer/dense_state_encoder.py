@@ -27,6 +27,8 @@ class FrozenDenseStateEncoder(nn.Module):
             self.num_obj_points, self.num_hand_points = 512, 1538
             self.obj = nn.Sequential(nn.Linear(6, 64), nn.GELU(), nn.Linear(64, 64))
             self.hand = nn.Sequential(nn.Linear(6, 64), nn.GELU(), nn.Linear(64, 64))
+            self.edge_shared = nn.Sequential(nn.Linear(128, 64), nn.GELU())
+            self.cross_head = nn.Linear(64, 1)
             for p in self.parameters(): p.requires_grad_(False)
             self.eval()
             return

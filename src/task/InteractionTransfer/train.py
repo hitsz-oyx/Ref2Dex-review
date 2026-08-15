@@ -37,12 +37,13 @@ def main():
     parser.add_argument("--root", required=True)
     parser.add_argument("--sequence", action="append", required=True)
     parser.add_argument("--steps", type=int, default=100)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
     dataset = GRABOneStepDataset(args.root, args.sequence)
     loader = DataLoader(dataset, batch_size=1, shuffle=True)
     model = InteractionTransfer()
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=1e-3)
-    history = train_one_step(model, loader, optimizer, steps=args.steps)
+    history = train_one_step(model, loader, optimizer, device=args.device, steps=args.steps)
     print({"steps": args.steps, "initial_loss": history[0], "final_loss": history[-1]})
 
 

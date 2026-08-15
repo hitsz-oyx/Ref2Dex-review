@@ -15,7 +15,7 @@ class InteractionTransfer(nn.Module):
         self.k, self.radius = int(k), float(radius)
         self.static_encoder = FrozenDenseStateEncoder(dense_checkpoint or "src/task/Cm/densetoken_ckpt/best.pt")
         dense_dim = self.static_encoder.output_dim
-        self.relation = RelationEncoder(dense_dim, relation_dim)
+        self.relation = RelationEncoder(self.static_encoder.output_dim // 2, relation_dim)
         self.message = InteractionMessage(relation_dim, message_dim)
         self.aggregate = ObjectAggregator(message_dim, dense_dim)
         self.effect = ObjectEffectDecoder(dense_dim)
@@ -37,7 +37,8 @@ class InteractionTransfer(nn.Module):
         unit = rel / dist.clamp_min(1e-8)
         geom = torch.cat([rel, dist, obj_n, hand_n, (unit * obj_n).sum(-1, keepdim=True),
                           -(unit * hand_n).sum(-1, keepdim=True), (obj_n * hand_n).sum(-1, keepdim=True)], -1)
-        relation = self.relation(torch.cat([obj_edge, hand_edge], -1), geom)
+        dense_edge, contact_prob = self.static_encoder.edge_features(z_obj, z_hand, edge_idx)
+        relation = self.relation(dense_edge, torch.cat([geom, contact_prob.unsqueeze(-1)], -1))
         flow = torch.gather(hand_flow.unsqueeze(1).expand(-1, object_points.shape[1], -1, -1), 2,
                             edge_idx.unsqueeze(-1).expand_as(hand_p))
         vn = (flow * obj_n).sum(-1, keepdim=True)
