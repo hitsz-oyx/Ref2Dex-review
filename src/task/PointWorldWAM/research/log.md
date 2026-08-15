@@ -376,3 +376,109 @@ forward 仍比 zero-flow 差 `18.1%`，inverse 比 identity 差 `59.6%`。曲线
 
 分别做 inverse-only/forward-only deterministic chunk regression 上界，确认失败来自 FM 采样、
 多任务竞争还是 compact query 容量；通过零变化 baseline 后再恢复 joint/full。
+
+## 实验：V1.2 Chunk WAM formulation fix 与 deterministic upper bound
+
+**假设**
+
+V1.1 的逐 horizon 尺度混合、iid world noise 直接破坏 coordinate topology、缺少 object adapter
+skip，以及 action query 最终均值池化共同限制了 chunk capacity。修正后，独立 deterministic
+inverse/forward regression 应在 128 windows 上都低于 `30 mm`，通过后才恢复 FM。
+
+**观察到的失败 / 现象**
+
+V1.1 3000-step joint FM 在完整 debug set 上 inverse/forward 为 `71.13/47.96 mm`，分别差于
+identity/zero-flow `44.57/40.60 mm`。它无法区分架构容量、FM noise、Euler integration 与
+多任务干扰。
+
+**诊断**
+
+改为 per-timestep statistics 后，world displacement mean norm 在 k1/k5/k10 为
+`8.32/38.40/69.44 mm`，符合 horizon 增长；对应 normalized RMS 均为 `1.000`。左右 action
+在三个 horizon 的 normalized RMS 均约 `0.996`，确认不再混合 K 尺度。首次 deterministic
+backward 中 inverse raw action/surface loss 为 `1.024/0.120`，`10×surface=1.199` 与 action
+同量级；forward loss 为 `0.331`，两路梯度均 finite。
+
+**改动**
+
+- world mean/std 改为 `[K,1,3]`，左右 action mean/std 改为 `[K,30]`；
+- world coordinate 改为 `P_t + tau_world * denorm(noisy_world)`，完整 noisy state 仍作为 feature；
+- world point head 输入增加 object adapter skip；
+- 新增左右 ActionReadout learned query，各自 cross-attend 同时刻全部 object/left/right tokens；
+- inverse regression 使用 clean GT world 与 normalized zero metric action，直接监督 normalized action；
+- forward regression 使用 clean GT action 与 normalized zero metric world，直接监督 normalized world；
+- 两个模式独立初始化；forward 训练 3000 step，inverse 因曲线未收敛续训至 6000 step；
+- 用实际 surface/EPE 选择 checkpoint，FM 训练同时保存每个评估点的 `last.pt`；
+- 保留 shared PTv3、World-Action Transformer、多 subject MANO 与显式逐点 world output。
+
+**结果**
+
+inverse 在 step 3000 为 `32.83 mm`，曲线仍持续下降，续训到 step 6000 后完整 128-window
+达到 `23.03 mm`；forward best 在 step 3000。完整 128-window 复算：
+
+| Gate | Regression | Baseline | 结论 |
+|---|---:|---:|---|
+| inverse surface | 23.03 mm | identity 44.57 mm | 改善 48.3%，通过 |
+| forward object flow | 15.78 mm | zero-flow 40.60 mm | 改善 61.1%，通过 |
+| forward action use | 15.78 mm | zero-action 41.80 mm | 通过 |
+| finite | 是 | — | 通过 |
+
+曲线显示 forward 从 step 1000 起通过 30 mm 并持续改善；inverse 在 3000 step 尚为
+`32.83 mm`，延长到 6000 step 后通过。可视化与数值结论一致。
+
+**决策**
+
+保留全部 formulation fix 和 regression 路径。第一阶段两个 deterministic gate 均通过，进入
+inverse-only 与 forward-only FM；仍不直接运行 joint 或 6868-window full training。
+
+**下一步**
+
+分别训练单任务 FM，要求 inverse 低于 identity、forward 低于 zero-flow 且使用 action；只有两者
+在完整 128 windows 上均通过才恢复 joint。
+
+## 实验：V1.2 单任务 Flow Matching 门禁
+
+**假设**
+
+deterministic 双门禁通过后，分别训练 inverse-only 与 forward-only FM，可以隔离 FM 难度，避免
+multi-task interference；两者应分别优于 identity 与 zero-flow，才允许恢复 joint。
+
+**观察到的失败 / 现象**
+
+3000 step 时固定 8-window 在线评估中，inverse 为 `70.41 mm`，略差于 identity `68.49 mm`；
+forward best 为 `43.36 mm`，差于 zero-flow `38.76 mm`，但 action 消融已经明显变差。两条曲线
+仍在改善，因此从各自 checkpoint 续训到 6000 step。
+
+**诊断**
+
+续训时发现旧 summary 的 `best_score` 是 inverse/forward 复合比值，而单任务 checkpoint 使用
+毫米指标比较，量纲不一致会阻止新 best 保存。修正为按 mode 从 checkpoint evaluation 恢复
+相同量纲的指标，并在每次评估保存 `last.pt`。复跑轨迹与原训练一致。
+
+**改动**
+
+- inverse-only 与 forward-only 分别在 GPU 0/1 训练 6000 step，Euler 维持 20 step；
+- trainer 的 resume/best 指标按 mode 统一，并增加 `last.pt`；
+- 新增 mode-specific 全 128-window evaluator，只评估被训练分支及对应 baseline。
+
+**结果**
+
+| Gate | FM | Baseline | 结论 |
+|---|---:|---:|---|
+| inverse surface | 47.11 mm | identity 44.57 mm | 差 5.7%，未通过 |
+| forward object flow | 22.39 mm | zero-flow 40.60 mm | 改善 44.9%，通过 |
+| forward action use | 22.39 mm | zero-action 48.37 mm | 通过 |
+| finite | 是 | — | 通过 |
+
+固定 8-window 在线集在 6000 step 给出 inverse `61.48 < 68.49 mm`，但完整 128 windows 结论
+相反；小子集不足以做最终 gate。forward 的在线与完整评估一致。
+
+**决策**
+
+保留 V1.2 formulation、regression、forward-only FM 与 checkpoint 修复。inverse-only FM 未通过
+完整 debug gate，因此停止；不运行 0.4/0.4/0.2 joint，也不扩到 6868 windows。
+
+**下一步**
+
+只诊断 inverse FM 的训练/采样误差与条件可辨识性；完整 128-window inverse 低于 identity 后
+才恢复 joint。

@@ -1,7 +1,8 @@
 # PointWorldWAM
 
 本 Task 按 `docs/指导/V0.md`–`V0.2.md` 验证 forward，按 `docs/指导/V1.md` 验证
-双手 inverse Flow Matching，并按 `docs/指导/V1.1.md` 验证 world/action chunk 联合生成：
+双手 inverse Flow Matching，按 `docs/指导/V1.1.md` 验证 world/action chunk 联合生成，并按
+`docs/指导/V1.2.md` 验证修正后架构的 deterministic upper bound：
 
 ```text
 GT MANO/hand point tracks -> rigid object point tracks
@@ -89,6 +90,30 @@ PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
   -m src.task.PointWorldWAM.eval_wam_v2 --batch-size 4
 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
   -m src.task.PointWorldWAM.research.wam_v2.diag_chunk
+
+# V1.2 normalization sanity 与两个独立 deterministic regression
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.research.wam_v12.diag_normalization
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v2_regression --mode inverse --device cuda:0
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v2_regression --mode forward --device cuda:1
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v2_regression --mode inverse --batch-size 4
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v2_regression --mode forward --batch-size 4
+
+# deterministic 双门禁通过后，分别训练与复算单任务 FM
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v2 --config src/task/PointWorldWAM/configs/grab_wam_v12_fm.yaml \
+  --mode inverse --device cuda:0 --steps 6000
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v2 --config src/task/PointWorldWAM/configs/grab_wam_v12_fm.yaml \
+  --mode forward --device cuda:1 --steps 6000
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v12_fm --mode inverse --device cuda:0 --batch-size 4
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v12_fm --mode forward --device cuda:1 --batch-size 4
 ```
 
 训练产物写入 `output/exp/pointworld_wam_*`，诊断产物写入

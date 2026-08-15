@@ -18,7 +18,9 @@ from .train import move_batch
 from .wam_v2 import ChunkJointWAM
 
 
-def sample_mode(cfg) -> str:
+def sample_mode(cfg, forced_mode=None) -> str:
+    if forced_mode is not None:
+        return forced_mode
     value = random.random()
     if value < cfg.inverse_prob:
         return "inverse"
@@ -289,13 +291,18 @@ def main() -> None:
         "--config", default="src/task/PointWorldWAM/configs/grab_wam_v2_chunk.yaml"
     )
     parser.add_argument("--resume", default=None)
+    parser.add_argument("--mode", choices=("inverse", "forward", "joint"), default=None)
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
     cfg = load_config(args.config)
+    target_steps = args.steps or cfg.train.steps
     random.seed(cfg.seed)
     np.random.seed(cfg.seed)
     torch.manual_seed(cfg.seed)
     torch.cuda.manual_seed_all(cfg.seed)
-    device = torch.device(cfg.train.device)
+    device = torch.device(args.device or cfg.train.device)
     dataset = build_wam_chunk_dataset(cfg.data)
     statistics = dataset.statistics()
     loader = DataLoader(
@@ -337,7 +344,9 @@ def main() -> None:
     )
     if resume_checkpoint is not None:
         optimizer.load_state_dict(resume_checkpoint["optimizer"])
-    output = Path(cfg.train.output_dir)
+    output = Path(args.output_dir or cfg.train.output_dir)
+    if args.mode is not None:
+        output = output / args.mode
     output.mkdir(parents=True, exist_ok=True)
     history_path = output / "history.json"
     history = (
@@ -348,18 +357,24 @@ def main() -> None:
     history = [row for row in history if int(row["step"]) <= start_step]
     best_score = math.inf
     summary_path = output / "summary.json"
-    if start_step and summary_path.is_file():
-        previous = json.loads(summary_path.read_text(encoding="utf-8"))
-        best_score = float(previous.get("best_score", math.inf))
+    if resume_checkpoint is not None:
+        resume_evaluation = resume_checkpoint.get("evaluation", {})
+        best_score = {
+            "inverse": resume_evaluation.get("inverse_hand_mm", math.inf),
+            "forward": resume_evaluation.get("forward_world_mm", math.inf),
+            "joint": resume_evaluation.get("checkpoint_score", math.inf),
+        }.get(args.mode, resume_evaluation.get("checkpoint_score", math.inf))
     iterator = iter(loader)
-    for step in range(start_step + 1, cfg.train.steps + 1):
+    if start_step >= target_steps:
+        raise ValueError(f"resume step={start_step} 必须小于目标 steps={target_steps}")
+    for step in range(start_step + 1, target_steps + 1):
         try:
             batch = next(iterator)
         except StopIteration:
             iterator = iter(loader)
             batch = next(iterator)
         batch = move_batch(batch, device)
-        mode = sample_mode(cfg.flow_matching)
+        mode = sample_mode(cfg.flow_matching, args.mode if args.mode != "joint" else None)
         model.train()
         optimizer.zero_grad(set_to_none=True)
         losses = chunk_losses(model, batch, cfg.loss, mode)
@@ -372,7 +387,7 @@ def main() -> None:
             "mode": mode,
             **{f"{key}_loss": float(value.detach()) for key, value in losses.items()},
         }
-        if step % cfg.train.eval_every == 0 or step == cfg.train.steps:
+        if step % cfg.train.eval_every == 0 or step == target_steps:
             evaluation = evaluate_generation(
                 model,
                 eval_loader,
@@ -382,24 +397,29 @@ def main() -> None:
             )
             row["evaluation"] = evaluation
             print(json.dumps({"step": step, "evaluation": evaluation}), flush=True)
-            if evaluation["checkpoint_score"] < best_score:
-                best_score = evaluation["checkpoint_score"]
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "optimizer": optimizer.state_dict(),
-                        "config": config_to_dict(cfg),
-                        "statistics": statistics,
-                        "subjects": sorted(dataset.subjects),
-                        "step": step,
-                        "evaluation": evaluation,
-                    },
-                    output / "best.pt",
-                )
+            checkpoint_metric = {
+                "inverse": evaluation["inverse_hand_mm"],
+                "forward": evaluation["forward_world_mm"],
+                "joint": evaluation["checkpoint_score"],
+            }.get(args.mode, evaluation["checkpoint_score"])
+            row["checkpoint_metric"] = checkpoint_metric
+            checkpoint_state = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "config": config_to_dict(cfg),
+                "statistics": statistics,
+                "subjects": sorted(dataset.subjects),
+                "step": step,
+                "evaluation": evaluation,
+            }
+            torch.save(checkpoint_state, output / "last.pt")
+            if checkpoint_metric < best_score:
+                best_score = checkpoint_metric
+                torch.save(checkpoint_state, output / "best.pt")
         if step == 1 or step % cfg.train.log_every == 0:
             print(json.dumps(row), flush=True)
         history.append(row)
-        if step % cfg.train.eval_every == 0 or step == cfg.train.steps:
+        if step % cfg.train.eval_every == 0 or step == target_steps:
             history_path.write_text(json.dumps(history, indent=2) + "\n")
             summary_path.write_text(
                 json.dumps(
@@ -428,7 +448,13 @@ def main() -> None:
         "windows": len(dataset),
         "full_windows": dataset.full_window_count,
         "best_step": int(checkpoint["step"]),
-        "best_score": float(checkpoint["evaluation"]["checkpoint_score"]),
+        "best_score": float(
+            {
+                "inverse": checkpoint["evaluation"]["inverse_hand_mm"],
+                "forward": checkpoint["evaluation"]["forward_world_mm"],
+                "joint": checkpoint["evaluation"]["checkpoint_score"],
+            }.get(args.mode, checkpoint["evaluation"]["checkpoint_score"])
+        ),
         "checkpoint_evaluation": checkpoint["evaluation"],
         "final_evaluation": final_evaluation,
         "load_report": load_report,

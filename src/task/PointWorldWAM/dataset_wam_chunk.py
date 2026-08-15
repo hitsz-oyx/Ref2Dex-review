@@ -200,24 +200,26 @@ class GRABWAMChunkDataset(Dataset):
 
     def statistics(self) -> Dict[str, torch.Tensor]:
         actions = {side: [] for side in ("left", "right")}
-        world_sum = torch.zeros(3, dtype=torch.float64)
-        world_square_sum = torch.zeros(3, dtype=torch.float64)
-        world_count = 0
+        world_sum = torch.zeros(self.chunk_size, 3, dtype=torch.float64)
+        world_square_sum = torch.zeros(self.chunk_size, 3, dtype=torch.float64)
+        world_count = torch.zeros(self.chunk_size, dtype=torch.float64)
         for index in range(len(self)):
             item = self[index]
-            world = item["world_chunk"].double().reshape(-1, 3)
-            world_sum += world.sum(0)
-            world_square_sum += world.square().sum(0)
-            world_count += len(world)
+            world = item["world_chunk"].double()
+            world_sum += world.sum(1)
+            world_square_sum += world.square().sum(1)
+            world_count += world.shape[1]
             for side in actions:
                 actions[side].append(item[f"{side}_action_chunk"])
         result = {}
-        world_mean = world_sum / world_count
-        world_var = world_square_sum / world_count - world_mean.square()
-        result["world_mean"] = world_mean.float()
-        result["world_std"] = world_var.clamp_min(0).sqrt().float().clamp_min(1e-5)
+        world_mean = world_sum / world_count[:, None]
+        world_var = world_square_sum / world_count[:, None] - world_mean.square()
+        result["world_mean"] = world_mean[:, None].float()
+        result["world_std"] = (
+            world_var.clamp_min(0).sqrt()[:, None].float().clamp_min(1e-5)
+        )
         for side, values in actions.items():
-            stacked = torch.cat(values, dim=0)
+            stacked = torch.stack(values, dim=0)
             result[f"{side}_mean"] = stacked.mean(0)
             result[f"{side}_std"] = stacked.std(0).clamp_min(1e-4)
         return result

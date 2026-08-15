@@ -6,6 +6,7 @@ from typing import Dict, Sequence
 import torch
 import torch.nn as nn
 
+from .modules.action_readout import ActionReadout
 from .modules.spatial_queries import SpatialQueryPool
 from .modules.subject_mano_bank import SubjectManoBank
 from .modules.world_action_transformer import WorldActionTransformer
@@ -82,6 +83,8 @@ class ChunkJointWAM(nn.Module):
             cfg.chunk_size,
         )
         self.world_context = nn.Linear(temporal_dim, channels)
+        self.left_action_readout = ActionReadout(temporal_dim, cfg.temporal_heads)
+        self.right_action_readout = ActionReadout(temporal_dim, cfg.temporal_heads)
         self.world_head = nn.Sequential(
             nn.Linear(channels, channels), nn.GELU(), nn.Linear(channels, 3)
         )
@@ -156,7 +159,8 @@ class ChunkJointWAM(nn.Module):
             )
         }
         object_points = batch["object_points"][:, None].expand(-1, chunk_size, -1, -1)
-        candidate_object = object_points + world_flow
+        coordinate_scale = tau_world[:, None, None, None]
+        candidate_object = object_points + coordinate_scale * world_flow
         time_indices = torch.arange(chunk_size, device=noisy_world.device)
         time_embedding = self.physical_time_embedding(time_indices)[None, :, None]
         world_noise = self.world_noise_embedding(tau_world)[:, None, None]
@@ -260,7 +264,17 @@ class ChunkJointWAM(nn.Module):
         }
         temporal = self.temporal(compact["object"], compact["left"], compact["right"])
         world_context = self.world_context(temporal["object"].mean(2))[:, :, None]
-        world_velocity = self.world_head(spatial_outputs["object"] + world_context)
+        world_features = (
+            spatial_outputs["object"] + object_features + world_context
+        )
+        world_velocity = self.world_head(world_features)
+        all_temporal = torch.cat(
+            [temporal["object"], temporal["left"], temporal["right"]], dim=2
+        )
+        action_context = {
+            "left": self.left_action_readout(all_temporal),
+            "right": self.right_action_readout(all_temporal),
+        }
         tau_action_embedding = self.action_noise_embedding(tau_action)[:, None].expand(
             -1, chunk_size, -1
         )
@@ -271,7 +285,7 @@ class ChunkJointWAM(nn.Module):
         for side in ("left", "right"):
             readout = torch.cat(
                 [
-                    temporal[side].mean(2),
+                    action_context[side],
                     state_embeddings[side][:, None].expand(-1, chunk_size, -1),
                     noisy_embeddings[side],
                     tau_action_embedding,
