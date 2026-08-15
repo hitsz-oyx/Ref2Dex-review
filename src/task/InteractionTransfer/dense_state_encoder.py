@@ -95,10 +95,16 @@ class FrozenDenseStateEncoder(nn.Module):
                                   hand_nn.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, 1, 3)).squeeze(2) - hand_points
         obj_dir = obj_delta / obj_delta.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         hand_dir = hand_delta / hand_delta.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        obj_centroid = hand_points.mean(dim=1, keepdim=True)
+        hand_centroid = obj_points.mean(dim=1, keepdim=True)
+        obj_cent_delta = obj_centroid - obj_points
+        hand_cent_delta = hand_centroid - hand_points
+        obj_cent_dir = obj_cent_delta / obj_cent_delta.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        hand_cent_dir = hand_cent_delta / hand_cent_delta.norm(dim=-1, keepdim=True).clamp_min(1e-8)
         obj_extra = torch.cat([d.amin(-1, keepdim=True), (obj_dir * obj_normals).sum(-1, keepdim=True),
-                               torch.zeros_like(d.amin(-1, keepdim=True))], -1)
+                               (obj_cent_dir * obj_normals).sum(-1, keepdim=True)], -1)
         hand_extra = torch.cat([d.amin(1).unsqueeze(-1), (hand_dir * hand_normals).sum(-1, keepdim=True),
-                                torch.zeros_like(d.amin(1).unsqueeze(-1))], -1)
+                                (hand_cent_dir * hand_normals).sum(-1, keepdim=True)], -1)
         obj_type = torch.cat([torch.ones_like(obj_points[..., :1]), torch.zeros_like(obj_points[..., :1])], -1)
         hand_type = torch.cat([torch.zeros_like(hand_points[..., :1]), torch.ones_like(hand_points[..., :1])], -1)
         feat = torch.cat([torch.cat([obj_points, obj_type, obj_normals, obj_extra], -1),

@@ -52,3 +52,17 @@ synthetic intervention：`message_norm(gt)=0.0109645`、`zero=0`、`reverse=0.01
 
 **决策**
 保留。此前“待提供 cache 路径”的结论撤回；下一步可以直接进行真实 cache 的短训和 direct baseline EPE 对比。
+
+## 实验：V0.3 DenseToken fidelity 与公平 transition 对齐
+
+**假设**
+补齐 DenseToken 的 opposite-cloud centroid projection，并复用 PointWorld one-step 的数据校验与运动排序后，InteractionTransfer 的输入特征和 transition 定义才完全一致；模型应继续满足 zero-preserving，并能在真实 cache 上下降训练 loss。
+
+**改动**
+在冻结 DenseToken 编码器中计算 opposite cloud centroid-direction·normal，替换原先恒为零的第三个几何特征。数据集加入 `source_fps=120`、`raw_frame_id` 间隔为 4 的校验，按 object motion 降序排序，并复用 PointWorld 的固定点索引。
+
+**结果**
+`graspenv` + RTX 3090 forward 通过：输出 `(1,512,3)`，有效 edge `5868`，`zero-message=0.0`。GT/reverse/shuffle message norm 为 `0.0890855/0.0903455/0.0892916`，对应 effect delta 为 `2.8514e-4/2.8261e-4/2.7422e-4`。真实 `s1/airplane_fly_1` cache 单序列 10 步 CUDA 短训 loss 从 `0.0561577` 降至 `0.0168040`，无 NaN/Inf。
+
+**决策**
+保留 V0.3 修改；实现 gate 和短训 gate 均通过。完整多序列训练及 direct baseline EPE 留待下一实验。
