@@ -1,0 +1,55 @@
+seed: 42
+
+data:
+  root: data/processed_data/interaction_dynamics_v1/data/grab
+  grab_raw_root: dataset/GRAB/data
+  object_points: 1024
+  chunk_size: 10
+  debug_max_windows: 128
+  require_interaction_in_window: true
+
+model:
+  pointworld_root: third_party/PointWorld
+  pointworld_checkpoint: third_party/PointWorld/pretrained_checkpoints/small-droid/model-best.pt
+  mano_model_dir: dataset/arctic/data/body_models/mano
+  subject_template_root: dataset/GRAB/data/tools/subject_meshes
+  ptv3_size: small
+  predictor_dim: 128
+  ptv3_patch_size: 256
+  grid_size: 0.005
+  enable_rpe: true
+  drop_path: 0.0
+  shuffle_orders: false
+  chunk_size: 10
+  object_queries: 8
+  hand_queries: 8
+  query_heads: 8
+  temporal_dim: 256
+  temporal_depth: 4
+  temporal_heads: 8
+  finger_classes: 6
+  region_classes: 3
+
+flow_matching:
+  inverse_prob: 0.4
+  forward_prob: 0.4
+  joint_prob: 0.2
+  inference_steps: 20
+
+loss:
+  world_weight: 1.0
+  action_weight: 1.0
+  surface_weight: 10.0
+
+train:
+  device: cuda:0
+  batch_size: 1
+  steps: 3000
+  log_every: 25
+  eval_every: 500
+  eval_max_windows: 8
+  lr_head: 0.0003
+  lr_new: 0.0001
+  lr_backbone: 0.00001
+  weight_decay: 0.000001
+  output_dir: output/exp/pointworld_wam_v2_chunk

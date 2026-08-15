@@ -1,13 +1,13 @@
 # PointWorldWAM
 
-本 Task 按 `docs/指导/V0.md`–`V0.2.md` 验证 forward，并按 `docs/指导/V1.md`
-验证双手 inverse Flow Matching：
+本 Task 按 `docs/指导/V0.md`–`V0.2.md` 验证 forward，按 `docs/指导/V1.md` 验证
+双手 inverse Flow Matching，并按 `docs/指导/V1.1.md` 验证 world/action chunk 联合生成：
 
 ```text
 GT MANO/hand point tracks -> rigid object point tracks
 ```
 
-当前不包含 inverse MANO branch。PointWorld 保持上游源码不改，以 git submodule 固定：
+PointWorld 保持上游源码不改，以 git submodule 固定：
 
 - repository: <https://github.com/NVlabs/PointWorld>
 - commit: `05484826dfef74cbe278a3974179a5a16705d35d`
@@ -80,6 +80,15 @@ PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
   --config src/task/PointWorldWAM/configs/grab_wam_v1.yaml
 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
   -m src.task.PointWorldWAM.eval_wam_v1
+
+# V1.1 10-frame Chunk Joint WAM；debug gate 未通过时不扩全量
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.train_wam_v2 \
+  --config src/task/PointWorldWAM/configs/grab_wam_v2_chunk.yaml
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.eval_wam_v2 --batch-size 4
+PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.PointWorldWAM.research.wam_v2.diag_chunk
 ```
 
 训练产物写入 `output/exp/pointworld_wam_*`，诊断产物写入

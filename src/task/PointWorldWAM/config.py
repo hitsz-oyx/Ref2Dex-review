@@ -36,6 +36,7 @@ def load_config(path: str) -> Namespace:
         "norm_stats_path",
         "grab_raw_root",
         "mano_model_dir",
+        "subject_template_root",
         "left_vtemplate",
         "right_vtemplate",
     ):

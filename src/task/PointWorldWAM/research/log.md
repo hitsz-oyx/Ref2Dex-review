@@ -309,3 +309,70 @@ effect error 为 `7.53/7.42 mm`，差异无解释力。
 
 先做 action-space direct regression/conditional memorization 上界，并检查 Euler flow path 是否是
 当前主要瓶颈；只有生成 surface 明确优于 identity 后再恢复 full training。
+
+## 实验：V1.1 Chunk Joint WAM debug gate
+
+**假设**
+
+把 one-step inverse 改为 10 帧 world/action 联合 FM，并以 candidate future geometry 作为 PTv3
+coordinate，再加入 canonical/finger/region identity、learned spatial queries、显式当前 MANO state
+和双向 temporal Transformer，应能在 128 windows 上同时超过 inverse identity 与 forward
+zero-flow baseline。
+
+**观察到的失败 / 现象**
+
+V1 的 FM loss 虽下降，实际单步 hand generation 仍劣于 identity；独立双手 forward evaluator
+也未学到 action。固定 s1 v_template 和 global max pool 不能直接扩到 joint chunk/full GRAB。
+
+**诊断**
+
+宽松条件仅要求 `[t,t+10]` 内任一时刻至少一手 active，共得到 6868 windows；128 个 debug
+window 从完整有序集合均匀抽取。cache 当前只有 s1，但实现按 subject/side 建立 frozen MANO bank，
+并已用 batch=4 验证非 batch=1 路径。完整 128×10 帧 GT action surface 重建左右平均误差为
+`0.000061/0.000062 mm`，最差单点 `0.00399 mm`，数据与 MANO 链可信。
+
+首次 joint backward 的 raw `L_W/L_A/L_surface` 为 `1.256/1.980/0.100`，各自梯度范数为
+`8.86/1.29/0.091`；选择 `surface_weight=10` 后 surface 梯度与 action FM 同量级但不主导。
+三种 mode 的 backward 均 finite，单次 joint backward 峰值显存 `6.59 GB`。
+
+**改动**
+
+- 新增相对当前帧的 10×30D 双手 action chunk、10×1024×3 world chunk 与独立统计；
+- 输出 current/canonical hand points、finger/region identity、current MANO state 与 subject ID；
+- noisy world/action 先构造 candidate object/hand coordinate，current correspondence 放入 feature；
+- 将 10 个共享 PTv3 timestep 展为 `B×K` 并行 spatial batch，不复制十套参数；
+- 每时刻用 object/left/right 各 8 个 cross-attention query 压缩，240 tokens 进入 4-layer
+  bidirectional World-Action Transformer；
+- 同一模型始终输出逐点 world velocity 与左右 action velocity，按 noise time 切换
+  inverse/forward/joint；
+- action mode 加 endpoint MANO surface loss，不加 smoothness/effect/rigid loss；
+- checkpoint 用固定噪声下实际 inverse/forward generation ratio 选择，不用 FM loss。
+
+**结果**
+
+3000-step debug 训练中，前 500/后 500 step 的 forward-mode world loss 均值从 `2.006` 降到
+`0.962`；inverse action loss 从 `2.048` 降到 `1.622`，surface loss 从 `0.0471 m` 降到
+`0.0351 m`。8-window checkpoint 复合指标 best 在 step 2500。
+
+best checkpoint 在全部 128 debug windows、20-step Euler 的统一复算：
+
+| Gate | Generated | Baseline | 结论 |
+|---|---:|---:|---|
+| inverse hand surface | 71.13 mm | identity 44.57 mm | 失败 |
+| forward object flow | 47.96 mm | zero-flow 40.60 mm | 失败 |
+| forward action use | 47.96 mm | zero-action 62.44 mm | 通过 |
+| joint stability | finite | finite | 通过 |
+
+clean action 相比 zero action 改善 `23.2%`，说明统一 forward 路径确实读取 action；但 generated
+forward 仍比 zero-flow 差 `18.1%`，inverse 比 identity 差 `59.6%`。曲线显示 forward 在后半程
+继续改善，inverse 在约 `85–91 mm` 波动，继续共享训练没有接近 inverse gate。
+
+**决策**
+
+保留 V1.1 完整实现与 debug 证据，判定 No-Go。不把 `debug_max_windows` 设为 null，不训练
+6868-window full dataset。
+
+**下一步**
+
+分别做 inverse-only/forward-only deterministic chunk regression 上界，确认失败来自 FM 采样、
+多任务竞争还是 compact query 容量；通过零变化 baseline 后再恢复 joint/full。
