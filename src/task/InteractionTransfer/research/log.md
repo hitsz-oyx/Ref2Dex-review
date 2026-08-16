@@ -134,3 +134,20 @@ Cm 与 DirectEdge 在独立 subprocess 中各自完成 PTv3 初始化、训练�
 
 **决策**
 保留独立进程修复和 benchmark 链路；不宣称 V0.5 表示验证通过。下一步若继续，应先使用 V0.6 建议的 offline DenseToken static cache，并扩大训练/验证 transition 后重新评估。
+
+## 实验：V0.6.1 正确 cross-sample 与多 transition intervention
+
+**假设**
+修正 val 单样本导致的 cross-sample=GT bug，并扩大到 64 个 train transitions、16 个 held-out transitions、1000 steps 后，Cm 的 GT EPE 应低于真正错配的 cross-sample/zero/reverse，并与 DirectEdge 做容量比较。
+
+**改动**
+`train_eval_v05.py` 强制 cross-sample 至少需要 2 个 validation transition，使用 roll derangement，额外报告 action distance。V0.5 worker 运行 64 train transitions、16 val transitions、1000 steps；Cm 与 DirectEdge 仍使用独立进程。
+
+**结果**
+Cm loss `0.06017 -> 0.000811`，DirectEdge loss `0.04140 -> 0.010756`。Cm held-out EPE：GT `5.44 mm`、cross-sample `22.13 mm`、zero `28.16 mm`、reverse `57.95 mm`、point-shuffle `4.89 mm`、mean-flow `4.89 mm`。DirectEdge GT `34.53 mm`，Cm/DirectEdge `0.158`。Cm 的 field distance：cross `0.02454`、zero `0.03552`、reverse `0.07027`、point-shuffle `0.00516`、mean-flow `0.00501`；cross action distance `0.01917 m`。
+
+**诊断**
+cross-sample 修复后不再等于 GT，且 GT 明显优于 cross/zero/reverse，V0.5 的主要 causal gate 在 16 个 held-out transitions 上通过。point-shuffle/mean-flow 仍略优于 GT，与 action local ratio 约 `0.0599` 的弱局部干预相符。
+
+**决策**
+保留 V0.6.1 修复和实验结果；Cm 的容量与主要 causal gate 通过，但不把弱 point-shuffle/mean-flow 判据宣称为通过。offline DenseToken static cache 仍是后续性能和规模化方向。

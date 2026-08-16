@@ -49,15 +49,19 @@ def train(model, dataset, device, steps):
 @torch.no_grad()
 def evaluate(model, dataset, device):
     model.eval()
+    if len(dataset) < 2:
+        raise ValueError("cross-sample evaluation requires at least 2 validation transitions")
     names = ("gt", "zero", "reverse", "cross_sample", "point_shuffle", "mean_flow")
     sums = {name: {"point_error_m": 0.0, "translation_error_m": 0.0, "rotation_error_deg": 0.0}
             for name in names}
     field_dist = {name: 0.0 for name in names if name != "gt"}
+    action_dist = {name: 0.0 for name in names if name != "gt"}
+    permutation = torch.roll(torch.arange(len(dataset)), shifts=1)
     for index in range(len(dataset)):
         sample = dataset[index]
         batch = {k: v.unsqueeze(0).to(device) for k, v in sample.items() if torch.is_tensor(v)}
         gt = batch["hand_flow"]
-        wrong = dataset[(index + 1) % len(dataset)]["hand_flow"].unsqueeze(0).to(device)
+        wrong = dataset[int(permutation[index])]["hand_flow"].unsqueeze(0).to(device)
         variants = {"gt": gt, "zero": torch.zeros_like(gt), "reverse": -gt,
                     "cross_sample": wrong,
                     "point_shuffle": gt[:, torch.randperm(gt.shape[1], device=device)],
@@ -72,10 +76,12 @@ def evaluate(model, dataset, device):
                 gt_field = out["object_field"].detach()
             else:
                 field_dist[name] += float((gt_field - out["object_field"]).norm(dim=-1).mean())
+                action_dist[name] += float((gt - action).norm(dim=-1).mean())
             del out
     n = len(dataset)
     return ({name: {key: value / n for key, value in metric.items()} for name, metric in sums.items()},
-            {name: value / n for name, value in field_dist.items()})
+            {name: value / n for name, value in field_dist.items()},
+            {name: value / n for name, value in action_dist.items()})
 
 
 def main():
@@ -102,12 +108,12 @@ def main():
     report_memory("after_model_init")
     loss = train(model, train_ds, torch.device(args.device), args.steps)
     report_memory("after_train")
-    metrics, field = evaluate(model, val_ds, torch.device(args.device))
+    metrics, field, action = evaluate(model, val_ds, torch.device(args.device))
     report_memory("after_eval")
     result = {"model": args.model, "pid": os.getpid(), "train_sequences": args.train_sequence,
               "val_sequences": args.val_sequence, "train_transitions": len(train_ds),
               "val_transitions": len(val_ds), "initial_loss": loss[0], "final_loss": loss[-1],
-              "eval": metrics, "field_distance": field}
+              "eval": metrics, "field_distance": field, "action_distance_m": action}
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2), encoding="utf-8")
