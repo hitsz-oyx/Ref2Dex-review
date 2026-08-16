@@ -135,6 +135,8 @@ class TrajectoryViewer:
         self.view_gui.on_click(lambda _: self.render())
 
         gui.add_markdown("## Scene")
+        gui.add_markdown("**颜色图例** — 灰：当前物体 · 蓝：当前手 · **橙：Pred Next（单步预测）** · "
+                         "**绿：GT Next（真实下一帧）** · **紫：Rollout（自回归物体状态）**")
         self.show_hand = gui.add_checkbox("Current Hands", True)
         self.show_object = gui.add_checkbox("Current Object", True)
         self.show_pred = gui.add_checkbox("Predicted Next", True)
@@ -154,11 +156,14 @@ class TrajectoryViewer:
             self.next_opacity.on_update(lambda _: self.render())
 
         with gui.add_folder("Autoregressive Rollout", expand_by_default=False):
-            self.rollout_info = gui.add_markdown("未启动：定位到起始帧后点 Start，随播放逐帧自回归")
-            self.rollout_start_btn = gui.add_button("Start at Current Frame")
+            self.rollout_info = gui.add_markdown(
+                "**Off**：前进/播放为普通单步模式  \n"
+                "**On**：从当前帧起，前进（>）与播放变为自回归；"
+                "回退/跳帧/Reset 恢复普通模式")
+            self.rollout_mode_gui = gui.add_button_group("Autoregressive", ("Off", "On"))
+            self.rollout_mode_gui.on_click(lambda _: self._on_rollout_mode())
             self.rollout_reset_btn = gui.add_button("Reset")
-            self.rollout_start_btn.on_click(lambda _: self._start_rollout())
-            self.rollout_reset_btn.on_click(lambda _: self._reset_rollout())
+            self.rollout_reset_btn.on_click(lambda _: self._set_rollout_mode(False))
 
         with gui.add_folder("Inverse Optimization", expand_by_default=False):
             self.inverse_info = gui.add_markdown("")
@@ -178,7 +183,7 @@ class TrajectoryViewer:
         with self.lock:
             self.bundle = self.provider.load(name)
             self._invalidate_result()
-            self._reset_rollout()
+            self._set_rollout_mode(False, sync=True)
             frames = self._valid_frame_list()
             frame = frames[0] if frames else 0
             self.frame_gui.max = self.bundle.frames - 1
@@ -210,10 +215,16 @@ class TrajectoryViewer:
                     else:
                         self.rollout_active = False
                         self.rollout_info.content = (
-                            f"stopped：frame {self.rollout_last} 不是 valid one-step transition")
+                            f"stopped：frame {self.rollout_last} 不是 valid one-step transition；"
+                            f"Reset 或切 On 重新开始")
                 elif frame != self.rollout_last:
-                    self._reset_rollout()  # 回退/跳变，与旧 viewer 行为一致
-                self.rollout_last = frame
+                    # 回退/跳帧：退出自回归，恢复普通模式（变回原样）
+                    self._set_rollout_mode(False, sync=True)
+                    self.rollout_info.content = (
+                        "**Off**（回退/跳帧自动退出）：前进/播放为普通单步模式  \n"
+                        "**On**：从当前帧起，前进（>）与播放变为自回归；"
+                        "回退/跳帧/Reset 恢复普通模式")
+                self.rollout_last = frame if self.rollout_active else -1
             if self.result is not None and self.result_frame != frame:
                 self.result = None
                 self.inverse_info.content = ""
@@ -261,31 +272,49 @@ class TrajectoryViewer:
             else self.bundle.valid_transition(t, 1)
 
     # ---------- 自回归 rollout ----------
-    def _start_rollout(self):
+    def _on_rollout_mode(self):
         with self.lock:
-            if self.bundle is None:
-                return
-            i = int(self.frame_gui.value)
-            oi = self.bundle.object_indices
-            self.rollout_points = self.bundle.obj_points_world[i, oi].astype(np.float32).copy()
-            self.rollout_mesh = self.bundle.obj_world[i].copy()
-            self.rollout_step = 0
-            self.rollout_epes = []
-            self.rollout_active = True
-            self.rollout_last = i
-            self.rollout_info.content = f"started @ frame {i}，推进播放或点 > 逐步自回归"
+            # GUI 触发，value 已更新，禁止再回写 .value（viser 会再次触发回调导致递归）
+            self._set_rollout_mode(self.rollout_mode_gui.value == "On", sync=False)
+
+    def _set_rollout_mode(self, on: bool, sync: bool = True):
+        """切换自回归模式；sync=True 时同步 GUI 开关（程序侧调用）。"""
+        if sync and hasattr(self, "rollout_mode_gui") and self.rollout_mode_gui.value != ("On" if on else "Off"):
+            self.rollout_mode_gui.value = "On" if on else "Off"  # 触发一次 _on_rollout_mode(sync=False)
+            return
+        if on:
+            self._init_rollout(int(self.frame_gui.value))
+        else:
+            self._clear_rollout()
+            if hasattr(self, "rollout_info"):
+                self.rollout_info.content = (
+                    "**Off**：前进/播放为普通单步模式  \n"
+                    "**On**：从当前帧起，前进（>）与播放变为自回归；"
+                    "回退/跳帧/Reset 恢复普通模式")
+        if hasattr(self, "rollout_info"):
             self.render()
 
-    def _reset_rollout(self):
+    def _init_rollout(self, i: int):
+        if self.bundle is None:
+            return
+        oi = self.bundle.object_indices
+        self.rollout_points = self.bundle.obj_points_world[i, oi].astype(np.float32).copy()
+        self.rollout_mesh = self.bundle.obj_world[i].copy()
+        self.rollout_step = 0
+        self.rollout_epes = []
+        self.rollout_active = True
+        self.rollout_last = i
+        self.rollout_info.content = (
+            f"**On** @ frame {i} — 前进（>）/播放为自回归；"
+            f"object 状态回代，hand ΔH 用 GT（teacher forcing）")
+
+    def _clear_rollout(self):
         self.rollout_active = False
         self.rollout_points = None
         self.rollout_mesh = None
         self.rollout_step = 0
         self.rollout_epes = []
         self.rollout_last = -1
-        if hasattr(self, "rollout_info"):
-            self.rollout_info.content = "未启动：定位到起始帧后点 Start，随播放逐帧自回归"
-            self.render()
 
     def _rollout_step(self, t: int):
         """t -> t+1 单步：object 状态用 rollout 结果回代，hand/ΔH 用 GT。"""
