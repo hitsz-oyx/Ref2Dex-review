@@ -43,6 +43,7 @@ COLOR_CURRENT_OBJ = (175, 175, 175)
 COLOR_CURRENT_HAND = (120, 140, 180)
 COLOR_PRED = (255, 140, 0)
 COLOR_GT = (0, 200, 120)
+COLOR_ROLLOUT = (168, 85, 247)
 
 
 def parse_args() -> argparse.Namespace:
@@ -87,6 +88,13 @@ class TrajectoryViewer:
         self.gap = 1
         self.playing = False
         self.lock = threading.RLock()
+        # 自回归 rollout 状态：object 状态由模型逐步推进，hand/ΔH 用 GT。
+        self.rollout_active = False
+        self.rollout_points = None   # (512,3) world
+        self.rollout_mesh = None     # (V,3) world
+        self.rollout_step = 0
+        self.rollout_epes = []
+        self.rollout_last = -1
 
         self.server = viser.ViserServer(host=args.host, port=args.port)
         self.batch = SceneBatch(self.server)
@@ -145,6 +153,13 @@ class TrajectoryViewer:
                                                step=0.05, initial_value=0.45)
             self.next_opacity.on_update(lambda _: self.render())
 
+        with gui.add_folder("Autoregressive Rollout", expand_by_default=False):
+            self.rollout_info = gui.add_markdown("未启动：定位到起始帧后点 Start，随播放逐帧自回归")
+            self.rollout_start_btn = gui.add_button("Start at Current Frame")
+            self.rollout_reset_btn = gui.add_button("Reset")
+            self.rollout_start_btn.on_click(lambda _: self._start_rollout())
+            self.rollout_reset_btn.on_click(lambda _: self._reset_rollout())
+
         with gui.add_folder("Inverse Optimization", expand_by_default=False):
             self.inverse_info = gui.add_markdown("")
             self.init_gui = gui.add_button_group("Initialization", ("Zero", "GT"))
@@ -163,6 +178,7 @@ class TrajectoryViewer:
         with self.lock:
             self.bundle = self.provider.load(name)
             self._invalidate_result()
+            self._reset_rollout()
             frames = self._valid_frame_list()
             frame = frames[0] if frames else 0
             self.frame_gui.max = self.bundle.frames - 1
@@ -186,7 +202,19 @@ class TrajectoryViewer:
 
     def _on_frame(self):
         with self.lock:
-            if self.result is not None and self.result_frame != int(self.frame_gui.value):
+            frame = int(self.frame_gui.value)
+            if self.rollout_active:
+                if frame == self.rollout_last + 1:
+                    if self._valid_step(self.rollout_last):
+                        self._rollout_step(self.rollout_last)
+                    else:
+                        self.rollout_active = False
+                        self.rollout_info.content = (
+                            f"stopped：frame {self.rollout_last} 不是 valid one-step transition")
+                elif frame != self.rollout_last:
+                    self._reset_rollout()  # 回退/跳变，与旧 viewer 行为一致
+                self.rollout_last = frame
+            if self.result is not None and self.result_frame != frame:
                 self.result = None
                 self.inverse_info.content = ""
             self.render()
@@ -226,6 +254,74 @@ class TrajectoryViewer:
         if self.legacy:
             return self.model.forward_core(hand_flow=hand_flow, **self._encode(inputs))
         return self.model.forward_core(hand_flow=hand_flow, dt=inputs["gap"], **self._encode(inputs))
+
+    def _valid_step(self, t: int) -> bool:
+        """rollout 单步（gap=1）有效性。"""
+        return self.bundle.valid_transition_v010(t) if self.legacy \
+            else self.bundle.valid_transition(t, 1)
+
+    # ---------- 自回归 rollout ----------
+    def _start_rollout(self):
+        with self.lock:
+            if self.bundle is None:
+                return
+            i = int(self.frame_gui.value)
+            oi = self.bundle.object_indices
+            self.rollout_points = self.bundle.obj_points_world[i, oi].astype(np.float32).copy()
+            self.rollout_mesh = self.bundle.obj_world[i].copy()
+            self.rollout_step = 0
+            self.rollout_epes = []
+            self.rollout_active = True
+            self.rollout_last = i
+            self.rollout_info.content = f"started @ frame {i}，推进播放或点 > 逐步自回归"
+            self.render()
+
+    def _reset_rollout(self):
+        self.rollout_active = False
+        self.rollout_points = None
+        self.rollout_mesh = None
+        self.rollout_step = 0
+        self.rollout_epes = []
+        self.rollout_last = -1
+        if hasattr(self, "rollout_info"):
+            self.rollout_info.content = "未启动：定位到起始帧后点 Start，随播放逐帧自回归"
+            self.render()
+
+    def _rollout_step(self, t: int):
+        """t -> t+1 单步：object 状态用 rollout 结果回代，hand/ΔH 用 GT。"""
+        b, oi = self.bundle, self.bundle.object_indices
+        inputs = (b.model_inputs_v010(t, self.device) if self.legacy
+                  else b.model_inputs(t, self.device, 1))
+        center_world = self.rollout_points.mean(0)
+        pts = torch.from_numpy(np.ascontiguousarray(
+            self.rollout_points - center_world)).unsqueeze(0).to(self.device)
+        ro_inputs = dict(inputs)
+        ro_inputs["object_points"] = pts          # 自回归：object 状态回代
+        with torch.no_grad():
+            out = self._forward(ro_inputs)
+        flow = out["object_flow"]
+
+        # 512 点直接累积 flow；mesh 用同一 twist 提升，保持刚体一致。
+        self.rollout_points = self.rollout_points + flow.squeeze(0).cpu().numpy()
+        twist, _ = flow_to_mesh_twist(flow, pts)
+        center_t = torch.from_numpy(np.ascontiguousarray(center_world)).view(1, 1, 3).to(self.device)
+        mesh_t = torch.from_numpy(np.ascontiguousarray(self.rollout_mesh)).unsqueeze(0).to(self.device)
+        self.rollout_mesh = twist_transform(twist, mesh_t, center_t).squeeze(0).cpu().numpy()
+
+        gt_next = b.obj_points_world[t + 1, oi].astype(np.float32)
+        pred_t = torch.from_numpy(self.rollout_points).unsqueeze(0)
+        gt_t = torch.from_numpy(gt_next).unsqueeze(0)
+        self.rollout_epes.append(float(epe(pred_t, gt_t)) * 1000)
+        self.rollout_step += 1
+        self._rollout_summary(t + 1)
+
+    def _rollout_summary(self, frame: int):
+        last = self.rollout_epes[-1] if self.rollout_epes else float("nan")
+        mean = float(np.mean(self.rollout_epes)) if self.rollout_epes else float("nan")
+        self.rollout_info.content = (
+            f"step **{self.rollout_step}** @ frame {frame}  \n"
+            f"EPE — last **{last:.2f}** / mean **{mean:.2f}** mm  \n"
+            f"object 状态自回归回代，hand ΔH 用 GT（teacher forcing）")
 
     # ---------- Forward ----------
     def _forward_outputs(self, i: int):
@@ -326,7 +422,26 @@ class TrajectoryViewer:
         if self.show_flow.value:
             self._sparse_flows("/scene", np.zeros(3), inputs, pred_flow)
 
+        self._render_rollout_mesh(obj_mesh, center, spacing)
         self._status(i, valid=True, pred_epe=pred_epe)
+
+    def _render_rollout_mesh(self, obj_mesh, center, spacing):
+        """紫色 mesh 显示自回归 rollout 的 object 状态（Overlay 叠加 / Side 额外 panel）。"""
+        if not (self.rollout_active or self.rollout_step > 0) or self.rollout_mesh is None:
+            return
+        if self.compare_gui.value == "Overlay":
+            offset = np.zeros(3)
+        else:
+            offset = np.array([1.5 * spacing, 0.0, 0.0])  # 接在 Pred(-0.5s)/GT(+0.5s) 网格之后
+        opacity = float(self.next_opacity.value)
+        self.batch.mesh("/rollout/object", self.rollout_mesh - center + offset,
+                        self.bundle.obj_faces, COLOR_ROLLOUT, opacity=opacity)
+        last = self.rollout_epes[-1] if self.rollout_epes else float("nan")
+        mean = float(np.mean(self.rollout_epes)) if self.rollout_epes else float("nan")
+        top = float(obj_mesh[:, 1].max()) + 0.25
+        state = "" if self.rollout_active else " (stopped)"
+        self.batch.label("/rollout/label", (float(offset[0]), top, 0.0),
+                         f"Rollout {self.rollout_step} steps{state} | EPE last {last:.2f} / mean {mean:.2f} mm")
 
     def _render_inverse(self):
         b, i, gap = self.bundle, int(self.frame_gui.value), self.gap
