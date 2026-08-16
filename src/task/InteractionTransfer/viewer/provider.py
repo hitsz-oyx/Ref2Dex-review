@@ -33,6 +33,7 @@ class SequenceBundle:
     hand_verts: dict             # side -> (T, 778, 3) world（geometry cache）
     hand_faces: dict             # side -> (1538, 3)
     hand_face_normals: dict      # side -> (T, 1538, 3)（stage4）
+    hand_face_centers: dict      # side -> (T, 1538, 3)（stage4，V0.x 模型输入）
     obj_verts_canonical: np.ndarray
     obj_faces: np.ndarray
     obj_world: np.ndarray        # (T, V, 3)
@@ -68,6 +69,20 @@ class SequenceBundle:
 
     def first_valid_frame(self, gap: int = 1) -> int:
         valid = self.valid_frames(gap)
+        return valid[0] if valid else 0
+
+    def valid_transition_v010(self, i: int) -> bool:
+        """V0.x one-step 有效性：i, i+1 处右手 active 且左手 inactive。"""
+        ra, la = self.right_active, self.left_active
+        if not (0 <= i < self.frames - 1):
+            return False
+        return bool(ra[i] and ra[i + 1] and not la[i] and not la[i + 1])
+
+    def valid_frames_v010(self) -> list[int]:
+        return [i for i in range(self.frames - 1) if self.valid_transition_v010(i)]
+
+    def first_valid_frame_v010(self) -> int:
+        valid = self.valid_frames_v010()
         return valid[0] if valid else 0
 
     def sample_hands(self, i: int, gap: int, seed_extra: int = 0):
@@ -110,6 +125,29 @@ class SequenceBundle:
             "center": center,
         }
 
+    def model_inputs_v010(self, i: int, device: torch.device) -> dict:
+        """V0.x batched 输入：单右手 1538 stage4 face centers，无 Δt。"""
+        j = i + 1
+        oi = self.object_indices
+        o = self.obj_points_world[i, oi].astype(np.float32)
+        center = o.mean(0)
+        nxt = self.obj_points_world[j, oi].astype(np.float32)
+        hp = self.hand_face_centers["right"][i].astype(np.float32)
+        nxt_hp = self.hand_face_centers["right"][j].astype(np.float32)
+
+        def t(x: np.ndarray) -> torch.Tensor:
+            return torch.from_numpy(np.ascontiguousarray(x)).unsqueeze(0).to(device)
+
+        return {
+            "object_points": t(o - center),
+            "object_normals": t(self.obj_normals_world[i, oi].astype(np.float32)),
+            "hand_points": t(hp - center),
+            "hand_normals": t(self.hand_face_normals["right"][i].astype(np.float32)),
+            "hand_flow": t(nxt_hp - hp),
+            "object_flow": t(nxt - o),
+            "center": center,
+        }
+
 
 class TrajectoryProvider:
     """加载 split 内序列；重数据（object mesh）由 MeshProvider 跨序列缓存。"""
@@ -135,13 +173,14 @@ class TrajectoryProvider:
             object_name = str(s["object_name"].item())
             subject = str(s["subject_id"].item())
 
-        hand_verts, hand_faces, hand_face_normals = {}, {}, {}
+        hand_verts, hand_faces, hand_face_normals, hand_face_centers = {}, {}, {}, {}
         right_active = left_active = None
         parity = 0.0
         for side in ("left", "right"):
             with np.load(self.cache_root / name / f"{side}.npz", allow_pickle=False) as h:
                 centers = np.asarray(h["hand_points_world"], np.float32)
                 hand_face_normals[side] = np.asarray(h["hand_normals_world"], np.float32)
+                hand_face_centers[side] = centers
                 active = np.asarray(h["obj_candidate_mask_5cm"], bool).any(1)
             if side == "right":
                 right_active = active
@@ -165,7 +204,7 @@ class TrajectoryProvider:
             name=name, object_name=object_name, subject=subject, raw_rel=raw_rel,
             raw_frames_total=seq.n_frames, raw_frame_id=raw_frame_id,
             hand_verts=hand_verts, hand_faces=hand_faces,
-            hand_face_normals=hand_face_normals,
+            hand_face_normals=hand_face_normals, hand_face_centers=hand_face_centers,
             obj_verts_canonical=obj_canonical, obj_faces=obj_faces,
             obj_world=obj_world, obj_points_world=obj_points,
             obj_normals_world=obj_normals,
@@ -177,12 +216,26 @@ class TrajectoryProvider:
 
 
 def load_model(checkpoint: Path, dense_checkpoint: str, device: torch.device):
-    from src.task.InteractionTransfer.model import InteractionTransfer
+    """自动识别 V0.x（action 8D）/ V1.0（action 9D）checkpoint。
 
-    model = InteractionTransfer(dense_checkpoint=dense_checkpoint).to(device).eval()
+    返回 ``(model, epoch)``；``model.is_legacy`` 标记 V0.x（调用方据此切换
+    单右手输入 / 无 dt forward / 6D rigid inverse）。
+    """
     ckpt = torch.load(checkpoint, map_location=device, weights_only=False)
+    state = ckpt["model"]
+    action_weight = state.get("message.action.0.weight")
+    legacy = action_weight is not None and int(action_weight.shape[-1]) == 8
+    if legacy:
+        from src.task.InteractionTransfer.viewer.legacy_model import LegacyInteractionTransfer
+
+        model = LegacyInteractionTransfer(dense_checkpoint=dense_checkpoint).to(device).eval()
+    else:
+        from src.task.InteractionTransfer.model import InteractionTransfer
+
+        model = InteractionTransfer(dense_checkpoint=dense_checkpoint).to(device).eval()
     current = model.state_dict()
-    current.update(ckpt["model"])
+    current.update(state)
     model.load_state_dict(current)
     model.requires_grad_(False)
+    model.is_legacy = legacy
     return model, int(ckpt.get("epoch", -1))
