@@ -168,3 +168,31 @@ Cm held-out EPE：GT `9.12 mm`、cross `24.40 mm`、zero `27.53 mm`、reverse `5
 
 **决策**
 保留 twist intervention 与 best-validation 机制；不进入 inverse action optimization。下一步仍应优先做 offline DenseToken static cache，并寻找高旋转/高局部差异 transition 子集后再验证局部 interaction。
+
+## 实验：V0.8 offline static cache 与全量 20 epoch 训练
+
+**假设**
+将 frozen DenseToken/PTv3 的静态特征离线缓存后，训练可扩展到全部序列和全量 transitions；全量数据训练的 EPE 应显著低于此前 64-transition 小样本。
+
+**改动**
+`model.py` 拆分 `encode_static`/`forward_core`（静态部分只依赖 `(O_t,H_t)`）；新增 `precompute_static.py`（分片并行、断点续算、保真度 sanity）与 `cached_dataset.py`（fp32 memmap 直读）；`train_full.py` 使用与 Cm full_grab_v1 完全一致的 1068/134/133 序列划分训练 20 epoch，val EPE 选 best。
+
+**结果**
+cache 覆盖 1335 序列、175,529 transitions（train 141,571 / val 16,794 / test 17,164），随机抽样保真度最大误差 `1.8e-6`。训练收敛于 epoch 16，val EPE `3.42 mm`（V0.7 小样本为 `9.12 mm`）。epoch 1 即达 `3.82 mm`，说明此前小样本主要受数据量限制。
+
+**决策**
+保留 static cache 链路和划分；V0.8 全量训练 gate 通过。训练后段 val 在 3.4–3.8 mm 波动无明显过拟合。
+
+## 实验：V0.9 checkpoint 定量验证与中间过程可视化
+
+**假设**
+全量训练后的 best checkpoint 在 held-out test 上满足 `EPE_GT << EPE_zero/reverse/cross`；且 ΔH→M→C_obj→ΔO 链路的中间表示可在 Viser 中随 action 切换观察变化。
+
+**改动**
+新增 `eval_ckpt.py`（test split 上 GT/zero/reverse/cross 四种 action intervention 的 EPE，支持 best/last 对比诊断）与 `visualize_intermediate.py`（Viser viewer：object/hand 点云、hand flow arrows（stride 可调）、M norm/attention Top-K edges、C_obj norm heatmap、GT/Pred flow、action 实时切换与 sample EPE）。
+
+**结果**
+test 17,164 transitions，best.pt（epoch 16）：GT `3.28 mm`、zero `11.15 mm`、reverse `21.58 mm`、cross `4.35 mm`；last.pt（epoch 17）：GT `3.47 mm`，与 best 接近。Quantitative Gate 通过。cross 与 GT 差距相对较小（`4.35` vs `3.28`），与相邻 transition 的 hand flow 天然相似一致。Viewer 在 `http://localhost:8080` 正常运行，action 切换链路可视化可用。
+
+**决策**
+保留 eval/viewer 脚本；V0.9 Quantitative Gate 通过。PCA-RGB、difference heatmap、selected point panel 等 viewer 扩展与 inverse 方向留待后续。

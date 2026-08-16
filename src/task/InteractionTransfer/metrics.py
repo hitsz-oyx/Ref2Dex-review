@@ -4,6 +4,13 @@ import torch
 
 
 @torch.no_grad()
+def epe(pred: torch.Tensor, target: torch.Tensor) -> float:
+    """V0.8 唯一指标：EPE = 每点 L2 误差均值（米）。"""
+    error = torch.linalg.vector_norm(pred - target, dim=-1)
+    return float(error.mean())
+
+
+@torch.no_grad()
 def flow_metrics(pred: torch.Tensor, target: torch.Tensor,
                  points: torch.Tensor | None = None) -> dict[str, float]:
     error = torch.linalg.vector_norm(pred - target, dim=-1)

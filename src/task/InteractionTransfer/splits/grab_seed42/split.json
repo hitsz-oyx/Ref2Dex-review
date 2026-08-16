@@ -1,0 +1,13 @@
+{
+  "name": "grab_seed42",
+  "task": "interaction_transfer",
+  "seed": 42,
+  "group_by": "sequence",
+  "train_ratio": 0.8,
+  "val_ratio": 0.1,
+  "test_ratio": 0.09999999999999995,
+  "num_sequences": 1335,
+  "num_train_sequences": 1068,
+  "num_val_sequences": 134,
+  "num_test_sequences": 133
+}
