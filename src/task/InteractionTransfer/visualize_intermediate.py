@@ -30,6 +30,39 @@ from src.task.InteractionTransfer.metrics import epe
 from src.task.InteractionTransfer.model import InteractionTransfer
 
 
+class RawTrajectory:
+    """按原始时间顺序读取完整 Stage4 轨迹，不做高运动 transition 筛选。"""
+    def __init__(self, root: str, sequence: str, object_points=512, hand_points=1538):
+        self.path = Path(root) / sequence
+        self.shared = np.load(self.path / "shared.npz", allow_pickle=False)
+        self.hand = np.load(self.path / "right.npz", allow_pickle=False)
+        self.n = int(len(self.shared["obj_points_world"]))
+        self.oi = np.linspace(0, self.shared["obj_points_world"].shape[1]-1, object_points, dtype=np.int64)
+        self.hi = np.linspace(0, self.hand["hand_points_world"].shape[1]-1, hand_points, dtype=np.int64)
+
+    def __len__(self): return max(0, self.n - 1)
+
+    def __getitem__(self, i):
+        i = int(np.clip(i, 0, len(self)-1)); j = i + 1
+        op = self.shared["obj_points_world"][i, self.oi].astype("f4")
+        on = self.shared["obj_normals_world"][i, self.oi].astype("f4")
+        hp = self.hand["hand_points_world"][i, self.hi].astype("f4")
+        hn = self.hand["hand_normals_world"][i, self.hi].astype("f4")
+        of = (self.shared["obj_points_world"][j, self.oi] - self.shared["obj_points_world"][i, self.oi]).astype("f4")
+        hf = (self.hand["hand_points_world"][j, self.hi] - self.hand["hand_points_world"][i, self.hi]).astype("f4")
+        center = op.mean(0, keepdims=True)
+        return {"object_points": torch.from_numpy(op-center), "object_normals": torch.from_numpy(on),
+                "hand_points": torch.from_numpy(hp-center), "hand_normals": torch.from_numpy(hn),
+                "hand_flow": torch.from_numpy(hf), "object_flow": torch.from_numpy(of),
+                "object_world": op, "hand_world": hp, "raw_frame_id": int(self.shared["raw_frame_id"][i])}
+
+    def world(self, i):
+        i = int(np.clip(i, 0, self.n-1)); j = min(i+1, self.n-1)
+        op = self.shared["obj_points_world"][i, self.oi].astype("f4")
+        hp = self.hand["hand_points_world"][i, self.hi].astype("f4")
+        return op, hp, (self.shared["obj_points_world"][j, self.oi]-self.shared["obj_points_world"][i, self.oi]).astype("f4")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, help="GRAB stage4 cache 目录")
@@ -38,6 +71,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dense-checkpoint", default="src/task/Cm/densetoken_ckpt/best.pt")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--fps", type=float, default=6.0)
     parser.add_argument("--sequence", default=None, help="初始序列，默认 test.txt 第一个")
     return parser.parse_args()
 
@@ -49,6 +83,8 @@ def viridis(values: np.ndarray) -> np.ndarray:
 
 
 def norm01(x: np.ndarray) -> np.ndarray:
+    if x.size == 0:
+        return np.zeros_like(x, dtype=np.float32)
     lo, hi = float(x.min()), float(x.max())
     return (x - lo) / (hi - lo + 1e-12)
 
@@ -71,7 +107,11 @@ class Viewer:
         self.lock = threading.RLock()
         self._loading = False
         self._optimizing = False
+        self._playing = False
         self.dataset = None
+        self.raw = None
+        self.rollout_pred = None
+        self.rollout_step = 0
         self.static = None
         self.gt_flow = None
         self.cross_flow = None
@@ -95,8 +135,27 @@ class Viewer:
         gui.add_markdown("## Sample")
         self.seq_gui = gui.add_dropdown("Sequence", self.sequences)
         self.seq_gui.on_update(lambda _: self._load_sequence(self.seq_gui.value))
+        self.prev_seq = gui.add_button("Previous Sequence")
+        self.next_seq = gui.add_button("Next Sequence")
+        self.prev_seq.on_click(lambda _: self._step_sequence(-1))
+        self.next_seq.on_click(lambda _: self._step_sequence(1))
         self.tr_gui = gui.add_slider("Transition", min=0, max=1, step=1, initial_value=0)
         self.tr_gui.on_update(lambda _: self.refresh(recompute_static=True))
+        self.prev_tr = gui.add_button("< Transition")
+        self.next_tr = gui.add_button("Transition >")
+        self.prev_tr.on_click(lambda _: self._step_transition(-1))
+        self.next_tr.on_click(lambda _: self._step_transition(1))
+        self.play_button = gui.add_button("Play")
+        self.stop_button = gui.add_button("Stop")
+        self.stop_button.disabled = True
+        self.play_button.on_click(lambda _: self._set_playing(True))
+        self.stop_button.on_click(lambda _: self._set_playing(False))
+        self.reset_rollout = gui.add_button("Reset Rollout")
+        self.reset_rollout.on_click(lambda _: self._reset_rollout())
+        self.coord_gui = gui.add_dropdown("Coordinate", ("World", "Hand Root", "Object Centered"), initial_value="World")
+        self.coord_gui.on_update(lambda _: self.refresh(recompute_static=False))
+        self.embodiment_gui = gui.add_dropdown("Hand Embodiment", ("Reference MANO", "Allegro", "LEAP", "Shadow", "Barrett"), initial_value="Reference MANO")
+        self.embodiment_gui.on_update(lambda _: self._on_embodiment_change())
 
         gui.add_markdown("## Rendering")
         self.point_shape = gui.add_dropdown("Point Shape",
@@ -157,16 +216,70 @@ class Viewer:
         with self.lock:
             self._loading = True
             try:
-                self.dataset = GRABOneStepDataset(self.args.root, [sequence], max_transitions=0)
+                self.raw = RawTrajectory(self.args.root, sequence)
+                self.dataset = self.raw
                 if self.seq_gui.value != sequence:
                     self.seq_gui.value = sequence
                 self.tr_gui.max = max(len(self.dataset) - 1, 1)
                 self.tr_gui.value = 0
                 self.static = None
                 self.result = None
+                self.rollout_pred = None
+                self.rollout_step = 0
                 self.refresh(recompute_static=True)
             finally:
                 self._loading = False
+
+    def _step_sequence(self, delta: int):
+        if not self.sequences:
+            return
+        index = self.sequences.index(self.seq_gui.value)
+        self._load_sequence(self.sequences[(index + int(delta)) % len(self.sequences)])
+
+    def _on_embodiment_change(self):
+        if self.embodiment_gui.value != "Reference MANO":
+            self.opt_status.content = (f"**{self.embodiment_gui.value}** 已选择。当前仓库没有对应 "
+                                       "InteractionTransfer comparison cache；显示保留参考手点云，待离线跨 embodiment 优化结果接入。")
+        self.refresh(recompute_static=False)
+
+    def _step_transition(self, delta: int):
+        if self.dataset is None:
+            return
+        value = int(np.clip(int(self.tr_gui.value) + int(delta), 0, max(len(self.dataset)-1, 0)))
+        self.tr_gui.value = value
+        if delta > 0:
+            self._advance_rollout()
+        elif delta < 0:
+            self._reset_rollout()
+
+    def _reset_rollout(self):
+        self.rollout_pred = None
+        self.rollout_step = 0
+        self.refresh(recompute_static=True)
+
+    def _advance_rollout(self):
+        if self.raw is None or self.raw.n < 2:
+            return
+        frame = int(self.tr_gui.value)
+        if self.rollout_pred is None:
+            self.rollout_pred = self.raw[frame]["object_points"].numpy().copy()
+        if frame >= len(self.raw):
+            return
+        sample = self.raw[frame]
+        op = torch.from_numpy(self.rollout_pred).unsqueeze(0).float().to(self.device)
+        hp = self._to_batch(sample["hand_points"])
+        with torch.no_grad():
+            static = self.model.encode_static(op, self._to_batch(sample["object_normals"]), hp,
+                                              self._to_batch(sample["hand_normals"]))
+            out = self.model.forward_core(hand_flow=self._to_batch(sample["hand_flow"]), **static)
+        self.rollout_pred = self.rollout_pred + out["object_flow"].squeeze(0).cpu().numpy()
+        self.rollout_step += 1
+        self.refresh(recompute_static=False)
+
+    def _set_playing(self, value: bool):
+        self._playing = bool(value)
+        self.play_button.disabled = self._playing
+        self.stop_button.disabled = not self._playing
 
     def _current_sample(self):
         idx = int(self.tr_gui.value)
@@ -247,7 +360,7 @@ class Viewer:
             pass
 
     def _clear_scene(self):
-        for name in ("/object", "/hand", "/hand_flow", "/edges", "/flow_pred", "/flow_gt",
+        for name in ("/object", "/hand", "/hand_flow", "/edges", "/flow_pred", "/flow_gt", "/rollout_pred",
                      "/init/object", "/init/hand", "/init/hand_flow", "/init/flow", "/init/label",
                      "/opt/object", "/opt/hand", "/opt/hand_flow", "/opt/flow", "/opt/label",
                      "/gt/object", "/gt/hand", "/gt/hand_flow", "/gt/flow", "/gt/label"):
@@ -257,26 +370,38 @@ class Viewer:
         with self.lock:
             if self.dataset is None:
                 return
-            self._clear_scene()
-            if self.view_mode.value == "Inverse Optimization":
-                if self.result is None:
-                    self._render_inverse_placeholder()
+            with self.server.atomic():
+                self._clear_scene()
+                if self.view_mode.value == "Inverse Optimization":
+                    if self.result is None:
+                        self._render_inverse_placeholder()
+                    else:
+                        self._render_inverse()
                 else:
-                    self._render_inverse()
-            else:
-                self._forward(recompute_static)
-                out = {k: v.squeeze(0).detach().cpu().numpy() for k, v in self.out.items()}
-                self._render_intermediate(out)
+                    self._forward(recompute_static)
+                    out = {k: v.squeeze(0).detach().cpu().numpy() for k, v in self.out.items()}
+                    self._render_intermediate(out)
 
     # ----- Intermediate 渲染（V0.9 原有） -----
     def _render_intermediate(self, out):
         scene = self.server.scene
         op, hp = self.object_np, self.hand_np
+        if self.coord_gui.value == "World" and self.raw is not None:
+            op, hp, _ = self.raw.world(int(self.tr_gui.value))
+            # 模型输出在 object-centered 坐标，世界显示只需平移到当前物体中心。
+            center = op.mean(0) - self.object_np.mean(0)
+            hp = self.hand_np + center
+            op = self.object_np + center
+        elif self.coord_gui.value == "Hand Root":
+            root = hp[0:1]
+            op, hp = op - root, hp - root
         pred_flow = out["object_flow"]
         gt_flow = self.gt_object_flow_t.squeeze(0).cpu().numpy()
 
         self.info.content = (
             f"**Checkpoint** {Path(self.args.checkpoint).name} \\| epoch {self.epoch}  \n"
+            f"**Sequence** {self.seq_gui.value} \\| transition {int(self.tr_gui.value)}/{len(self.dataset)-1}  \n"
+            f"**Coordinate** {self.coord_gui.value} \\| **Rollout** {self.rollout_step} step  \n"
             f"**Mode** Intermediate \\| **Action** {self.action}  \n"
             f"**Sample EPE** {self.sample_epe:.2f} mm"
         )
@@ -330,6 +455,15 @@ class Viewer:
             segs = np.stack([op, op + gt_flow], axis=1)
             colors = np.tile(np.array([0, 200, 120], np.uint8), (len(op), 2, 1))
             scene.add_line_segments("/flow_gt", points=segs, colors=colors, line_width=2.0)
+        if self.rollout_pred is not None:
+            rp = self.rollout_pred
+            if self.coord_gui.value == "World":
+                rp = rp + (op.mean(0) - self.object_np.mean(0))
+            elif self.coord_gui.value == "Hand Root":
+                rp = rp - hp[0:1]
+            segs = np.stack([op, rp], axis=1)
+            colors = np.tile(np.array([220, 40, 220], np.uint8), (len(op), 2, 1))
+            scene.add_line_segments("/rollout_pred", points=segs, colors=colors, line_width=2.5)
 
     # ----- Inverse 渲染（V0.10 三路并排） -----
     def _render_inverse_placeholder(self):
@@ -433,7 +567,9 @@ def main() -> None:
     try:
         import time
         while True:
-            time.sleep(3600)
+            if viewer._playing and viewer.dataset is not None:
+                viewer._step_transition(1)
+            time.sleep(max(1e-3, 1.0 / float(args.fps)))
     except KeyboardInterrupt:
         pass
 
