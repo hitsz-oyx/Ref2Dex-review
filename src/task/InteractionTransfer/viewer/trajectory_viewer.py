@@ -1,18 +1,21 @@
-"""InteractionTransfer V0.10.1 正式主 Viewer。
+"""InteractionTransfer V1.0 正式主 Viewer。
 
 与 legacy ``visualize_intermediate.py`` 的区别：
-- 真实 MANO hand mesh + GRAB object mesh（点云只作为可选 debug overlay）；
-- 完整轨迹按真实时间序播放（cache 帧序），Play/Stop/FPS；
-- Forward：Current / Pred Next / GT Next 的"下一状态"mesh 对比（Overlay / Side-by-side）；
-- Inverse：Initial / Optimized / GT 三路并排，rigid 优化结果真实移动整只手；
+- 真实 MANO 双手 mesh（geometry cache 778 顶点/手）+ GRAB object mesh；
+- V1.0 数据流：双手 769+769 在线表面采样（按 (i, gap) 播种）、Gap 下拉
+  （{1,2,4,8}，限当前帧 valid gaps）、9D action（含 Δt）；
+- Forward：Current / Pred Next / GT Next 的"下一状态"mesh 对比；
+- Inverse：Initial / Optimized / GT 三路并排；rigid 12D（左右手各自
+  SE(3)）优化结果分别提升回两只手的 MANO mesh；
 - ``server.atomic()`` 批量重建，播放不闪烁；panel 间距按 object diameter 自适应。
 
 用法::
 
     python -m src.task.InteractionTransfer.viewer.trajectory_viewer \\
         --root data/processed_data/stage4/data/grab \\
+        --geometry-root data/processed_data/stage4/interactiontransfer_geometry_cache \\
         --split src/task/InteractionTransfer/splits/grab_seed42/test.txt \\
-        --checkpoint outputs/InteractionTransfer/v08_full_20ep/best.pt \\
+        --checkpoint outputs/InteractionTransfer/v10_full_20ep/best.pt \\
         --device cuda:0 --port 8080
 """
 from __future__ import annotations
@@ -30,7 +33,7 @@ import viser
 from src.task.InteractionTransfer.inverse_optimize import optimize_hand_flow
 from src.task.InteractionTransfer.metrics import epe
 from src.task.InteractionTransfer.viewer.mesh_provider import flow_to_mesh_twist, twist_transform
-from src.task.InteractionTransfer.viewer.provider import TrajectoryProvider, load_model
+from src.task.InteractionTransfer.viewer.provider import GAPS, TrajectoryProvider, load_model
 from src.task.InteractionTransfer.viewer.scene_renderer import (
     SceneBatch, auto_spacing, panel_offsets,
 )
@@ -44,6 +47,7 @@ COLOR_GT = (0, 200, 120)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, help="GRAB stage4 cache 目录")
+    parser.add_argument("--geometry-root", required=True, help="geometry cache 目录")
     parser.add_argument("--split", type=Path, required=True, help="split txt（每行一个序列）")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--dense-checkpoint", default="src/task/Cm/densetoken_ckpt/best.pt")
@@ -56,16 +60,29 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def split_hands(inputs: dict):
+    """concat 手点 -> (left, right) 两块。"""
+    n = inputs["hand_points"].shape[1] // 2
+    return (inputs["hand_points"][:, :n], inputs["hand_normals"][:, :n],
+            inputs["hand_points"][:, n:], inputs["hand_normals"][:, n:])
+
+
+def encode_static_split(model, inputs):
+    lp, ln, rp, rn = split_hands(inputs)
+    return model.encode_static(inputs["object_points"], inputs["object_normals"], lp, ln, rp, rn)
+
+
 class TrajectoryViewer:
     def __init__(self, args):
         self.args = args
         self.device = torch.device(args.device)
         self.model, self.epoch = load_model(args.checkpoint, args.dense_checkpoint, self.device)
-        self.provider = TrajectoryProvider(args.root, args.split, args.grab_root,
-                                           args.mano_path, str(self.device))
+        self.provider = TrajectoryProvider(args.root, args.split, args.geometry_root,
+                                           args.grab_root, args.mano_path, str(self.device))
         self.bundle = None
         self.result = None            # 当前帧的 inverse 结果
         self.result_frame = -1
+        self.gap = 1
         self.playing = False
         self.lock = threading.RLock()
 
@@ -77,7 +94,7 @@ class TrajectoryViewer:
     # ---------- GUI ----------
     def _build_gui(self):
         gui = self.server.gui
-        gui.add_markdown("# InteractionTransfer")
+        gui.add_markdown("# InteractionTransfer (V1.0)")
         self.info = gui.add_markdown("")
 
         self.seq_gui = gui.add_dropdown("Sequence", self.provider.sequences)
@@ -86,6 +103,8 @@ class TrajectoryViewer:
         gui.add_markdown("## Frame")
         self.frame_gui = gui.add_slider("Frame", min=0, max=1, step=1, initial_value=0)
         self.frame_gui.on_update(lambda _: self._on_frame())
+        self.gap_gui = gui.add_dropdown("Gap (Δt)", tuple(str(g) for g in GAPS), initial_value="1")
+        self.gap_gui.on_update(lambda _: self._on_gap())
         self.prev_btn = gui.add_button("<", visible=True)
         self.play_btn = gui.add_button("Play")
         self.stop_btn = gui.add_button("Stop")
@@ -103,7 +122,7 @@ class TrajectoryViewer:
         self.view_gui.on_click(lambda _: self.render())
 
         gui.add_markdown("## Scene")
-        self.show_hand = gui.add_checkbox("Current Hand", True)
+        self.show_hand = gui.add_checkbox("Current Hands", True)
         self.show_object = gui.add_checkbox("Current Object", True)
         self.show_pred = gui.add_checkbox("Predicted Next", True)
         self.show_gt = gui.add_checkbox("Ground Truth Next", True)
@@ -139,10 +158,15 @@ class TrajectoryViewer:
         with self.lock:
             self.bundle = self.provider.load(name)
             self._invalidate_result()
-            frame = self.bundle.first_valid_frame()
+            frame = self.bundle.first_valid_frame(self.gap)
             self.frame_gui.max = self.bundle.frames - 1
             self.frame_gui.value = frame
             self.render()
+
+    def _on_gap(self):
+        with self.lock:
+            self.gap = int(self.gap_gui.value)
+            self._invalidate_result()
 
     def _invalidate_result(self):
         self.result = None
@@ -165,23 +189,26 @@ class TrajectoryViewer:
     def _jump_valid(self):
         b = self.bundle
         current = int(self.frame_gui.value)
-        valid = b.valid_frames()
+        valid = b.valid_frames(self.gap)
         ahead = [i for i in valid if i > current]
         self.frame_gui.value = ahead[0] if ahead else (valid[0] if valid else 0)
 
     # ---------- Forward ----------
     def _forward_outputs(self, i: int):
         """encode_static + forward_core(GT action)。仅对 valid transition 调用。"""
-        inputs = self.bundle.model_inputs(i, self.device)
+        inputs = self.bundle.model_inputs(i, self.device, self.gap)
         with torch.no_grad():
-            static = self.model.encode_static(inputs["object_points"], inputs["object_normals"],
-                                              inputs["hand_points"], inputs["hand_normals"])
-            out = self.model.forward_core(hand_flow=inputs["hand_flow"], **static)
+            static = encode_static_split(self.model, inputs)
+            out = self.model.forward_core(hand_flow=inputs["hand_flow"], dt=inputs["gap"], **static)
         return inputs, out
 
     def _center(self, i: int) -> np.ndarray:
         oi = self.bundle.object_indices
         return self.bundle.obj_points_world[i, oi].mean(0)
+
+    def _hand_meshes(self, i: int, center: np.ndarray):
+        """当前帧双手 mesh（world 减 object center）。"""
+        return {side: self.bundle.hand_verts[side][i] - center for side in ("left", "right")}
 
     def _next_object_mesh(self, object_flow: torch.Tensor, points: torch.Tensor,
                           mesh_verts: torch.Tensor) -> np.ndarray:
@@ -189,6 +216,18 @@ class TrajectoryViewer:
         twist, _ = flow_to_mesh_twist(object_flow, points)
         center = points.mean(dim=1, keepdim=True)
         return twist_transform(twist, mesh_verts, center).squeeze(0).cpu().numpy()
+
+    def _hand_meshes_from_flow(self, flow: torch.Tensor, hp: torch.Tensor, hand_meshes: dict) -> dict:
+        """优化得到的 ΔH（concat 双手）分别拟合 twist 并提升回两只手 mesh。"""
+        n = hp.shape[1] // 2
+        out = {}
+        for side, sl in (("left", slice(0, n)), ("right", slice(n, None))):
+            block_pts = hp[:, sl]
+            block_flow = flow[:, sl]
+            twist, center = flow_to_mesh_twist(block_flow, block_pts)
+            mesh = torch.from_numpy(hand_meshes[side]).to(self.device).unsqueeze(0)
+            out[side] = twist_transform(twist, mesh, center).squeeze(0).cpu().numpy()
+        return out
 
     def render(self):
         with self.lock:
@@ -202,16 +241,16 @@ class TrajectoryViewer:
                 self.info.content = f"```\n{traceback.format_exc()[-1200:]}\n```"
 
     def _render_forward(self):
-        b, i = self.bundle, int(self.frame_gui.value)
-        valid = b.valid_transition(i)
+        b, i, gap = self.bundle, int(self.frame_gui.value), self.gap
+        valid = b.valid_transition(i, gap)
         center = self._center(i)
 
         obj_mesh = b.obj_world[i] - center
-        hand_mesh = b.mano_verts[i] - center
+        hand_meshes = self._hand_meshes(i, center)
         spacing = auto_spacing(obj_mesh)
 
         if not valid:
-            self._panel_meshes("/current", np.zeros(3), obj_mesh, hand_mesh, None, None, None)
+            self._panel_meshes("/current", np.zeros(3), obj_mesh, hand_meshes, None, None)
             self._status(i, valid=False)
             return
 
@@ -221,13 +260,12 @@ class TrajectoryViewer:
         pred_epe = float(epe(pred_flow, gt_flow)) * 1000
         pred_mesh = self._next_object_mesh(pred_flow, inputs["object_points"],
                                            torch.from_numpy(obj_mesh).to(self.device))
-        gt_mesh = b.obj_world[i + 1] - center
+        gt_mesh = b.obj_world[i + gap] - center
 
         if self.compare_gui.value == "Overlay":
-            offsets = [np.zeros(3)]
-            self._panel_meshes("/scene", offsets[0], obj_mesh, hand_mesh,
+            self._panel_meshes("/scene", np.zeros(3), obj_mesh, hand_meshes,
                                pred_mesh if self.show_pred.value else None,
-                               gt_mesh if self.show_gt.value else None, None)
+                               gt_mesh if self.show_gt.value else None)
             top = self._label_height(obj_mesh, gt_mesh, pred_mesh)
             if self.show_pred.value:
                 self.batch.label("/scene/pred_label", (0.0, top, 0.0), f"Pred  EPE {pred_epe:.2f} mm")
@@ -235,10 +273,10 @@ class TrajectoryViewer:
                 self.batch.label("/scene/gt_label", (0.0, top, 0.0), "GT next")
         else:
             offsets = panel_offsets(2, spacing)
-            self._panel_meshes("/pred", offsets[0], obj_mesh, hand_mesh,
-                               pred_mesh if self.show_pred.value else None, None, None)
-            self._panel_meshes("/gt", offsets[1], obj_mesh, hand_mesh,
-                               None, gt_mesh if self.show_gt.value else None, None)
+            self._panel_meshes("/pred", offsets[0], obj_mesh, hand_meshes,
+                               pred_mesh if self.show_pred.value else None, None)
+            self._panel_meshes("/gt", offsets[1], obj_mesh, hand_meshes,
+                               None, gt_mesh if self.show_gt.value else None)
             top = self._label_height(obj_mesh, gt_mesh, pred_mesh)
             self.batch.label("/pred/label", (float(offsets[0][0]), top, 0.0),
                              f"Pred next  EPE {pred_epe:.2f} mm")
@@ -250,32 +288,26 @@ class TrajectoryViewer:
         self._status(i, valid=True, pred_epe=pred_epe)
 
     def _render_inverse(self):
-        b, i = self.bundle, int(self.frame_gui.value)
-        valid = b.valid_transition(i)
+        b, i, gap = self.bundle, int(self.frame_gui.value), self.gap
+        valid = b.valid_transition(i, gap)
         center = self._center(i)
         obj_mesh = b.obj_world[i] - center
-        hand_mesh = b.mano_verts[i] - center
+        hand_meshes = self._hand_meshes(i, center)
 
         if not valid:
-            self._panel_meshes("/current", np.zeros(3), obj_mesh, hand_mesh, None, None, None)
+            self._panel_meshes("/current", np.zeros(3), obj_mesh, hand_meshes, None, None)
             self._status(i, valid=False)
             return
 
         if self.result is None:
-            self.inverse_info.content = "尚未优化：点击 Optimize（Rigid SE(3)）"
-            self._render_inverse_placeholder(i, obj_mesh, hand_mesh, center)
+            self.inverse_info.content = "尚未优化：点击 Optimize（Rigid 12D 双手）"
+            self._render_inverse_placeholder(i, obj_mesh, hand_meshes, center)
             return
 
         spacing = auto_spacing(obj_mesh)
         offsets = panel_offsets(3, spacing)
-        inputs = self.bundle.model_inputs(i, self.device)
+        inputs = self.bundle.model_inputs(i, self.device, gap)
         hp = inputs["hand_points"]
-        mano_model = torch.from_numpy(hand_mesh).to(self.device).unsqueeze(0)
-        hand_center = hp.mean(dim=1, keepdim=True)
-
-        def hand_mesh_from_flow(flow: torch.Tensor) -> np.ndarray:
-            twist, _ = flow_to_mesh_twist(flow, hp)
-            return twist_transform(twist, mano_model, hand_center).squeeze(0).cpu().numpy()
 
         obj_model = torch.from_numpy(obj_mesh).to(self.device).unsqueeze(0)
         op = inputs["object_points"]
@@ -285,8 +317,9 @@ class TrajectoryViewer:
             flow = torch.from_numpy(np.asarray(row["flow"])).to(self.device)
             obj_flow = torch.from_numpy(np.asarray(row["object_flow"])).to(self.device)
             columns[name] = {
-                "hand": b.mano_verts[i + 1] - center if name == "gt" else hand_mesh_from_flow(flow),
-                "next_obj": (b.obj_world[i + 1] - center) if name == "gt"
+                "hand": ({side: b.hand_verts[side][i + gap] - center for side in ("left", "right")}
+                         if name == "gt" else self._hand_meshes_from_flow(flow, hp, hand_meshes)),
+                "next_obj": (b.obj_world[i + gap] - center) if name == "gt"
                 else self._next_object_mesh(obj_flow, op, obj_model),
                 "epe": row["epe_mm"],
             }
@@ -300,58 +333,57 @@ class TrajectoryViewer:
             x = np.array([float(offsets[idx]), 0.0, 0.0])
             self._panel_meshes(f"/{name}", x, obj_mesh, col["hand"],
                                col["next_obj"] if name != "gt" else None,
-                               col["next_obj"] if name == "gt" else None, None,
+                               col["next_obj"] if name == "gt" else None,
                                hand_color=colors[name])
             self.batch.label(f"/{name}/label", (float(offsets[idx]), top, 0.0),
                              f"{titles[name]}  EPE {col['epe']:.2f} mm")
         history = self.result["history"]
         tail = " → ".join(f"{h['epe_mm']:.2f}" for h in history[::max(1, len(history) // 6)])
         self.inverse_info.content = (
-            f"rigid SE(3) | init={self.init_gui.value} | target={self.target_gui.value}  \n"
+            f"rigid 12D (L+R) | init={self.init_gui.value} | target={self.target_gui.value}  \n"
             f"history EPE: {tail} mm")
         self._status(i, valid=True, inverse=True)
 
-    def _render_inverse_placeholder(self, i, obj_mesh, hand_mesh, center):
-        b = self.bundle
+    def _render_inverse_placeholder(self, i, obj_mesh, hand_meshes, center):
+        b, gap = self.bundle, self.gap
         spacing = auto_spacing(obj_mesh)
         offsets = panel_offsets(2, spacing)
-        inputs = self.bundle.model_inputs(i, self.device)
+        inputs = self.bundle.model_inputs(i, self.device, gap)
         hp = inputs["hand_points"]
         init_flow = (inputs["hand_flow"] if self.init_gui.value == "GT"
                      else torch.zeros_like(inputs["hand_flow"]))
-        twist, _ = flow_to_mesh_twist(init_flow, hp)
-        mano_model = torch.from_numpy(hand_mesh).to(self.device).unsqueeze(0)
-        init_hand = twist_transform(twist, mano_model,
-                                    hp.mean(dim=1, keepdim=True)).squeeze(0).cpu().numpy()
+        init_hand = self._hand_meshes_from_flow(init_flow, hp, hand_meshes)
         with torch.no_grad():
-            static = self.model.encode_static(inputs["object_points"], inputs["object_normals"],
-                                              inputs["hand_points"], inputs["hand_normals"])
-            init_out = self.model.forward_core(hand_flow=init_flow, **static)
+            static = encode_static_split(self.model, inputs)
+            init_out = self.model.forward_core(hand_flow=init_flow, dt=inputs["gap"], **static)
         init_epe = float(epe(init_out["object_flow"], inputs["object_flow"])) * 1000
         init_next = self._next_object_mesh(init_out["object_flow"], inputs["object_points"],
                                            torch.from_numpy(obj_mesh).to(self.device))
-        gt_hand = b.mano_verts[i + 1] - center
-        gt_next = b.obj_world[i + 1] - center
+        gt_hand = {side: b.hand_verts[side][i + gap] - center for side in ("left", "right")}
+        gt_next = b.obj_world[i + gap] - center
         top = self._label_height(obj_mesh, gt_next, init_next)
         self._panel_meshes("/initial", np.array([float(offsets[0]), 0, 0]), obj_mesh,
-                           init_hand, init_next, None, None)
+                           init_hand, init_next, None)
         self._panel_meshes("/gt", np.array([float(offsets[1]), 0, 0]), obj_mesh,
-                           gt_hand, None, gt_next, None, hand_color=COLOR_GT)
+                           gt_hand, None, gt_next, hand_color=COLOR_GT)
         self.batch.label("/initial/label", (float(offsets[0]), top, 0.0),
                          f"Initial  EPE {init_epe:.2f} mm")
         self.batch.label("/gt/label", (float(offsets[1]), top, 0.0), "GT action")
         self._status(i, valid=True, inverse=True, init_epe=init_epe)
 
     # ---------- 渲染元件 ----------
-    def _panel_meshes(self, prefix: str, offset: np.ndarray, obj_mesh, hand_mesh,
-                      pred_next, gt_next, _unused=None, hand_color=COLOR_CURRENT_HAND):
+    def _panel_meshes(self, prefix: str, offset: np.ndarray, obj_mesh, hand_meshes,
+                      pred_next, gt_next, hand_color=COLOR_CURRENT_HAND):
         opacity = float(self.next_opacity.value)
         if self.show_object.value and obj_mesh is not None:
             self.batch.mesh(f"{prefix}/object", obj_mesh + offset, self.bundle.obj_faces,
                             COLOR_CURRENT_OBJ)
-        if self.show_hand.value and hand_mesh is not None:
-            self.batch.mesh(f"{prefix}/hand", hand_mesh + offset, self.bundle.mano_faces,
-                            hand_color)
+        if self.show_hand.value and hand_meshes is not None:
+            for side in ("left", "right"):
+                mesh = hand_meshes.get(side) if isinstance(hand_meshes, dict) else None
+                if mesh is not None:
+                    self.batch.mesh(f"{prefix}/hand_{side}", mesh + offset,
+                                    self.bundle.hand_faces[side], hand_color)
         if pred_next is not None:
             self.batch.mesh(f"{prefix}/pred_next", pred_next + offset, self.bundle.obj_faces,
                             COLOR_PRED, opacity=opacity)
@@ -360,12 +392,12 @@ class TrajectoryViewer:
                             COLOR_GT, opacity=opacity)
 
     def _sparse_flows(self, prefix: str, offset: np.ndarray, inputs, pred_flow):
-        b = self.bundle
-        i = int(self.frame_gui.value)
+        i, gap = int(self.frame_gui.value), self.gap
         stride = int(self.flow_stride.value)
         center = self._center(i)
-        op = b.obj_points_world[i, b.object_indices].astype(np.float32) - center
-        hp = b.hand_points_world[i].astype(np.float32) - center
+        op = self.bundle.obj_points_world[i, self.bundle.object_indices].astype(np.float32) - center
+        hp, _, _, _, _ = self.bundle.sample_hands(i, gap)
+        hp = hp - center
         pred = pred_flow.squeeze(0).cpu().numpy()
         gt = inputs["object_flow"].squeeze(0).cpu().numpy()
         hand = inputs["hand_flow"].squeeze(0).cpu().numpy()
@@ -380,15 +412,16 @@ class TrajectoryViewer:
 
     def _status(self, i: int, valid: bool, pred_epe=None, inverse=False, init_epe=None):
         b = self.bundle
-        raw = int(b.raw_frame_id[i])
-        valid_count = len(b.valid_frames())
-        parity = f"  \n⚠ MANO/cache hand parity {b.hand_parity_mm:.2f} mm" if b.hand_parity_mm > 1.0 else ""
+        gap = self.gap
+        raw_i, raw_j = int(b.raw_frame_id[i]), int(b.raw_frame_id[min(i + gap, b.frames - 1)])
+        valid_count = len(b.valid_frames(gap))
+        parity = f"  \n⚠ geometry parity {b.hand_parity_mm:.2f} mm" if b.hand_parity_mm > 0.01 else ""
         lines = [
             f"**{b.name}** | object **{b.object_name}** | subject **{b.subject}** (ckpt epoch {self.epoch})",
-            f"Cached frame **{i} / {b.frames - 1}** | raw **{raw} / {b.raw_frames_total - 1}** | "
-            f"valid transitions **{valid_count}**",
+            f"Cached frame **{i} / {b.frames - 1}** | raw **{raw_i} → {raw_j} / {b.raw_frames_total - 1}** "
+            f"| Δt = **{gap}** ({gap / 30 * 1000:.0f} ms) | valid transitions **{valid_count}**",
             "Model prediction: **available**" if valid else
-            "Model prediction: **unavailable** — outside valid single-hand interaction interval",
+            "Model prediction: **unavailable** — (R∨L) not active over window",
         ]
         if valid and pred_epe is not None:
             lines.append(f"Pred EPE: **{pred_epe:.2f} mm**")
@@ -406,20 +439,19 @@ class TrajectoryViewer:
     def _optimize(self):
         with self.lock:
             i = int(self.frame_gui.value)
-            if not self.bundle.valid_transition(i):
+            if not self.bundle.valid_transition(i, self.gap):
                 self.inverse_info.content = "当前帧不在 valid transition，无法优化"
                 return
-            inputs = self.bundle.model_inputs(i, self.device)
+            inputs = self.bundle.model_inputs(i, self.device, self.gap)
             with torch.no_grad():
-                static = self.model.encode_static(inputs["object_points"], inputs["object_normals"],
-                                                  inputs["hand_points"], inputs["hand_normals"])
+                static = encode_static_split(self.model, inputs)
             init_flow = (inputs["hand_flow"] if self.init_gui.value == "GT"
                          else torch.zeros_like(inputs["hand_flow"]))
             self.inverse_info.content = "optimizing..."
             result = optimize_hand_flow(
                 self.model, static, inputs["hand_points"], inputs["object_flow"],
                 gt_flow=inputs["hand_flow"], init_flow=init_flow,
-                parameterization="rigid",
+                dt=inputs["gap"], parameterization="rigid",
                 target_kind=self.target_gui.value.lower(),
                 steps=int(self.steps_gui.value), lr=0.01,
             )

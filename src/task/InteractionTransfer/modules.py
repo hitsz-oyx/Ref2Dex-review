@@ -15,10 +15,11 @@ class RelationEncoder(nn.Module):
 
 
 class InteractionMessage(nn.Module):
-    def __init__(self, relation_dim=64, message_dim=32):
+    def __init__(self, relation_dim=64, message_dim=32, action_dim=9):
         super().__init__()
-        # bias-free action path makes action=0 exactly message=0.
-        self.action = nn.Sequential(nn.Linear(8, message_dim, bias=False), nn.GELU(),
+        # bias-free action path makes action=0 exactly message=0
+        # (Δt 通道单独为 0 时；V1.0 action = [Δh, v_n, v_t, |Δh|, Δt])。
+        self.action = nn.Sequential(nn.Linear(action_dim, message_dim, bias=False), nn.GELU(),
                                     nn.Linear(message_dim, message_dim, bias=False))
         self.gate = nn.Sequential(nn.Linear(relation_dim, message_dim), nn.Sigmoid())
         self.message = nn.Sequential(nn.Linear(message_dim, message_dim, bias=False), nn.GELU(),

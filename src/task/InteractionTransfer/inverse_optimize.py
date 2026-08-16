@@ -1,12 +1,13 @@
-"""V0.10 inverse optimization backend：以 hand action 为变量，冻结 forward model 反解。
+"""V1.0 inverse optimization backend：以 hand action 为变量，冻结 forward model 反解。
 
 目标（第一版，无正则）::
 
     ΔH* = argmin MSE( ΔO(ΔH), target )        # target_kind = "effect"
     ΔH* = argmin MSE( C_obj(ΔH), C_obj(ΔH_GT) )  # target_kind = "c_obj"
 
-两种参数化：
-- ``rigid``：只优化 6 维 twist (t, ω)，h' = R(ω)(h-c_H)+c_H+t；
+两种参数化（V1.0 指导 §8）：
+- ``rigid``：双手各自一个 6 维 twist，共 12 维：左手块由 (t_L, ω_L) 刚体
+  变换，右手块由 (t_R, ω_R) 刚体变换，不再把两只手绑成同一 SE(3)；
 - ``free``：直接优化 ΔH ∈ R^{1538x3}（上限诊断）。
 
 ``optimize_hand_flow`` 返回 initial / optimized 的 flow、object_flow、
@@ -69,6 +70,22 @@ def twist_to_flow(twist: torch.Tensor, hand_points: torch.Tensor, center: torch.
     return rotated - (hand_points - center) + twist[:, :3].unsqueeze(1)
 
 
+def fit_rigid_twist_pair(flow: torch.Tensor, left_points: torch.Tensor,
+                         right_points: torch.Tensor) -> torch.Tensor:
+    """左右手各自拟合 rigid twist，返回 [B,12] = [twist_L, twist_R]。"""
+    return torch.cat([fit_rigid_twist(flow[:, :left_points.shape[1]], left_points),
+                      fit_rigid_twist(flow[:, left_points.shape[1]:], right_points)], dim=-1)
+
+
+def twist_pair_to_flow(twist: torch.Tensor, left_points: torch.Tensor,
+                       right_points: torch.Tensor) -> torch.Tensor:
+    """[B,12] 双手 twist -> ΔH [B,J_L+J_R,3]；每只手绕自身质心旋转。"""
+    n_left = left_points.shape[1]
+    flow_l = twist_to_flow(twist[:, :6], left_points, left_points.mean(dim=1, keepdim=True))
+    flow_r = twist_to_flow(twist[:, 6:], right_points, right_points.mean(dim=1, keepdim=True))
+    return torch.cat([flow_l, flow_r], dim=1)
+
+
 def optimize_hand_flow(
     model: InteractionTransfer,
     static: dict,
@@ -76,6 +93,7 @@ def optimize_hand_flow(
     target_object_flow: torch.Tensor,
     gt_flow: torch.Tensor,
     init_flow: torch.Tensor,
+    dt: torch.Tensor,
     parameterization: str = "rigid",
     target_kind: str = "effect",
     steps: int = 300,
@@ -84,29 +102,30 @@ def optimize_hand_flow(
 ) -> dict:
     """冻结 model，优化 hand action 使预测 effect（或 C_obj）逼近 target。
 
-    static 为 ``encode_static`` 输出（已 batch）；target_object_flow 为
-    ΔO^GT；init_flow 为初始 action（zero/cross/random/GT 由调用方构造）。
+    static 为 ``encode_static`` 输出（已 batch，双手 concat 顺序
+    [left, right]）；dt 为该 transition 的 normalized gap；init_flow 为
+    初始 action（zero/cross/random/GT 由调用方构造）。
     """
     model.requires_grad_(False)
     device = hand_points.device
-    B = hand_points.shape[0]
-    center = hand_points.mean(dim=1, keepdim=True)
+    left_count = hand_points.shape[1] // 2
+    left_points, right_points = hand_points[:, :left_count], hand_points[:, left_count:]
 
     if target_kind == "c_obj":
         with torch.no_grad():
-            target_field = model.forward_core(**static, hand_flow=gt_flow)["object_field"]
+            target_field = model.forward_core(**static, hand_flow=gt_flow, dt=dt)["object_field"]
 
     def forward_out(flow: torch.Tensor) -> dict:
-        return model.forward_core(**static, hand_flow=flow)
+        return model.forward_core(**static, hand_flow=flow, dt=dt)
 
     with torch.no_grad():
         initial_out = forward_out(init_flow)
 
     if parameterization == "rigid":
-        var = fit_rigid_twist(init_flow, hand_points).detach().clone().requires_grad_(True)
+        var = fit_rigid_twist_pair(init_flow, left_points, right_points).detach().clone().requires_grad_(True)
 
         def current_flow() -> torch.Tensor:
-            return twist_to_flow(var, hand_points, center)
+            return twist_pair_to_flow(var, left_points, right_points)
     elif parameterization == "free":
         var = init_flow.detach().clone().requires_grad_(True)
 
@@ -154,5 +173,5 @@ def optimize_hand_flow(
         "gt": summarize(gt_out, gt_flow),
         "history": history,
         "meta": {"parameterization": parameterization, "target_kind": target_kind,
-                 "steps": steps, "lr": lr},
+                 "steps": steps, "lr": lr, "dt": float(dt.reshape(-1)[0])},
     }

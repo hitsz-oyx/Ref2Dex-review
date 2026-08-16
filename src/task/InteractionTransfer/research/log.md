@@ -238,3 +238,21 @@ smoke 5/5 通过：MANO face centers 与 cache 1538 点 parity `0.0004 mm`；raw
 
 **决策**
 `visualize_intermediate.py` 降级为 legacy debug；V1.0 双手 + 随机 timestep 改造时 viewer 需同步扩展（bimanual mesh、Δt 显示）。
+
+## 重构：V1.0 Bimanual + Random Surface + Random Horizon（指导 V1.0）
+
+**假设**
+固定 1538 face-center 点、固定 gap=1、right-only 三大人造约束都在放大模型对 MANO 点布局 / 33 ms 尺度 / 单手数据分布的依赖；一次性切换到「双手 769+769 在线表面采样 + 随机 gap ∈ {1,2,4,8} + 9D action（含 Δt）+ split KNN 8+8」后，R→M→C_obj→ΔO 核心结构不动即可覆盖 Right-only / Left-only / Bimanual 三类 interaction。
+
+**改动**
+- `geometry_cache.py`：face-center = A·V（A 为常量 face-vertex 平均矩阵，rank 778），用伪逆从 stage4 现有 cache 精确重建每帧 MANO 顶点（残差 ~2e-7 m），存 `hand_vertices_world [T,778,3] + active_mask`，1335 序列全量构建。
+- `dataset.py`：新增 `GRABRandomTransitionDataset`（random frame + random gap + Dirichlet barycentric 在线采样，t/t+g 复用同一组 face id + 权重；valid = (R∨L) 在 [i,i+g] 连续 active；train 随机 / val/test 按 index 播种）。
+- `edge_builder.py`：`build_edges_bimanual` split KNN（K_L=8, K_R=8，右手索引偏移后 concat）；`model.py`/`modules.py`：action 8D→9D（+normalized Δt），无 side embedding，static 每次 forward 在线跑 frozen PTv3（放弃 V0.8 offline static cache）。
+- `inverse_optimize.py`：rigid 6D→12D（ξ_L, ξ_R 各自 SE(3)，`fit_rigid_twist_pair`/`twist_pair_to_flow`）；`train_full.py`/`eval_ckpt.py`/`eval_inverse.py` 全部切换 V1.0 数据流（cross intervention 同时替换 Δt）。
+- viewer：`provider.py`（geometry cache 双手 mesh + gap-aware valid transitions）、`trajectory_viewer.py`（Gap 下拉、双手 mesh、rigid 12D 分别提升回两只手 MANO mesh）、`smoke_test.py` 升级 V1.0。
+
+**结果**
+smoke 7/7 通过：geometry/cache face-center parity `0.0002 mm`；raw object params 与 cache 点云一致性 `0.0004 mm`；dataset deterministic 播种与手工重放逐字段 `0.00e+00`（item 0: gaps=(1,2,4,8) 随机取 8）；provider 采样手工重放 `0.00e+00`；rigid 12D twist 往返 `7.45e-07`；zero flow + Δt=0 时 edge message 严格为 0（bias-free action path 保持）；单帧 rigid 12D inverse loss 下降（random init trainable 上 62.66→62.46 mm，仅验证链路）；GT object flow 刚体提升 mesh 对齐 `0.000 mm`。全量 20 epoch 训练待 geometry cache 构建完成后启动，结果另记。
+
+**决策**
+保留 V1.0 数据流为核心路径；V0.x 的 `GRABOneStepDataset`/`interaction_debug.py`/`visualize_intermediate.py` 保留为 legacy。后续：全量训练 + `eval_ckpt`（GT/zero/reverse/cross gate）+ `eval_inverse`（rigid 12D vs free vs GT action）。

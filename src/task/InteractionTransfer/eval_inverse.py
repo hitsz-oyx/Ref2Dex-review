@@ -1,21 +1,23 @@
-"""V0.10 inverse generalization：test split 上批量 inverse optimization 的 EPE。
+"""V1.0 inverse generalization：test split 上批量 inverse optimization 的 EPE。
 
 流程（每个 test transition）::
 
     target = GT object_flow
-    zero init -> optimize (rigid / free) -> optimized action -> EPE
+    zero init -> optimize (rigid 12D / free) -> optimized action -> EPE
 
 输出对比表：Zero action / GT action / Optimized rigid / Optimized free。
+rigid 为双手各自 SE(3)（ξ_L, ξ_R 共 12 维，指导 §8）。
 
 用法::
 
     python -m src.task.InteractionTransfer.eval_inverse \\
-        --root data/processed_data/stage4/data/grab \\
+        --stage4-root data/processed_data/stage4/data/grab \\
+        --geometry-root data/processed_data/stage4/interactiontransfer_geometry_cache \\
         --split src/task/InteractionTransfer/splits/grab_seed42/test.txt \\
-        --checkpoint outputs/InteractionTransfer/v08_full_20ep/best.pt \\
+        --checkpoint outputs/InteractionTransfer/v10_full_20ep/best.pt \\
         --device cuda:0 --num-samples 500 --batch-size 16 \\
         --steps 300 --lr 0.01 \\
-        --output outputs/InteractionTransfer/v08_full_20ep/test_inverse_metrics.json
+        --output outputs/InteractionTransfer/v10_full_20ep/test_inverse_metrics.json
 """
 from __future__ import annotations
 
@@ -27,15 +29,15 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from src.task.InteractionTransfer.dataset import GRABOneStepDataset
+from src.task.InteractionTransfer.dataset import GRABRandomTransitionDataset
 from src.task.InteractionTransfer.inverse_optimize import optimize_hand_flow
 from src.task.InteractionTransfer.model import InteractionTransfer
-from src.task.InteractionTransfer.train_full import STATIC_KEYS
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", required=True)
+    parser.add_argument("--stage4-root", required=True)
+    parser.add_argument("--geometry-root", required=True)
     parser.add_argument("--split", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--dense-checkpoint", default="src/task/Cm/densetoken_ckpt/best.pt")
@@ -46,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--target-kind", choices=("effect", "c_obj"), default="effect")
     parser.add_argument("--init", choices=("zero", "random", "cross", "gt"), default="zero")
+    parser.add_argument("--gaps", nargs="+", type=int, default=(1, 2, 4, 8))
+    parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--parameterizations", nargs="+", default=("rigid", "free"))
     parser.add_argument("--output", type=Path, default=None)
     return parser.parse_args()
@@ -65,7 +69,8 @@ def main() -> None:
     args = parse_args()
     device = torch.device(args.device)
     sequences = [line.strip() for line in args.split.read_text(encoding="utf-8").splitlines() if line.strip()]
-    dataset = GRABOneStepDataset(args.root, sequences, max_transitions=0)
+    dataset = GRABRandomTransitionDataset(args.stage4_root, args.geometry_root, sequences,
+                                          gaps=tuple(args.gaps), seed=args.seed, deterministic=True)
     if args.num_samples and args.num_samples < len(dataset):
         indices = np.linspace(0, len(dataset) - 1, args.num_samples).astype(int).tolist()
     else:
@@ -92,12 +97,17 @@ def main() -> None:
         for bi, batch in enumerate(loader):
             batch = {k: v.to(device, non_blocking=True) for k, v in batch.items() if torch.is_tensor(v)}
             with torch.no_grad():
+                n_left = batch["hand_points"].shape[1] // 2
                 static = model.encode_static(batch["object_points"], batch["object_normals"],
-                                             batch["hand_points"], batch["hand_normals"])
+                                             batch["hand_points"][:, :n_left],
+                                             batch["hand_normals"][:, :n_left],
+                                             batch["hand_points"][:, n_left:],
+                                             batch["hand_normals"][:, n_left:])
             init_flow = make_init_flow(args.init, batch["hand_flow"])
             result = optimize_hand_flow(model, static, batch["hand_points"], batch["object_flow"],
                                         gt_flow=batch["hand_flow"], init_flow=init_flow,
-                                        parameterization=param, target_kind=args.target_kind,
+                                        dt=batch["gap"], parameterization=param,
+                                        target_kind=args.target_kind,
                                         steps=args.steps, lr=args.lr, history_every=50)
             zero_epe.append(result["initial"]["epe_mm"])
             gt_epe.append(result["gt"]["epe_mm"])
@@ -112,6 +122,7 @@ def main() -> None:
         "checkpoint": str(args.checkpoint), "epoch": epoch,
         "num_samples": len(indices), "init": args.init,
         "target_kind": args.target_kind, "steps": args.steps, "lr": args.lr,
+        "gaps": list(args.gaps),
         "test_epe_mm": {
             "zero_action": float(np.mean(zero_epe)),
             **{f"optimized_{p}": float(np.mean(summaries[f"opt_{p}"])) for p in args.parameterizations},

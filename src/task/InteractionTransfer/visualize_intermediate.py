@@ -1,17 +1,23 @@
-"""V0.10 Forward + Inverse 一体化 Viser viewer。
+"""V1.0 Forward + Inverse 一体化 Viser viewer（geometry cache + 在线采样）。
 
 用法::
 
     python -m src.task.InteractionTransfer.visualize_intermediate \\
-        --root <GRAB_CACHE_ROOT> \\
+        --stage4-root <GRAB_STAGE4_ROOT> \\
+        --geometry-root <GEOMETRY_CACHE_ROOT> \\
         --split src/task/InteractionTransfer/splits/grab_seed42/test.txt \\
-        --checkpoint outputs/InteractionTransfer/v08_full_20ep/best.pt \\
+        --checkpoint outputs/InteractionTransfer/v10_full_20ep/best.pt \\
         --device cuda:0 --port 8080
+
+数据流（V1.0）：双手 769+769 在线表面采样（同一 transition 的 t 与 t+g
+复用同一组 face id + barycentric 权重，按 (i, g) 播种保证重复渲染稳定）；
+Gap 下拉在 {1,2,4,8} 中切换（限当前 frame 的 valid gaps）；action 为 9D
+（含 Δt）；Inverse 的 Rigid 为双手各自 SE(3) 共 12 维。
 
 两种 View Mode：
 - Intermediate：ΔH → M_ij → C_obj → ΔO 单场景中间表示分析；
 - Inverse Optimization：Initial / Optimized / GT 三路并排，冻结 model
-  优化 hand action（Rigid SE(3) / Free Point Flow，Effect / C_obj target）。
+  优化 hand action（Rigid 12D / Free Point Flow，Effect / C_obj target）。
 """
 from __future__ import annotations
 
@@ -24,48 +30,94 @@ import torch
 
 import viser
 
-from src.task.InteractionTransfer.dataset import GRABOneStepDataset
+from src.task.InteractionTransfer.geometry_cache import gather_surface_points, sample_surface_refs
 from src.task.InteractionTransfer.inverse_optimize import optimize_hand_flow
 from src.task.InteractionTransfer.metrics import epe
 from src.task.InteractionTransfer.model import InteractionTransfer
 
 
 class RawTrajectory:
-    """按原始时间顺序读取完整 Stage4 轨迹，不做高运动 transition 筛选。"""
-    def __init__(self, root: str, sequence: str, object_points=512, hand_points=1538):
-        self.path = Path(root) / sequence
+    """geometry cache 轨迹读取 + 双手在线表面采样 + random gap 支持。
+
+    ``__getitem__(k)`` 返回第 k 个 valid start（窗口 [i, i+g] 内
+    (R∨L) 连续 active）的 transition；gap 由 ``self.gap`` 指定（无效时
+    回退到该 start 的第一个 valid gap）。表面采样按 (i, g) 播种，同一
+    transition 重复渲染结果稳定。
+    """
+    def __init__(self, stage4_root: str, geometry_root: str, sequence: str,
+                 object_points=512, hand_points_per_side=769, gaps=(1, 2, 4, 8), seed=5):
+        self.stage4_root, self.geometry_root = Path(stage4_root), Path(geometry_root)
+        self.path = self.stage4_root / sequence
+        self.hand_points_per_side = int(hand_points_per_side)
+        self.gaps, self.seed, self.gap = tuple(int(g) for g in gaps), int(seed), 1
+
         self.shared = np.load(self.path / "shared.npz", allow_pickle=False)
-        self.hand = np.load(self.path / "right.npz", allow_pickle=False)
         self.n = int(len(self.shared["obj_points_world"]))
-        self.oi = np.linspace(0, self.shared["obj_points_world"].shape[1]-1, object_points, dtype=np.int64)
-        self.hi = np.linspace(0, self.hand["hand_points_world"].shape[1]-1, hand_points, dtype=np.int64)
+        self.oi = np.linspace(0, self.shared["obj_points_world"].shape[1] - 1, object_points, dtype=np.int64)
+        self.hand_normals, self.vertices, self.active = {}, {}, {}
+        for side in ("left", "right"):
+            hand = np.load(self.path / f"{side}.npz", allow_pickle=False)
+            self.hand_normals[side] = hand["hand_normals_world"]
+            geom = np.load(self.geometry_root / sequence / f"{side}.npz", allow_pickle=False)
+            self.vertices[side] = geom["hand_vertices_world"]
+            self.active[side] = np.asarray(geom["active_mask"], dtype=bool)
+        self.faces = {side: np.load(self.geometry_root / f"faces_{side}.npy") for side in ("left", "right")}
 
-    def __len__(self): return max(0, self.n - 1)
+        # valid starts：(R∨L) 在 [i, i+g] 窗口连续 active。
+        active = self.active["left"] | self.active["right"]
+        prefix = np.concatenate([[0], np.cumsum(active)])
+        self.valid_gaps = {}
+        for i in range(self.n):
+            gaps_i = tuple(g for g in self.gaps
+                           if i + g < self.n and int(prefix[i + g + 1] - prefix[i]) == g + 1)
+            if gaps_i:
+                self.valid_gaps[i] = gaps_i
+        self.starts = sorted(self.valid_gaps)
 
-    def __getitem__(self, i):
-        i = int(np.clip(i, 0, len(self)-1)); j = i + 1
+    def __len__(self):
+        return len(self.starts)
+
+    def _sample(self, i: int, gap: int, seed_extra: int = 0) -> dict:
+        j = i + gap
+        rng = np.random.default_rng([self.seed, i, gap, seed_extra])
         op = self.shared["obj_points_world"][i, self.oi].astype("f4")
         on = self.shared["obj_normals_world"][i, self.oi].astype("f4")
-        hp = self.hand["hand_points_world"][i, self.hi].astype("f4")
-        hn = self.hand["hand_normals_world"][i, self.hi].astype("f4")
         of = (self.shared["obj_points_world"][j, self.oi] - self.shared["obj_points_world"][i, self.oi]).astype("f4")
-        hf = (self.hand["hand_points_world"][j, self.hi] - self.hand["hand_points_world"][i, self.hi]).astype("f4")
+        pts, nrm, flow, world = [], [], [], []
+        for side in ("left", "right"):
+            face_idx, bary = sample_surface_refs(self.faces[side].shape[0], self.hand_points_per_side, rng)
+            p_i = gather_surface_points(self.vertices[side][i], self.faces[side], face_idx, bary)
+            p_j = gather_surface_points(self.vertices[side][j], self.faces[side], face_idx, bary)
+            pts.append(p_i)
+            nrm.append(self.hand_normals[side][i][face_idx].astype("f4"))
+            flow.append(p_j - p_i)
+            world.append(p_i)
+        hp, hn, hf = np.concatenate(pts), np.concatenate(nrm), np.concatenate(flow).astype("f4")
         center = op.mean(0, keepdims=True)
-        return {"object_points": torch.from_numpy(op-center), "object_normals": torch.from_numpy(on),
-                "hand_points": torch.from_numpy(hp-center), "hand_normals": torch.from_numpy(hn),
+        return {"object_points": torch.from_numpy(op - center), "object_normals": torch.from_numpy(on),
+                "hand_points": torch.from_numpy(hp - center), "hand_normals": torch.from_numpy(hn),
                 "hand_flow": torch.from_numpy(hf), "object_flow": torch.from_numpy(of),
-                "object_world": op, "hand_world": hp, "raw_frame_id": int(self.shared["raw_frame_id"][i])}
+                "object_world": op, "hand_world": hp,
+                "gap": gap, "start": i, "raw_frame_id": int(self.shared["raw_frame_id"][i])}
 
-    def world(self, i):
-        i = int(np.clip(i, 0, self.n-1)); j = min(i+1, self.n-1)
-        op = self.shared["obj_points_world"][i, self.oi].astype("f4")
-        hp = self.hand["hand_points_world"][i, self.hi].astype("f4")
-        return op, hp, (self.shared["obj_points_world"][j, self.oi]-self.shared["obj_points_world"][i, self.oi]).astype("f4")
+    def __getitem__(self, k):
+        k = int(np.clip(k, 0, max(len(self) - 1, 0)))
+        i = self.starts[k]
+        gap = self.gap if self.gap in self.valid_gaps[i] else self.valid_gaps[i][0]
+        return self._sample(i, gap)
+
+    def world(self, k):
+        k = int(np.clip(k, 0, max(len(self) - 1, 0)))
+        i = self.starts[k]
+        gap = self.gap if self.gap in self.valid_gaps[i] else self.valid_gaps[i][0]
+        data = self._sample(i, gap)
+        return data["object_world"], data["hand_world"], data["object_flow"].numpy()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", required=True, help="GRAB stage4 cache 目录")
+    parser.add_argument("--stage4-root", required=True, help="GRAB stage4 cache 目录")
+    parser.add_argument("--geometry-root", required=True, help="geometry_cache.py 生成的顶点 cache 目录")
     parser.add_argument("--split", type=Path, required=True, help="test.txt")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--dense-checkpoint", default="src/task/Cm/densetoken_ckpt/best.pt")
@@ -140,7 +192,9 @@ class Viewer:
         self.prev_seq.on_click(lambda _: self._step_sequence(-1))
         self.next_seq.on_click(lambda _: self._step_sequence(1))
         self.tr_gui = gui.add_slider("Transition", min=0, max=1, step=1, initial_value=0)
-        self.tr_gui.on_update(lambda _: self.refresh(recompute_static=True))
+        self.tr_gui.on_update(lambda _: self._on_transition_change())
+        self.gap_gui = gui.add_dropdown("Gap", ("1", "2", "4", "8"), initial_value="1")
+        self.gap_gui.on_update(lambda _: self._on_gap_change())
         self.prev_tr = gui.add_button("< Transition")
         self.next_tr = gui.add_button("Transition >")
         self.prev_tr.on_click(lambda _: self._step_transition(-1))
@@ -196,7 +250,7 @@ class Viewer:
         self.opt_status = gui.add_markdown("")
         self.init_gui = gui.add_button_group("Initialization", ("Zero", "Cross", "Random", "GT"))
         self.init_gui.on_click(lambda _: self._on_inverse_param_change())
-        self.param_gui = gui.add_button_group("Parameterization", ("Rigid SE(3)", "Free Point Flow"))
+        self.param_gui = gui.add_button_group("Parameterization", ("Rigid SE(3) L+R (12D)", "Free Point Flow"))
         self.param_gui.on_click(lambda _: self._on_inverse_param_change())
         self.target_gui = gui.add_button_group("Target", ("Object Effect", "C_obj"))
         self.target_gui.on_click(lambda _: self._on_inverse_param_change())
@@ -216,12 +270,13 @@ class Viewer:
         with self.lock:
             self._loading = True
             try:
-                self.raw = RawTrajectory(self.args.root, sequence)
+                self.raw = RawTrajectory(self.args.stage4_root, self.args.geometry_root, sequence)
                 self.dataset = self.raw
                 if self.seq_gui.value != sequence:
                     self.seq_gui.value = sequence
                 self.tr_gui.max = max(len(self.dataset) - 1, 1)
                 self.tr_gui.value = 0
+                self._sync_gap_options()
                 self.static = None
                 self.result = None
                 self.rollout_pred = None
@@ -229,6 +284,28 @@ class Viewer:
                 self.refresh(recompute_static=True)
             finally:
                 self._loading = False
+
+    def _sync_gap_options(self):
+        """把 Gap 下拉同步到当前 start 的 valid gaps。"""
+        if self.raw is None or not self.raw.starts:
+            return
+        i = self.raw.starts[int(np.clip(self.tr_gui.value, 0, len(self.raw) - 1))]
+        gaps = self.raw.valid_gaps[i]
+        self.gap_gui.options = tuple(str(g) for g in gaps)
+        if self.raw.gap in gaps:
+            self.gap_gui.value = str(self.raw.gap)
+        else:
+            self.gap_gui.value = str(gaps[0])
+            self.raw.gap = gaps[0]
+
+    def _on_gap_change(self):
+        if self.raw is not None:
+            self.raw.gap = int(self.gap_gui.value)
+        self.refresh(recompute_static=True)
+
+    def _on_transition_change(self):
+        self._sync_gap_options()
+        self.refresh(recompute_static=True)
 
     def _step_sequence(self, delta: int):
         if not self.sequences:
@@ -258,20 +335,23 @@ class Viewer:
         self.refresh(recompute_static=True)
 
     def _advance_rollout(self):
-        if self.raw is None or self.raw.n < 2:
+        if self.raw is None or len(self.raw) < 2:
             return
         frame = int(self.tr_gui.value)
-        if self.rollout_pred is None:
-            self.rollout_pred = self.raw[frame]["object_points"].numpy().copy()
         if frame >= len(self.raw):
             return
+        if self.rollout_pred is None:
+            self.rollout_pred = self.raw[frame]["object_points"].numpy().copy()
         sample = self.raw[frame]
+        n = self.raw.hand_points_per_side
         op = torch.from_numpy(self.rollout_pred).unsqueeze(0).float().to(self.device)
-        hp = self._to_batch(sample["hand_points"])
+        hp, hn = self._to_batch(sample["hand_points"]), self._to_batch(sample["hand_normals"])
         with torch.no_grad():
-            static = self.model.encode_static(op, self._to_batch(sample["object_normals"]), hp,
-                                              self._to_batch(sample["hand_normals"]))
-            out = self.model.forward_core(hand_flow=self._to_batch(sample["hand_flow"]), **static)
+            static = self.model.encode_static(op, self._to_batch(sample["object_normals"]),
+                                              hp[:, :n], hn[:, :n], hp[:, n:], hn[:, n:])
+            out = self.model.forward_core(hand_flow=self._to_batch(sample["hand_flow"]),
+                                          dt=torch.tensor([float(sample["gap"])], device=self.device),
+                                          **static)
         self.rollout_pred = self.rollout_pred + out["object_flow"].squeeze(0).cpu().numpy()
         self.rollout_step += 1
         self.refresh(recompute_static=False)
@@ -293,21 +373,28 @@ class Viewer:
     def _forward(self, recompute_static: bool):
         sample, idx = self._current_sample()
         if recompute_static or self.static is None:
+            n = self.raw.hand_points_per_side
             op, on = self._to_batch(sample["object_points"]), self._to_batch(sample["object_normals"])
             hp, hn = self._to_batch(sample["hand_points"]), self._to_batch(sample["hand_normals"])
-            self.static = self.model.encode_static(op, on, hp, hn)
+            self.static = self.model.encode_static(op, on, hp[:, :n], hn[:, :n], hp[:, n:], hn[:, n:])
             self.hand_points_t = hp
             self.gt_flow = self._to_batch(sample["hand_flow"])
+            self.dt = torch.tensor([float(sample["gap"])], device=self.device)
             cross = self.dataset[(idx + 1) % len(self.dataset)]
             self.cross_flow = self._to_batch(cross["hand_flow"])
+            self.cross_dt = torch.tensor([float(cross["gap"])], device=self.device)
             self.object_np = sample["object_points"].cpu().numpy() if torch.is_tensor(sample["object_points"]) else sample["object_points"]
             self.hand_np = sample["hand_points"].cpu().numpy() if torch.is_tensor(sample["hand_points"]) else sample["hand_points"]
             self.gt_object_flow_t = self._to_batch(sample["object_flow"])
 
         action = self.action_gui.value
-        a = {"GT": self.gt_flow, "Zero": torch.zeros_like(self.gt_flow),
-             "Reverse": -self.gt_flow, "Cross": self.cross_flow}[action]
-        self.out = self.model.forward_core(hand_flow=a, **self.static)
+        if action == "Cross":
+            a, dt = self.cross_flow, self.cross_dt
+        else:
+            a = {"GT": self.gt_flow, "Zero": torch.zeros_like(self.gt_flow),
+                 "Reverse": -self.gt_flow}[action]
+            dt = self.dt
+        self.out = self.model.forward_core(hand_flow=a, dt=dt, **self.static)
         self.sample_epe = float(epe(self.out["object_flow"], self.gt_object_flow_t)) * 1000
         self.action = action
 
@@ -334,12 +421,12 @@ class Viewer:
                 self._optimizing = True
                 self.run_button.disabled = True
                 try:
-                    param = "rigid" if self.param_gui.value == "Rigid SE(3)" else "free"
+                    param = "rigid" if self.param_gui.value.startswith("Rigid") else "free"
                     target_kind = "effect" if self.target_gui.value == "Object Effect" else "c_obj"
                     self.result = optimize_hand_flow(
                         self.model, self.static, self.hand_points_t, self.gt_object_flow_t,
                         gt_flow=self.gt_flow, init_flow=self._init_flow_for_inverse(),
-                        parameterization=param, target_kind=target_kind,
+                        dt=self.dt, parameterization=param, target_kind=target_kind,
                         steps=int(self.steps_gui.value), lr=float(self.lr_gui.value),
                         history_every=25)
                     self._render_inverse()
@@ -400,7 +487,8 @@ class Viewer:
 
         self.info.content = (
             f"**Checkpoint** {Path(self.args.checkpoint).name} \\| epoch {self.epoch}  \n"
-            f"**Sequence** {self.seq_gui.value} \\| transition {int(self.tr_gui.value)}/{len(self.dataset)-1}  \n"
+            f"**Sequence** {self.seq_gui.value} \\| transition {int(self.tr_gui.value)}/{len(self.dataset)-1}"
+            f" \\| Δt = {int(self.raw.gap)} frame(s)  \n"
             f"**Coordinate** {self.coord_gui.value} \\| **Rollout** {self.rollout_step} step  \n"
             f"**Mode** Intermediate \\| **Action** {self.action}  \n"
             f"**Sample EPE** {self.sample_epe:.2f} mm"
@@ -470,8 +558,8 @@ class Viewer:
         """尚未 Optimize：只显示 Initial（当前 init action 的 forward）与 GT 两路。"""
         init_flow = self._init_flow_for_inverse()
         with torch.no_grad():
-            init_out = self.model.forward_core(hand_flow=init_flow, **self.static)
-            gt_out = self.model.forward_core(hand_flow=self.gt_flow, **self.static)
+            init_out = self.model.forward_core(hand_flow=init_flow, dt=self.dt, **self.static)
+            gt_out = self.model.forward_core(hand_flow=self.gt_flow, dt=self.dt, **self.static)
         init = {"flow": init_flow.squeeze(0).cpu().numpy(),
                 "object_flow": init_out["object_flow"].squeeze(0).cpu().numpy(),
                 "object_field": init_out["object_field"].squeeze(0).cpu().numpy(),
