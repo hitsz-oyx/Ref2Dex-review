@@ -23,13 +23,14 @@ def report_memory(tag):
     print(f"[{tag}] RSS={rss:.1f} MiB | GPU allocated={allocated:.1f} MiB | GPU reserved={reserved:.1f} MiB", flush=True)
 
 
-def train(model, dataset, device, steps):
+def train(model, dataset, device, steps, val_dataset=None, eval_every=0):
     loader = DataLoader(dataset, batch_size=1, shuffle=True)
     model.to(device).train()
     assert not model.static_encoder.training and not model.static_encoder.backbone.training
     optimizer = torch.optim.AdamW((p for p in model.parameters() if p.requires_grad), lr=1e-3)
     iterator, history = iter(loader), []
-    for _ in range(steps):
+    best_state, best_epe = None, float("inf")
+    for step in range(1, steps + 1):
         try:
             batch = next(iterator)
         except StopIteration:
@@ -43,7 +44,33 @@ def train(model, dataset, device, steps):
         loss.backward()
         optimizer.step()
         history.append(float(loss.detach()))
+        if val_dataset is not None and eval_every and step % eval_every == 0:
+            metrics, _, _ = evaluate(model, val_dataset, device)
+            epe = metrics["gt"]["point_error_m"]
+            if epe < best_epe:
+                best_epe = epe
+                trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+                best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()
+                              if key in trainable}
+            model.train()
+    if best_state is not None:
+        current = model.state_dict()
+        current.update(best_state)
+        model.load_state_dict(current)
     return history
+
+
+def fit_rigid_twist(points, flow):
+    """最小二乘拟合 flow ~= t + omega x (p-c)。"""
+    centered = points - points.mean(1, keepdim=True)
+    x, y, z = centered.unbind(-1)
+    zeros = torch.zeros_like(x)
+    skew = torch.stack([zeros, -z, y, z, zeros, -x, -y, x, zeros], -1).view(points.shape[0], points.shape[1], 3, 3)
+    design = torch.cat([torch.eye(3, device=points.device).view(1, 1, 3, 3).expand_as(skew), -skew], -1)
+    solution = torch.linalg.lstsq(design.reshape(points.shape[0], -1, 6), flow.reshape(points.shape[0], -1, 1)).solution.squeeze(-1)
+    translation, omega = solution[..., :3], solution[..., 3:]
+    rotation = torch.bmm(-skew.mean(1), omega.unsqueeze(-1)).squeeze(-1)
+    return translation, rotation
 
 
 @torch.no_grad()
@@ -51,7 +78,7 @@ def evaluate(model, dataset, device):
     model.eval()
     if len(dataset) < 2:
         raise ValueError("cross-sample evaluation requires at least 2 validation transitions")
-    names = ("gt", "zero", "reverse", "cross_sample", "point_shuffle", "mean_flow")
+    names = ("gt", "zero", "reverse", "cross_sample", "point_shuffle", "mean_flow", "translation_only", "rotation_only")
     sums = {name: {"point_error_m": 0.0, "translation_error_m": 0.0, "rotation_error_deg": 0.0}
             for name in names}
     field_dist = {name: 0.0 for name in names if name != "gt"}
@@ -61,11 +88,14 @@ def evaluate(model, dataset, device):
         sample = dataset[index]
         batch = {k: v.unsqueeze(0).to(device) for k, v in sample.items() if torch.is_tensor(v)}
         gt = batch["hand_flow"]
+        translation, rotation = fit_rigid_twist(batch["hand_points"], gt)
         wrong = dataset[int(permutation[index])]["hand_flow"].unsqueeze(0).to(device)
         variants = {"gt": gt, "zero": torch.zeros_like(gt), "reverse": -gt,
                     "cross_sample": wrong,
                     "point_shuffle": gt[:, torch.randperm(gt.shape[1], device=device)],
-                    "mean_flow": gt.mean(1, keepdim=True).expand_as(gt)}
+                    "mean_flow": gt.mean(1, keepdim=True).expand_as(gt),
+                    "translation_only": translation.unsqueeze(1).expand_as(gt),
+                    "rotation_only": rotation.unsqueeze(1).expand_as(gt)}
         gt_field = None
         for name, action in variants.items():
             out = model(batch["object_points"], batch["object_normals"], batch["hand_points"],
@@ -95,6 +125,7 @@ def main():
     parser.add_argument("--train-max-transitions", type=int)
     parser.add_argument("--val-max-transitions", type=int)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--eval-every", type=int, default=0)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
     torch.manual_seed(13)
@@ -106,7 +137,8 @@ def main():
     report_memory("after_dataset")
     model = InteractionTransfer() if args.model == "cm" else DirectEdge()
     report_memory("after_model_init")
-    loss = train(model, train_ds, torch.device(args.device), args.steps)
+    loss = train(model, train_ds, torch.device(args.device), args.steps,
+                 val_dataset=val_ds, eval_every=args.eval_every)
     report_memory("after_train")
     metrics, field, action = evaluate(model, val_ds, torch.device(args.device))
     report_memory("after_eval")

@@ -151,3 +151,20 @@ cross-sample 修复后不再等于 GT，且 GT 明显优于 cross/zero/reverse�
 
 **决策**
 保留 V0.6.1 修复和实验结果；Cm 的容量与主要 causal gate 通过，但不把弱 point-shuffle/mean-flow 判据宣称为通过。offline DenseToken static cache 仍是后续性能和规模化方向。
+
+## 实验：V0.7 刚体 twist intervention 与公平收敛对比
+
+**假设**
+如果 Cm 使用 hand point 的局部空间运动结构，那么 rigid-twist 分解中的 GT 应优于 translation-only；DirectEdge 则应通过独立 best-validation 选择后再比较。
+
+**改动**
+新增最小二乘 rigid twist 拟合，评估 `translation_only` 与 `rotation_only`；worker 支持每隔 500 steps 在 held-out EPE 上保存可训练参数的 best state，避免复制冻结 PTv3。Cm 与 DirectEdge 均使用 64 train transitions、16 held-out transitions、1000 steps。
+
+**结果**
+Cm held-out EPE：GT `9.12 mm`、cross `24.40 mm`、zero `27.53 mm`、reverse `59.20 mm`、translation-only `8.57 mm`、rotation-only `27.53 mm`、point-shuffle `8.64 mm`、mean-flow `8.57 mm`。DirectEdge best-run GT `34.05 mm`，Cm/DirectEdge `0.268`。Cm loss `0.06017 -> 0.001316`，DirectEdge loss `0.04140 -> 0.007521`。
+
+**诊断**
+主要 action causal gate 继续通过：GT 明显优于 cross/zero/reverse。translation-only 和 mean-flow 略优于 GT，rotation-only 接近 zero，说明当前 GRAB one-step cache 中整体平移占主导，尚未证明 Cm 编码了强局部 hand-object interaction；这与 action local ratio 约 `0.0599` 一致。
+
+**决策**
+保留 twist intervention 与 best-validation 机制；不进入 inverse action optimization。下一步仍应优先做 offline DenseToken static cache，并寻找高旋转/高局部差异 transition 子集后再验证局部 interaction。
