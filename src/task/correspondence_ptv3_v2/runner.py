@@ -81,6 +81,14 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             profile_paths,
             base_dir=_REPO_ROOT,
         )
+        from src.task.correspondence_ptv3_v2.mano_recon import resolve_mano_model_dir
+        resolved_mano_dir = resolve_mano_model_dir(
+            getattr(self.cfg.meta, "mano_model_dir", None)
+        )
+        if resolved_mano_dir is not None:
+            # Store the canonical value so MANO reconstruction, proxy FPS and
+            # serialized runtime config all agree regardless of cwd.
+            self.cfg.meta.mano_model_dir = str(resolved_mano_dir)
 
     @classmethod
     def configure_overfit_mode(

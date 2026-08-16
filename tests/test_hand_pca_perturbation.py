@@ -10,7 +10,11 @@ import pytest
 import torch
 
 from src.base import cleanup_distributed, load_config
-from src.task.correspondence_ptv3_v2.mano_recon import MANOConfig, MANOLayerCache
+from src.task.correspondence_ptv3_v2.mano_recon import (
+    MANOConfig,
+    MANOLayerCache,
+    resolve_mano_model_dir,
+)
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
 
 
@@ -25,6 +29,12 @@ def _standard_noise(seeds: list[int], width: int) -> torch.Tensor:
         generator.manual_seed(seed)
         rows.append(torch.randn(width, generator=generator))
     return torch.stack(rows)
+
+
+def test_relative_mano_model_dir_is_anchored_to_repo_root() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    expected = (repo_root / "dataset/arctic/data/body_models/mano").resolve()
+    assert resolve_mano_model_dir("dataset/arctic/data/body_models/mano") == expected
 
 
 def test_pca_scalar_std_is_not_replaced_by_noise_scale() -> None:

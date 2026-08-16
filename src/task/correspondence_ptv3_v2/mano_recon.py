@@ -39,6 +39,19 @@ for _name, _value in (
         setattr(np, _name, _value)
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def resolve_mano_model_dir(model_dir: str | Path | None) -> Path | None:
+    """Resolve MANO assets relative to the repository, independent of cwd."""
+    if model_dir is None:
+        return None
+    path = Path(model_dir).expanduser()
+    if not path.is_absolute():
+        path = _REPO_ROOT / path
+    return path.resolve()
+
+
 @dataclass(frozen=True)
 class MANOConfig:
     side: str                       # "right" or "left"
@@ -60,7 +73,8 @@ class MANOLayerCache:
     """
 
     def __init__(self, *, model_dir: str | Path, device: torch.device | str = "cpu") -> None:
-        self.model_dir = Path(model_dir)
+        self.model_dir = resolve_mano_model_dir(model_dir)
+        assert self.model_dir is not None
         self.device = torch.device(device)
         self._cache: dict[MANOConfig, Any] = {}
 
@@ -263,7 +277,8 @@ def get_proxy_face_idx(
     side = str(side)
     if side not in {"left", "right"}:
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
-    model_dir_key = None if model_dir is None else str(Path(model_dir).resolve())
+    resolved_model_dir = resolve_mano_model_dir(model_dir)
+    model_dir_key = None if resolved_model_dir is None else str(resolved_model_dir)
     cache_key = (side, int(count), model_dir_key)
     cached = _PROXY_FACE_IDX_CACHE.get(cache_key)
     if cached is not None and len(cached) == int(count):
@@ -276,7 +291,7 @@ def get_proxy_face_idx(
 
     is_rhand = side == "right"
     layer = MANO(
-        str(model_dir),
+        str(resolved_model_dir),
         is_rhand=is_rhand,
         use_pca=True,
         num_pca_comps=24,
