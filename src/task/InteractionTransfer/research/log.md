@@ -196,3 +196,24 @@ test 17,164 transitions，best.pt（epoch 16）：GT `3.28 mm`、zero `11.15 mm`
 
 **决策**
 保留 eval/viewer 脚本；V0.9 Quantitative Gate 通过。PCA-RGB、difference heatmap、selected point panel 等 viewer 扩展与 inverse 方向留待后续。
+
+## 实验：V0.10 inverse optimization
+
+**假设**
+冻结 forward model、以 hand action 为优化变量时，梯度可以把 action 引导到产生目标 object effect 的解：500 个 test transitions 上 optimized EPE 应显著低于 zero init，并接近或优于 GT action forward。
+
+**改动**
+新增 `inverse_optimize.py`（`optimize_hand_flow` backend：Rigid SE(3) 6 参数 twist（含 3 轮迭代精化的最小二乘 twist 拟合，单元验证误差 4e-6）与 Free Point Flow 两种参数化；Effect / C_obj 双 target；返回 initial/optimized/GT 三路完整状态与 history）与 `eval_inverse.py`（test split 均匀抽样 500 transitions，zero init、Adam lr 0.01、300 steps，batch=16）。`visualize_intermediate.py` 升级为 Forward+Inverse 一体化：View Mode 切换、Initial/Optimized/GT 三路并排（含各自 EPE label、C_obj difference heatmap、optimization history）、Optimize/Reset、point shape（circle+gradient shading）与 object/hand point size 滑块。
+
+**结果**
+500 test transitions（zero init，target=GT object flow，300 steps）：
+
+- Zero action `11.00 mm`
+- Optimized rigid SE(3) `1.87 mm`
+- Optimized free flow `1.74 mm`
+- GT action forward `3.27 mm`
+
+单样本 history 典型收敛：`29.24 → 4.94(25 步) → 1.98 mm(50 步)`。rigid 优于 GT action forward，说明 learned forward map 中存在比 GT action 更精确产生目标 effect 的 action 解（forward map 非单射）；free 仅比 rigid 低 0.13 mm，可优化空间几乎全部位于 6 维 rigid 子空间内，与 V0.7 "平移占主导"的结论一致。
+
+**决策**
+保留 inverse backend / eval / viewer；V0.10 inverse gate 通过：`GT object effect → optimized rigid hand action → low object EPE` 在未见 test sequences 上成立。下一步可将 Rigid SE(3) backend 替换为 MANO / robot FK，或接入 C_obj target 做 cross-embodiment 方向验证。
