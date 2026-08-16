@@ -217,3 +217,24 @@ test 17,164 transitions，best.pt（epoch 16）：GT `3.28 mm`、zero `11.15 mm`
 
 **决策**
 保留 inverse backend / eval / viewer；V0.10 inverse gate 通过：`GT object effect → optimized rigid hand action → low object EPE` 在未见 test sequences 上成立。下一步可将 Rigid SE(3) backend 替换为 MANO / robot FK，或接入 C_obj target 做 cross-embodiment 方向验证。
+
+## 重构：V0.10.1 主 Viewer（真实 mesh + 时间序轨迹播放）
+
+**动机**（指导 V0.10.1）
+旧 `visualize_intermediate.py` 把 Forward、Inverse、M/attention/C_obj、三列对比全塞进一个类，且 Inverse 三列画的是同一堆点 + flow 箭头，没有真正展示"优化后的手"和"预测后的物体"；transition 顺序来自 motion 排序而非时间序。正式主 Viewer 与调试工具应拆开。
+
+**改动**
+新建 `viewer/` 包取代旧 viewer 的主 Viewer 地位（旧文件保留为 legacy debug）：
+
+- `mesh_provider.py`：复用 `process/GRAB/raw.py` 加载 MANO layer（按 subject v_template 注入）、canonical object mesh 与 raw object pose；`twist_transform` 把 6 维 twist 直接作用到 mesh 顶点。
+- `provider.py`：`SequenceBundle` 按 cache 帧序（真实时间序）组织完整序列，`model_inputs(i)` 与 `GRABOneStepDataset.__getitem__` 逐字段一致；`valid_transition` 只决定"是否可运行模型"，不筛帧，序列外帧仍显示 mesh 并注明模型不可用。
+- `scene_renderer.py`：`SceneBatch` 用 `server.atomic()` 批量重建场景消除闪烁；`auto_spacing` 按 object 直径 `max(0.15, 1.5d)` 自动排布三路 panel（Optimized 居中）。
+- `trajectory_viewer.py`（正式主 Viewer）：Object→Mesh、Hand→MANO Mesh；Forward/Inverse 两模式；Current/Pred Next/GT Next 以半透明 mesh 状态可视化，默认不画 flow 箭头；Rigid inverse 的 (t,ω) 经 `twist_transform` 真正作用到 MANO mesh 得到"优化后的手"；Overlay/Side-by-side；Play/Stop/FPS 按时间序播放完整序列；极简 GUI，M/attention/point size 等收进折叠 Advanced。
+- `interaction_debug.py`（调试 Viewer）：Edge View Off/Top20/Top50/Selected，Selected 模式点击 object point 只显示其 K=16 条 edge 并列出 ||M||/attention 表；C_obj 四种显示（Off/Magnitude/GT-Current diff/GT-Optimized diff）；Free Point Flow 只在此处提供。
+- `smoke_test.py`：无头冒烟测试。
+
+**结果**
+smoke 5/5 通过：MANO face centers 与 cache 1538 点 parity `0.0004 mm`；raw object params 重建与 cache 点云运动一致性 `0.0004 mm`；`model_inputs` 与 dataset 逐字段 `0.00e+00`；GT object flow 的刚体 twist 提升到 mesh 后与下一帧对齐 `0.000 mm`；单帧 inverse（zero init, 300 steps）`11.33 → 0.90 mm`（GT action forward `1.71 mm`）。`trajectory_viewer`（:8080）与 `interaction_debug`（:8082）真机启动正常（HTTP 200）。
+
+**决策**
+`visualize_intermediate.py` 降级为 legacy debug；V1.0 双手 + 随机 timestep 改造时 viewer 需同步扩展（bimanual mesh、Δt 显示）。
