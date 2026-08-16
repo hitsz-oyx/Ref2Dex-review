@@ -114,3 +114,23 @@ V0.5 多序列 benchmark 脚本已实现 sequence split 和顺序释放模型显
 
 **决策**
 保留两个 P0 修复、action-field 诊断和 DirectEdge/benchmark 实现；V0.5 的正式 multi-sequence causal gate 尚未完成，不能宣称通过。后续需降低点数/模型显存或分卡后重新运行 benchmark。
+
+## 实验：V0.6 独立进程内存修复与 V0.5 sequence split benchmark
+
+**假设**
+Cm 与 DirectEdge 在独立 subprocess 中各自完成 PTv3 初始化、训练和 evaluation 后，native CPU allocator 不会跨模型滞留；在未见 sequence 上，Cm 应优于 zero/reverse/cross-sample，并接近 DirectEdge。
+
+**改动**
+将 `benchmark_v05.py` 改为不导入 torch 的轻量 launcher，新增 `train_eval_v05.py` 单模型 worker，两个 worker 通过 `subprocess.run` 顺序执行并写 JSON。worker 内一次初始化 PTv3，完成训练、GT/zero/reverse/cross-sample/point-shuffle/mean-flow evaluation，并输出 RSS/GPU memory。cross-sample 改为使用下一个真实 transition 的 hand flow。
+
+**结果**
+独立 worker 的 RSS 峰值约 `2.20 GiB`，GPU allocated 约 `376.5 MiB`，不再被 OOM 杀死。使用 `s1/airplane_fly_1` 训练 4 transitions、20 steps，在两个未见 sequence 各评估 1 transition：
+
+- `flashlight_on_2`：Cm GT `47.19 mm`、zero `47.90 mm`、reverse `47.90 mm`、cross `47.19 mm`；DirectEdge GT `91.03 mm`；Cm/DirectEdge `0.518`。
+- `bowl_drink_2`：Cm GT `30.66 mm`、zero `28.74 mm`、reverse `28.64 mm`、cross `30.66 mm`；DirectEdge GT `49.42 mm`；Cm/DirectEdge `0.620`。
+
+**诊断**
+容量 gate 在这两个 held-out transition 上通过，但 GT 没有稳定优于 zero/reverse，cross-sample 与 GT 几乎相同；V0.5 causal gate 未通过。此前 action local ratio 仅约 `0.0599`，说明该 cache 的 point-shuffle/cross-sample 干预仍然较弱或模型未学到对应关系。
+
+**决策**
+保留独立进程修复和 benchmark 链路；不宣称 V0.5 表示验证通过。下一步若继续，应先使用 V0.6 建议的 offline DenseToken static cache，并扩大训练/验证 transition 后重新评估。
