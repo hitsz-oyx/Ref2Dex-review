@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--num-workers", type=int, default=0)
     return parser.parse_args()
 
 
@@ -37,8 +38,8 @@ def main() -> None:
     cfg.data.val_split = 0.0
     cfg.data.batch_size = args.batch_size
     cfg.data.val_batch_size = args.batch_size
-    cfg.data.num_workers = 0
-    cfg.data.persistent_workers = False
+    cfg.data.num_workers = args.num_workers
+    cfg.data.persistent_workers = args.num_workers > 0
     cfg.meta.use_mano_reconstruction = False
     cfg.meta.apply_hand_perturb = False
     cfg.meta.runtime_resample_object = False
