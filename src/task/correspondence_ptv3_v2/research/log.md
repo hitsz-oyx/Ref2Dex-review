@@ -137,3 +137,19 @@ ARCTIC 原始 Stage 3 位于 NAS 的 `processed_data_backup/arctic/arctic_initon
 
 **决策**
 保留 ARCTIC 子集评估作为公平外部测试；若需要最终结论，再扩展到全量 297 文件或按 subject 做分层统计。
+
+## 实验：OakInk Stage 3 转换与分布先导统计
+
+**假设**
+OakInk 的手/物几何可以转换为当前 correspondence v2 的 compact Stage 3；其尺度、接触比例和物体尺寸分布可能解释联合增加数据后指标变化。
+
+**改动**
+新增 `research/oakink_conversion/convert_oakink_pilot.py`，从 OakInk per-view/per-frame pickle 和物体网格生成 4096 物体点、1538 手点及 hand-to-object 最短距离。OakInk 的 `obj_transf` 经过核验是 object-to-camera，转换采用物体 canonical 坐标、手点乘逆位姿。由于原始数据只有 778 个手顶点，pilot 以确定性索引扩展到 1538；手法线暂用 wrist radial proxy，因此当前产物只用于 schema/分布验证，不能直接作为最终训练数据。新增 `summarize_stage3_distribution.py` 统一统计距离、接触比例和点云半径。
+
+**结果**
+NAS pilot 目录 `OakInk/processed/stage3_corr_oakink_pilot_20260817` 已生成 20 个视角组、1000 帧，Dataset smoke 通过。OakInk pilot 的 hand-to-object 距离中位数为 23.98 mm，10 mm 内手点比例 20.65%，物体点半径中位数 74.4 mm。
+
+与现有小样本统计的方向性对比：ContactPose 10 mm 比例 35.2%、物体半径中位数 55.8 mm；GRAB smoke 10 mm 比例 19.9%、物体半径 142.1 mm；ARCTIC 子集 10 mm 比例 17.6%、物体半径 269.2 mm。样本和坐标/采样版本尚未完全统一，不能据此下最终结论，但数据分布确实存在明显尺度与接触密度差异，可能导致大数据联合训练的 loss 权重和输出校准发生变化。
+
+**下一步**
+全量 OakInk 转换已在 NAS tmux `oakink_convert_20260817` 中运行；完成后重新统计全量，并补充按 object category、sequence 和 contact-distance 分桶的比较。最终训练前需要把手法线改为 MANO 面法线或明确关闭法线通道。
