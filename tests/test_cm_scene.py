@@ -21,7 +21,11 @@ import numpy as np
 import pytest
 import torch
 
-from process.GRAB.stage4_cm_scene import compute_scene_candidate_ragged
+from process.GRAB.stage4_cm_scene import (
+    build_static_environment,
+    compute_scene_candidate_ragged,
+    summarize_scene_root,
+)
 from src.task.Cm.build_dense_cache import build_dense_cache
 from src.task.Cm.build_sampling_bank import build_all_banks
 from src.task.Cm.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
@@ -245,6 +249,55 @@ def _geometry_with_env(num_env_near: int, num_env_far: int, *, seed: int = 7):
         num_env_far=num_env_far,
         seed=seed,
     )
+
+
+def test_static_environment_tolerates_sparse_pose_outliers() -> None:
+    poses = np.tile(np.eye(4, dtype=np.float64), (100, 1, 1))
+    poses[:, :3, 3] = np.linspace(0.0, 5e-5, 100)[:, None]
+    poses[-5:, :3, :3] = np.diag([1.0, -1.0, -1.0])
+    poses[-5:, :3, 3] = 0.1
+    asset = {
+        "name": "table",
+        "canonical_points": np.array([[0.0, 0.0, 0.0]], dtype=np.float32),
+        "canonical_normals": np.array([[0.0, 0.0, 1.0]], dtype=np.float32),
+        "poses_world": poses,
+    }
+    points, normals, names, counts = build_static_environment(
+        [asset], static_rot_eps=1e-3, static_trans_eps=1e-3,
+    )
+    assert names == ["table"] and counts == [1]
+    assert float(np.linalg.norm(points[0])) < 1e-3
+    np.testing.assert_allclose(normals[0], [0.0, 0.0, 1.0], atol=1e-6)
+
+    poses[20:80, :3, 3] = 0.1
+    asset["poses_world"] = poses
+    with pytest.raises(NotImplementedError, match="inliers="):
+        build_static_environment([asset], static_rot_eps=1e-3, static_trans_eps=1e-3)
+
+
+def test_scene_root_summary_includes_incremental_sequences() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        for subject, sequence, counts in (
+            ("s1", "first", [0, 2, 1]),
+            ("s2", "second", [3, 0]),
+        ):
+            shared = root / subject / sequence / "shared"
+            side = root / subject / sequence / "right"
+            shared.mkdir(parents=True)
+            side.mkdir()
+            np.save(shared / "raw_frame_id.npy", np.arange(len(counts), dtype=np.int32))
+            np.save(side / "candidate_offsets.npy", np.concatenate([[0], np.cumsum(counts)]))
+        assert summarize_scene_root(root, source_sequences=3) == {
+            "source_sequences": 3,
+            "sequences_present": 2,
+            "sequences_missing": 1,
+            "sides_present": 2,
+            "side_frames": 5,
+            "active_side_frames": 3,
+            "candidate_min": 0,
+            "candidate_max": 3,
+        }
 
 
 # ---------------------------------------------------------------------------

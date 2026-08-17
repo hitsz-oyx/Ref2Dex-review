@@ -85,3 +85,59 @@ V1.1 cache pipeline 可以在真实 GRAB、MANO 和冻结 DenseToken checkpoint 
 **决策**
 
 保留 sparse cache 和 cached-feature 训练路径；严格 online/cache parity 记录为当前 spconv kernel 的未通过 gate，不把该 smoke 解释为正式全量效果。正式全量 dense cache 前需要决定是否接受该非确定性，或更换确定性 backbone/kernel。
+
+## 实验：V1.1.1 DenseToken 三层 parity benchmark
+
+**假设**
+
+严格逐元素 online/cache parity 不是必要条件；如果 cache 与 online 的 downstream Cm flow 差异不超过 online-online 的 kernel 波动，则可以接受 cache 并进入全量链路。
+
+**观察到的失败 / 现象**
+
+原始 smoke 输出目录已被清理，因此先按相同配置重跑 20-step cached-feature smoke，生成临时 Cm checkpoint。benchmark 固定 `cup_lift` 的 `32` 个 sample、`stride=1`、`bank=0`，并分别比较两次 online forward 与 cache；cache 构建时使用 batch size 64，benchmark 复核使用 batch size 32。
+
+**诊断**
+
+feature 层仍受 spconv kernel 和 batch shape 影响：batch 32 时 object/hand 的 online-online RMS 为 `0.0486/0.0361`，online-cache RMS 为 `0.3627/0.3386`。但 Cm downstream 输出变化很小：output flow RMS 为 online-online `4.61e-7`、online-cache `5.97e-6`；EPE 为 cached `10.464178 mm`，两次 online 为 `10.463841/10.463593 mm`，最大差约 `0.0006 mm`。
+
+**改动**
+
+新增 `research/dense_cache_v1_1_1/benchmark_dense_cache.py`，固定 dataset view 后报告 feature、Cm output 和 flow EPE 三层指标。同步清理 Stage4 V1.1 过时的固定 8192 文案、sampling bank 未使用变量，并补充 V1.1.1 文档索引。
+
+**结果**
+
+downstream online-cache 差异远小于训练 smoke 的毫米级误差和数据/模型变化，V1.1.1 的行为 parity gate 通过；feature 绝对值差异保留为 spconv 非确定性诊断，不再作为阻塞条件。
+
+**决策**
+
+保留 sparse DenseToken cache，允许进入全量 scene/sampling 链路；全量 dense cache 仍需根据 scene cache 后的 active-frame 总量和磁盘估算决定具体执行规模。
+
+## 实验：V1.1.2 正式两层 cache 路线
+
+**假设**
+
+Scene geometry/candidate 与 B=4 sampling bank 能去除重复的原始数据、MANO、mesh 和 5cm 搜索开销；DenseToken feature bank 的数百 GB 存储、构建时间和随机 IO 成本高于收益，正式训练改为 online Frozen DenseToken 更合适。
+
+**观察到的失败 / 现象**
+
+全量扫描在 1335 条原始 sequence 中成功构建 1255 条，80 条因 environment 持续移动而不满足 `static_world` schema。现有 325857 个 active side-frame 的完整 DenseToken bank 预算为约 `517 GB`；运行约 20 分钟只完成 158 条 sequence 的部分 cache，root 从 71 GB 增长到约 150 GB。
+
+**诊断**
+
+Level 3 每个 active side-frame、B=4、token dim 96 需要约 `1.51 MiB`，且必须预先运行四次 Frozen PTv3。该成本只在大量重复 Cm ablation 时可能摊回；当前正式路线没有足够收益支持该预计算。
+
+**改动**
+
+停止全量 DenseToken 构建并删除 `cm_scene_v1_1_full/**/dense_bank`，回收约 79 GB；保留 71 GB 的 Level 1/2 cache、2510 个 sampling bank 和 calibration。正式 config 改为 `use_dense_cache: false`，训练时在线运行 Frozen DenseToken；feature bank builder 保留为显式诊断/消融工具。
+
+**结果**
+
+前两层 root 统计为 1255 sequences、2510 sides、765512 side-frames、325857 active side-frames。sampling bank 完成 2510/2510；train-only calibration 为 `flow_target_rms_m=0.0927736881`、`flow_target_scale=10.7789183`。删除后 `dense_bank=0`，sampling index 文件仍为 2510，root 占用 71 GB。
+
+真实 `cup_lift` online Frozen DenseToken 3-step smoke 成功（`amp=False`）：epoch loss `0.249824`、EPE `14.5185 mm`、grad norm mean `0.540904`，无 NaN/Inf。该结果只验证删除 Level 3 后的训练链路可运行，不作为正式效果结论。
+
+按无正式 split 的第一种方案，对 `cm_scene_v1_1_full` 显式设置 `split_json_path=null`，限制前 6 个 sample、batch size 2，在 `cuda:5` 上完成 3-step online smoke（`amp=False`）。epoch loss `1.33097e-05`、EPE `0.0812016 mm`、grad norm mean `0.0217312`，三步均为有限值并正常退出。前 6 个 sample 的极小 flow 不具备效果代表性，该实验仅确认全量前两层 root 的 loader、sampling bank 与 online Frozen DenseToken 训练路径可用。未生成新的正式 train/val/test split。
+
+**决策**
+
+保留两层 cache 路线，撤回 DenseToken 全量预计算。下一步使用 online Frozen DenseToken 做真实训练和 evaluation；80 条动态 environment sequence 暂不进入 static-world 数据集。

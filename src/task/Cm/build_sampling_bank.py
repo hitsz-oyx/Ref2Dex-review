@@ -88,7 +88,6 @@ def build_all_banks(
     """Write ``sampling_bank/<side>_indices.npy`` for every sequence."""
     root = Path(root)
     meta = read_meta(root)
-    scene_pool = meta.get("scene_pool", {})
     fingerprint = scene_cache_fingerprint(
         schema=SCHEMA_NAME,
         points_per_asset=int(meta["points_per_asset"]),

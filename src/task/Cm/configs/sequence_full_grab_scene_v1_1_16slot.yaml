@@ -12,11 +12,11 @@ meta:
   loss_slot_count_weight: 0.0
   loss_slot_confidence_weight: 0.0
   loss_active_overlap_weight: 0.0
-  flow_target_rms_m: null
+  flow_target_rms_m: 0.09277368805946942
   geometry_input_scale: 100.0
   hand_flow_input_scale: 100.0
-  object_flow_target_scale: 100.0
-  require_flow_calibration: false
+  object_flow_target_scale: 10.778918257070734
+  require_flow_calibration: true
 
 data:
   root: data/processed_data/cm_scene_v1_1
@@ -40,7 +40,7 @@ data:
   sampling_bank_size: 4
   fixed_eval_bank: 0
   dominant_hand_manifest: null
-  use_dense_cache: true
+  use_dense_cache: false
 
 train:
   device: cuda
@@ -63,4 +63,4 @@ train:
 
 wandb:
   enable: false
-  tags: [cm, scene-v1-1, full-grab, slot-16, no-gate, time-conditioned, dense-cache]
+  tags: [cm, scene-v1-1, full-grab, slot-16, no-gate, time-conditioned, online-dense-token]

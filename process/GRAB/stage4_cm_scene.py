@@ -1,11 +1,11 @@
 """Build the Cm Scene Cache V1.1 (mmap scene geometry + ragged candidates).
 
-依照 ``src/task/Cm/docs/指导/V1.md`` 实现：把 Stage4 从 NPZ 升级为真正支持
-mmap 的三级 cache 的第一级。语义上 ``P_t`` 变为当前手附近的 local scene
-points（4096 object + 4096 environment = 8192 scene pool），object 与
-environment 完全一视同仁；candidate 仍是「当前手 5cm」，但改存 ragged
-index 而不是 bool mask。环境资产通过 ``GRABSeqData.get_environment_assets``
-通用接口获得，Stage4 不感知 environment == table。
+依照 ``src/task/Cm/docs/指导/V1.1.md`` 实现 Scene Cache 的第一级。语义上
+``P_t`` 变为当前手附近的 local scene points；每个 manipulated/environment
+asset 各采 4096 点，sequence 间允许不同数量的 asset，object 与 environment
+完全一视同仁。candidate 仍是「当前手 5cm」，但改存 ragged index 而不是 bool
+mask。环境资产通过 ``GRABSeqData.get_environment_assets`` 通用接口获得，Stage4
+不感知 environment == table。
 
 用法::
 
@@ -45,6 +45,7 @@ SOURCE_FPS = 120.0
 # rigid static asset (rotation in radians, translation in metres).
 DEFAULT_STATIC_ROT_EPS = 1.0e-3
 DEFAULT_STATIC_TRANS_EPS = 1.0e-3
+DEFAULT_STATIC_INLIER_FRACTION = 0.9
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -74,13 +75,24 @@ def _resolve_sequences(args: argparse.Namespace) -> list[str]:
     ]
 
 
-def _rotation_angle_deviation(rotations: np.ndarray) -> float:
-    """Max angle between each frame rotation and frame 0, in radians."""
-    first = rotations[0]
-    relative = np.einsum("ji,tjk->tik", first, rotations)  # R_0^T @ R_t
+def _robust_static_pose(poses: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Estimate a static pose without letting sparse tracker outliers dominate."""
+    translation = np.median(poses[:, :3, 3], axis=0)
+    median_rotation = np.median(poses[:, :3, :3], axis=0)
+    u, _, vh = np.linalg.svd(median_rotation)
+    rotation = u @ vh
+    if np.linalg.det(rotation) < 0.0:
+        u[:, -1] *= -1.0
+        rotation = u @ vh
+    return rotation, translation
+
+
+def _rotation_angle_deviation(rotations: np.ndarray, reference: np.ndarray) -> np.ndarray:
+    """Angle from every frame rotation to one reference rotation, in radians."""
+    relative = np.einsum("ji,tjk->tik", reference, rotations)
     trace = np.trace(relative, axis1=1, axis2=2)
     cosine = np.clip((trace - 1.0) / 2.0, -1.0, 1.0)
-    return float(np.arccos(cosine).max())
+    return np.arccos(cosine)
 
 
 def build_static_environment(
@@ -88,29 +100,37 @@ def build_static_environment(
     *,
     static_rot_eps: float,
     static_trans_eps: float,
+    static_inlier_fraction: float = DEFAULT_STATIC_INLIER_FRACTION,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[int]]:
     """Collapse per-frame env poses into one static world placement (V1.md §8).
 
-    GRAB 的 table pose 每帧只有 ~1e-4 rad / 6e-5 m 的数值抖动；确认偏差在
-    容差内后按 frame-0 pose 存 ``[N_E,3]``，Dataset 自动 broadcast。未来动态
-    environment 再扩展 ``static_local + pose`` / ``dynamic_world``。
+    GRAB 的 table pose 通常只有数值抖动，但部分序列含稀疏 tracker outlier。
+    使用 robust median pose，并要求足够比例的帧落在物理容差内；持续移动的
+    environment 仍然 fail-fast。Dataset 对结果自动 broadcast。
     """
     points: list[np.ndarray] = []
     normals: list[np.ndarray] = []
     names: list[str] = []
     counts: list[int] = []
+    if not 0.0 < static_inlier_fraction <= 1.0:
+        raise ValueError("static_inlier_fraction must be in (0, 1]")
     for asset in assets:
         poses = np.asarray(asset["poses_world"], dtype=np.float64)
-        trans_dev = float(np.abs(poses[:, :3, 3] - poses[0, :3, 3]).max())
-        rot_dev = _rotation_angle_deviation(poses[:, :3, :3])
-        if trans_dev > static_trans_eps or rot_dev > static_rot_eps:
+        rotation, translation = _robust_static_pose(poses)
+        trans_dev = np.linalg.norm(poses[:, :3, 3] - translation, axis=1)
+        rot_dev = _rotation_angle_deviation(poses[:, :3, :3], rotation)
+        inlier = (trans_dev <= static_trans_eps) & (rot_dev <= static_rot_eps)
+        inlier_fraction = float(inlier.mean())
+        if inlier_fraction < static_inlier_fraction:
             raise NotImplementedError(
                 f"Environment asset {asset['name']!r} moves within the sequence "
-                f"(rot={rot_dev:.3g} rad, trans={trans_dev:.3g} m); only "
+                f"(inliers={inlier_fraction:.1%}, required={static_inlier_fraction:.1%}, "
+                f"rot_p90={np.quantile(rot_dev, 0.9):.3g} rad, "
+                f"trans_p90={np.quantile(trans_dev, 0.9):.3g} m); only "
                 f"'static_world' storage is supported in scene cache V1."
             )
-        rotation = poses[0, :3, :3].astype(np.float32)
-        translation = poses[0, :3, 3].astype(np.float32)
+        rotation = rotation.astype(np.float32)
+        translation = translation.astype(np.float32)
         world_points = (np.asarray(asset["canonical_points"], dtype=np.float32) @ rotation.T + translation).astype(np.float32)
         world_normals = (np.asarray(asset["canonical_normals"], dtype=np.float32) @ rotation.T).astype(np.float32)
         norm = np.linalg.norm(world_normals, axis=-1, keepdims=True)
@@ -160,16 +180,58 @@ def compute_scene_candidate_ragged(
     return offsets, indices
 
 
+def summarize_scene_root(output_root: str | Path, *, source_sequences: int) -> dict[str, Any]:
+    """Summarize all materialized sequences, including incremental retries."""
+    root = Path(output_root)
+    sequence_files = sorted(root.glob("*/*/shared/raw_frame_id.npy"))
+    side_frames = 0
+    active_side_frames = 0
+    sides_present = 0
+    candidate_min: int | None = None
+    candidate_max: int | None = None
+    for raw_frame_path in sequence_files:
+        sequence_dir = raw_frame_path.parent.parent
+        for side in ("left", "right"):
+            offsets_path = sequence_dir / side / "candidate_offsets.npy"
+            if not offsets_path.is_file():
+                continue
+            offsets = np.load(offsets_path, mmap_mode="r")
+            counts = np.diff(offsets)
+            sides_present += 1
+            side_frames += int(counts.size)
+            active_side_frames += int(np.count_nonzero(counts))
+            if counts.size:
+                current_min = int(counts.min())
+                current_max = int(counts.max())
+                candidate_min = current_min if candidate_min is None else min(candidate_min, current_min)
+                candidate_max = current_max if candidate_max is None else max(candidate_max, current_max)
+    sequences_present = len(sequence_files)
+    return {
+        "source_sequences": int(source_sequences),
+        "sequences_present": sequences_present,
+        "sequences_missing": max(int(source_sequences) - sequences_present, 0),
+        "sides_present": sides_present,
+        "side_frames": side_frames,
+        "active_side_frames": active_side_frames,
+        "candidate_min": candidate_min,
+        "candidate_max": candidate_max,
+    }
+
+
 def build_sequence_scene(
     source: dict[str, Any],
     *,
     env_assets: list[dict],
     static_rot_eps: float,
     static_trans_eps: float,
+    static_inlier_fraction: float = DEFAULT_STATIC_INLIER_FRACTION,
 ) -> dict[str, Any]:
     """Assemble shared scene-pool fields for one sequence."""
     env_points, env_normals, env_names, env_counts = build_static_environment(
-        env_assets, static_rot_eps=static_rot_eps, static_trans_eps=static_trans_eps,
+        env_assets,
+        static_rot_eps=static_rot_eps,
+        static_trans_eps=static_trans_eps,
+        static_inlier_fraction=static_inlier_fraction,
     )
     obj_points = np.asarray(source["obj_points_world"], dtype=np.float32)
     obj_normals = np.asarray(source["obj_normals_world"], dtype=np.float32)
@@ -306,6 +368,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--obj-unit", choices=["m", "mm", "auto"], default="m")
     parser.add_argument("--static-rot-eps", type=float, default=DEFAULT_STATIC_ROT_EPS)
     parser.add_argument("--static-trans-eps", type=float, default=DEFAULT_STATIC_TRANS_EPS)
+    parser.add_argument("--static-inlier-fraction", type=float, default=DEFAULT_STATIC_INLIER_FRACTION)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -366,6 +429,7 @@ def main() -> None:
                 env_assets=env_assets,
                 static_rot_eps=args.static_rot_eps,
                 static_trans_eps=args.static_trans_eps,
+                static_inlier_fraction=args.static_inlier_fraction,
             )
             sequence_dir = output_root / str(source["subject_id"]) / str(source["seq_name"])
             pending_sides = [side for side in sides if args.overwrite or not (sequence_dir / side).is_dir()]
@@ -412,6 +476,10 @@ def main() -> None:
             print(f"[stage4-scene] failed {raw_path}: {exc}")
             traceback.print_exc()
 
+    root_stats = summarize_scene_root(
+        output_root,
+        source_sequences=max(len(sequences), stats["failed"] + len(list(output_root.glob("*/*/shared/raw_frame_id.npy")))),
+    )
     update_meta(
         output_root,
         schema_name=SCHEMA_NAME,
@@ -429,10 +497,12 @@ def main() -> None:
         source_fps=SOURCE_FPS,
         effective_fps=SOURCE_FPS / int(args.ds_rate),
         environment_storage="static_world",
+        static_inlier_fraction=float(args.static_inlier_fraction),
         coordinate_frame="world; Dataset maps endpoints to hand_root_t",
-        stats=stats,
+        stats=root_stats,
+        last_run_stats=stats,
     )
-    print(f"[stage4-scene] summary: {json.dumps(stats)}")
+    print(f"[stage4-scene] summary: {json.dumps(root_stats)}")
     if stats["failed"]:
         raise SystemExit(1)
 
