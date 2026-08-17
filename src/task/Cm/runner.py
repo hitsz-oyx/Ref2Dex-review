@@ -1,7 +1,9 @@
 """BaseRunner integration for CmAction temporal point-flow learning."""
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -91,6 +93,17 @@ class CmActionRunner(BaseRunner):
             summary[f"{split}/zero_flow_improvement"] = float(sum(improvement) / len(improvement))
         if norm_ratio:
             summary[f"{split}/norm_ratio"] = float(sum(norm_ratio) / len(norm_ratio))
+        # Scene V1 diagnostics (V1.md §25): object vs environment must be
+        # reported separately so a zero-flow collapse on environment points
+        # cannot hide behind an attractive overall EPE.
+        for name, key in (
+            ("flow/epe_object_mm", "mean_stride_epe_object_mm"),
+            ("flow/epe_environment_mm", "mean_stride_epe_environment_mm"),
+            ("flow/pred_norm_environment_mm", "mean_stride_pred_norm_environment_mm"),
+        ):
+            panel = values(name)
+            if panel:
+                summary[f"{split}/{key}"] = float(sum(panel) / len(panel))
         for stride in (1, 5, 10):
             key = f"{split}/stride_{stride}/flow/epe_mm"
             if key in metrics:
@@ -130,6 +143,7 @@ class CmActionRunner(BaseRunner):
             "loss", "flow/loss_scaled", "flow/epe_mm", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
             "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
+            "flow/epe_object_mm", "flow/epe_environment_mm", "flow/pred_norm_environment_mm",
         )
         aliases = {"lr": "optim/lr", "grad_norm": "optim/grad_norm"}
         return {
@@ -146,6 +160,9 @@ class CmActionRunner(BaseRunner):
             "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
             "slot/assignment_entropy",
             "slot/max_probability_mean", "slot/count_loss", "slot/confidence_loss",
+            "flow/epe_object_mm", "flow/gt_norm_object_mm",
+            "flow/epe_environment_mm", "flow/gt_norm_environment_mm",
+            "flow/pred_norm_environment_mm",
         )
         if float(self.cfg.meta.loss_active_overlap_weight) != 0.0:
             core_keys += ("slot/active_overlap",)
@@ -170,7 +187,38 @@ class CmActionRunner(BaseRunner):
         return result
 
     def make_dataloaders(self, data_cfg: Any, seed: int):
+        scene_loader = self._resolve_scene_dataloaders(data_cfg, seed)
+        if scene_loader is not None:
+            return scene_loader
         return make_dataloaders(
+            data_cfg,
+            seed,
+            meta_cfg=self.cfg.meta,
+            distributed=self.distributed,
+        )
+
+    def _resolve_scene_dataloaders(self, data_cfg: Any, seed: int):
+        """Dispatch to the Scene Cache V1 dataset when the root declares it.
+
+        Detection is by the root ``meta.json`` schema; a scene root that then
+        fails fingerprint validation raises loudly inside the scene loader
+        (V1.md §22) instead of silently falling back to the NPZ dataset.
+        """
+        root_value = str(getattr(data_cfg, "root", "") or data_cfg.train_path or "").strip()
+        if not root_value:
+            return None
+        meta_path = Path(root_value) / "meta.json"
+        if not meta_path.is_file():
+            return None
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict) or payload.get("schema_name") != "ref2dex_cm_scene_v1":
+            return None
+        from src.task.Cm.dataset_scene import make_dataloaders as make_scene_dataloaders
+
+        return make_scene_dataloaders(
             data_cfg,
             seed,
             meta_cfg=self.cfg.meta,
@@ -276,6 +324,27 @@ class CmActionRunner(BaseRunner):
         residual_sum = (residual_norm_map * valid.float()).sum()
         gt_norm_sum = (gt_norm_map * valid.float()).sum()
         pred_norm_sum = (pred_norm_map * valid.float()).sum()
+        # Scene V1 (V1.md §25): scene_source_id is diagnostics-only metadata
+        # (0=object, 1=environment) and never enters the model.  Splitting the
+        # EPE by source exposes a zero-flow collapse on environment points
+        # that the overall EPE could otherwise hide.
+        source_metrics: dict[str, MetricStat] = {}
+        scene_source_id = batch.get("scene_source_id")
+        if scene_source_id is not None:
+            environment = scene_source_id.bool() & valid
+            object_mask = (~scene_source_id.bool()) & valid
+            for name, mask, norm_map in (
+                ("flow/epe_object_mm", object_mask, residual_norm_map),
+                ("flow/gt_norm_object_mm", object_mask, gt_norm_map),
+                ("flow/epe_environment_mm", environment, residual_norm_map),
+                ("flow/gt_norm_environment_mm", environment, gt_norm_map),
+                ("flow/pred_norm_environment_mm", environment, pred_norm_map),
+            ):
+                count = float(mask.sum())
+                if count > 0.0:
+                    source_metrics[name] = MetricStat(
+                        float((norm_map * 1000.0 * mask.float()).sum().detach()), count
+                    )
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
@@ -351,6 +420,7 @@ class CmActionRunner(BaseRunner):
             "slot/count_loss": slot_count_loss,
             "slot/confidence_loss": confidence_loss,
         }
+        metrics.update(source_metrics)
         if float(self.cfg.meta.loss_active_overlap_weight) != 0.0:
             metrics["slot/active_overlap"] = active_overlap_loss
         return RunnerOutput(loss=total_loss, metrics=metrics, batch_size=int(pred_flow.shape[0]))

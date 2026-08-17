@@ -187,14 +187,25 @@ def compute_canonical_hand_surface(mano_layer: MANO) -> tuple:
 
 
 def resolve_grab_sequence_root(grab_root: str | Path) -> Path:
-    """Return the directory that directly contains subject subdirectories."""
+    """Return the directory that directly contains subject subdirectories.
+
+    GRAB is stored either as ``{root}/grab/{subject}/*.npz``,
+    ``{root}/data/{subject}/*.npz``, or ``{root}/data/grab/{subject}/*.npz``.
+    """
     root = Path(grab_root).resolve()
-    for candidate in (root / "grab", root / "data", root):
+    candidates = (
+        root / "grab",
+        root / "data" / "grab",
+        root / "data",
+        root,
+    )
+    for candidate in candidates:
         if candidate.is_dir() and next(candidate.glob("*/*.npz"), None) is not None:
             return candidate
     raise FileNotFoundError(
         f"No GRAB sequences found under {root}. Expected one of "
-        f"{root / 'grab'}, {root / 'data'}, or {root} to contain */*.npz"
+        f"{root / 'grab'}, {root / 'data' / 'grab'}, {root / 'data'}, "
+        f"or {root} to contain */*.npz"
     )
 
 
@@ -347,13 +358,24 @@ def load_object_canonical_mesh(obj_name: str, grab_root: str, unit: str = "m") -
         airplane=0.089, apple=0.049, body=1.345, coffeemug=0.058,
         cubelarge=0.060, fryingpan=0.118, ... 全部在米单位。
     """
-    p = op.join(grab_root, "tools", "object_meshes", "contact_meshes", f"{obj_name}.ply")
-    if not op.exists(p):
-        p = op.join(grab_root, "tools", "object_meshes", "contact_meshes", f"{obj_name}.obj")
-    if not op.exists(p):
+    base = Path(grab_root).resolve()
+    search_roots = [base]
+    for extra in (base / "data", base / "grab", base.parent):
+        if extra not in search_roots:
+            search_roots.append(extra)
+    for root in search_roots:
+        for ext in (".ply", ".obj"):
+            candidate = root / "tools" / "object_meshes" / "contact_meshes" / f"{obj_name}{ext}"
+            if candidate.exists():
+                p = candidate
+                break
+        else:
+            continue
+        break
+    else:
         p = op.join(OBJECT_ASSET_ROOT, obj_name, "mesh.obj")
-    if not op.exists(p):
-        raise FileNotFoundError(f"GRAB object mesh not found: {obj_name} (tried {p})")
+        if not op.exists(p):
+            raise FileNotFoundError(f"GRAB object mesh not found: {obj_name} (tried {p})")
     mesh = trimesh.load(p, process=False)
     # ============================================================
     # 单位处理（实测 GRAB = 米，仿 arctic_preprocess.load_object_mesh）
@@ -368,6 +390,52 @@ def load_object_canonical_mesh(obj_name: str, grab_root: str, unit: str = "m") -
     else:
         raise ValueError(f"Unknown unit {unit!r}; expected 'm', 'mm', or 'auto'")
     return mesh
+
+
+
+
+def load_environment_mesh(mesh_relpath: str, grab_root: str, seq_root: Optional[str] = None, unit: str = "m") -> trimesh.Trimesh:
+    """Load a canonical environment mesh by its dataset-relative path.
+
+    兼容两种布局：路径相对 ``grab_root``（如 ``tools/...``），或相对
+    ``seq_root``（``resolve_grab_sequence_root`` 返回的目录）。
+    """
+    candidates = [op.join(grab_root, mesh_relpath)]
+    if seq_root is not None:
+        candidates.append(op.join(seq_root, mesh_relpath))
+        candidates.append(op.join(op.dirname(seq_root.rstrip("/")), mesh_relpath))
+    path = next((p for p in candidates if op.exists(p)), None)
+    if path is None:
+        raise FileNotFoundError(f"Environment mesh not found: {mesh_relpath} (tried {candidates})")
+    mesh = trimesh.load(path, process=False)
+    if unit == "m":
+        pass
+    elif unit == "mm":
+        mesh.vertices = mesh.vertices / 1000.0
+    elif unit == "auto":
+        if np.abs(mesh.vertices).max() > 10.0:
+            mesh.vertices = mesh.vertices / 1000.0
+    else:
+        raise ValueError(f"Unknown unit {unit!r}; expected 'm', 'mm', or 'auto'")
+    return mesh
+
+
+def sample_environment_surface(mesh: trimesh.Trimesh, num_points: int, seed: int = 42) -> tuple:
+    """Stable canonical surface sampling for one environment asset.
+
+    与物体采样一致：固定 seed 的均匀表面采样 + 重心坐标插值 vertex normals，
+    保证同一 canonical point index 在所有序列/所有帧中对应同一表面点。
+    """
+    points, face_idx, bary = sample_mesh_surface(mesh, num_points, seed=seed)
+    mesh.fix_normals()
+    vertex_normals = mesh.vertex_normals
+    normals = interpolate_vertex_attributes(face_idx, bary, vertex_normals, mesh.faces)
+    norms = np.linalg.norm(normals, axis=-1, keepdims=True)
+    normals = normals / np.clip(norms, 1e-10, None)
+    return (
+        np.asarray(points, dtype=np.float32),
+        np.asarray(normals, dtype=np.float32),
+    )
 
 
 
@@ -426,6 +494,33 @@ class GRABSeqData:
             "global_orient": params["global_orient"],
             "transl": params["transl"],
         }
+
+    def get_environment_assets(self) -> list[dict]:
+        """Return generic environment assets stored in this raw sequence.
+
+        返回的每个 asset 是一个通用 dict：
+            name            资产名（例如 "table"），不含任何数据集特定语义
+            mesh_relpath    canonical mesh 相对 grab_root 的路径
+            global_orient   (T_raw, 3) axis-angle
+            transl          (T_raw, 3)
+
+        上层（Stage4 scene builder）只看到 "environment assets"，
+        不知道也不需要知道 environment == table。
+        """
+        assets: list[dict] = []
+        if "table" in self._raw.files:
+            table = self._raw["table"].item()
+            params = table.get("params", {})
+            mesh_relpath = table.get("table_mesh", None)
+            if mesh_relpath is None or "global_orient" not in params or "transl" not in params:
+                raise ValueError(f"{self.path}: malformed table environment entry")
+            assets.append({
+                "name": "table",
+                "mesh_relpath": str(mesh_relpath),
+                "global_orient": np.asarray(params["global_orient"], dtype=np.float32),
+                "transl": np.asarray(params["transl"], dtype=np.float32),
+            })
+        return assets
 
     def get_contact_object(self) -> np.ndarray:
         """返回 (T, V_obj) int8 矩阵：每帧每个物点接触的 SMPL-X 身体 part id。
@@ -522,6 +617,10 @@ class GRABRawAdapter:
         self.hand_point_id = np.arange(self.num_hand_points, dtype=np.int32)
         # 物体采样缓存
         self._obj_cache = {}
+        # 环境资产 canonical surface 采样缓存：key -> (points, normals)
+        self._env_cache: dict = {}
+        # 序列根目录（懒解析，用于环境 mesh 相对路径）
+        self._sequence_root: Optional[Path] = None
         print(
             f"[Preprocessor] Device: {self.device} | "
             f"NN batch size: {self.nn_batch_size}"
@@ -575,6 +674,59 @@ class GRABRawAdapter:
             print(f"[Preprocessor] Cached {obj_name}: {len(mesh.vertices)} verts, "
                   f"{self.num_obj_points} samples")
         return self._obj_cache[obj_name]
+
+    def _get_env_sampling(self, mesh_relpath: str, asset_name: str, num_points: int, seq_root: str) -> tuple:
+        key = (asset_name, int(num_points))
+        if key not in self._env_cache:
+            mesh = load_environment_mesh(mesh_relpath, self.grab_root, seq_root=seq_root, unit=self.obj_unit)
+            self._env_cache[key] = sample_environment_surface(mesh, int(num_points), seed=42)
+            print(f"[Preprocessor] Cached environment {asset_name}: {len(mesh.vertices)} verts, {num_points} samples")
+        return self._env_cache[key]
+
+    def get_environment_geometry(
+        self,
+        seq_data: "GRABSeqData",
+        frame_ids: np.ndarray,
+        *,
+        num_env_points: int,
+    ) -> list[dict]:
+        """Return posed environment assets for the selected frames.
+
+        每个返回的 asset：
+            name                资产名（如 "table"）
+            canonical_points    (N_E, 3) canonical 表面采样点
+            canonical_normals   (N_E, 3)
+            poses_world         (T, 4, 4) 每帧世界位姿（T == len(frame_ids)）
+
+        Stage4 scene builder 负责判断 pose 是否序列内恒定并决定
+        static_world / dynamic_world 存储方式；本函数保持通用。
+        """
+        assets = seq_data.get_environment_assets()
+        if self._sequence_root is None:
+            self._sequence_root = resolve_grab_sequence_root(self.grab_root)
+        seq_root = str(self._sequence_root)
+        result: list[dict] = []
+        for asset in assets:
+            cano_points, cano_normals = self._get_env_sampling(
+                asset["mesh_relpath"], asset["name"], num_env_points, seq_root,
+            )
+            rot_aa = np.asarray(asset["global_orient"][frame_ids], dtype=np.float32)
+            transl = np.asarray(asset["transl"][frame_ids], dtype=np.float32)
+            if np.abs(transl).max() > 5.0:
+                transl = transl / 1000.0
+            rot_t = torch.from_numpy(rot_aa).float().to(self.device)
+            R_env = axis_angle_to_rotmat(rot_t).detach().cpu().numpy()
+            poses_world = build_SE3(
+                torch.from_numpy(R_env).float(),
+                torch.from_numpy(transl).float(),
+            ).cpu().numpy().astype(np.float32)
+            result.append({
+                "name": asset["name"],
+                "canonical_points": cano_points,
+                "canonical_normals": cano_normals,
+                "poses_world": poses_world,
+            })
+        return result
 
     # ---- MANO forward (PCA + flat_hand_mean=True) ----
     def _mano_forward(self, mano: MANO, T: int, hand_params: dict) -> tuple:

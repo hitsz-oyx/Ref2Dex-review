@@ -71,6 +71,18 @@ class Config(TaskConfig):
         max_train_samples = None
         max_val_samples = None
         train_strides = None
+        # ---- Scene Cache V1 (see docs/指导/V1.md) ----
+        # Dispatch is automatic: a data root whose meta.json declares
+        # ``ref2dex_cm_scene_v1`` routes to Stage4CmSceneDataset.
+        use_mmap: bool = True
+        use_sampling_bank: bool = True
+        sampling_bank_size: int = 4
+        # Validation/test always evaluate a fixed bank for determinism.
+        fixed_eval_bank: int = 0
+        # Read precomputed frozen DenseToken features from dense_bank/ instead
+        # of running the online PTv3 in the training loop.  Toggling false at
+        # any time restores the online path for cache-parity validation.
+        use_dense_cache: bool = False
 
     class train(TaskConfig.train):
         amp = False

@@ -403,13 +403,22 @@ class CmFlowModel(nn.Module):
         self,
         batch: dict[str, torch.Tensor],
     ) -> dict[str, torch.Tensor]:
-        z_obj, z_hand, dense_hand_contact = self.dense_encoder(
-            obj_points=batch["obj_points"],
-            obj_normals=batch["obj_normals"],
-            hand_points=batch["hand_points"],
-            hand_normals=batch["hand_normals"],
-            obj_valid_mask=batch["obj_valid_mask"],
-        )
+        # Scene Cache V1 dual path: when the dataset provides precomputed
+        # frozen DenseToken features, skip the online PTv3 forward entirely.
+        # ``use_dense_cache: false`` restores the online encoder at any time,
+        # which is exactly how the cache parity is validated.
+        if "cached_z_obj" in batch:
+            z_obj = batch["cached_z_obj"].float()
+            z_hand = batch["cached_z_hand"].float()
+            dense_hand_contact = batch["cached_hand_contact"].float()
+        else:
+            z_obj, z_hand, dense_hand_contact = self.dense_encoder(
+                obj_points=batch["obj_points"],
+                obj_normals=batch["obj_normals"],
+                hand_points=batch["hand_points"],
+                hand_normals=batch["hand_normals"],
+                obj_valid_mask=batch["obj_valid_mask"],
+            )
         return self.head(
             z_obj=z_obj,
             z_hand=z_hand,
