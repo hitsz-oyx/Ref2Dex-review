@@ -30,6 +30,12 @@ def _scalar(data: np.lib.npyio.NpzFile, key: str) -> str:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-path", required=True, type=Path, help="Cm Stage 4 train split root.")
+    parser.add_argument(
+        "--split-json-path",
+        type=Path,
+        default=None,
+        help="For a Scene Cache root, restrict calibration to the descriptor's train split.",
+    )
     parser.add_argument("--min-stride", type=int, default=1)
     parser.add_argument("--max-stride", type=int, default=10)
     parser.add_argument(
@@ -152,6 +158,7 @@ def calibrate_flow_scale_scene(
     max_stride: int,
     active_only: bool,
     num_obj_points: int = 512,
+    sequence_dirs: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Scene Cache V1 calibration over the unified object+environment pool.
 
@@ -167,7 +174,7 @@ def calibrate_flow_scale_scene(
     if num_obj_points <= 0:
         raise ValueError("num_obj_points must be positive.")
     train_path = train_path.resolve()
-    sequence_dirs = iter_sequence_dirs(train_path)
+    sequence_dirs = iter_sequence_dirs(train_path) if sequence_dirs is None else sorted(sequence_dirs)
     if not sequence_dirs:
         raise FileNotFoundError(f"No scene sequences found under {train_path}")
 
@@ -235,6 +242,34 @@ def calibrate_flow_scale_scene(
             "statistics_scene_environment_candidate_points": state["env_candidate_points"],
         },
     )
+
+
+def scene_train_sequence_dirs(train_path: Path, split_json_path: Path) -> list[Path]:
+    """Resolve the canonical train list to Scene Cache sequence directories."""
+    from src.base.data import read_split_json
+
+    train_path = train_path.resolve()
+    _, train_split, _, _ = read_split_json(split_json_path)
+    entries = [
+        line.strip()
+        for line in train_split.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    sequence_dirs: list[Path] = []
+    for entry in entries:
+        raw_frame_path = (train_path / entry).resolve()
+        try:
+            raw_frame_path.relative_to(train_path)
+        except ValueError as exc:
+            raise ValueError(f"Train split entry escapes Scene Cache root: {entry}") from exc
+        if raw_frame_path.name != "raw_frame_id.npy" or raw_frame_path.parent.name != "shared":
+            raise ValueError(f"Expected a shared/raw_frame_id.npy split entry, got {entry!r}")
+        if not raw_frame_path.is_file():
+            raise FileNotFoundError(f"Train split references missing file: {raw_frame_path}")
+        sequence_dirs.append(raw_frame_path.parent.parent)
+    if len(set(sequence_dirs)) != len(sequence_dirs):
+        raise ValueError("Train split contains duplicate Scene Cache sequences.")
+    return sorted(sequence_dirs)
 
 
 def calibrate_flow_scale(
@@ -358,14 +393,22 @@ def main() -> None:
     args = _parse_args()
     train_path = args.train_path.resolve()
     if _is_scene_root(train_path):
+        sequence_dirs = None
+        if args.split_json_path is not None:
+            sequence_dirs = scene_train_sequence_dirs(train_path, args.split_json_path)
         result = calibrate_flow_scale_scene(
             train_path,
             min_stride=args.min_stride,
             max_stride=args.max_stride,
             active_only=args.active_only,
             num_obj_points=args.num_obj_points,
+            sequence_dirs=sequence_dirs,
         )
+        if args.split_json_path is not None:
+            result["statistics_split_json_path"] = str(args.split_json_path.resolve())
     else:
+        if args.split_json_path is not None:
+            raise ValueError("--split-json-path is currently supported only for Scene Cache roots.")
         result = calibrate_flow_scale(
             train_path,
             min_stride=args.min_stride,

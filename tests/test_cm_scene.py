@@ -26,10 +26,15 @@ from process.GRAB.stage4_cm_scene import (
     compute_scene_candidate_ragged,
     summarize_scene_root,
 )
+from process.GRAB.build_cm_split import _read_source_scene_assignment
 from src.task.Cm.build_dense_cache import build_dense_cache
 from src.task.Cm.build_sampling_bank import build_all_banks
 from src.task.Cm.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
-from src.task.Cm.compute_flow_scale import calibrate_flow_scale, calibrate_flow_scale_scene
+from src.task.Cm.compute_flow_scale import (
+    calibrate_flow_scale,
+    calibrate_flow_scale_scene,
+    scene_train_sequence_dirs,
+)
 from src.task.Cm.dataset import Stage4CmDataset
 from src.task.Cm.dataset_scene import Stage4CmSceneDataset
 from src.task.Cm.model import CmFlowHead
@@ -298,6 +303,55 @@ def test_scene_root_summary_includes_incremental_sequences() -> None:
             "candidate_min": 0,
             "candidate_max": 3,
         }
+
+
+def test_scene_split_reuses_source_sequence_assignment() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "scene"
+        source_root = Path(tmp) / "source_split"
+        source_root.mkdir()
+        names = ("train_a", "train_b", "val_a", "test_a")
+        for name in names:
+            shared = root / "s1" / name / "shared"
+            shared.mkdir(parents=True)
+            np.save(shared / "raw_frame_id.npy", np.arange(2, dtype=np.int32))
+        split_names = {
+            "train": ("train_a", "train_b", "missing_dynamic"),
+            "val": ("val_a",),
+            "test": ("test_a",),
+        }
+        descriptor = {}
+        for split_name, sequences in split_names.items():
+            list_name = f"{split_name}.txt"
+            lines = [
+                f"grab/s1/{sequence}/{side}.npz"
+                for sequence in sequences
+                for side in ("left", "right")
+            ]
+            (source_root / list_name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            descriptor[f"{split_name}_split"] = list_name
+        descriptor["num_sequences"] = 5
+        descriptor["seed"] = 42
+        source_json = source_root / "split.json"
+        source_json.write_text(json.dumps(descriptor), encoding="utf-8")
+
+        assignments, source = _read_source_scene_assignment(root.resolve(), source_json)
+        assert [path.name for path in assignments["train"]] == ["train_a", "train_b"]
+        assert [path.name for path in assignments["val"]] == ["val_a"]
+        assert [path.name for path in assignments["test"]] == ["test_a"]
+        assert source["seed"] == 42
+
+        migrated_root = root / "splits" / "full_grab_v1"
+        migrated_root.mkdir(parents=True)
+        (migrated_root / "train.txt").write_text(
+            "s1/train_a/shared/raw_frame_id.npy\ns1/train_b/shared/raw_frame_id.npy\n",
+            encoding="utf-8",
+        )
+        (migrated_root / "split.json").write_text(
+            json.dumps({"train_split": "train.txt"}), encoding="utf-8",
+        )
+        resolved = scene_train_sequence_dirs(root, migrated_root / "split.json")
+        assert [path.name for path in resolved] == ["train_a", "train_b"]
 
 
 # ---------------------------------------------------------------------------
