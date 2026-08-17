@@ -987,7 +987,9 @@ class BaseRunner:
             "job_type": self.cfg.wandb.job_type,
             "dir": str(self.output_dir),
             "config": to_jsonable(self.cfg.to_dict()),
-            "settings": wandb.Settings(init_timeout=120),
+            "settings": wandb.Settings(
+                init_timeout=int(getattr(self.cfg.wandb, "init_timeout", 600))
+            ),
         }
         if self.cfg.wandb.mode is not None:
             init_kwargs["mode"] = self.cfg.wandb.mode

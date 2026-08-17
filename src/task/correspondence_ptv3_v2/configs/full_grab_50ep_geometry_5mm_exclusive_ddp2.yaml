@@ -29,4 +29,5 @@ train:
 wandb:
   enable: true
   mode: online
+  init_timeout: 600
   tags: [correspondence, ptv3, v2, full-grab, geometry-5mm, exclusive-perturb, ddp2]
