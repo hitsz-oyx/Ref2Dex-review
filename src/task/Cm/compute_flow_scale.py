@@ -4,7 +4,7 @@ The calibration deliberately reads *only* the train split.  It enumerates
 every legal current-frame/stride pair and always uses current-frame 5cm
 candidates, matching ``Stage4CmDataset`` sampling.
 
-Scene Cache V1 roots (``meta.json`` with schema ``ref2dex_cm_scene_v1``) are
+Scene Cache V1.1 roots (``meta.json`` with schema ``ref2dex_cm_scene_v1_1``) are
 detected automatically (V1.md §23): the candidate population then covers the
 unified scene pool, so static environment points contribute their exactly-zero
 flow to the new target statistics.  The loss is unchanged; only the target
@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 
 
-SCENE_SCHEMA_NAME = "ref2dex_cm_scene_v1"
+SCENE_SCHEMA_NAME = "ref2dex_cm_scene_v1_1"
 
 
 def _scalar(data: np.lib.npyio.NpzFile, key: str) -> str:

@@ -61,15 +61,12 @@ def dense_fingerprint_for_root(
     num_scene_points: int = 512,
 ) -> str:
     meta = read_meta(root)
-    scene_pool = meta["scene_pool"]
     return dense_cache_fingerprint(
         checkpoint_sha=checkpoint_sha,
         schema=SCHEMA_NAME,
         sampling_fingerprint=scene_cache_fingerprint(
             schema=SCHEMA_NAME,
-            num_obj_pool=int(scene_pool["object_points"]),
-            num_env_pool=int(scene_pool["environment_points"]),
-            num_hand_points=int(meta["num_hand_points"]),
+            points_per_asset=int(meta["points_per_asset"]),
             candidate_threshold_m=float(meta["candidate_threshold_m"]),
             sampling_seed=int(meta.get("sampling_seed", -1)),
         ),
@@ -126,14 +123,22 @@ def build_side_dense(
     batch_size: int,
     device: torch.device,
     dtype: np.dtype,
-) -> dict[str, np.ndarray]:
-    """Run the frozen encoder over every (frame, bank) of one side."""
+    output_dir: str | Path | None = None,
+) -> dict[str, np.ndarray] | None:
+    """Run the frozen encoder only for candidate-bearing frames.
+
+    With ``output_dir`` the arrays are created with ``open_memmap`` and filled
+    batch by batch; no full-sequence feature tensor is held in RAM.
+    """
     side_arrays = cache.load_side(side)
     bank_indices = np.load(str(cache.dir / "sampling_bank" / f"{side}_indices.npy"), mmap_mode="r")
     frames = cache.frame_count
+    active_frames = np.flatnonzero(np.diff(np.asarray(side_arrays["candidate_offsets"])) > 0).astype(np.int32)
+    if active_frames.size == 0:
+        raise ValueError(f"{cache.dir}/{side}: no active candidate-bearing frames for dense cache")
     num_hand = int(side_arrays["hand_points_world"].shape[1])
     probe = _batch_inputs(
-        cache, side_arrays, bank_indices, bank=0, frames=range(0, min(1, frames)), device=device
+        cache, side_arrays, bank_indices, bank=0, frames=[int(active_frames[0])], device=device
     )
     with torch.no_grad():
         z_obj_probe, z_hand_probe, _ = encoder(
@@ -151,16 +156,27 @@ def build_side_dense(
             "DenseToken output point counts do not match the cache contract: "
             f"{int(z_obj_probe.shape[1])} / {int(z_hand_probe.shape[1])}"
         )
-    out = {
-        "z_scene": np.empty((frames, bank_size, num_scene_points, token_dim), dtype=dtype),
-        "z_hand": np.empty((frames, bank_size, num_hand, token_dim), dtype=dtype),
-        "hand_contact": np.empty((frames, bank_size, num_hand), dtype=dtype),
-    }
+    mapping = np.full(frames, -1, dtype=np.int32)
+    mapping[active_frames] = np.arange(active_frames.size, dtype=np.int32)
+    if output_dir is None:
+        out = {
+            "z_scene": np.empty((active_frames.size, bank_size, num_scene_points, token_dim), dtype=dtype),
+            "z_hand": np.empty((active_frames.size, bank_size, num_hand, token_dim), dtype=dtype),
+            "hand_contact": np.empty((active_frames.size, bank_size, num_hand), dtype=dtype),
+        }
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out = {
+            "z_scene": np.lib.format.open_memmap(output_dir / "z_scene.npy", mode="w+", dtype=dtype, shape=(active_frames.size, bank_size, num_scene_points, token_dim)),
+            "z_hand": np.lib.format.open_memmap(output_dir / "z_hand.npy", mode="w+", dtype=dtype, shape=(active_frames.size, bank_size, num_hand, token_dim)),
+            "hand_contact": np.lib.format.open_memmap(output_dir / "hand_contact.npy", mode="w+", dtype=dtype, shape=(active_frames.size, bank_size, num_hand)),
+        }
     for bank in range(bank_size):
-        for start in range(0, frames, batch_size):
-            frame_range = range(start, min(start + batch_size, frames))
+        for start in range(0, active_frames.size, batch_size):
+            active_batch = active_frames[start:min(start + batch_size, active_frames.size)]
             batch = _batch_inputs(
-                cache, side_arrays, bank_indices, bank=bank, frames=frame_range, device=device
+                cache, side_arrays, bank_indices, bank=bank, frames=[int(v) for v in active_batch], device=device
             )
             with torch.no_grad():
                 z_obj, z_hand, contact = encoder(
@@ -170,12 +186,18 @@ def build_side_dense(
                     hand_normals=batch["hand_normals"],
                     obj_valid_mask=batch["obj_valid_mask"],
                 )
-            index = slice(frame_range.start, frame_range.stop)
+            index = slice(start, min(start + batch_size, active_frames.size))
             out["z_scene"][index, bank] = z_obj.to(device="cpu", dtype=torch.float32).numpy()
             out["z_hand"][index, bank] = z_hand.to(device="cpu", dtype=torch.float32).numpy()
             out["hand_contact"][index, bank] = (
                 contact.to(device="cpu", dtype=torch.float32).numpy()
             )
+    if output_dir is not None:
+        np.save(Path(output_dir) / "active_frame_id.npy", active_frames)
+        np.save(Path(output_dir) / "frame_to_dense.npy", mapping)
+        for array in out.values():
+            array.flush()
+        return None
     return out
 
 
@@ -225,7 +247,8 @@ def build_dense_cache(
             if marker.is_file() and not overwrite:
                 stats["skipped"] += 1
                 continue
-            arrays = build_side_dense(
+            dense_dir.mkdir(parents=True, exist_ok=True)
+            build_side_dense(
                 cache,
                 side,
                 encoder=encoder,
@@ -234,12 +257,10 @@ def build_dense_cache(
                 batch_size=int(batch_size),
                 device=resolved_device,
                 dtype=DTYPE_MAP[dtype],
+                output_dir=dense_dir,
             )
-            dense_dir.mkdir(parents=True, exist_ok=True)
-            for name, array in arrays.items():
-                np.save(dense_dir / f"{name}.npy", array)
             stats["sides"] += 1
-            stats["frames"] += cache.frame_count
+            stats["frames"] += int(np.load(dense_dir / "active_frame_id.npy", mmap_mode="r").shape[0])
         stats["sequences"] += 1
         print(f"[dense-cache] {sequence_dir.relative_to(root)} done")
     update_meta(

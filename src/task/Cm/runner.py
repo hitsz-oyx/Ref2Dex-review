@@ -214,7 +214,7 @@ class CmActionRunner(BaseRunner):
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             return None
-        if not isinstance(payload, dict) or payload.get("schema_name") != "ref2dex_cm_scene_v1":
+        if not isinstance(payload, dict) or payload.get("schema_name") != "ref2dex_cm_scene_v1_1":
             return None
         from src.task.Cm.dataset_scene import make_dataloaders as make_scene_dataloaders
 

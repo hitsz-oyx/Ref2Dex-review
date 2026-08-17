@@ -1,12 +1,8 @@
 _base_: src.task.Cm.config:Config
 
-name: cm_full_grab_scene_v1_16slot
+name: cm_full_grab_scene_v1_1_16slot
 
 meta:
-  # Scene Cache V1 keeps the model contract identical: 512 scene points +
-  # 1538 hand points enter the frozen dense encoder, and the loss is the
-  # same scaled Smooth-L1.  Only the semantics of the 512 points change
-  # (local scene = object + environment, treated identically).
   num_obj_points: 512
   num_hand_points: 1538
   num_cm_tokens: 16
@@ -16,9 +12,6 @@ meta:
   loss_slot_count_weight: 0.0
   loss_slot_confidence_weight: 0.0
   loss_active_overlap_weight: 0.0
-  # Recompute with `python -m src.task.Cm.compute_flow_scale --train-path
-  # data/processed_data/cm_scene_v1/...` after building the scene cache;
-  # the object-only calibration no longer matches the scene distribution.
   flow_target_rms_m: null
   geometry_input_scale: 100.0
   hand_flow_input_scale: 100.0
@@ -26,9 +19,8 @@ meta:
   require_flow_calibration: false
 
 data:
-  # Legacy V1 config; V1.1 runs use sequence_full_grab_scene_v1_1_16slot.yaml.
-  root: data/processed_data/cm_scene_v1
-  split_json_path: data/processed_data/cm_scene_v1/splits/full_grab_v1/split.json
+  root: data/processed_data/cm_scene_v1_1
+  split_json_path: data/processed_data/cm_scene_v1_1/splits/full_grab_v1/split.json
   train_path: ""
   val_path: null
   val_split: 0.0
@@ -43,12 +35,11 @@ data:
   persistent_workers: true
   pin_memory: true
   prefetch_factor: 4
-  # Scene cache V1
   use_mmap: true
   use_sampling_bank: true
   sampling_bank_size: 4
   fixed_eval_bank: 0
-  # Requires build_dense_cache to have run with the configured checkpoint.
+  dominant_hand_manifest: null
   use_dense_cache: true
 
 train:
@@ -57,7 +48,6 @@ train:
   lr: 1.5e-4
   weight_decay: 1.0e-4
   scheduler: cosine
-  warmup_steps: 0
   epochs: 100
   max_steps: 80000
   amp: false
@@ -73,4 +63,4 @@ train:
 
 wandb:
   enable: false
-  tags: [cm, scene-v1, full-grab, slot-16, no-gate, time-conditioned, dense-cache]
+  tags: [cm, scene-v1-1, full-grab, slot-16, no-gate, time-conditioned, dense-cache]

@@ -1,4 +1,4 @@
-"""Build the Cm Scene Cache V1 (mmap scene geometry + ragged candidates).
+"""Build the Cm Scene Cache V1.1 (mmap scene geometry + ragged candidates).
 
 依照 ``src/task/Cm/docs/指导/V1.md`` 实现：把 Stage4 从 NPZ 升级为真正支持
 mmap 的三级 cache 的第一级。语义上 ``P_t`` 变为当前手附近的 local scene
@@ -88,7 +88,7 @@ def build_static_environment(
     *,
     static_rot_eps: float,
     static_trans_eps: float,
-) -> tuple[np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, list[str], list[int]]:
     """Collapse per-frame env poses into one static world placement (V1.md §8).
 
     GRAB 的 table pose 每帧只有 ~1e-4 rad / 6e-5 m 的数值抖动；确认偏差在
@@ -98,6 +98,7 @@ def build_static_environment(
     points: list[np.ndarray] = []
     normals: list[np.ndarray] = []
     names: list[str] = []
+    counts: list[int] = []
     for asset in assets:
         poses = np.asarray(asset["poses_world"], dtype=np.float64)
         trans_dev = float(np.abs(poses[:, :3, 3] - poses[0, :3, 3]).max())
@@ -117,9 +118,10 @@ def build_static_environment(
         points.append(world_points)
         normals.append(world_normals)
         names.append(str(asset["name"]))
+        counts.append(int(world_points.shape[0]))
     if not points:
-        return np.zeros((0, 3), np.float32), np.zeros((0, 3), np.float32), []
-    return np.concatenate(points, axis=0), np.concatenate(normals, axis=0), names
+        return np.zeros((0, 3), np.float32), np.zeros((0, 3), np.float32), [], []
+    return np.concatenate(points, axis=0), np.concatenate(normals, axis=0), names, counts
 
 
 def compute_scene_candidate_ragged(
@@ -166,7 +168,7 @@ def build_sequence_scene(
     static_trans_eps: float,
 ) -> dict[str, Any]:
     """Assemble shared scene-pool fields for one sequence."""
-    env_points, env_normals, env_names = build_static_environment(
+    env_points, env_normals, env_names, env_counts = build_static_environment(
         env_assets, static_rot_eps=static_rot_eps, static_trans_eps=static_trans_eps,
     )
     obj_points = np.asarray(source["obj_points_world"], dtype=np.float32)
@@ -176,6 +178,17 @@ def build_sequence_scene(
         np.full(num_obj, ENV_SOURCE_OBJECT, dtype=np.uint8),
         np.full(env_points.shape[0], ENV_SOURCE_ENVIRONMENT, dtype=np.uint8),
     ])
+    scene_asset_id = np.concatenate([
+        np.zeros(num_obj, dtype=np.uint16),
+        np.concatenate([
+            np.full(count, asset_id + 1, dtype=np.uint16)
+            for asset_id, count in enumerate(env_counts)
+        ]) if env_counts else np.zeros(0, dtype=np.uint16),
+    ])
+    asset_offsets = np.asarray(
+        [0, num_obj] + [num_obj + sum(env_counts[:i + 1]) for i in range(len(env_counts))],
+        dtype=np.int64,
+    )
     return {
         "raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32),
         "obj_points_world": obj_points,
@@ -183,7 +196,10 @@ def build_sequence_scene(
         "env_points_world": env_points,
         "env_normals_world": env_normals,
         "scene_source_id": scene_source_id,
+        "scene_asset_id": scene_asset_id,
+        "asset_offsets": asset_offsets,
         "environment_names": env_names,
+        "environment_counts": env_counts,
     }
 
 
@@ -199,7 +215,8 @@ def write_sequence(
     shared_dir = sequence_dir / "shared"
     shared_dir.mkdir(parents=True, exist_ok=True)
     for name in ("raw_frame_id", "obj_points_world", "obj_normals_world",
-                 "env_points_world", "env_normals_world", "scene_source_id"):
+                 "env_points_world", "env_normals_world", "scene_source_id",
+                 "scene_asset_id", "asset_offsets"):
         np.save(shared_dir / f"{name}.npy", shared[name])
     source_rel = source_path.resolve().relative_to(grab_root.resolve()).as_posix()
     (shared_dir / "meta.json").write_text(
@@ -217,6 +234,14 @@ def write_sequence(
             "coordinate_frame": "world",
             "environment_storage": "static_world",
             "environment_assets": shared["environment_names"],
+            "assets": [
+                {"name": str(source["object_name"]), "role": "manipulated", "num_points": int(source["obj_points_world"].shape[1])},
+                *[
+                    {"name": name, "role": "environment", "num_points": count}
+                    for name, count in zip(shared["environment_names"], shared["environment_counts"])
+                ],
+            ],
+            "scene_pool_size": int(shared["obj_points_world"].shape[1] + shared["env_points_world"].shape[0]),
         }, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
@@ -270,7 +295,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", default=None)
     parser.add_argument("--side", choices=["left", "right", "both"], default="both")
     parser.add_argument("--num-obj-points", type=int, default=4096)
-    parser.add_argument("--num-env-points", type=int, default=4096)
+    parser.add_argument("--num-env-points", "--points-per-asset", dest="num_env_points", type=int, default=4096)
     parser.add_argument("--ds-rate", type=int, default=4)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--frame-start", type=int, default=0)
@@ -293,9 +318,11 @@ def main() -> None:
     if args.manifest and (args.raw_file or args.seq):
         raise SystemExit("--manifest cannot be combined with --raw-file/--seq")
     if args.num_obj_points != 4096:
-        raise SystemExit("Scene cache V1 contract requires --num-obj-points=4096")
+        raise SystemExit("Scene cache V1.1 requires --num-obj-points=4096")
+    if args.num_env_points != args.num_obj_points:
+        raise SystemExit("V1.1 requires --points-per-asset=4096 for every asset")
     if args.num_env_points <= 0:
-        raise SystemExit("--num-env-points must be positive")
+        raise SystemExit("--points-per-asset must be positive")
     if args.ds_rate <= 0:
         raise SystemExit("--ds-rate must be positive")
 
@@ -393,11 +420,9 @@ def main() -> None:
         source="raw GRAB via generic environment assets; no Stage 2/3 dependency",
         source_grab_root=str(grab_root),
         output_root=str(output_root),
-        scene_pool={
-            "object_points": int(args.num_obj_points),
-            "environment_points": int(args.num_env_points),
-            "total_points": int(args.num_obj_points) + int(args.num_env_points),
-        },
+        points_per_asset=int(args.num_env_points),
+        model_scene_points=512,
+        hand_points=int(adapter.num_hand_points),
         candidate_threshold_m=float(args.candidate_threshold),
         num_hand_points=int(adapter.num_hand_points),
         ds_rate=int(args.ds_rate),

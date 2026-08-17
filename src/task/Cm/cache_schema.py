@@ -25,12 +25,14 @@ Layout::
         │   ├── candidate_offsets.npy   [T+1]      int64
         │   └── candidate_indices.npy   [K]        int32   (pool indices)
         ├── sampling_bank/
-        │   └── left|right_indices.npy [T,B,512]   uint16  (0xFFFF = invalid)
+        │   └── left|right_indices.npy [T,B,512]   uint32  (0xFFFFFFFF = invalid)
         └── dense_bank/
             └── left|right/
-                ├── z_scene.npy      [T,B,512,D]  float16
-                ├── z_hand.npy       [T,B,1538,D] float16
-                └── hand_contact.npy [T,B,1538]   float16
+                ├── z_scene.npy      [T_active,B,512,D]  float16
+                ├── z_hand.npy       [T_active,B,1538,D] float16
+                ├── hand_contact.npy [T_active,B,1538]   float16
+                ├── active_frame_id.npy [T_active]       int32
+                └── frame_to_dense.npy [T]                int32
 """
 from __future__ import annotations
 
@@ -42,12 +44,11 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA_NAME = "ref2dex_cm_scene_v1"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_NAME = "ref2dex_cm_scene_v1_1"
+SCHEMA_VERSION = "1.1.0"
 
-# uint16 sentinel marking an unfilled sampling-bank slot.  Valid pool indices
-# are always < 65535 because the scene pool is far smaller.
-INVALID_INDEX = 0xFFFF
+# Variable asset counts can exceed the uint16 index range.
+INVALID_INDEX = 0xFFFFFFFF
 
 SIDES = ("left", "right")
 SHARED_FIELDS = (
@@ -57,6 +58,8 @@ SHARED_FIELDS = (
     "env_points_world.npy",
     "env_normals_world.npy",
     "scene_source_id.npy",
+    "scene_asset_id.npy",
+    "asset_offsets.npy",
     "meta.json",
 )
 SIDE_FIELDS = (
@@ -86,17 +89,12 @@ def sha256_file(path: str | Path, *, chunk_size: int = 1 << 20) -> str:
 def scene_cache_fingerprint(
     *,
     schema: str,
-    num_obj_pool: int,
-    num_env_pool: int,
-    num_hand_points: int,
+    points_per_asset: int,
     candidate_threshold_m: float,
     sampling_seed: int,
 ) -> str:
     """Fingerprint binding the sampling bank to the geometry cache contract."""
-    payload = (
-        f"{schema}\0{int(num_obj_pool)}\0{int(num_env_pool)}\0{int(num_hand_points)}\0"
-        f"{float(candidate_threshold_m):.9g}\0{int(sampling_seed)}"
-    )
+    payload = f"{schema}\0{int(points_per_asset)}\0{float(candidate_threshold_m):.9g}\0{int(sampling_seed)}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -179,6 +177,8 @@ class SceneSequenceCache:
         self.env_points_world: np.ndarray = load_mmap(shared_dir / "env_points_world.npy")
         self.env_normals_world: np.ndarray = load_mmap(shared_dir / "env_normals_world.npy")
         self.scene_source_id: np.ndarray = load_mmap(shared_dir / "scene_source_id.npy")
+        self.scene_asset_id: np.ndarray = load_mmap(shared_dir / "scene_asset_id.npy")
+        self.asset_offsets: np.ndarray = load_mmap(shared_dir / "asset_offsets.npy")
         self._validate_shared()
 
     def _validate_shared(self) -> None:
@@ -193,6 +193,14 @@ class SceneSequenceCache:
             raise ValueError(f"{self.dir}: env normals shape mismatch")
         if self.scene_source_id.shape != (num_obj + num_env,):
             raise ValueError(f"{self.dir}: scene_source_id must have length N_O+N_E")
+        if self.scene_asset_id.shape != self.scene_source_id.shape:
+            raise ValueError(f"{self.dir}: scene_asset_id must match scene pool length")
+        if self.asset_offsets.ndim != 1 or self.asset_offsets.size < 2:
+            raise ValueError(f"{self.dir}: asset_offsets must contain at least one asset")
+        if int(self.asset_offsets[0]) != 0 or int(self.asset_offsets[-1]) != self.num_scene_pool:
+            raise ValueError(f"{self.dir}: asset_offsets must span the complete scene pool")
+        if np.any(np.diff(self.asset_offsets) <= 0):
+            raise ValueError(f"{self.dir}: asset_offsets must be strictly increasing")
         if self.raw_frame_id.shape != (self.obj_points_world.shape[0],):
             raise ValueError(f"{self.dir}: raw_frame_id length must match obj frames")
         storage = str(self.shared_meta.get("environment_storage", "static_world"))
@@ -269,17 +277,8 @@ def validate_scene_root(
     sequence_dirs = iter_sequence_dirs(root)
     if not sequence_dirs:
         raise ValueError(f"{root}: no sequence directories found")
-    expected_pool = None
-    scene_pool_meta = meta.get("scene_pool")
-    if isinstance(scene_pool_meta, dict) and "total_points" in scene_pool_meta:
-        expected_pool = int(scene_pool_meta["total_points"])
-    num_scene = None
     for sequence_dir in sequence_dirs:
         cache = SceneSequenceCache(sequence_dir)
-        if num_scene is None:
-            num_scene = cache.num_scene_pool
-        elif cache.num_scene_pool != num_scene:
-            raise ValueError(f"{root}: inconsistent scene pool size across sequences")
         present_sides = tuple(side for side in SIDES if side_dir(sequence_dir, side).is_dir())
         for side in present_sides:
             cache.load_side(side)
@@ -293,8 +292,6 @@ def validate_scene_root(
                 expected = (cache.frame_count, int(sampling_bank_size), int(num_scene_points or 0))
                 if bank.shape != expected:
                     raise ValueError(f"{bank_path}: expected shape {expected}, got {bank.shape}")
-    if num_scene is not None and expected_pool is not None and num_scene != expected_pool:
-        raise ValueError(f"{root}: scene pool size {num_scene} != meta total_points {expected_pool}")
     if use_dense_cache:
         stored = meta.get("dense_cache", {})
         if not stored.get("enabled"):
@@ -310,7 +307,7 @@ def validate_scene_root(
                 dense_dir = sequence_dir / "dense_bank" / side
                 if not side_dir(sequence_dir, side).is_dir():
                     continue
-                for name in ("z_scene.npy", "z_hand.npy", "hand_contact.npy"):
+                for name in ("z_scene.npy", "z_hand.npy", "hand_contact.npy", "frame_to_dense.npy", "active_frame_id.npy"):
                     if not (dense_dir / name).is_file():
                         raise FileNotFoundError(f"{dense_dir / name}: dense bank file missing")
     return meta

@@ -24,7 +24,7 @@ import torch
 from process.GRAB.stage4_cm_scene import compute_scene_candidate_ragged
 from src.task.Cm.build_dense_cache import build_dense_cache
 from src.task.Cm.build_sampling_bank import build_all_banks
-from src.task.Cm.cache_schema import SCHEMA_NAME, SCHEMA_VERSION, load_mmap
+from src.task.Cm.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
 from src.task.Cm.compute_flow_scale import calibrate_flow_scale, calibrate_flow_scale_scene
 from src.task.Cm.dataset import Stage4CmDataset
 from src.task.Cm.dataset_scene import Stage4CmSceneDataset
@@ -123,6 +123,11 @@ def _write_scene_sequence(
         np.ones(num_env, np.uint8),
     ])
     np.save(shared_dir / "scene_source_id.npy", scene_source_id)
+    np.save(shared_dir / "scene_asset_id.npy", np.concatenate([
+        np.zeros(OBJ_POOL, np.uint16), np.ones(num_env, np.uint16)
+    ]))
+    asset_offsets = [0, OBJ_POOL] + ([OBJ_POOL + num_env] if num_env else [])
+    np.save(shared_dir / "asset_offsets.npy", np.asarray(asset_offsets, np.int64))
     (shared_dir / "meta.json").write_text(
         json.dumps({
             "schema_name": SCHEMA_NAME,
@@ -163,11 +168,7 @@ def _write_root_meta(root: Path, num_env: int) -> None:
         json.dumps({
             "schema_name": SCHEMA_NAME,
             "schema_version": SCHEMA_VERSION,
-            "scene_pool": {
-                "object_points": OBJ_POOL,
-                "environment_points": int(num_env),
-                "total_points": OBJ_POOL + int(num_env),
-            },
+            "points_per_asset": 4096,
             "candidate_threshold_m": 0.05,
             "num_hand_points": HAND_POINTS,
             "ds_rate": DS_RATE,
@@ -314,7 +315,7 @@ def test_sampling_bank_determinism_and_diversity() -> None:
         first = np.load(bank_path)
         np.testing.assert_array_equal(first, np.load(bank_path))
         assert first.shape == (FRAMES, 4, 512)
-        assert first.dtype == np.uint16
+        assert first.dtype == np.uint32
         # Same (sequence, side, frame, bank) always yields identical indices.
         rng = np.random.default_rng(0)
         for _ in range(5):
@@ -337,7 +338,7 @@ def test_sampling_bank_determinism_and_diversity() -> None:
             assert len(set().union(*sets)) > 512
         # Candidate count 180 < 512: unfilled slots use the uint16 sentinel.
         small_bank = np.load(small_dir / "sampling_bank" / "right_indices.npy")
-        valid = small_bank != 0xFFFF
+        valid = small_bank != INVALID_INDEX
         small_counts = np.diff(np.load(small_dir / "right" / "candidate_offsets.npy"))
         assert small_counts.max() <= 180
         assert bool((~valid).any())
@@ -345,6 +346,25 @@ def test_sampling_bank_determinism_and_diversity() -> None:
             np.minimum(small_counts, 512)[:, None], (FRAMES, 4)
         )
         np.testing.assert_array_equal(valid.sum(axis=-1), expected_valid)
+
+
+def test_v11_variable_scene_pool_and_uint32_indices() -> None:
+    """Different asset counts per sequence must coexist in one root."""
+    from src.task.Cm.cache_schema import SceneSequenceCache, validate_scene_root
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        first = _write_scene_sequence(root, "s1", "object_only", _build_geometry(
+            num_obj_near=600, num_obj_far=OBJ_POOL - 600,
+            num_env_near=0, num_env_far=0, seed=3,
+        ))
+        second = _write_scene_sequence(root, "s1", "with_environment", _geometry_with_env(100, 412, seed=4))
+        _write_root_meta(root, num_env=512)
+        build_all_banks(root, bank_size=4, num_points=512, sampling_seed=42)
+        validate_scene_root(root, num_scene_points=512, sampling_bank_size=4)
+        assert SceneSequenceCache(first).num_scene_pool == OBJ_POOL
+        assert SceneSequenceCache(second).num_scene_pool == OBJ_POOL + 512
+        assert np.load(first / "sampling_bank" / "right_indices.npy", mmap_mode="r").dtype == np.uint32
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +440,14 @@ def test_dense_cache_parity_and_fingerprint_guard() -> None:
         root = Path(tmp)
         geometry = _geometry_with_env(100, 412)
         sequence_dir = _write_scene_sequence(root, "s1", "unit", geometry)
+        # Simulate a side with no local candidate at frame 0.  The dense bank
+        # must omit it instead of materializing a zero feature row.
+        side = sequence_dir / "right"
+        old_offsets = np.load(side / "candidate_offsets.npy")
+        old_indices = np.load(side / "candidate_indices.npy")
+        first_end = int(old_offsets[1])
+        np.save(side / "candidate_offsets.npy", np.concatenate([[0, 0], old_offsets[2:] - first_end]))
+        np.save(side / "candidate_indices.npy", old_indices[first_end:])
         _write_root_meta(root, num_env=512)
         build_all_banks(root, bank_size=4, num_points=512, sampling_seed=42)
         encoder = _StubDenseEncoder()
@@ -435,6 +463,10 @@ def test_dense_cache_parity_and_fingerprint_guard() -> None:
             token_dim=encoder.token_dim,
         )
         assert stats["sides"] == 1
+        frame_to_dense = np.load(sequence_dir / "dense_bank" / "right" / "frame_to_dense.npy")
+        z_scene = np.load(sequence_dir / "dense_bank" / "right" / "z_scene.npy", mmap_mode="r")
+        assert frame_to_dense[0] == -1
+        assert z_scene.shape[0] == int((frame_to_dense >= 0).sum())
 
         dataset = Stage4CmSceneDataset(
             root, file_list=[sequence_dir], num_obj_points=512, num_hand_points=HAND_POINTS,

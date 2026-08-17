@@ -7,8 +7,8 @@
 Bank 内容与旧 ``Stage4CmDataset`` 的在线采样逐位一致（parity Test A/C）：
 bank ``b`` 的种子取 ``stable_frame_seed(..., epoch=b, namespace="cm-object-sampling")``，
 因此旧数据集在 ``base_seed=sampling_seed, epoch=b`` 时抽到的 512 点与
-``bank=b`` 完全相同。索引类型 uint16（scene pool < 65535），未填满的槽位用
-``INVALID_INDEX=0xFFFF`` 哨兵标记。
+``bank=b`` 完全相同。索引类型 uint32，未填满的槽位用
+``INVALID_INDEX=0xFFFFFFFF`` 哨兵标记。
 
 用法::
 
@@ -45,17 +45,15 @@ def build_side_bank(
     num_points: int,
     sampling_seed: int,
 ) -> np.ndarray:
-    """Generate one ``[T, bank_size, num_points]`` uint16 index bank."""
+    """Generate one ``[T, bank_size, num_points]`` uint32 index bank."""
     pool = cache.num_scene_pool
     if pool >= INVALID_INDEX:
-        raise ValueError(
-            f"Scene pool size {pool} exceeds the uint16 sampling-bank limit {INVALID_INDEX}."
-        )
+        raise ValueError(f"Scene pool size {pool} exceeds the uint32 sampling-bank limit.")
     side_arrays = cache.load_side(side)
     raw_frame_id = np.asarray(cache.raw_frame_id)
     seq_id = str(cache.shared_meta.get("seq_id", cache.dir.name))
     frames = cache.frame_count
-    bank = np.full((frames, int(bank_size), int(num_points)), INVALID_INDEX, dtype=np.uint16)
+    bank = np.full((frames, int(bank_size), int(num_points)), INVALID_INDEX, dtype=np.uint32)
     for frame in range(frames):
         candidate = cache.candidate_indices_at(side_arrays, frame)
         if candidate.size == 0:
@@ -75,7 +73,7 @@ def build_side_bank(
                 namespace="cm-object-sampling",
             )
             selected, valid = sample_object_indices(mask, num_samples=int(num_points), seed=seed)
-            bank[frame, b] = np.where(valid, selected, INVALID_INDEX).astype(np.uint16)
+            bank[frame, b] = np.where(valid, selected, INVALID_INDEX).astype(np.uint32)
     return bank
 
 
@@ -93,9 +91,7 @@ def build_all_banks(
     scene_pool = meta.get("scene_pool", {})
     fingerprint = scene_cache_fingerprint(
         schema=SCHEMA_NAME,
-        num_obj_pool=int(scene_pool["object_points"]),
-        num_env_pool=int(scene_pool["environment_points"]),
-        num_hand_points=int(meta["num_hand_points"]),
+        points_per_asset=int(meta["points_per_asset"]),
         candidate_threshold_m=float(meta["candidate_threshold_m"]),
         sampling_seed=int(sampling_seed),
     )
@@ -120,10 +116,8 @@ def build_all_banks(
     for sequence_dir in iter_sequence_dirs(root):
         cache = SceneSequenceCache(sequence_dir)
         # Cross-check the builder meta against the arrays actually on disk.
-        if cache.num_obj_pool != int(scene_pool["object_points"]) or cache.num_env_pool != int(
-            scene_pool["environment_points"]
-        ):
-            raise ValueError(f"{sequence_dir}: scene pool size disagrees with root meta")
+        if cache.num_scene_pool <= 0:
+            raise ValueError(f"{sequence_dir}: scene pool must not be empty")
         bank_dir = sequence_dir / "sampling_bank"
         for side in ("left", "right"):
             if not (sequence_dir / side).is_dir():

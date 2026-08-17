@@ -29,3 +29,29 @@
 **下一步**
 
 在具备 GRAB 原始数据和对应 MANO/DenseToken 依赖的环境中构建全量 scene cache，完成 train-only flow calibration、dense bank parity 和正式训练。
+
+## 实验：Scene Cache V1.1 variable-asset 与 sparse-dense
+
+**假设**
+
+每个资产固定采样 4096 点、不同 sequence 允许不同 asset 数量，左右手作为两个独立的 1538 点 sample，使用 uint32 sampling index 和 active-frame-only dense mmap，不应改变 Cm 的单手输入合同或 loss。
+
+**观察到的失败 / 现象**
+
+V1 schema 固定 root scene pool 大小且 sampling index 为 uint16；dense builder 会先在内存中创建整条 sequence 的 feature tensor。
+
+**诊断**
+
+这两点会阻碍多资产 sequence 和大 scene pool，并造成不必要的 inactive frame 计算/存储。
+
+**改动**
+
+升级 schema 为 `ref2dex_cm_scene_v1_1`，增加 `asset_offsets`/`scene_asset_id`，取消 sequence 间 pool-size 一致性校验；sampling bank 改为 uint32；DenseToken bank 使用 `open_memmap`、`active_frame_id` 和 `frame_to_dense`；新增 V1.1 配置和 variable-asset 测试。
+
+**结果**
+
+`python3 -m pytest -q tests/test_cm_scene.py`：10 passed。验证了不同 scene pool 共存、uint32 index、candidate/flow/loss parity、FP16 dense parity，以及 inactive frame 不产生 dense feature row。
+
+**决策**
+
+保留 V1.1 实现。真实 GRAB 资产数量和正式训练仍需在原始数据可用环境执行。

@@ -73,7 +73,7 @@ class Config(TaskConfig):
         train_strides = None
         # ---- Scene Cache V1 (see docs/指导/V1.md) ----
         # Dispatch is automatic: a data root whose meta.json declares
-        # ``ref2dex_cm_scene_v1`` routes to Stage4CmSceneDataset.
+        # ``ref2dex_cm_scene_v1_1`` routes to Stage4CmSceneDataset.
         use_mmap: bool = True
         use_sampling_bank: bool = True
         sampling_bank_size: int = 4

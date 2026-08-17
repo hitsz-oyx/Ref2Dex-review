@@ -42,7 +42,7 @@ from src.task.correspondence_ptv3_v2.sampling import stable_frame_seed
 # 每个 DataLoader worker 保留的 mmap 序列句柄上限（shared cache 与 side
 # 记录各一份 LRU），其余交给 OS page cache。
 _OPEN_SEQUENCE_LIMIT = 8
-_DENSE_FILES = ("z_scene", "z_hand", "hand_contact")
+_DENSE_FILES = ("z_scene", "z_hand", "hand_contact", "frame_to_dense")
 
 
 def _world_to_hand(points: np.ndarray, pose_world: np.ndarray) -> np.ndarray:
@@ -253,11 +253,18 @@ class Stage4CmSceneDataset(Dataset):
         record: dict[str, Any] = {"side_arrays": side_arrays, "bank": bank, "dense": None}
         if self.use_dense_cache:
             dense_dir = Path(sequence_dir) / "dense_bank" / side
-            dense = {name: np.load(str(dense_dir / f"{name}.npy"), mmap_mode="r") for name in _DENSE_FILES}
+            dense = {
+                name: np.load(str(dense_dir / f"{name}.npy"), mmap_mode="r")
+                for name in _DENSE_FILES
+            }
             expected_dense = (cache.frame_count, self.sampling_bank_size)
-            for name, array in dense.items():
-                if array.shape[:2] != expected_dense:
-                    raise ValueError(f"{dense_dir / name}: expected leading shape {expected_dense}, got {array.shape}")
+            mapping = dense["frame_to_dense"]
+            if mapping.shape != (cache.frame_count,):
+                raise ValueError(f"{dense_dir / 'frame_to_dense.npy'}: expected shape {(cache.frame_count,)}, got {mapping.shape}")
+            if np.any(mapping >= 0) and int(mapping[mapping >= 0].max()) >= dense["z_scene"].shape[0]:
+                raise ValueError(f"{dense_dir}: frame_to_dense contains an out-of-range row")
+            if dense["z_scene"].shape[1] != self.sampling_bank_size or dense["z_hand"].shape[1] != self.sampling_bank_size:
+                raise ValueError(f"{dense_dir}: dense bank size does not match sampling_bank_size")
             record["dense"] = dense
         key = f"{sequence_dir}|{side}"
         self._open_records[key] = record
@@ -356,9 +363,12 @@ class Stage4CmSceneDataset(Dataset):
         }
         if self.use_dense_cache:
             dense = record["dense"]
-            sample["cached_z_obj"] = torch.from_numpy(np.asarray(dense["z_scene"][current, bank], dtype=np.float32))
-            sample["cached_z_hand"] = torch.from_numpy(np.asarray(dense["z_hand"][current, bank], dtype=np.float32))
-            sample["cached_hand_contact"] = torch.from_numpy(np.asarray(dense["hand_contact"][current, bank], dtype=np.float32))
+            dense_row = int(dense["frame_to_dense"][current])
+            if dense_row < 0:
+                raise RuntimeError(f"{sequence_dir}/{side} frame {current} has no dense-cache row")
+            sample["cached_z_obj"] = torch.from_numpy(np.asarray(dense["z_scene"][dense_row, bank], dtype=np.float32))
+            sample["cached_z_hand"] = torch.from_numpy(np.asarray(dense["z_hand"][dense_row, bank], dtype=np.float32))
+            sample["cached_hand_contact"] = torch.from_numpy(np.asarray(dense["hand_contact"][dense_row, bank], dtype=np.float32))
         return sample
 
 
@@ -415,9 +425,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
             schema=SCHEMA_NAME,
             sampling_fingerprint=scene_cache_fingerprint(
                 schema=SCHEMA_NAME,
-                num_obj_pool=int(root_meta["scene_pool"]["object_points"]),
-                num_env_pool=int(root_meta["scene_pool"]["environment_points"]),
-                num_hand_points=int(root_meta["num_hand_points"]),
+                points_per_asset=int(root_meta["points_per_asset"]),
                 candidate_threshold_m=float(root_meta["candidate_threshold_m"]),
                 sampling_seed=int(root_meta.get("sampling_seed", -1)),
             ),

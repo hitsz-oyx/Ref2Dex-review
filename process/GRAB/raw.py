@@ -676,7 +676,7 @@ class GRABRawAdapter:
         return self._obj_cache[obj_name]
 
     def _get_env_sampling(self, mesh_relpath: str, asset_name: str, num_points: int, seq_root: str) -> tuple:
-        key = (asset_name, int(num_points))
+        key = (str(mesh_relpath), asset_name, int(num_points))
         if key not in self._env_cache:
             mesh = load_environment_mesh(mesh_relpath, self.grab_root, seq_root=seq_root, unit=self.obj_unit)
             self._env_cache[key] = sample_environment_surface(mesh, int(num_points), seed=42)
