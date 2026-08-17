@@ -135,7 +135,29 @@ def build_side_dense(
     frames = cache.frame_count
     active_frames = np.flatnonzero(np.diff(np.asarray(side_arrays["candidate_offsets"])) > 0).astype(np.int32)
     if active_frames.size == 0:
-        raise ValueError(f"{cache.dir}/{side}: no active candidate-bearing frames for dense cache")
+        token_dim = int(getattr(encoder, "token_dim", 0))
+        if token_dim <= 0:
+            raise ValueError(f"{cache.dir}/{side}: empty stream requires encoder.token_dim")
+        num_hand = int(side_arrays["hand_points_world"].shape[1])
+        mapping = np.full(frames, -1, dtype=np.int32)
+        if output_dir is None:
+            return {
+                "z_scene": np.empty((0, bank_size, num_scene_points, token_dim), dtype=dtype),
+                "z_hand": np.empty((0, bank_size, num_hand, token_dim), dtype=dtype),
+                "hand_contact": np.empty((0, bank_size, num_hand), dtype=dtype),
+            }
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name, shape in (
+            ("z_scene", (0, bank_size, num_scene_points, token_dim)),
+            ("z_hand", (0, bank_size, num_hand, token_dim)),
+            ("hand_contact", (0, bank_size, num_hand)),
+        ):
+            mmap = np.lib.format.open_memmap(output_dir / f"{name}.npy", mode="w+", dtype=dtype, shape=shape)
+            mmap.flush()
+        np.save(output_dir / "active_frame_id.npy", active_frames)
+        np.save(output_dir / "frame_to_dense.npy", mapping)
+        return None
     num_hand = int(side_arrays["hand_points_world"].shape[1])
     probe = _batch_inputs(
         cache, side_arrays, bank_indices, bank=0, frames=[int(active_frames[0])], device=device

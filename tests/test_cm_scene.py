@@ -502,6 +502,41 @@ def test_dense_cache_parity_and_fingerprint_guard() -> None:
             )
 
 
+def test_dense_cache_all_empty_side_writes_sparse_empty_bank() -> None:
+    """A side with no candidate-bearing frame is a valid zero-row stream."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        geometry = _geometry_with_env(100, 412)
+        sequence_dir = _write_scene_sequence(root, "s1", "empty", geometry)
+        side = sequence_dir / "right"
+        np.save(side / "candidate_offsets.npy", np.zeros(FRAMES + 1, dtype=np.int64))
+        np.save(side / "candidate_indices.npy", np.empty(0, dtype=np.uint32))
+        _write_root_meta(root, num_env=512)
+        build_all_banks(root, bank_size=4, num_points=512, sampling_seed=42)
+
+        encoder = _StubDenseEncoder()
+        stats = build_dense_cache(
+            root,
+            encoder=encoder,
+            checkpoint_sha="stub-sha",
+            bank_size=4,
+            num_scene_points=512,
+            batch_size=8,
+            device="cpu",
+            dtype="float16",
+            token_dim=encoder.token_dim,
+        )
+        dense_dir = sequence_dir / "dense_bank" / "right"
+        assert stats == {"sequences": 1, "sides": 1, "skipped": 0, "frames": 0}
+        assert np.load(dense_dir / "z_scene.npy", mmap_mode="r").shape == (0, 4, 512, 16)
+        assert np.load(dense_dir / "z_hand.npy", mmap_mode="r").shape == (0, 4, HAND_POINTS, 16)
+        assert np.load(dense_dir / "hand_contact.npy", mmap_mode="r").shape == (0, 4, HAND_POINTS)
+        np.testing.assert_array_equal(np.load(dense_dir / "active_frame_id.npy"), np.empty(0, dtype=np.int32))
+        np.testing.assert_array_equal(
+            np.load(dense_dir / "frame_to_dense.npy"), np.full(FRAMES, -1, dtype=np.int32)
+        )
+
+
 # ---------------------------------------------------------------------------
 # Test E: loss parity with environment disabled (V1.md §26 E)
 # ---------------------------------------------------------------------------

@@ -415,6 +415,11 @@ def _ensure_sequence_disjoint_splits(
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any | None = None):
     """Scene-cache train/val/test loaders with fixed-stride fixed-bank eval views."""
     root = Path(str(getattr(data_cfg, "root", "") or data_cfg.train_path)).resolve()
+    # Scene V1.1 uses one physical root and may intentionally leave
+    # ``train_path`` empty.  The shared file-split helper otherwise interprets
+    # an empty path as the repository cwd and can discover unrelated caches.
+    if not str(getattr(data_cfg, "train_path", "") or "").strip():
+        data_cfg.train_path = str(root)
     sampling_bank_size = int(getattr(data_cfg, "sampling_bank_size", 4))
     use_dense_cache = bool(getattr(data_cfg, "use_dense_cache", False))
     root_meta = read_meta(root)
