@@ -81,6 +81,10 @@ class Config(TaskConfig):
         mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
         use_mano_reconstruction: bool = True
         apply_hand_perturb: bool = False
+        # When enabled, each sample is assigned to either the hand-noise path
+        # or the object-noise path with a stable per-frame gate.  This avoids
+        # presenting compounded hand+object errors during training.
+        exclusive_hand_object_perturb: bool = False
         # Fix #5 (docs/指导.md): decouple PCA coefficients from axis-angle
         # by giving each parameterisation its own (scale, clip) pair.
         # The PCA path additionally supports per-dim std from the training

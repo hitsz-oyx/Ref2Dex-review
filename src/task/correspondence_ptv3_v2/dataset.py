@@ -58,6 +58,8 @@ class CorrStaticDatasetV2(Dataset):
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
         apply_hand_perturb: bool = True,
+        exclusive_hand_object_perturb: bool = False,
+        hand_perturb_prob: float = 0.8,
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
@@ -94,6 +96,8 @@ class CorrStaticDatasetV2(Dataset):
         self.base_seed = int(base_seed)
         self.apply_obj_perturb = bool(apply_obj_perturb)
         self.apply_hand_perturb = bool(apply_hand_perturb)
+        self.exclusive_hand_object_perturb = bool(exclusive_hand_object_perturb)
+        self.hand_perturb_prob = float(hand_perturb_prob)
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
@@ -313,13 +317,28 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="augmentation",
         )
+        hand_perturb_this = bool(self.apply_hand_perturb)
+        if self.exclusive_hand_object_perturb and hand_perturb_this:
+            gate_seed = stable_frame_seed(
+                base_seed=self.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=epoch,
+                namespace="exclusive-hand-object-perturbation",
+            )
+            gate_rng = np.random.default_rng(gate_seed)
+            hand_perturb_this = bool(gate_rng.random() <= self.hand_perturb_prob)
+        apply_obj_perturb_this = bool(self.apply_obj_perturb)
+        if self.exclusive_hand_object_perturb and hand_perturb_this:
+            apply_obj_perturb_this = False
         geometry = perturb_object_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
             hand_points=hand_points,
             hand_normals=hand_normals,
             seed=aug_seed,
-            apply_obj_perturb=self.apply_obj_perturb,
+            apply_obj_perturb=apply_obj_perturb_this,
             obj_rot_std_deg=self.obj_rot_std_deg,
             obj_trans_std=self.obj_trans_std,
             obj_perturb_prob=self.obj_perturb_prob,
@@ -344,7 +363,7 @@ class CorrStaticDatasetV2(Dataset):
                 hand_points=hand_points,
                 hand_normals=hand_normals,
                 seed=aug_seed,
-                apply_obj_perturb=self.apply_obj_perturb,
+                apply_obj_perturb=apply_obj_perturb_this,
                 obj_rot_std_deg=self.obj_rot_std_deg,
                 obj_trans_std=self.obj_trans_std,
                 obj_perturb_prob=self.obj_perturb_prob,
@@ -431,7 +450,7 @@ class CorrStaticDatasetV2(Dataset):
             # Fix #2: per-sample apply_hand_perturb flag so val_clean
             # does not get the same noise injection as train.
             result["apply_hand_perturb"] = torch.tensor(
-                bool(self.apply_hand_perturb), dtype=torch.bool
+                hand_perturb_this, dtype=torch.bool
             )
             # Fix #4: a per-frame, per-epoch, per-side, per-namespace seed
             # for the hand-PCA noise generator. The runner uses this so the
@@ -645,6 +664,10 @@ def make_dataloaders(
         "base_seed": int(seed),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
         "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "exclusive_hand_object_perturb": bool(
+            getattr(meta_cfg, "exclusive_hand_object_perturb", False)
+        ),
+        "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),

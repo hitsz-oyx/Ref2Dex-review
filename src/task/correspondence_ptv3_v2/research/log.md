@@ -153,3 +153,17 @@ NAS pilot 目录 `OakInk/processed/stage3_corr_oakink_pilot_20260817` 已生成 
 
 **下一步**
 全量 OakInk 转换已在 NAS tmux `oakink_convert_20260817` 中运行；完成后重新统计全量，并补充按 object category、sequence 和 contact-distance 分桶的比较。最终训练前需要把手法线改为 MANO 面法线或明确关闭法线通道。
+
+## 实验：GRAB 5 mm 手扰动与物体扰动互斥训练
+
+**假设**
+9 mm 手扰动与 10°/10 mm 物体扰动同时出现可能形成过强的复合噪声；把手扰动降到 5 mm，并让每个样本只接受手或物体一种扰动，可能改善 correspondence 与恢复指标的折中。
+
+**改动**
+新增稳定的 per-frame 互斥门控。`hand_perturb_prob=0.8` 时约 80% 样本只应用手扰动，其余样本按 `obj_perturb_prob=1.0` 只应用物体扰动。GRAB 9 mm 几何标定乘 `5/9` 得到 5 mm 目标。配置 `full_grab_50ep_geometry_5mm_exclusive_ddp2.yaml` 使用纯 GRAB、双卡和 W&B online，Stage 3 从 NAS 读取。
+
+**结果**
+200 帧门控 smoke 得到 164 帧仅手扰动、36 帧仅物体扰动、0 帧同时扰动、0 帧无扰动。2-step MANO 训练 smoke 通过。现有 NAS v2.1 文件权限为 `000`，已从可读 GRAB 原始数据启动新的 v2.1 Stage 2/3 重建；tmux `grab5mm_exclusive_ddp2_20260817` 会在数据生成完成后自动用 GPU 1、2 启动正式训练。
+
+**下一步**
+训练开始后记录 NAS 读取下的 step/s、GPU utilization 和 DataLoader 等待表现，并与本地旧 run 对比。

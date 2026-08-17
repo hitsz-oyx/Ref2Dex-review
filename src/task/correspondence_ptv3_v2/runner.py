@@ -511,6 +511,11 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         hand_aa_std = float(getattr(self.cfg.meta, "hand_axis_angle_std_rad", 0.0))
         hand_aa_clip = float(getattr(self.cfg.meta, "hand_axis_angle_clip_rad", 0.0))
         hand_perturb_prob = float(getattr(self.cfg.meta, "hand_perturb_prob", 1.0))
+        if bool(getattr(self.cfg.meta, "exclusive_hand_object_perturb", False)):
+            # The Dataset already made the stable per-sample hand/object mode
+            # decision and encoded it in apply_hand_perturb.  Do not gate the
+            # selected hand samples a second time here.
+            hand_perturb_prob = 1.0
         geometry_noise_scale = float(
             getattr(self.cfg.meta, "hand_geometry_noise_scale", 1.0)
         )
