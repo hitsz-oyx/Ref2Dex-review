@@ -71,6 +71,7 @@ class CorrStaticDatasetV2(Dataset):
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
+        dataset_id: str | None = None,
         **_: Any,
     ) -> None:
         super().__init__()
@@ -98,6 +99,7 @@ class CorrStaticDatasetV2(Dataset):
         self.obj_perturb_prob = float(obj_perturb_prob)
         self.runtime_resample_object = bool(runtime_resample_object)
         self.use_mano_reconstruction = bool(use_mano_reconstruction)
+        self.dataset_id_override = None if dataset_id in {None, ""} else str(dataset_id)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -264,7 +266,7 @@ class CorrStaticDatasetV2(Dataset):
         data = self._load_file(path)
         seq_id = self._scalar_string(data, "seq_id", path.stem)
         side = self._scalar_string(data, "side", "")
-        dataset_id = infer_stage3_dataset_id(data)
+        dataset_id = self.dataset_id_override or infer_stage3_dataset_id(data)
         raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame_idx])
         epoch = self.eval_sampling_epoch if self.eval_sampling_epoch is not None else self.epoch
 
@@ -650,6 +652,7 @@ def make_dataloaders(
         "use_mano_reconstruction": use_mano_reconstruction,
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
+        "dataset_id": getattr(data_cfg, "dataset_id", None),
     }
     val_clean_kwargs = {
         **train_kwargs,

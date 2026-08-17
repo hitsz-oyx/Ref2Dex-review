@@ -103,3 +103,37 @@
 
 **产物**
 完整 JSON 位于 `output/research/contactpose_checkpoint_compare/pure_20260817_101033.json` 和 `mixed_20260817_101033.json`。
+
+## 实验：ARCTIC 子集独立评估
+
+**假设**
+在未参与训练的 ARCTIC 数据上进行相同协议评估，可以检查纯 GRAB 与 GRAB+ContactPose 联合训练 checkpoint 的跨数据集表现，避免只依据 ContactPose 训练分布下的结果判断。
+
+**改动**
+ARCTIC 原始 Stage 3 位于 NAS 的 `processed_data_backup/arctic/arctic_initonly_4096_hand_root_v2`，全量 297 个文件、约 22 GB。为控制时间，在仓库 `tmp/arctic_eval_subset_20260817` 建立符号链接子集：5 个 subject（s01、s02、s04、s05、s06）各取 4 个序列，共 20 文件、12389 帧。该数据为 schema 2.0.0，缺少显式 dataset descriptor，因此 Dataset/evaluator 增加 `dataset_id=arctic` 显式识别。
+
+两份 checkpoint 使用相同评估协议：读取存储的 clean hand points，关闭 MANO/PCA hand perturb 与 runtime object resampling，分别评估 clean 和 10° rotation / 10 mm translation object perturb。
+
+**结果**
+
+| 指标 | 纯 GRAB | GRAB+ContactPose | 联合相对变化 |
+| --- | ---: | ---: | ---: |
+| clean random QFL | 0.0001431 | 0.0001669 | +16.7% |
+| perturbed random QFL | 0.0002136 | 0.0002670 | +25.0% |
+| clean random MAE | 0.002711 | 0.004029 | +48.6% |
+| perturbed random MAE | 0.003699 | 0.005797 | +56.7% |
+| clean contact auxiliary QFL | 0.004611 | 0.004878 | +5.8% |
+| perturbed contact auxiliary QFL | 0.006532 | 0.007280 | +11.5% |
+| perturbed recovery Brier | 0.8383 | 0.8000 | -4.6% |
+| perturbed recovery projection | 0.8120 | 0.7728 | -4.8% |
+| fake-contact recovery Brier | 0.9066 | 0.8484 | -6.4% |
+| missed-contact recovery Brier | 0.7687 | 0.7507 | -2.3% |
+
+**诊断**
+在 ARCTIC 子集上，联合训练的 correspondence 拟合指标变差，但 object perturb recovery 指标小幅改善。该结果与 ContactPose 全量上的“拟合明显改善、recovery 恶化”不同，说明跨数据集结论依赖数据分布和指标；ARCTIC 结果目前只能作为方向性证据，不能外推到全量 ARCTIC。
+
+**产物**
+结果 JSON：`output/research/contactpose_checkpoint_compare/arctic_pure_20260817_132348.json`、`arctic_mixed_20260817_132348.json`。
+
+**决策**
+保留 ARCTIC 子集评估作为公平外部测试；若需要最终结论，再扩展到全量 297 文件或按 subject 做分层统计。

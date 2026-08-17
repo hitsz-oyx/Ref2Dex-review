@@ -38,6 +38,7 @@ def main() -> None:
     cfg.data.val_split = 0.0
     cfg.data.batch_size = args.batch_size
     cfg.data.val_batch_size = args.batch_size
+    cfg.data.dataset_id = "arctic" if "arctic" in test_root.name.lower() else None
     cfg.data.num_workers = args.num_workers
     cfg.data.persistent_workers = args.num_workers > 0
     cfg.meta.use_mano_reconstruction = False
