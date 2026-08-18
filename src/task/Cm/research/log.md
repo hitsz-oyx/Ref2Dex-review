@@ -10,6 +10,18 @@
 
 **状态**：implementation gate 通过；E0/E1 真实 cache 统计待在具备数据和依赖的环境中运行。
 
+V1.2 loader 已接入 `CmActionRunner`：`ref2dex_cm_object_v2` root 现在走 sequence-disjoint object-v2 train/val/test loader；E1 可通过 `python3 -m src.task.Cm.compute_object_v2_stats --root <root>` 生成按 dataset 分组的样本、candidate 和 flow RMS 统计。
+
+### 2026-08-18：V1.2 GRAB E0/E1 与 Runner smoke
+
+使用 `graspenv` 从真实 `dataset/GRAB` 生成 `s1/cup_lift` 的 934 帧 Stage4 object-only cache（左右 hand stream），再转换为 object-v2 mmap 和 B=4 sampling bank。右手有 764 个 active current-frame 起点，左手无 active 起点；统一统计样本数为 764，candidate points 为 390002，GRAB flow RMS 为 `0.0314204741 m`（31.42 mm）。
+
+E0 shape/finite/delta-time gate 通过：object `[512,3]`、hand `[1538,3]`、`delta_time_s=1/30`。使用同一 root 完成 1-step CUDA Frozen DenseToken + Cm Runner smoke：loss `0.0125128`、flow EPE `0.0715053 mm`，无 NaN/Inf，正常退出。
+
+ARCTIC raw 实际位于 `data/raw_data/ARCTIC/arctic/data/arctic_data/data/raw_seqs`；已修正 adapter 自动路径探测。使用 `s05/laptop_use_01` 64 帧完成 ARCTIC Stage4：左右 hand stream 均写出，candidate 中位数分别为 570/500。转换后的 ARCTIC smoke 统计为 53 samples、flow RMS `0.0640490 m`（64.05 mm）；GRAB smoke 为 764 samples、`0.0310844 m`（31.08 mm）。两者 RMS 比约 2.06，超出指导中的 0.7--1.4 初始接近区间，因此 full-data 统计前不固定 dataset-specific scale。
+
+GRAB+ARCTIC smoke root 已通过 1-step CUDA Frozen DenseToken + Cm Runner，loss `0.0125159`、flow EPE `0.150698 mm`，无 NaN/Inf。该 mixed root 只有各一个 sequence，不能替代正式 sequence split 或 5k--10k step 三组实验；正式训练仍需扩展 cache 后执行。
+
 ---
 
 ## 实验：Scene Cache V1 合成 parity

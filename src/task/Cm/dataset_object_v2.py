@@ -7,8 +7,10 @@ from typing import Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import DataLoader, Dataset
 
+from src.base.data import make_dataloader_kwargs
+from src.base.distributed import make_default_eval_sampler, make_default_train_sampler
 from src.task.Cm.dataset import Stage4CmDataset, _normal_world_to_hand, _world_to_hand
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
 
@@ -16,10 +18,11 @@ from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stab
 class _MmapSequenceDataset(Dataset):
     def __init__(self, sequence_dirs: list[Path], *, num_obj_points: int = 512, num_hand_points: int = 1538,
                  base_seed: int = 42, min_stride: int = 1, max_stride: int = 10, fixed_stride: int | None = None,
-                 active_only: bool = True):
+                 active_only: bool = True, sampling_bank_size: int = 4, fixed_eval_bank: int = 0):
         self.num_obj_points, self.num_hand_points = num_obj_points, num_hand_points
         self.base_seed, self.min_stride, self.max_stride = base_seed, min_stride, max_stride
         self.fixed_stride, self.active_only, self.epoch = fixed_stride, active_only, 0
+        self.sampling_bank_size, self.fixed_eval_bank = max(1, int(sampling_bank_size)), int(fixed_eval_bank)
         self.rows: list[tuple[Path, str, int]] = []
         self._cache: dict[Path, dict[str, np.ndarray]] = {}
         for sequence in sequence_dirs:
@@ -55,6 +58,7 @@ class _MmapSequenceDataset(Dataset):
                 "pose": np.load(key / "hand_root_pose_world.npy", mmap_mode="r"),
                 "offsets": np.load(key / "candidate_offsets.npy", mmap_mode="r"),
                 "indices": np.load(key / "candidate_indices.npy", mmap_mode="r"),
+                "sampling": np.load(key / "sampling_indices.npy", mmap_mode="r") if (key / "sampling_indices.npy").exists() else None,
             }
         return self._cache[key]
 
@@ -65,10 +69,16 @@ class _MmapSequenceDataset(Dataset):
         seed = stable_frame_seed(base_seed=self.base_seed, seq_id=str(sequence), side=side, raw_frame_id=raw, epoch=self.epoch, namespace="cm-object-v2")
         stride = self.fixed_stride or int(np.random.default_rng(seed).integers(self.min_stride, self.max_stride + 1))
         future = current + stride
-        candidate = np.asarray(data["indices"][data["offsets"][current]:data["offsets"][current + 1]], dtype=np.uint32)
         candidate_mask = np.zeros(data["obj"].shape[1], dtype=bool)
+        candidate = np.asarray(data["indices"][data["offsets"][current]:data["offsets"][current + 1]], dtype=np.uint32)
         candidate_mask[candidate] = True
-        selected, valid = sample_object_indices(candidate_mask, num_samples=self.num_obj_points, seed=seed)
+        bank = data["sampling"]
+        if bank is not None and bank.shape[1] >= self.sampling_bank_size and bank.shape[2] == self.num_obj_points:
+            bank_index = self.fixed_eval_bank if self.fixed_stride is not None else seed % self.sampling_bank_size
+            selected = np.asarray(bank[current, bank_index], dtype=np.int64)
+            valid = candidate_mask[selected]
+        else:
+            selected, valid = sample_object_indices(candidate_mask, num_samples=self.num_obj_points, seed=seed)
         safe = np.maximum(selected, 0)
         pose = np.asarray(data["pose"][current])
         obj_now = _world_to_hand(data["obj"][current, safe], pose)
@@ -98,7 +108,7 @@ class CmObjectV2Dataset(Dataset):
 
     def __init__(self, roots: str | Path | Sequence[str | Path], **kwargs) -> None:
         self.roots = [Path(roots)] if isinstance(roots, (str, Path)) else [Path(root) for root in roots]
-        self.datasets: list[Stage4CmDataset] = []
+        self.datasets: list[Dataset] = []
         self._locations: list[tuple[int, int]] = []
         for root in self.roots:
             files = sorted(root.glob("**/left.npz")) + sorted(root.glob("**/right.npz"))
@@ -162,3 +172,88 @@ def write_statistics(dataset: Dataset, path: str | Path) -> dict:
     payload = {"schema_name": "ref2dex_cm_object_v2_statistics", "sampling_rule": "p_d proportional to sqrt(N_d)", "datasets": result}
     Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return payload
+
+
+def _sequence_dirs(root: Path) -> list[Path]:
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+    result = [path.parent.parent for path in sorted(root.glob("**/shared/meta.json"))]
+    if not result:
+        raise FileNotFoundError(f"No object-v2 sequence caches under {root}")
+    return result
+
+
+def _split_by_dataset(sequence_dirs: list[Path], *, seed: int, val_fraction: float, test_fraction: float) -> tuple[list[Path], list[Path], list[Path]]:
+    grouped: dict[str, list[Path]] = {}
+    for sequence in sequence_dirs:
+        try:
+            name = str(json.loads((sequence / "shared" / "meta.json").read_text(encoding="utf-8")).get("dataset_name", "unknown"))
+        except (OSError, json.JSONDecodeError):
+            name = "unknown"
+        grouped.setdefault(name, []).append(sequence)
+    train: list[Path] = []
+    val: list[Path] = []
+    test: list[Path] = []
+    rng = np.random.default_rng(int(seed))
+    for name, values in sorted(grouped.items()):
+        values = list(values)
+        rng.shuffle(values)
+        n = len(values)
+        n_test = max(1, int(round(n * test_fraction))) if n >= 3 and test_fraction > 0 else 0
+        n_val = max(1, int(round(n * val_fraction))) if n - n_test >= 3 and val_fraction > 0 else 0
+        test.extend(values[:n_test])
+        val.extend(values[n_test:n_test + n_val])
+        train.extend(values[n_test + n_val:])
+    if not train:
+        raise ValueError("Object-v2 sequence split produced an empty train set")
+    return sorted(train), sorted(val), sorted(test)
+
+
+def make_dataloaders(data_cfg, seed: int, *, meta_cfg, distributed=None):
+    """Build sequence-disjoint object-v2 train/val/test loaders.
+
+    The loader keeps ``dataset_id`` in the batch for diagnostics; Cm's model
+    and loss consume the same keys as the legacy Stage4 dataset.
+    """
+    root_value = str(getattr(data_cfg, "root", "") or getattr(data_cfg, "train_path", "")).strip()
+    root = Path(root_value).resolve()
+    train_dirs, val_dirs, test_dirs = _split_by_dataset(
+        _sequence_dirs(root), seed=seed,
+        val_fraction=float(getattr(data_cfg, "val_split", 0.1) or 0.1),
+        test_fraction=float(getattr(data_cfg, "test_fraction", 0.1) or 0.1),
+    )
+    common = dict(num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
+                 base_seed=int(seed), min_stride=int(getattr(data_cfg, "min_stride", 1)),
+                 max_stride=int(getattr(data_cfg, "max_stride", 10)), active_only=bool(getattr(data_cfg, "active_only", True)),
+                 sampling_bank_size=int(getattr(data_cfg, "sampling_bank_size", 4)),
+                 fixed_eval_bank=int(getattr(data_cfg, "fixed_eval_bank", 0)))
+    train_dataset = _MmapSequenceDataset(train_dirs, **common)
+    val_dataset = _MmapSequenceDataset(val_dirs, fixed_stride=int(getattr(data_cfg, "val_stride", 1)), **common) if val_dirs else None
+    test_dataset = _MmapSequenceDataset(test_dirs, fixed_stride=int(getattr(data_cfg, "test_stride", 1)), **common) if test_dirs else None
+    train_kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
+    train_kwargs.update(batch_size=int(data_cfg.batch_size),
+                        shuffle=distributed is None,
+                        sampler=None if distributed is None else make_default_train_sampler(
+                            train_dataset, shuffle=True, seed=seed, distributed=distributed, drop_last=False))
+    train_loader = DataLoader(train_dataset, **train_kwargs)
+    def eval_loader(dataset, batch_size):
+        if dataset is None:
+            return None
+        kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
+        kwargs.update(batch_size=int(batch_size or data_cfg.batch_size), shuffle=False,
+                      sampler=None if distributed is None else make_default_eval_sampler(dataset, distributed=distributed))
+        return DataLoader(dataset, **kwargs)
+    val_loader = eval_loader(val_dataset, getattr(data_cfg, "val_batch_size", None))
+    test_loader = eval_loader(test_dataset, getattr(data_cfg, "test_batch_size", None))
+    val_loaders = {}
+    test_loaders = {}
+    for stride in tuple(getattr(data_cfg, "val_strides", (1, 5, 10))):
+        if not val_dirs:
+            break
+        view = _MmapSequenceDataset(val_dirs, fixed_stride=int(stride), **common)
+        val_loaders[f"val/stride_{int(stride)}/"] = eval_loader(view, getattr(data_cfg, "val_batch_size", None))
+    metadata = {"schema_name": "ref2dex_cm_object_v2", "coordinate_frame": "hand_root_t",
+                "num_obj_pool": 4096, "num_obj_points": int(meta_cfg.num_obj_points),
+                "num_hand_points": int(meta_cfg.num_hand_points), "dataset_split": {
+                    "train_sequences": len(train_dirs), "val_sequences": len(val_dirs), "test_sequences": len(test_dirs)}}
+    return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders

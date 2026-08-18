@@ -6,6 +6,7 @@ samples articulated object surfaces, and returns in-memory fields for the
 common Stage 2 writer. It does not write a Stage 1 dataset.
 """
 import json               # 读取 parts.json（铰接物体顶/底部件标签）
+import os
 import os.path as op      # 路径拼接
 from pathlib import Path
 
@@ -37,10 +38,19 @@ from smplx import MANO    # MANO 手部参数化人体模型
 # 路径配置（可通过命令行参数覆盖）
 # ============================================================
 REF2DEX_ROOT = op.dirname(op.dirname(op.dirname(op.abspath(__file__))))
+_ARCTIC_ROOT_CANDIDATES = [
+    os.environ.get("REF2DEX_ARCTIC_ROOT", ""),
+    op.join(REF2DEX_ROOT, "dataset", "arctic"),
+    op.join(REF2DEX_ROOT, "data", "raw_data", "ARCTIC", "arctic"),
+]
+ARCTIC_ROOT = next(
+    (path for path in _ARCTIC_ROOT_CANDIDATES if path and op.isdir(op.join(path, "data", "arctic_data", "data", "raw_seqs"))),
+    _ARCTIC_ROOT_CANDIDATES[1],
+)
 # MANO 模型文件目录（包含 MANO_LEFT.pkl / MANO_RIGHT.pkl）
-MANO_MODEL_DIR = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "body_models", "mano")
+MANO_MODEL_DIR = op.join(ARCTIC_ROOT, "data", "body_models", "mano")
 # ARCTIC 原始数据根目录
-DATA_ROOT = op.join(REF2DEX_ROOT, "dataset", "arctic", "data", "arctic_data", "data")
+DATA_ROOT = op.join(ARCTIC_ROOT, "data", "arctic_data", "data")
 RAW_SEQS_DIR = op.join(DATA_ROOT, "raw_seqs")        # 输入: 存 .mano.npy / .object.npy
 META_DIR = op.join(DATA_ROOT, "meta")                 # 物体模板、拆分标签等元数据
 OBJECT_VTEMPLATE_DIR = op.join(META_DIR, "object_vtemplates")

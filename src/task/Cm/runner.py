@@ -122,7 +122,50 @@ class CmActionRunner(BaseRunner):
             metrics[f"{prefix}flow/zero_flow_improvement"] = 1.0 - relative_epe
         if pred_norm_mm is not None and gt_norm_mm is not None:
             metrics[f"{prefix}flow/norm_ratio"] = pred_norm_mm / max(gt_norm_mm, 1e-8)
+        if gt_norm_mm is not None:
+            metrics[f"{prefix}flow/zero_baseline_epe_mm"] = gt_norm_mm
+        if any(hasattr(loader.dataset, name) for name in ("rows", "datasets")):
+            metrics.update(self._evaluate_action_interventions(loader, prefix=prefix))
         return metrics
+
+    def _evaluate_action_interventions(self, loader: Any, *, prefix: str) -> dict[str, float]:
+        """Measure action shuffle/reverse EPE without changing model inputs or loss."""
+        totals = {"shuffle": [0.0, 0.0], "reverse": [0.0, 0.0]}
+        dataset_totals: dict[tuple[str, str], list[float]] = {}
+        was_training = self.model.training
+        self.eval_mode()
+        for batch in loader:
+            batch = self.prepare_batch(batch)
+            valid = batch["obj_valid_mask"].bool()
+            dataset_ids = batch.get("dataset_id")
+            for mode in ("shuffle", "reverse"):
+                changed = dict(batch)
+                changed["hand_flow"] = (
+                    torch.roll(batch["hand_flow"], shifts=1, dims=0)
+                    if mode == "shuffle" else -batch["hand_flow"]
+                )
+                with self.eval_context():
+                    prediction = self.model(changed)["pred_obj_flow"]
+                epe = torch.linalg.norm(prediction - batch["obj_flow_gt"].float(), dim=-1)
+                totals[mode][0] += float((epe * valid.float()).sum())
+                totals[mode][1] += float(valid.sum())
+                if dataset_ids is not None:
+                    for name in set(str(value) for value in dataset_ids):
+                        sample_mask = torch.tensor([str(value) == name for value in dataset_ids], device=valid.device).unsqueeze(-1)
+                        mask = valid & sample_mask
+                        entry = dataset_totals.setdefault((mode, name), [0.0, 0.0])
+                        entry[0] += float((epe * mask.float()).sum())
+                        entry[1] += float(mask.sum())
+        if was_training:
+            self.train_mode()
+        result = {
+            f"{prefix}flow/action_{mode}_epe_mm": 1000.0 * values[0] / max(values[1], 1.0)
+            for mode, values in totals.items()
+        }
+        for (mode, name), values in dataset_totals.items():
+            key = name.lower().replace("/", "_").replace(" ", "_")
+            result[f"{prefix}flow/action_{mode}_{key}_epe_mm"] = 1000.0 * values[0] / max(values[1], 1.0)
+        return result
 
     def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         """Keep JSONL exhaustive while limiting W&B validation curves."""
@@ -215,7 +258,16 @@ class CmActionRunner(BaseRunner):
         except json.JSONDecodeError:
             return None
         if not isinstance(payload, dict) or payload.get("schema_name") != "ref2dex_cm_scene_v1_1":
-            return None
+            if payload.get("schema_name") != "ref2dex_cm_object_v2":
+                return None
+            from src.task.Cm.dataset_object_v2 import make_dataloaders as make_object_dataloaders
+
+            return make_object_dataloaders(
+                data_cfg,
+                seed,
+                meta_cfg=self.cfg.meta,
+                distributed=self.distributed,
+            )
         from src.task.Cm.dataset_scene import make_dataloaders as make_scene_dataloaders
 
         return make_scene_dataloaders(
@@ -345,6 +397,25 @@ class CmActionRunner(BaseRunner):
                     source_metrics[name] = MetricStat(
                         float((norm_map * 1000.0 * mask.float()).sum().detach()), count
                     )
+        dataset_ids = batch.get("dataset_id")
+        if dataset_ids is not None:
+            for dataset_name in sorted(set(str(value) for value in dataset_ids)):
+                sample_mask = torch.tensor(
+                    [str(value) == dataset_name for value in dataset_ids],
+                    dtype=torch.bool,
+                    device=valid.device,
+                ).unsqueeze(-1)
+                mask = valid & sample_mask
+                count = float(mask.sum())
+                if count <= 0.0:
+                    continue
+                key = dataset_name.lower().replace("/", "_").replace(" ", "_")
+                source_metrics[f"flow/epe_{key}_mm"] = MetricStat(
+                    float((residual_norm_map * 1000.0 * mask.float()).sum().detach()), count
+                )
+                source_metrics[f"flow/gt_norm_{key}_mm"] = MetricStat(
+                    float((gt_norm_map * 1000.0 * mask.float()).sum().detach()), count
+                )
         cm_assignment = prediction["cm_assignment"].clamp_min(1e-8)
         # cm_assignment: [B, N, S]  每个物点分到 S 个 slot 的概率分布（已 clamp 防 log(0)）
         slot_assignment_entropy = -(cm_assignment * cm_assignment.log()).sum(dim=1).mean()
