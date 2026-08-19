@@ -139,3 +139,118 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 如果继续推进研究，应把 300-step 短训升级到更长预算；当前不建议再堆同级别 seed。
+
+
+## 2026-08-19 — 记录 V1.2.1 吞吐 benchmark 与 DDP 兼容配置
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_arctic.yaml` — 为 object-v2 mixed/full training 打开 `find_unused_parameters=true`。
+- `src/task/Cm/configs/object_v2_grab_only.yaml` — 为 GRAB-only full training 打开 `find_unused_parameters=true`。
+- `src/task/Cm/configs/object_v2_arctic_only.yaml` — 为 ARCTIC-only full training 打开 `find_unused_parameters=true`。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 记录 train-only 吞吐 benchmark 与推荐的 3 GPU DDP。
+- `src/task/Cm/docs/logs/decision_log.md` — 记录 3 GPU DDP 的选型理由。
+
+**改动原因**
+
+用户要求开始 full-data 训练前先统计吞吐并选最合适的多卡方案；同时 2 GPU DDP 已经暴露 `no-gate` 路径上的 unused-parameter 问题，需要显式打开 `find_unused_parameters=true`。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 吞吐 benchmark 已完成，配置已适配 DDP
+- 剩余: 等用户确认 full-training 具体范围后启动在线 wandb 长训
+- 续接点: GRAB-only / ARCTIC-only / mixed 的正式 run
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 full-data long-run prep
+- 进度: benchmark + DDP 修正完成
+- 本次对应阶段中的第几步: 1
+
+**下一步打算做什么**（可选）
+
+等待用户确认正式长训范围，然后用 3 GPU 启动在线 wandb 训练。
+
+
+## 2026-08-19 — 记录 mixed full run 与 batch-size sweep 结论
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 记录 mixed 3 GPU batch-size sweep 的吞吐结果与正式推荐 batch。
+- `src/task/Cm/docs/logs/decision_log.md` — 记录为什么正式长训选 3 GPU + batch_size=48。
+- `src/task/Cm/docs/logs/experiment_log.md` — 追加 mixed full run（batch 24）完成事实与结果。
+
+**改动原因**
+
+用户要求按“多卡 + batch size 极限吞吐”选正式训练口径；因此先完成 train-only sweep，再把结果写回任务入口和自主决策记录。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 吞吐 sweep 已完成，mixed full run 已完成
+- 剩余: 等待用户确认是否立即按 batch_size=48 继续长训 GRAB-only / ARCTIC-only / mixed
+- 续接点: 正式长训启动
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 long-run prep
+- 进度: batch-size sweep 完成
+- 本次对应阶段中的第几步: 2
+
+**下一步打算做什么**（可选）
+
+如果用户确认，就用 3 GPU + batch_size=48 开正式长训。
+
+## 2026-08-19 — 将正式长训入口切到 batch 48 与 online wandb
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_arctic.yaml` — mixed/full 训练默认 batch 调到 48，`wandb` 改为 online。
+- `src/task/Cm/configs/object_v2_grab_only.yaml` — GRAB-only full 训练默认 batch 调到 48，`wandb` 改为 online。
+- `src/task/Cm/configs/object_v2_arctic_only.yaml` — ARCTIC-only full 训练默认 batch 调到 48，`wandb` 改为 online。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 将正式长训入口描述更新为 3 GPU + batch 48。
+- `src/task/Cm/docs/logs/decision_log.md` — 将正式长训决策锚定到 batch 48 的吞吐峰值。
+- `src/task/Cm/docs/logs/experiment_log.md` — 追加 throughput sweep / mixed full pilot 的正式 EXP 记录。
+
+**改动原因**
+
+用户明确说明吞吐 benchmark 关注的是多卡 + batch size 的极限点，而不是单纯卡数；当前 sweep 已验证 3 GPU + batch 48 为 mixed 路线峰值，因此将正式长训入口统一收口到该设置，并把 pilot 与正式选择分开记录。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 正式长训入口已切到 48，下一步可直接启动在线训练
+- 剩余: 等长训产出
+- 续接点: mixed / GRAB-only / ARCTIC-only formal run
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 full-data long-run prep
+- 进度: 入口收口完成
+- 本次对应阶段中的第几步: 3
+
+**下一步打算做什么**（可选）
+
+启动 3 GPU + batch 48 的正式长训。

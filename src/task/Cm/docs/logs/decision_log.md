@@ -65,3 +65,37 @@ V1.2.1 指导要求修复 worker epoch、缓存泄漏和训练划分，但没有
 **建议用户确认**
 
 否
+
+
+## 2026-08-19 — V1.2.1 采用 3 GPU DDP + batch 48 作为正式长训起点
+
+- branch: `oyx`
+- post-commit: `HEAD`
+
+**未指定点**
+
+用户要求“用多卡一起训练”，但没有指定是 2 GPU 还是 3 GPU，也没有指定是按吞吐还是按效率选卡数。
+
+**实际选择**
+
+正式长训使用 3 GPU DDP（`CUDA_VISIBLE_DEVICES=0,1,5`）并把 mixed/object-v2 full training 的 batch size 设为 48。
+
+**其他合理选择**
+
+2 GPU DDP，或者 batch size 24 / 32 / 64。
+
+**选择理由**
+
+train-only benchmark 显示 mixed 的纯训练吞吐在 3 GPU 下随 batch 增长到 48 时达到峰值（约 366.7 samples/s），64 已回落到约 357.1 samples/s；因此 48 是当前能拿到的最优吞吐点，同时保留了 DDP 的并行收益。
+
+**对结果的影响**
+
+只影响训练时间和每步全局 batch，不改变模型语义、GT 或评估口径；DDP 需保持 `find_unused_parameters=true`。
+
+**可逆性**
+
+完全可逆。
+
+**建议用户确认**
+
+是（建议时机：启动正式长训前）

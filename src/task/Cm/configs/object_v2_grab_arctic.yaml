@@ -26,8 +26,8 @@ data:
   group_val_by_sequence: true
   sampling_bank_size: 4
   fixed_eval_bank: 0
-  batch_size: 8
-  val_batch_size: 8
+  batch_size: 48
+  val_batch_size: 48
   num_workers: 4
   persistent_workers: true
 train:
@@ -35,7 +35,9 @@ train:
   max_steps: 10000
   eval_every_epochs: 1
   amp: false
+  distributed:
+    find_unused_parameters: true
 wandb:
   project: ref2dex
-  mode: offline
+  mode: online
   tags: [cm, object-v2, grab-arctic, frozen-densetoken]
