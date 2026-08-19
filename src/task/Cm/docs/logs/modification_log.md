@@ -288,3 +288,38 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 按分钟级检查 mixed 运行状态；完成后记录最终指标并启动两个 single-dataset 对照。
+
+## 2026-08-19 — 将 mixed 正式预算延长到 50 epochs
+
+- branch: `oyx`
+- post-commit: 待提交
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_arctic.yaml` — 将 mixed 正式总预算设为 50 epochs、184650 steps。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 标明 10000 steps 是 pilot，正式入口为 50 epochs/184650 steps。
+- `src/task/Cm/docs/logs/experiment_log.md` — 更新当前研究状态，记录从 10000-step checkpoint 续训。
+
+**改动原因**
+
+用户确认 10000 steps 仅作为 pilot 不足以代表 full long training，要求继续完成 50 epochs 的全量 mixed 训练。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 预算配置已改为 184650 steps，准备从 `outputs/cm/cm_object_v2_grab_arctic_20260819_165241/checkpoints/step_000010000_epoch_000003.pt` 续训。
+- 剩余: 启动续训并确认新总步数、checkpoint 恢复和 cosine 学习率状态。
+- 续接点: 检查新 run 的 `train_setup`、`Loaded checkpoint` 和首个 `perf/` 记录。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 mixed full-data long-run
+- 进度: 10000-step pilot 已完成；50-epoch 正式长训待启动。
+
+**下一步打算做什么**（可选）
+
+用 3 GPU + batch 48 + online wandb 启动续训，并在完成后追加 EXP-005 的正式结果。

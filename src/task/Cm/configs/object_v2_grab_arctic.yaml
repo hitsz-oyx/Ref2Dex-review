@@ -32,7 +32,8 @@ data:
   persistent_workers: true
 train:
   device: cuda
-  max_steps: 10000
+  epochs: 50
+  max_steps: 184650
   eval_every_epochs: 1
   amp: false
   distributed:
