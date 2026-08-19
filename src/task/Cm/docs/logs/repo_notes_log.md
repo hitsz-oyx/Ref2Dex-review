@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-主路线是 V1.2.1 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank、E1 统计、sequence 固定 split、train-only calibration 和 no-gate + time condition 的 300-step 混合短训都已完成；当前结论是实现链路可跑，但还不能据此下科学判断。
+主路线是 V1.2.1 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank、E1 统计、sequence 固定 split、train-only calibration 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 300-step 短训都已完成；当前结论是实现链路可跑，但还不能据此下科学判断。
 
 ## 文档索引
 

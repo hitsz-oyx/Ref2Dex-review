@@ -100,3 +100,42 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 继续跑 GRAB-only、ARCTIC-only 和 mixed 对照，必要时再加长训练步数。
+
+## 2026-08-19 — 补齐 V1.2.1 单数据集对照配置与计数修正
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/compute_flow_scale.py` — object-v2 校准的 sequence 计数改为按完整路径去重，避免同名 sequence 被误合并。
+- `src/task/Cm/configs/object_v2_grab_only.yaml` — GRAB-only 的 no-gate + time condition 对照配置。
+- `src/task/Cm/configs/object_v2_arctic_only.yaml` — ARCTIC-only 的 no-gate + time condition 对照配置。
+- `src/task/Cm/docs/logs/experiment_log.md` — 追加 GRAB-only / ARCTIC-only 小规模短训结果。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 更新当前研究状态和入口索引。
+- `src/task/Cm/docs/logs/architecture_log.md` — 记录单数据集对照已经纳入 object-v2 管线。
+
+**改动原因**
+
+用户要求继续推进 V1.2.1，但又明确关心 seed 数量与训练规模；因此把后续工作收敛为同预算的单数据集对照，并修正校准元数据里的序列计数口径。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 单数据集对照配置已补齐，已完成 GRAB-only / ARCTIC-only 的小规模实验整理
+- 剩余: 若要进一步判断假设，需要提高预算而不是增加重复 seed
+- 续接点: 更长预算的 mixed / single-dataset 对照
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 mixed + single-dataset baseline
+- 进度: 2/2 个主要小规模验证步骤完成
+- 本次对应阶段中的第几步: 2
+
+**下一步打算做什么**（可选）
+
+如果继续推进研究，应把 300-step 短训升级到更长预算；当前不建议再堆同级别 seed。

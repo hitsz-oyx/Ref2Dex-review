@@ -2,7 +2,7 @@
 
 ## 当前研究状态
 
-V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的混合短训；当前结论是实现链路可跑，但 300-step 级别训练仍属 INCONCLUSIVE。
+V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 小规模短训；当前结论仍是 INCONCLUSIVE，300-step 预算更像实现与稳定性 gate。
 
 ## 历史证据索引
 
@@ -12,6 +12,7 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 
 - V1.2 implementation gate：`SUPPORTED`（真实 smoke 级别）。
 - V1.2.1 mixed data-only short training：`INCONCLUSIVE`（实现有效，但 300-step 级别未形成明确效果结论）。
+- V1.2.1 single-dataset short training：`INCONCLUSIVE`（GRAB-only / ARCTIC-only 300-step 级别也未形成明确效果结论）。
 - V1.1.1 downstream cache parity：`SUPPORTED`；feature 逐元素差异归因于 spconv 非确定性，不作为科学反证。
 - V1.1.2 全量 DenseToken bank：`INVALID_IMPLEMENTATION`/路线撤回，因资源成本过高而停止，不用于效果结论。
 
@@ -107,6 +108,91 @@ INCONCLUSIVE
 - config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
 - train log: `output/exp/cm_v121/`
 - metrics: `outputs/cm/cm_v121_mixed_seed*/metrics.jsonl`
+
+## EXP-003 — V1.2.1 grab-only / arctic-only small-scale comparison
+
+### 日期
+
+2026-08-19
+
+### 对应指导
+
+`docs/指导/V1.2.1.md`
+
+### 假设
+
+如果 V1.2.1 的固定 split 与 train-only calibration 足够稳定，那么把 mixed 数据拆成 GRAB-only / ARCTIC-only 后，至少应在 300-step 小预算上看到比 zero-flow 更一致的优化趋势；否则说明这个预算只够验证链路，不足以验证数据假设。
+
+### Baseline
+
+- commit: `cb7ae88`
+- config: `src/task/Cm/configs/object_v2_grab_only.yaml` / `src/task/Cm/configs/object_v2_arctic_only.yaml`
+- checkpoint: 无；只做短训对照
+
+### 本次修改
+
+- 新增 GRAB-only 与 ARCTIC-only object-v2 配置；
+- 修正 object-v2 flow calibration 的 sequence 计数口径；
+- 复用各自独立的固定 split + train-only calibration；
+- 维持 `use_time_condition=true`、`use_slot_gate=false` 不变。
+
+### 实现审查
+
+Verdict: PASS
+
+关键检查：
+- 单数据集 split 可读；
+- loader 能稳定返回 train/val/test；
+- calibration metadata 与 config scale 一致；
+- 300-step run 无 NaN / 崩溃 / 数据错误。
+
+### 实验命令
+
+```bash
+python -m src.task.Cm.train \
+  --config src/task/Cm/configs/object_v2_grab_only.yaml \
+  --set train.max_steps=300 \
+  --set train.seed=42
+```
+
+### 结果
+
+| Run | val/mean_stride_epe_mm | val/mean_stride_relative_epe | val/zero_flow_improvement | 备注 |
+| --- | ---: | ---: | ---: | --- |
+| GRAB seed42 | 51.3116 | 1.00292 | -0.00292 | 已完成 |
+| GRAB seed43 | 51.3039 | 1.00245 | -0.00245 | 已完成 |
+| ARCTIC seed42 | 23.5727 | 1.00296 | -0.00296 | 已完成 |
+
+### 关键观察
+
+- GRAB-only 和 ARCTIC-only 都能正常收敛到稳定的 300-step 轨迹，但都没有明显优于 zero-flow；
+- GRAB 和 ARCTIC 的尺度差异仍然显著，说明 train-only calibration 是必要的，但仅靠校准不能让短预算立刻出现正向信号；
+- 这批结果和 mixed 小预算一起看，仍然更像是“实现可用”而不是“科学假设已证实”。
+
+### 解释
+
+固定 split 与 train-only calibration 已经把可复现性问题收住了；剩下的瓶颈是预算太短，cosine lr 也已经衰减到零，模型还没进入能分辨数据差异的区间。
+
+### 结论状态
+
+INCONCLUSIVE
+
+### 决策
+
+不再继续用更多 300-step seed 去堆重复证据；如果后面要进一步判断数据假设，应把预算加长，而不是只加 seed。
+
+### 下一步
+
+先基于当前 completed runs 更新文档和提交，再考虑是否把预算提高到更能区分 mixed / single-dataset 的级别。
+
+### 证据
+
+- `output/exp/cm_v121/cm_v121_grab_seed42.stdout.log`
+- `output/exp/cm_v121/cm_v121_grab_seed43.stdout.log`
+- `output/exp/cm_v121/cm_v121_arctic_seed42.stdout.log`
+- `outputs/cm/cm_v121_grab_seed42_20260819_103530/metrics.jsonl`
+- `outputs/cm/cm_v121_grab_seed43_20260819_103530/metrics.jsonl`
+- `outputs/cm/cm_v121_arctic_seed42_20260819_103530/metrics.jsonl`
 
 ## EXP-001 — V1.2 full-data Stage4/cache 与 E1 统计
 

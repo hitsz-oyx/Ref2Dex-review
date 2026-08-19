@@ -119,7 +119,7 @@ def calibrate_flow_scale_object_v2(train_path: Path, *, min_stride: int, max_str
                                for s in range(min_stride, max_stride + 1)}}
     for sequence in sequence_dirs:
         obj = np.load(sequence / "shared" / "obj_points_world.npy", mmap_mode="r")
-        state["sequence_ids"].add(sequence.name)
+        state["sequence_ids"].add(str(sequence.resolve()))
         for side in ("left", "right"):
             side_dir = sequence / side
             if not (side_dir / "candidate_offsets.npy").exists():
