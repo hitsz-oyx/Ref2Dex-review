@@ -393,3 +393,39 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 验证配置与模型接口；持续观察 GPU，出现不与其他任务冲突的 3 卡组合后执行 batch sweep。
+
+## 2026-08-19 — 在共享 GPU 1、5 启动 GRAB gate+cm64 长训
+
+- branch: `oyx`
+- post-commit: `99d32d5`
+- 范围: task 内部
+
+**文件**
+
+- `output/exp/cm_v121/cm_v121_grab_gate_cm64_2gpu_bs48_50ep_20260819_234923.log` — 共享两卡正式训练 stdout/stderr（运行产物，不纳入版本管理）。
+- `outputs/cm/cm_object_v2_grab_gate_cm64_20260819_234926/` — config、metadata、metrics、checkpoint 与 W&B 本地目录（运行产物，不纳入版本管理）。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 记录共享卡吞吐不可与独占 benchmark 直接比较。
+- `src/task/Cm/docs/logs/experiment_log.md` — 更新 mixed 与 GRAB gate+cm64 均在运行中的当前状态。
+
+**改动原因**
+
+用户确认允许在 mixed 已占用的 GPU 1、5 上共享启动 GRAB gate+cm64 候选，以显存可容纳为前提接受吞吐下降。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`；本候选为用户追加的复合模型实验。
+
+**单次修改进度**（可选）
+
+- 当前: 2 GPU DDP 已启动；global batch 96，50 epochs 自动解析为 134900 steps；W&B run `z2t2b5mi`。step 100–200 初始吞吐约 111 samples/s，预计约 32.4 小时。
+- 剩余: 持续训练并观察共享对 mixed 吞吐的影响；完成后追加正式 EXP。
+- 续接点: 训练日志与 `outputs/cm/cm_object_v2_grab_gate_cm64_20260819_234926/metrics.jsonl`。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 composite candidate
+- 进度: GRAB gate+cm64 50-epoch 正式训练已启动。
+
+**下一步打算做什么**（可选）
+
+确认两个任务在共享卡下持续前进且无 OOM/NaN；完成后分别整理 mixed 和复合候选的正式 EXP。
