@@ -323,3 +323,38 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 用 3 GPU + batch 48 + online wandb 启动续训，并在完成后追加 EXP-005 的正式结果。
+
+## 2026-08-19 — 启动 50-epoch mixed continuation
+
+- branch: `oyx`
+- post-commit: `815d55e`
+- 范围: task 内部
+
+**文件**
+
+- `output/exp/cm_v121/cm_v121_mixed_3gpu_bs48_50ep_resume_20260819_195242.log` — 50-epoch mixed continuation 日志（运行产物，不纳入版本管理）。
+- `output/exp/cm_v121/pilot_artifacts/cm_v121_mixed_3gpu_bs48_10k_pilot_step_10000.pt` — 10000-step pilot checkpoint 备份，避免续训的 checkpoint 保留策略覆盖 pilot 证据。
+- `src/task/Cm/docs/logs/modification_log.md` — 记录续训入口、恢复点和 W&B run。
+
+**改动原因**
+
+用户确认将 10000-step pilot 延长到 50 epochs/184650 steps；从已有 step 10000 checkpoint 恢复，保持 3 GPU、batch 48、no-gate + time condition 和 online wandb。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 已验证 `total_steps=184650`、`Loaded checkpoint ... at step 10000`，首个续训 step 10100 的学习率为 `2.9779e-4`；W&B run 为 `cqzdih3m`。
+- 剩余: 继续运行至 step 184650，并追加 EXP-005 的完整结果。
+- 续接点: 检查 `output/exp/cm_v121/cm_v121_mixed_3gpu_bs48_50ep_resume_20260819_195242.log` 的 epoch/step 和最终 val/test 指标。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 mixed full-data long-run
+- 进度: 50-epoch continuation 已启动；当前约 step 10100/184650。
+
+**下一步打算做什么**（可选）
+
+按分钟级检查续训状态；完成后记录最终指标、W&B 链接和 checkpoint，并决定是否启动 single-dataset 对照。
