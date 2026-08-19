@@ -292,7 +292,7 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 ## 2026-08-19 — 将 mixed 正式预算延长到 50 epochs
 
 - branch: `oyx`
-- post-commit: 待提交
+- post-commit: `HEAD`
 - 范围: task 内部
 
 **文件**
@@ -358,3 +358,38 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 按分钟级检查续训状态；完成后记录最终指标、W&B 链接和 checkpoint，并决定是否启动 single-dataset 对照。
+
+## 2026-08-19 — 新增 GRAB gate+cm64 独立训练配置
+
+- branch: `oyx`
+- post-commit: 待提交
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_gate_cm64.yaml` — 新增 GRAB-only、time-conditioned、slot gate、`cm_dim=64` 的 50-epoch 候选配置。
+- `src/task/Cm/docs/logs/decision_log.md` — 记录保持 time condition、按 epoch 控制预算和重新 benchmark batch 的理由。
+- `src/task/Cm/docs/logs/modification_log.md` — 记录本次配置与文档修改。
+
+**改动原因**
+
+用户要求并行准备一版只使用 GRAB、用 gate 限制 slot、把 slot embedding 维数从 256 降到 64 的训练。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`；这是用户明确追加的模型候选，超出 V1.2.1 原先“只改数据”的主对照，但不覆盖主配置。
+
+**单次修改进度**（可选）
+
+- 当前: 独立配置加载和模型构造已通过，确认 `cm_dim=64`、gate/time condition 均开启、可训练参数量 94373；`tests/test_cm_slot_attention.py` 为 9 passed。
+- 剩余: 在真正空闲的多卡上重新 sweep batch size，再启动 50 epochs online wandb 正式训练。
+- 续接点: `src/task/Cm/configs/object_v2_grab_gate_cm64.yaml`。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 composite candidate
+- 进度: 配置准备完成，GPU benchmark/训练待执行。
+
+**下一步打算做什么**（可选）
+
+验证配置与模型接口；持续观察 GPU，出现不与其他任务冲突的 3 卡组合后执行 batch sweep。

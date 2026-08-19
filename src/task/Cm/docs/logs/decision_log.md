@@ -99,3 +99,36 @@ train-only benchmark 显示 mixed 的纯训练吞吐在 3 GPU 下随 batch 增�
 **建议用户确认**
 
 是（建议时机：启动正式长训前）
+
+## 2026-08-19 — GRAB gate+cm64 候选保持 time condition 并按 50 epochs 比较
+
+- branch: `oyx`
+- post-commit: `HEAD`
+
+**未指定点**
+
+用户指定 GRAB-only、开启 slot gate、把 slot embedding 维数从 256 改为 64，但未重复指定 time condition、训练 epoch 和 batch。
+
+**实际选择**
+
+保持 `use_time_condition=true` 和其余数据/GT/loss/split/calibration 不变；正式预算沿用当前确认的 50 epochs。batch 48 仅作为吞吐 sweep 起点，正式 batch 要在空闲多卡上重新测定。
+
+**其他合理选择**
+
+关闭 time condition；沿用 10000-step pilot；直接复用 mixed 的 batch 48 而不重新 benchmark。
+
+**选择理由**
+
+保持 time condition 可把用户要求之外的模型变化降到最少；按 epoch 控制可让 GRAB-only 完整遍历次数明确；`cm_dim=64` 会改变显存和计算瓶颈，因此需要重新确定 batch 峰值。
+
+**对结果的影响**
+
+该候选同时改变数据范围、gate 和 slot capacity，是复合候选，不应被解释为单独的 gate 或 cm_dim 消融。50 epochs 保证预算口径清晰，但与 mixed 的样本总量不同。
+
+**可逆性**
+
+完全可逆；使用独立配置，不修改现有 mixed 与 GRAB-only baseline。
+
+**建议用户确认**
+
+否；当前选择遵循用户刚确认的 50-epoch 正式训练口径，启动前仍需确认可用 GPU 不与其他任务冲突。
