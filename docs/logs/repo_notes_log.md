@@ -1,0 +1,17 @@
+# Ref2Dex 仓库常识
+
+## 运行环境
+
+- Python：`/home2/wyy/miniconda3/envs/graspenv/bin/python`（3.8.20）。
+- PyTorch：2.4.1+cu121；主要 GPU 假设为 NVIDIA RTX 3090（约 24 GB）。
+- GRAB：`dataset/GRAB`；ARCTIC：`data/raw_data/ARCTIC/arctic`，raw sequences 位于其下的 `data/arctic_data/data/raw_seqs`。
+- 派生 cache：`data/processed_data/`；训练/诊断产物：`output/exp/`、`output/research/`、`outputs/`，均不提交。
+- 测试：`/home2/wyy/miniconda3/bin/conda run -n graspenv python -m pytest ...`。
+
+## 文档入口
+
+- 全局结构：[`architecture_log.md`](architecture_log.md)
+- 全局环境与路径：本文档
+- 全局自主决策：[`decision_log.md`](decision_log.md)
+- 全局修改记录：[`modification_log.md`](modification_log.md)
+- Cm 任务入口：[`src/task/Cm/docs/logs/repo_notes_log.md`](../../src/task/Cm/docs/logs/repo_notes_log.md)

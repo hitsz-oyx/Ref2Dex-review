@@ -5,6 +5,14 @@ Loads a CmAction checkpoint once, exposes a tiny HTTP API so a browser-based
 three.js viewer can pull inference results pair-by-pair without holding the
 GPU/long inference in the page itself.
 
+Supports two data layouts via the ``--scene-cache`` flag:
+
+* default (Stage 4 NPZ):  ``--data-root data/processed_data/stage4/data`` and
+  ``--input s1/banana_lift/right.npz``; uses ``Stage4CmDataset``.
+* ``--scene-cache``:      ``--data-root data/processed_data/cm_scene_v1_1_full``
+  and ``--input s1/banana_lift`` (a sequence directory under the scene root);
+  uses ``Stage4CmSceneDataset``.
+
 Endpoints
 ---------
 GET /                         serves viewer.html
@@ -16,14 +24,24 @@ GET /api/horizon?idx=N&stride=S
                                one fixed-start, non-autoregressive prediction
                                at the requested horizon
 GET /api/files?query=TEXT     Stage4 left/right NPZ suggestions
+                              (or scene sequence dirs in ``--scene-cache`` mode)
 POST /api/input               select one Stage4 NPZ under --data-root
+                              (or one scene sequence dir under --data-root)
 GET /api/healthz              liveness probe
 
 Usage (run from Ref2Dex root)
 -----------------------------
+    # Stage 4 NPZ (legacy)
     python src/task/Cm/viewer/server.py \
         --checkpoint outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822/checkpoints/best.pt \
         --input      data/processed_data/stage4/data/grab/s1/banana_lift/right.npz \
+        --port 8765
+
+    # Scene cache v1.1
+    python src/task/Cm/viewer/server.py \
+        --scene-cache \
+        --checkpoint outputs/cm/cm_full_grab_scene_v1_1_16slot_10epoch_20260818_001836/checkpoints/best.pt \
+        --input      data/processed_data/cm_scene_v1_1_full/s1/banana_lift \
         --port 8765
 
 Open http://<host>:8765/ in a browser.
@@ -56,6 +74,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.base import build_runner_from_checkpoint  # noqa: E402
+from src.task.Cm.cache_schema import (  # noqa: E402
+    SIDES as _SCENE_SIDES,
+    iter_sequence_dirs as _iter_scene_sequence_dirs,
+)
 from src.task.Cm.dataset import Stage4CmDataset  # noqa: E402
 from src.task.Cm.runner import CmActionRunner  # noqa: E402
 
@@ -75,15 +97,22 @@ def _to_jsonable(arr: np.ndarray) -> list:
     return np.asarray(arr, dtype=np.float32).reshape(-1).tolist()
 
 
+def _is_scene_cache_mode(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "scene_cache", False))
+
+
 def _build_dataset(
     args,
     runner: CmActionRunner,
     input_path: Path,
     *,
     stride: int | None = None,
-) -> Stage4CmDataset:
-    return Stage4CmDataset(
-        input_path,
+):
+    """Return either ``Stage4CmDataset`` (Stage 4 NPZ) or ``Stage4CmSceneDataset``.
+
+    Callers branch on the concrete class to read raw NPZ / scene npy fields.
+    """
+    common = dict(
         num_obj_points=int(runner.cfg.meta.num_obj_points),
         num_hand_points=int(runner.cfg.meta.num_hand_points),
         base_seed=int(runner.cfg.train.seed),
@@ -93,6 +122,14 @@ def _build_dataset(
         fixed_stride=int(args.stride if stride is None else stride),
         coordinate_frame=str(runner.cfg.meta.coordinate_frame),
     )
+    if _is_scene_cache_mode(args):
+        from src.task.Cm.dataset_scene import Stage4CmSceneDataset  # noqa: PLC0415
+        return Stage4CmSceneDataset(
+            input_path,
+            sampling_bank_size=int(getattr(runner.cfg.data, "sampling_bank_size", 4)),
+            **common,
+        )
+    return Stage4CmDataset(input_path, **common)
 
 
 def _input_path_for_client(path: Path, data_root: Path) -> str:
@@ -102,21 +139,36 @@ def _input_path_for_client(path: Path, data_root: Path) -> str:
         return str(path)
 
 
-def _resolve_input_path(value: str, data_root: Path) -> Path:
+def _resolve_input_path(value: str, data_root: Path, *, scene_cache: bool) -> Path:
     requested = Path(value).expanduser()
     candidates = [requested] if requested.is_absolute() else [REPO_ROOT / requested, data_root / requested]
-    candidate = next((path.resolve() for path in candidates if path.is_file()), candidates[-1].resolve())
+    candidate = next((path.resolve() for path in candidates if path.exists()), candidates[-1].resolve())
     try:
         candidate.relative_to(data_root)
     except ValueError as exc:
-        raise ValueError(f"NPZ must be inside data root: {data_root}") from exc
-    if candidate.name not in {"left.npz", "right.npz"}:
-        raise ValueError("Select a Stage4 left.npz or right.npz file.")
-    if not candidate.is_file():
-        raise FileNotFoundError(candidate)
-    if not (candidate.parent / "shared.npz").is_file():
-        raise FileNotFoundError(f"{candidate}: missing sibling shared.npz")
+        raise ValueError(f"Input must be inside data root: {data_root}") from exc
+    if scene_cache:
+        # Scene cache: a sequence directory contains shared/, left/, right/, sampling_bank/.
+        if not (candidate / "shared").is_dir():
+            raise ValueError(f"{candidate}: not a scene-cache sequence (expected sibling 'shared/' dir)")
+        present = [side for side in _SCENE_SIDES if (candidate / side).is_dir()]
+        if not present:
+            raise ValueError(f"{candidate}: sequence has no 'left' or 'right' side directory")
+    else:
+        # Stage 4 NPZ: must be a hand-side NPZ with sibling shared.npz.
+        if candidate.name not in {"left.npz", "right.npz"}:
+            raise ValueError("Select a Stage4 left.npz or right.npz file.")
+        if not candidate.is_file():
+            raise FileNotFoundError(candidate)
+        if not (candidate.parent / "shared.npz").is_file():
+            raise FileNotFoundError(f"{candidate}: missing sibling shared.npz")
     return candidate
+
+
+def _list_files(data_root: Path, *, scene_cache: bool) -> list[Path]:
+    if scene_cache:
+        return _iter_scene_sequence_dirs(data_root)
+    return sorted([*data_root.glob("**/left.npz"), *data_root.glob("**/right.npz")])
 
 
 def _dataset_info(state: dict) -> dict:
@@ -125,7 +177,7 @@ def _dataset_info(state: dict) -> dict:
     input_path = state["input_path"]
     ds_rate = getattr(dataset, "ds_rate", None)
     source_fps = getattr(dataset, "source_fps", None)
-    return {
+    info: dict = {
         "n_pairs": len(dataset),
         "ds_rate": int(ds_rate) if ds_rate is not None else None,
         "source_fps": float(source_fps) if source_fps is not None else None,
@@ -135,10 +187,12 @@ def _dataset_info(state: dict) -> dict:
         "data_root": str(data_root),
         "base_stride": int(state["args"].stride),
         "available_strides": list(range(int(state["runner"].cfg.data.min_stride), int(state["runner"].cfg.data.max_stride) + 1)),
+        "scene_cache": bool(state["scene_cache"]),
     }
+    return info
 
 
-def _dataset_for_stride(state: dict, stride: int) -> Stage4CmDataset:
+def _dataset_for_stride(state: dict, stride: int):
     min_stride = int(state["runner"].cfg.data.min_stride)
     max_stride = int(state["runner"].cfg.data.max_stride)
     if stride < min_stride or stride > max_stride:
@@ -170,7 +224,33 @@ def _infer_horizon(state: dict, base_idx: int, stride: int) -> dict:
     return payload
 
 
-def _infer_one(runner: CmActionRunner, dataset: Stage4CmDataset, idx: int) -> dict:
+def _scene_pose_pair(dataset, idx: int, stride: int) -> tuple[np.ndarray, np.ndarray, str]:
+    """Return ``(pose_current, pose_next, side)`` for a scene-cache sample.
+
+    The dataset's ``sample_location`` does not surface the hand side, so we read
+    it back from ``dataset._samples`` (the public ``__getitem__`` already relies
+    on the same private tuple).
+    """
+    samples = getattr(dataset, "_samples", None)
+    if not samples or idx >= len(samples):
+        raise IndexError(f"scene dataset has no sample {idx}")
+    sequence_dir, side, current = samples[idx][:3]
+    cache = dataset._get_cache(sequence_dir)  # noqa: SLF001 — mirrors __getitem__
+    record = dataset._load_record(sequence_dir, side)  # noqa: SLF001
+    side_arrays = record["side_arrays"]
+    pose_current = np.asarray(side_arrays["hand_root_pose_world"][int(current)], dtype=np.float32)
+    pose_next = np.asarray(
+        side_arrays["hand_root_pose_world"][int(current) + int(stride)], dtype=np.float32
+    )
+    return pose_current, pose_next, str(side)
+
+
+def _is_scene_dataset(dataset) -> bool:
+    """Detect ``Stage4CmSceneDataset`` without importing it eagerly."""
+    return type(dataset).__name__ == "Stage4CmSceneDataset"
+
+
+def _infer_one(runner: CmActionRunner, dataset, idx: int) -> dict:
     sample = dataset[idx]
     batch = {k: v.unsqueeze(0) for k, v in sample.items() if torch.is_tensor(v)}
     with torch.no_grad():
@@ -196,20 +276,25 @@ def _infer_one(runner: CmActionRunner, dataset: Stage4CmDataset, idx: int) -> di
     anchors_pos = prediction["cm_anchor_pos"].squeeze(0).numpy().astype(np.float64)
     decoder_usage = prediction["decoder_slot_usage"].squeeze(0).numpy().astype(np.float64)
 
-    # World-coordinate hand-root poses (row-major 4x4) for the W-key toggle.
-    # npz has [T, 4, 4]; current frame pose for current-frame geometry,
-    # next frame pose for future-frame geometry (anchor_pos lives in current).
-    path, raw_idx = dataset.sample_location(idx)
-    data = dataset._load_file(path)
     stride_npz = int(sample["stride"])
-    pose_current = np.asarray(data["hand_root_pose_world"][raw_idx], dtype=np.float32)
-    pose_next = np.asarray(data["hand_root_pose_world"][raw_idx + stride_npz], dtype=np.float32)
+    if _is_scene_dataset(dataset):
+        pose_current, pose_next, side = _scene_pose_pair(dataset, idx, stride_npz)
+    else:
+        # Stage 4 NPZ layout.
+        path, raw_idx = dataset.sample_location(idx)
+        data = dataset._load_file(path)  # noqa: SLF001 — mirrors __getitem__
+        pose_current = np.asarray(data["hand_root_pose_world"][raw_idx], dtype=np.float32)
+        pose_next = np.asarray(
+            data["hand_root_pose_world"][raw_idx + stride_npz], dtype=np.float32
+        )
+        side = path.stem
 
     return {
         "idx": int(idx),
         "raw": int(sample["raw_frame_id"]),
         "next_raw": int(sample["next_raw_frame_id"]),
         "stride": int(sample["stride"]),
+        "side": side,
         "valid_obj_count": int(valid.sum().item()),
         "points": {
             "current": _to_jsonable(current),
@@ -232,7 +317,7 @@ def _infer_one(runner: CmActionRunner, dataset: Stage4CmDataset, idx: int) -> di
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "CmHTMLViewer/0.1"
+    server_version = "CmHTMLViewer/0.2"
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
@@ -281,10 +366,16 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/files":
             query = parse_qs(parsed.query).get("query", [""])[0].strip().lower()
             data_root = state["data_root"]
+            scene_cache = bool(state["scene_cache"])
+            with state["lock"]:
+                candidates = [
+                    _input_path_for_client(candidate, data_root)
+                    for candidate in _list_files(data_root, scene_cache=scene_cache)
+                ]
             candidates = [
-                _input_path_for_client(candidate, data_root)
-                for candidate in sorted([*data_root.glob("**/left.npz"), *data_root.glob("**/right.npz")])
-                if not query or query in str(candidate.relative_to(data_root)).lower()
+                candidate
+                for candidate in candidates
+                if not query or query in str(candidate).lower()
             ]
             self._send_json({"files": candidates[:300], "total": len(candidates), "query": query})
             return
@@ -336,7 +427,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             requested_path = str(self._read_json()["path"])
             with state["lock"]:
-                input_path = _resolve_input_path(requested_path, state["data_root"])
+                input_path = _resolve_input_path(
+                    requested_path, state["data_root"], scene_cache=bool(state["scene_cache"]),
+                )
                 dataset = _build_dataset(state["args"], state["runner"], input_path)
                 state["dataset"] = dataset
                 state["input_path"] = input_path
@@ -358,9 +451,15 @@ def main() -> None:
     parser.add_argument("--input", required=True)
     parser.add_argument(
         "--data-root",
-        default=str(REPO_ROOT / "data" / "processed_data" / "stage4" / "data"),
-        help="Stage4 root exposed by the browser NPZ selector.",
+        default=None,
+        help=(
+            "Root exposed by the browser selector. "
+            "Defaults to data/processed_data/stage4/data (Stage 4 NPZ) or "
+            "data/processed_data/cm_scene_v1_1_full when --scene-cache is set."
+        ),
     )
+    parser.add_argument("--scene-cache", action="store_true",
+                        help="Use Stage4CmSceneDataset (Scene Cache V1.1) and treat --input as a sequence directory.")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--device", default="auto")
@@ -374,10 +473,16 @@ def main() -> None:
     runner.setup_inference(args.checkpoint)
     if not isinstance(runner, CmActionRunner):
         raise SystemExit("This server only supports CmAction BaseRunner checkpoints.")
+    if args.data_root is None:
+        args.data_root = str(
+            REPO_ROOT / "data" / "processed_data" / "cm_scene_v1_1_full"
+            if args.scene_cache else
+            REPO_ROOT / "data" / "processed_data" / "stage4" / "data"
+        )
     data_root = Path(args.data_root).expanduser().resolve()
     if not data_root.is_dir():
-        raise SystemExit(f"Stage4 data root does not exist: {data_root}")
-    input_path = _resolve_input_path(args.input, data_root)
+        raise SystemExit(f"Data root does not exist: {data_root}")
+    input_path = _resolve_input_path(args.input, data_root, scene_cache=args.scene_cache)
     dataset = _build_dataset(args, runner, input_path)
 
     server = ThreadingHTTPServer((args.host, args.port), _Handler)
@@ -387,13 +492,14 @@ def main() -> None:
         "dataset": dataset,
         "data_root": data_root,
         "input_path": input_path,
+        "scene_cache": bool(args.scene_cache),
         "datasets_by_stride": {},
         "raw_index_by_stride": {},
         "lock": threading.RLock(),
     }
     print(
         f"[cm-html-viewer] serving on http://{args.host}:{args.port}/  "
-        f"(pairs={len(dataset)}, ckpt={args.checkpoint})"
+        f"(scene_cache={args.scene_cache}, pairs={len(dataset)}, ckpt={args.checkpoint})"
     )
     try:
         server.serve_forever()

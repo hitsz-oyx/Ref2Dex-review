@@ -79,14 +79,14 @@
   </div>
   <aside id="controls" aria-label="Viewer controls">
     <div class="control-group">
-      <label class="control-label" for="npz-path">Stage4 NPZ file</label>
+      <label class="control-label" for="npz-path" id="input-label">Stage4 NPZ file</label>
       <div class="file-row">
         <input id="npz-path" list="npz-files" autocomplete="off" spellcheck="false">
         <button id="load-npz" class="command" type="button">Load</button>
       </div>
       <datalist id="npz-files"></datalist>
       <div class="button-row" style="margin-top:6px"><button id="refresh-files" class="command" type="button">Browse files</button></div>
-      <div id="file-help">Loading available Stage4 files...</div>
+      <div id="file-help">Loading available files...</div>
     </div>
     <div class="control-group">
       <span class="control-label">Flow display</span>
@@ -122,8 +122,8 @@
     <div class="control-group">
       <span class="control-label">Active sources</span>
       <div class="path-row"><strong>Checkpoint</strong><code id="checkpoint-path">Loading...</code></div>
-      <div class="path-row"><strong>Selected NPZ</strong><code id="dataset-path">Loading...</code></div>
-      <div class="path-row"><strong>Stage4 root</strong><code id="data-root-path">Loading...</code></div>
+      <div class="path-row"><strong id="dataset-label">Selected NPZ</strong><code id="dataset-path">Loading...</code></div>
+      <div class="path-row"><strong id="data-root-label">Stage4 root</strong><code id="data-root-path">Loading...</code></div>
     </div>
     <div id="error-panel" hidden><div id="error-title">Viewer issue</div><div id="error-text"></div></div>
   </aside>
@@ -362,10 +362,19 @@
       checkpointPathEl.textContent = info.checkpoint || 'Unavailable';
       datasetPathEl.textContent = info.input || 'Unavailable';
       dataRootPathEl.textContent = info.data_root || 'Unavailable';
+      const scene = !!info.scene_cache;
+      const inputLabelEl = document.getElementById('input-label');
+      const datasetLabelEl = document.getElementById('dataset-label');
+      const dataRootLabelEl = document.getElementById('data-root-label');
+      if (inputLabelEl) inputLabelEl.textContent = scene ? 'Scene sequence dir' : 'Stage4 NPZ file';
+      if (datasetLabelEl) datasetLabelEl.textContent = scene ? 'Selected sequence' : 'Selected NPZ';
+      if (dataRootLabelEl) dataRootLabelEl.textContent = scene ? 'Scene root' : 'Stage4 root';
     }
     async function refreshFileChoices() {
       fileHelpEl.textContent = 'Loading matching files...';
       try {
+        const info = state.lastInfo || {};
+        const scene = !!info.scene_cache;
         const result = await loadFiles(npzPathEl.value.trim());
         npzFilesEl.replaceChildren();
         result.files.forEach(path => {
@@ -373,22 +382,29 @@
           option.value = path;
           npzFilesEl.appendChild(option);
         });
-        fileHelpEl.textContent = `${result.total} matching Stage4 side files. Type a path or choose a suggestion.`;
+        fileHelpEl.textContent = scene
+          ? `${result.total} matching scene sequence dirs. Type a path or choose a suggestion.`
+          : `${result.total} matching Stage4 side files. Type a path or choose a suggestion.`;
         clearError();
       } catch (error) {
-        fileHelpEl.textContent = 'Could not list Stage4 files.';
+        fileHelpEl.textContent = 'Could not list files.';
         showError(`File list: ${error.message}`);
       }
     }
     async function applyInputSelection() {
       const path = npzPathEl.value.trim();
-      if (!path) { showError('Choose a Stage4 left.npz or right.npz file first.'); return; }
+      const scene = !!(state.lastInfo && state.lastInfo.scene_cache);
+      if (!path) {
+        showError(scene ? 'Choose a scene sequence directory first.' : 'Choose a Stage4 left.npz or right.npz file first.');
+        return;
+      }
       const button = document.getElementById('load-npz');
       button.disabled = true;
-      setStatus('Loading Stage4 file...', 'ok');
+      setStatus(scene ? 'Loading scene sequence…' : 'Loading Stage4 file...', 'ok');
       try {
         const info = await selectInput(path);
         state.nPairs = info.n_pairs;
+        state.lastInfo = info;
         state.idx = 0;
         state.horizonMode = false;
         npzPathEl.value = info.input;
@@ -398,8 +414,8 @@
         await setIdx(0);
         if (state.showWorld) focusCurrentGeometry();
       } catch (error) {
-        showError(`Load NPZ: ${error.message}`);
-        setStatus('The selected NPZ could not be loaded.', 'err');
+        showError(`Load input: ${error.message}`);
+        setStatus('The selected input could not be loaded.', 'err');
       } finally {
         button.disabled = false;
         syncControls();
@@ -663,12 +679,15 @@
       try {
         const info = await loadInfo();
         state.nPairs = info.n_pairs;
+        state.lastInfo = info;
         npzPathEl.value = info.input;
         updateSourcePaths(info);
-        fileHelpEl.textContent = `${info.n_pairs} active pairs loaded from ${info.input}`;
+        fileHelpEl.textContent = info.scene_cache
+          ? `${info.n_pairs} active pairs loaded from ${info.input}`
+          : `${info.n_pairs} active pairs loaded from ${info.input}`;
         syncControls();
         refreshFileChoices();
-        setStatus(`info: pairs=${info.n_pairs}  ds_rate=${info.ds_rate}  coord=${info.coord_frame}`);
+        setStatus(`info: pairs=${info.n_pairs}  ds_rate=${info.ds_rate}  coord=${info.coord_frame}  scene_cache=${!!info.scene_cache}`);
         await setIdx(0);
         if (state.showWorld) focusCurrentGeometry();
       } catch (e) {

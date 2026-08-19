@@ -112,8 +112,15 @@ class CmObjectV2Dataset(Dataset):
         self._locations: list[tuple[int, int]] = []
         for root in self.roots:
             files = sorted(root.glob("**/left.npz")) + sorted(root.glob("**/right.npz"))
-            if (root / "meta.json").is_file() and "ref2dex_cm_object_v2" in (root / "meta.json").read_text(encoding="utf-8"):
-                sequences = [path.parent.parent for path in sorted(root.glob("**/shared/meta.json"))]
+            sequence_meta = sorted(root.glob("**/shared/meta.json"))
+            root_meta = (root / "meta.json").read_text(encoding="utf-8") if (root / "meta.json").is_file() else ""
+            if "ref2dex_cm_object_v2" in root_meta or sequence_meta:
+                # Accept both a single object-v2 root and a combined root with
+                # ``grab/`` and ``arctic/`` children.  The latter is the
+                # canonical V1.2 layout used by the mixed config and E1 stats.
+                sequences = [path.parent.parent for path in sequence_meta]
+                if not sequences:
+                    raise ValueError(f"No object-v2 sequence caches under {root}")
                 dataset = _MmapSequenceDataset(sequences, **kwargs)
             else:
                 if not files:
