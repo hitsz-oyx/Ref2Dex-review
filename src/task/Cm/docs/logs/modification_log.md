@@ -254,3 +254,37 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 启动 3 GPU + batch 48 的正式长训。
+
+## 2026-08-19 — 启动 mixed 正式长训
+
+- branch: `oyx`
+- post-commit: `3e32de8`
+- 范围: task 内部
+
+**文件**
+
+- `output/exp/cm_v121/cm_v121_mixed_3gpu_bs48_full_20260819_165238.log` — mixed full-data 训练日志（运行产物，不纳入版本管理）。
+- `src/task/Cm/docs/logs/experiment_log.md` — 将吞吐 EXP-004 锚定到提交 `3e32de8`。
+
+**改动原因**
+
+按 V1.2.1 的数据-only 约束和 EXP-004 吞吐结论，启动 3 GPU、per-device batch 48、global batch 144、online wandb 的 mixed 全量训练。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: torchrun 已启动，3 个 worker 正在加载 Frozen DenseToken 与 object-v2 数据。
+- 剩余: 等待 10000-step 训练、验证和 checkpoint 完成。
+- 续接点: 检查日志中的 `train_setup`、step 进度、W&B 初始化和最终 metrics。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 full-data long-run
+- 进度: mixed 1/3 个正式数据路线已启动；GRAB-only / ARCTIC-only 待 mixed 完成后按相同吞吐设置启动。
+
+**下一步打算做什么**（可选）
+
+按分钟级检查 mixed 运行状态；完成后记录最终指标并启动两个 single-dataset 对照。

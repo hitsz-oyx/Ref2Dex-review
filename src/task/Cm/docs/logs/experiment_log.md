@@ -284,7 +284,7 @@ Verdict: PASS（cache/E1 gate）；正式训练 calibration gate 尚未完成。
 
 ### Baseline
 
-- commit: `HEAD`（正式配置修改提交前的当前工作树）
+- commit: `3e32de8`
 - config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
 - checkpoint: 无；本 EXP 为训练吞吐与正式入口选择，不比较模型效果
 
@@ -364,4 +364,4 @@ batch 24 mixed full pilot 的最终汇总为：`val/mean_stride_epe_mm=29.3987`�
 - `output/exp/cm_v121_throughput/mixed_bs48_3gpu_trainonly.log`
 - `output/exp/cm_v121_throughput/mixed_bs64_3gpu_trainonly.log`
 - `outputs/cm/cm_v121_mixed_bs24_3gpu_full_20260819_131714/metrics.jsonl`
-- commit: 待本轮配置与文档提交后补充
+- commit: `3e32de8`
