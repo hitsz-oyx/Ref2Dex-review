@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
+from collections import OrderedDict
 from pathlib import Path
-from typing import Sequence
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -16,15 +18,17 @@ from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stab
 
 
 class _MmapSequenceDataset(Dataset):
-    def __init__(self, sequence_dirs: list[Path], *, num_obj_points: int = 512, num_hand_points: int = 1538,
-                 base_seed: int = 42, min_stride: int = 1, max_stride: int = 10, fixed_stride: int | None = None,
+    def __init__(self, sequence_dirs: List[Path], *, num_obj_points: int = 512, num_hand_points: int = 1538,
+                 base_seed: int = 42, min_stride: int = 1, max_stride: int = 10, fixed_stride: Optional[int] = None,
                  active_only: bool = True, sampling_bank_size: int = 4, fixed_eval_bank: int = 0):
         self.num_obj_points, self.num_hand_points = num_obj_points, num_hand_points
         self.base_seed, self.min_stride, self.max_stride = base_seed, min_stride, max_stride
-        self.fixed_stride, self.active_only, self.epoch = fixed_stride, active_only, 0
+        self.fixed_stride, self.active_only = fixed_stride, active_only
+        self._epoch = mp.Value("q", 0, lock=True)
         self.sampling_bank_size, self.fixed_eval_bank = max(1, int(sampling_bank_size)), int(fixed_eval_bank)
-        self.rows: list[tuple[Path, str, int]] = []
-        self._cache: dict[Path, dict[str, np.ndarray]] = {}
+        self.rows: List[Tuple[Path, str, int]] = []
+        self._cache: "OrderedDict[Path, Dict[str, np.ndarray]]" = OrderedDict()
+        self._open_sequence_limit = 16
         for sequence in sequence_dirs:
             shared = sequence / "shared"
             for side in ("left", "right"):
@@ -40,12 +44,17 @@ class _MmapSequenceDataset(Dataset):
             raise ValueError("No valid samples in object V2 mmap root")
 
     def set_epoch(self, epoch: int) -> None:
-        self.epoch = int(epoch)
+        with self._epoch.get_lock():
+            self._epoch.value = int(epoch)
+
+    @property
+    def epoch(self) -> int:
+        return int(self._epoch.value)
 
     def __len__(self) -> int:
         return len(self.rows)
 
-    def _load(self, sequence: Path, side: str) -> dict[str, np.ndarray]:
+    def _load(self, sequence: Path, side: str) -> Dict[str, np.ndarray]:
         key = sequence / side
         if key not in self._cache:
             shared = sequence / "shared"
@@ -60,9 +69,13 @@ class _MmapSequenceDataset(Dataset):
                 "indices": np.load(key / "candidate_indices.npy", mmap_mode="r"),
                 "sampling": np.load(key / "sampling_indices.npy", mmap_mode="r") if (key / "sampling_indices.npy").exists() else None,
             }
+        else:
+            self._cache.move_to_end(key)
+        while len(self._cache) > self._open_sequence_limit:
+            self._cache.popitem(last=False)
         return self._cache[key]
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor | str]:
+    def __getitem__(self, index: int) -> Dict[str, Union[torch.Tensor, str]]:
         sequence, side, current = self.rows[index]
         data = self._load(sequence, side)
         raw = int(data["raw"][current])
@@ -106,10 +119,10 @@ class _MmapSequenceDataset(Dataset):
 class CmObjectV2Dataset(Dataset):
     """Read one or more existing Stage4 roots without exposing dataset identity to Cm."""
 
-    def __init__(self, roots: str | Path | Sequence[str | Path], **kwargs) -> None:
+    def __init__(self, roots: Union[str, Path, Sequence[Union[str, Path]]], **kwargs) -> None:
         self.roots = [Path(roots)] if isinstance(roots, (str, Path)) else [Path(root) for root in roots]
-        self.datasets: list[Dataset] = []
-        self._locations: list[tuple[int, int]] = []
+        self.datasets: List[Dataset] = []
+        self._locations: List[Tuple[int, int]] = []
         for root in self.roots:
             files = sorted(root.glob("**/left.npz")) + sorted(root.glob("**/right.npz"))
             sequence_meta = sorted(root.glob("**/shared/meta.json"))
@@ -137,7 +150,7 @@ class CmObjectV2Dataset(Dataset):
         for dataset in self.datasets:
             dataset.set_epoch(epoch)
 
-    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+    def __getitem__(self, index: int) -> Dict[str, torch.Tensor]:
         dataset_index, row = self._locations[index]
         sample = dict(self.datasets[dataset_index][row])
         if isinstance(self.datasets[dataset_index], _MmapSequenceDataset):
@@ -157,8 +170,8 @@ class CmObjectV2Dataset(Dataset):
             return "unknown"
 
 
-def dataset_statistics(dataset: Dataset) -> dict[str, dict[str, float]]:
-    stats: dict[str, dict[str, float]] = {}
+def dataset_statistics(dataset: Dataset) -> Dict[str, Dict[str, float]]:
+    stats: Dict[str, Dict[str, float]] = {}
     for index in range(len(dataset)):
         sample = dataset[index]
         name = str(sample.get("dataset_id", "unknown"))
@@ -174,14 +187,14 @@ def dataset_statistics(dataset: Dataset) -> dict[str, dict[str, float]]:
     return stats
 
 
-def write_statistics(dataset: Dataset, path: str | Path) -> dict:
+def write_statistics(dataset: Dataset, path: Union[str, Path]) -> Dict:
     result = dataset_statistics(dataset)
     payload = {"schema_name": "ref2dex_cm_object_v2_statistics", "sampling_rule": "p_d proportional to sqrt(N_d)", "datasets": result}
     Path(path).write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return payload
 
 
-def _sequence_dirs(root: Path) -> list[Path]:
+def _sequence_dirs(root: Path) -> List[Path]:
     if not root.is_dir():
         raise FileNotFoundError(root)
     result = [path.parent.parent for path in sorted(root.glob("**/shared/meta.json"))]
@@ -190,17 +203,17 @@ def _sequence_dirs(root: Path) -> list[Path]:
     return result
 
 
-def _split_by_dataset(sequence_dirs: list[Path], *, seed: int, val_fraction: float, test_fraction: float) -> tuple[list[Path], list[Path], list[Path]]:
-    grouped: dict[str, list[Path]] = {}
+def _split_by_dataset(sequence_dirs: List[Path], *, seed: int, val_fraction: float, test_fraction: float) -> Tuple[List[Path], List[Path], List[Path]]:
+    grouped: Dict[str, List[Path]] = {}
     for sequence in sequence_dirs:
         try:
             name = str(json.loads((sequence / "shared" / "meta.json").read_text(encoding="utf-8")).get("dataset_name", "unknown"))
         except (OSError, json.JSONDecodeError):
             name = "unknown"
         grouped.setdefault(name, []).append(sequence)
-    train: list[Path] = []
-    val: list[Path] = []
-    test: list[Path] = []
+    train: List[Path] = []
+    val: List[Path] = []
+    test: List[Path] = []
     rng = np.random.default_rng(int(seed))
     for name, values in sorted(grouped.items()):
         values = list(values)
@@ -216,6 +229,46 @@ def _split_by_dataset(sequence_dirs: list[Path], *, seed: int, val_fraction: flo
     return sorted(train), sorted(val), sorted(test)
 
 
+def _read_sequence_split(split_path: Path, root: Path) -> List[Path]:
+    entries = [line.strip() for line in split_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    result = []
+    for entry in entries:
+        path = (root / entry).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Object-v2 split entry escapes root: {entry}") from exc
+        if not (path / "shared" / "meta.json").is_file():
+            raise FileNotFoundError(f"Object-v2 split references missing sequence: {path}")
+        result.append(path)
+    if len(set(result)) != len(result):
+        raise ValueError(f"Duplicate object-v2 sequence in split {split_path}")
+    return result
+
+
+def _resolve_splits(data_cfg, root: Path, sequence_dirs: List[Path], seed: int):
+    descriptor = getattr(data_cfg, "split_json_path", None)
+    if descriptor:
+        descriptor_path = Path(descriptor)
+        if not descriptor_path.is_absolute():
+            descriptor_path = (Path.cwd() / descriptor_path).resolve()
+        payload = json.loads(descriptor_path.read_text(encoding="utf-8"))
+        def read(name: str, required: bool):
+            value = payload.get(name)
+            if not value:
+                if required:
+                    raise ValueError(f"Split descriptor missing {name}")
+                return []
+            path = Path(value)
+            if not path.is_absolute():
+                path = descriptor_path.parent / path
+            return _read_sequence_split(path.resolve(), root)
+        return read("train_split", True), read("val_split", False), read("test_split", False)
+    return _split_by_dataset(sequence_dirs, seed=seed,
+                             val_fraction=float(getattr(data_cfg, "val_split", 0.1) or 0.1),
+                             test_fraction=float(getattr(data_cfg, "test_fraction", 0.1) or 0.1))
+
+
 def make_dataloaders(data_cfg, seed: int, *, meta_cfg, distributed=None):
     """Build sequence-disjoint object-v2 train/val/test loaders.
 
@@ -224,11 +277,7 @@ def make_dataloaders(data_cfg, seed: int, *, meta_cfg, distributed=None):
     """
     root_value = str(getattr(data_cfg, "root", "") or getattr(data_cfg, "train_path", "")).strip()
     root = Path(root_value).resolve()
-    train_dirs, val_dirs, test_dirs = _split_by_dataset(
-        _sequence_dirs(root), seed=seed,
-        val_fraction=float(getattr(data_cfg, "val_split", 0.1) or 0.1),
-        test_fraction=float(getattr(data_cfg, "test_fraction", 0.1) or 0.1),
-    )
+    train_dirs, val_dirs, test_dirs = _resolve_splits(data_cfg, root, _sequence_dirs(root), seed)
     common = dict(num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
                  base_seed=int(seed), min_stride=int(getattr(data_cfg, "min_stride", 1)),
                  max_stride=int(getattr(data_cfg, "max_stride", 10)), active_only=bool(getattr(data_cfg, "active_only", True)),
@@ -262,5 +311,10 @@ def make_dataloaders(data_cfg, seed: int, *, meta_cfg, distributed=None):
     metadata = {"schema_name": "ref2dex_cm_object_v2", "coordinate_frame": "hand_root_t",
                 "num_obj_pool": 4096, "num_obj_points": int(meta_cfg.num_obj_points),
                 "num_hand_points": int(meta_cfg.num_hand_points), "dataset_split": {
-                    "train_sequences": len(train_dirs), "val_sequences": len(val_dirs), "test_sequences": len(test_dirs)}}
+                "train_sequences": len(train_dirs), "val_sequences": len(val_dirs), "test_sequences": len(test_dirs)}}
+    metadata_path = root / "metadata.json"
+    if metadata_path.is_file():
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict):
+            metadata.update(payload)
     return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders

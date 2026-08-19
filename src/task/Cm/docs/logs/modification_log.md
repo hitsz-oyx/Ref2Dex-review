@@ -57,3 +57,46 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **影响范围**
 
 仅 Cm viewer 的 side 名称解析，不改变推理结果。
+
+## 2026-08-19 — 推进 V1.2.1 数据-only 混合实验链路
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/dataset_object_v2.py` — 用共享 epoch 和 LRU 打开缓存修复多进程读取稳定性，并支持固定 split。
+- `src/task/Cm/compute_flow_scale.py` — 增加 object-v2 train-only flow calibration 入口。
+- `src/task/Cm/build_object_v2_splits.py` — 生成 sequence 级固定 split 与 `splits.json`。
+- `src/task/Cm/configs/object_v2_grab_arctic.yaml` — 固定为 no-gate + time condition，并接入固定 split 与校准标记。
+- `src/task/Cm/runner.py` — 识别联合 `grab/` + `arctic/` root 的 object-v2 数据目录。
+- `src/task/Cm/docs/指导/V1.2.1.md` — 研究指导版本，作为本轮实现与实验依据。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 更新任务入口状态与主要入口索引。
+- `src/task/Cm/docs/logs/architecture_log.md` — 记录固定 split、校准和联合 root 的数据流约束。
+- `src/task/Cm/docs/logs/decision_log.md` — 记录共享 epoch、LRU cache 和确定性 split 的实现选择。
+- `src/task/Cm/docs/logs/experiment_log.md` — 追加 V1.2.1 混合短训实验结果与结论。
+
+**改动原因**
+
+按 V1.2.1 指导修复 worker epoch、cache 泄漏和训练 split，并按用户确认采用只改数据链路的 no-gate + time condition 方案，随后用 2-step smoke 与 3-seed 300-step 短训验证实现闭环。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 代码、配置、文档和短训验证都已完成
+- 剩余: 下一轮对照实验
+- 续接点: GRAB-only / ARCTIC-only / mixed 同预算比较
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 mixed data-only baseline
+- 进度: 1/2 个主要步骤完成
+- 本次对应阶段中的第几步: 1
+
+**下一步打算做什么**（可选）
+
+继续跑 GRAB-only、ARCTIC-only 和 mixed 对照，必要时再加长训练步数。

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -63,18 +63,18 @@ def internal_flow_smooth_l1(
 
 
 class CmActionRunner(BaseRunner):
-    def evaluate_all(self) -> dict[str, float]:
+    def evaluate_all(self) -> Dict[str, float]:
         detailed = super().evaluate_all()
         return {**detailed, **self._summarize_stride_metrics(detailed, split="val")}
 
-    def evaluate_test_all(self) -> dict[str, float]:
+    def evaluate_test_all(self) -> Dict[str, float]:
         detailed = super().evaluate_test_all()
         return {**detailed, **self._summarize_stride_metrics(detailed, split="test")}
 
     @staticmethod
-    def _summarize_stride_metrics(metrics: dict[str, float], *, split: str) -> dict[str, float]:
+    def _summarize_stride_metrics(metrics: Dict[str, float], *, split: str) -> Dict[str, float]:
         """Keep a compact validation/test panel instead of 10× metric curves."""
-        def values(name: str) -> list[float]:
+        def values(name: str) -> List[float]:
             return [
                 value for key, value in metrics.items()
                 if key.startswith(f"{split}/stride_") and key.endswith(f"/{name}")
@@ -84,7 +84,7 @@ class CmActionRunner(BaseRunner):
         relative_epe = values("flow/relative_epe")
         improvement = values("flow/zero_flow_improvement")
         norm_ratio = values("flow/norm_ratio")
-        summary: dict[str, float] = {}
+        summary: Dict[str, float] = {}
         if epe:
             summary[f"{split}/mean_stride_epe_mm"] = float(sum(epe) / len(epe))
         if relative_epe:
@@ -110,7 +110,7 @@ class CmActionRunner(BaseRunner):
                 summary[f"{split}/stride_{stride}_epe_mm"] = metrics[key]
         return summary
 
-    def evaluate_loader(self, loader: Any, *, prefix: str) -> dict[str, float]:
+    def evaluate_loader(self, loader: Any, *, prefix: str) -> Dict[str, float]:
         """Add ratios after point-weighted aggregation across one loader."""
         metrics = super().evaluate_loader(loader, prefix=prefix)
         epe_mm = metrics.get(f"{prefix}flow/epe_mm")
@@ -128,10 +128,10 @@ class CmActionRunner(BaseRunner):
             metrics.update(self._evaluate_action_interventions(loader, prefix=prefix))
         return metrics
 
-    def _evaluate_action_interventions(self, loader: Any, *, prefix: str) -> dict[str, float]:
+    def _evaluate_action_interventions(self, loader: Any, *, prefix: str) -> Dict[str, float]:
         """Measure action shuffle/reverse EPE without changing model inputs or loss."""
         totals = {"shuffle": [0.0, 0.0], "reverse": [0.0, 0.0]}
-        dataset_totals: dict[tuple[str, str], list[float]] = {}
+        dataset_totals: Dict[Tuple[str, str], List[float]] = {}
         was_training = self.model.training
         self.eval_mode()
         for batch in loader:
@@ -167,7 +167,7 @@ class CmActionRunner(BaseRunner):
             result[f"{prefix}flow/action_{mode}_{key}_epe_mm"] = 1000.0 * values[0] / max(values[1], 1.0)
         return result
 
-    def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+    def select_eval_metrics(self, metrics: Dict[str, float]) -> Dict[str, float]:
         """Keep JSONL exhaustive while limiting W&B validation curves."""
         keep = {
             key: value
@@ -181,7 +181,7 @@ class CmActionRunner(BaseRunner):
                     keep[key] = metrics[key]
         return keep
 
-    def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+    def select_step_metrics(self, metrics: Dict[str, float]) -> Dict[str, float]:
         core_keys = (
             "loss", "flow/loss_scaled", "flow/epe_mm", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
@@ -195,7 +195,7 @@ class CmActionRunner(BaseRunner):
             if key in metrics
         }
 
-    def select_epoch_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+    def select_epoch_metrics(self, metrics: Dict[str, float]) -> Dict[str, float]:
         suffix = "train_epoch/"
         core_keys = (
             "loss", "flow/loss_scaled", "flow/epe_mm", "flow/gt_norm_mm", "flow/pred_norm_mm",
@@ -252,6 +252,13 @@ class CmActionRunner(BaseRunner):
             return None
         meta_path = Path(root_value) / "meta.json"
         if not meta_path.is_file():
+            # Combined object-v2 roots may contain dataset-specific children
+            # (grab/ and arctic/) without duplicating a root meta.json.
+            if list(Path(root_value).glob("**/shared/meta.json")):
+                from src.task.Cm.dataset_object_v2 import make_dataloaders as make_object_dataloaders
+                return make_object_dataloaders(
+                    data_cfg, seed, meta_cfg=self.cfg.meta, distributed=self.distributed,
+                )
             return None
         try:
             payload = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -277,7 +284,7 @@ class CmActionRunner(BaseRunner):
             distributed=self.distributed,
         )
 
-    def configure_data(self, metadata: dict[str, Any], train_dataset: Any | None = None) -> None:
+    def configure_data(self, metadata: Dict[str, Any], train_dataset: Optional[Any] = None) -> None:
         super().configure_data(metadata, train_dataset)
         stage4_frame = str(metadata.get("coordinate_frame", ""))
         expected_frame = str(self.cfg.meta.coordinate_frame)
@@ -348,7 +355,7 @@ class CmActionRunner(BaseRunner):
     def step(
         self,
         model: torch.nn.Module,
-        batch: dict[str, torch.Tensor],
+        batch: Dict[str, torch.Tensor],
         mode: str = "train",
     ) -> RunnerOutput:
         prediction = model(batch)
@@ -380,7 +387,7 @@ class CmActionRunner(BaseRunner):
         # (0=object, 1=environment) and never enters the model.  Splitting the
         # EPE by source exposes a zero-flow collapse on environment points
         # that the overall EPE could otherwise hide.
-        source_metrics: dict[str, MetricStat] = {}
+        source_metrics: Dict[str, MetricStat] = {}
         scene_source_id = batch.get("scene_source_id")
         if scene_source_id is not None:
             environment = scene_source_id.bool() & valid
@@ -474,7 +481,7 @@ class CmActionRunner(BaseRunner):
         sampled_active_count = prediction["slot_hard_mask"].sum(dim=-1).float()
         fallback_used = prediction["slot_fallback_used"]
         effective_branch_count = full_usage_entropy.exp().mean()
-        metrics: dict[str, torch.Tensor | MetricStat] = {
+        metrics: Dict[str, Union[torch.Tensor, MetricStat]] = {
             "loss": total_loss,
             "flow/loss_scaled": flow_smooth_l1,
             "flow/epe_mm": MetricStat(float((residual_sum * 1000.0).detach()), float(valid_count.detach())),

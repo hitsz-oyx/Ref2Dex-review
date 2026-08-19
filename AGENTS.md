@@ -1,17 +1,5 @@
 # Ref2Dex Agent 规范
 
-本仓库 AI Agent 协作规范。涉及科研实验工作流、研究优先级、可信度检查、范围纪律等通用研究工程规范，已拆分到：
-
-```text
-.agents/skills/research-experiment/SKILL.md
-```
-
-进行科研实验、模型训练、benchmark、evaluation 或连续实验推进前，应先调用该 skill。
-
-本文件仅保留本仓库特定的目录、文档、Git 与协作规范。
-
----
-
 ## 0. 需求确认与歧义处理
 
 在开始修改代码、配置、数据处理逻辑或实验实现之前，必须先确认用户需求已经足够明确。

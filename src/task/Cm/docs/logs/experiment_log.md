@@ -2,7 +2,7 @@
 
 ## 当前研究状态
 
-V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。GRAB/ARCTIC sample 数接近，但 flow RMS 相差约 2.26×；下一步是固定 split、train-only calibration 与 GRAB-only/ARCTIC-only/mixed 短训。
+V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的混合短训；当前结论是实现链路可跑，但 300-step 级别训练仍属 INCONCLUSIVE。
 
 ## 历史证据索引
 
@@ -11,8 +11,102 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 ### 当前结论
 
 - V1.2 implementation gate：`SUPPORTED`（真实 smoke 级别）。
+- V1.2.1 mixed data-only short training：`INCONCLUSIVE`（实现有效，但 300-step 级别未形成明确效果结论）。
 - V1.1.1 downstream cache parity：`SUPPORTED`；feature 逐元素差异归因于 spconv 非确定性，不作为科学反证。
 - V1.1.2 全量 DenseToken bank：`INVALID_IMPLEMENTATION`/路线撤回，因资源成本过高而停止，不用于效果结论。
+
+## EXP-002 — V1.2.1 fixed split + no-gate/time mixed short training
+
+### 日期
+
+2026-08-19
+
+### 对应指导
+
+`docs/指导/V1.2.1.md`
+
+### 假设
+
+只改数据链路，并把模型保持在稳定的 no-gate + time condition 语义下，配合固定 sequence split 和 train-only flow calibration，可以先把 V1.2.1 的实现问题收敛到可重复的训练基线，再判断 mixed GRAB/ARCTIC 数据是否会带来早期优化信号。
+
+### Baseline
+
+- commit: `ccb76ca`
+- config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- checkpoint: 无；本次只做短训验证
+
+### 本次修改
+
+- 增加 sequence 固定 split 生成器；
+- `_MmapSequenceDataset` 改为 `mp.Value` 共享 epoch；
+- object-v2 cache 加入 LRU 打开数上限；
+- train-only flow calibration 接入 object-v2 mixed root；
+- mixed config 固定为 `use_time_condition=true`、`use_slot_gate=false`；
+- runner 增加联合 root 的 object-v2 识别。
+
+### 实现审查
+
+Verdict: PASS
+
+关键检查：
+- train/val/test 按 sequence 互斥；
+- dataloader 能稳定读取联合 `grab/` + `arctic/` root；
+- 2-step smoke 与 3-seed 短训均无 NaN / 崩溃 / 数据错误；
+- no-gate + time condition 与当前配置一致。
+
+### 实验命令
+
+```bash
+python -m src.task.Cm.train \
+  --config src/task/Cm/configs/object_v2_grab_arctic.yaml \
+  --set train.max_steps=300 \
+  --set train.seed=42
+```
+
+### 结果
+
+| Seed | Final train/mean_stride_epe_mm | Final train/val_mean_stride_epe_mm | Final train/relative_epe | Final train/zero_flow_improvement |
+| --- | ---: | ---: | ---: | ---: |
+| 42 | 28.0734 mm | 28.0734 mm | 1.00372 | -0.003715 |
+| 43 | 27.5051 mm | 27.5051 mm | 1.00405 | -0.0040464 |
+| 44 | 28.0194 mm | 28.0194 mm | 1.00533 | -0.0053268 |
+
+证据文件：
+- `output/exp/cm_v121/cm_v121_mixed_seed42.stdout.log`
+- `output/exp/cm_v121/cm_v121_mixed_seed43.stdout.log`
+- `output/exp/cm_v121/cm_v121_mixed_seed44.stdout.log`
+- `outputs/cm/cm_v121_mixed_seed42_20260819_094543/metrics.jsonl`
+- `outputs/cm/cm_v121_mixed_seed43_20260819_094543/metrics.jsonl`
+- `outputs/cm/cm_v121_mixed_seed44_20260819_094543/metrics.jsonl`
+
+### 关键观察
+
+- 数据链路与训练链路都能闭环，说明 V1.2.1 的实现修正是有效的；
+- 三个 seed 的 300-step 结果都没有给出明显的优化信号，zero-flow 对比略差于当前预测；
+- 这个 budget 更像实现 gate，而不是足够强的科学判定。
+
+### 解释
+
+fixed split 和 train-only calibration 解决的是可复现性与统计口径问题；它们让实验可比，但并不会自动提升指标。300 step 训练太短，且 cosine schedule 已明显衰减，当前结果不足以判断 mixed data-only 假设是否成立。
+
+### 结论状态
+
+INCONCLUSIVE
+
+### 决策
+
+不把当前 300-step checkpoint 作为候选最佳模型；保留配置与日志，继续做更有区分度的 GRAB-only、ARCTIC-only、mixed 对照。
+
+### 下一步
+
+按 V1.2.1 指导继续跑同预算的 GRAB-only / ARCTIC-only / mixed 对照，并在需要时提高训练步数再比较。
+
+### 证据
+
+- commit: `HEAD`
+- config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- train log: `output/exp/cm_v121/`
+- metrics: `outputs/cm/cm_v121_mixed_seed*/metrics.jsonl`
 
 ## EXP-001 — V1.2 full-data Stage4/cache 与 E1 统计
 

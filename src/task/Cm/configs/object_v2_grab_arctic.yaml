@@ -3,15 +3,18 @@ _base_: src.task.Cm.config:Config
 name: cm_object_v2_grab_arctic
 
 meta:
-  use_time_condition: false
+  use_time_condition: true
   num_obj_pool: 4096
   num_obj_points: 512
   num_hand_points: 1538
-  use_slot_gate: true
-  require_flow_calibration: false
+  use_slot_gate: false
+  require_flow_calibration: true
+  flow_target_rms_m: 0.0732755479335936
+  object_flow_target_scale: 13.647117329047555
 data:
   root: data/processed_data/cm_object_v2
   train_path: data/processed_data/cm_object_v2
+  split_json_path: data/processed_data/cm_object_v2/splits_seed42/splits.json
   val_path: null
   test_path: null
   val_split: 0.1

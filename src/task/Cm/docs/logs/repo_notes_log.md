@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-主路线是 V1.2 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank 和 E1 统计已经完成；固定 split、train-only calibration 与三组短训尚未完成。
+主路线是 V1.2.1 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank、E1 统计、sequence 固定 split、train-only calibration 和 no-gate + time condition 的 300-step 混合短训都已完成；当前结论是实现链路可跑，但还不能据此下科学判断。
 
 ## 文档索引
 
@@ -16,7 +16,8 @@
 - 修改记录：[`modification_log.md`](modification_log.md)
 - 版本指导：[`../指导/`](../指导/)
 - 兼容性/历史说明：[`../项目说明.md`](../项目说明.md)、[`../Cm框架.md`](../Cm框架.md)、[`../Pipeline.md`](../Pipeline.md)
+- 当前研究指导：`../指导/V1.2.1.md`
 
 ## 主要入口
 
-`process/GRAB/stage4_cm.py`、`process/ARCTIC/stage4_cm.py`、`process/common/object_cache_v2.py`、`src/task/Cm/dataset_object_v2.py`、`src/task/Cm/model.py`、`src/task/Cm/runner.py`、`src/task/Cm/train.py`、`src/task/Cm/eval.py`。
+`process/GRAB/stage4_cm.py`、`process/ARCTIC/stage4_cm.py`、`process/common/object_cache_v2.py`、`src/task/Cm/build_object_v2_splits.py`、`src/task/Cm/dataset_object_v2.py`、`src/task/Cm/compute_flow_scale.py`、`src/task/Cm/model.py`、`src/task/Cm/runner.py`、`src/task/Cm/train.py`、`src/task/Cm/eval.py`。
