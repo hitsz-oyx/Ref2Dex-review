@@ -132,3 +132,36 @@ train-only benchmark 显示 mixed 的纯训练吞吐在 3 GPU 下随 batch 增�
 **建议用户确认**
 
 否；当前选择遵循用户刚确认的 50-epoch 正式训练口径，启动前仍需确认可用 GPU 不与其他任务冲突。
+
+## 2026-08-20 — gate+cm64 采用全开后渐进启用的 warm-up
+
+- branch: `oyx`
+- post-commit: `待提交`
+
+**未指定点**
+
+用户要求增加 gate warm-up，但未指定 warm-up 时长以及从全 slot 到 hard gate 的切换方式。
+
+**实际选择**
+
+前 5 个 epoch 强制 16 个 slot 全部参与，随后 5 个 epoch 将 threshold 从 0 线性升至 0.85、count loss 权重从 0 线性升至配置值；第 11 个 epoch 起恢复完整 gate 配置。
+
+**其他合理选择**
+
+只关闭 gate 若干 epoch 后直接切换；或仅降低 threshold 而不渐进 count loss。
+
+**选择理由**
+
+Hard-Concrete 初始 nonzero probability 约 0.83，而原 threshold 为 0.85，直接切换会再次触发单 slot fallback。全开阶段先让 slot/decoder 学到有区分度的表示，渐进阶段再引入稀疏压力，可避免切换瞬间重新坍缩。
+
+**对结果的影响**
+
+改变 gate 的优化日程，不改变输入、GT、数据划分、评估指标或最终 gate 超参数；该版本应与原 gate+cm64 作为不同训练策略比较。
+
+**可逆性**
+
+完全可逆；warm-up 通过独立配置开关控制，默认关闭。
+
+**建议用户确认**
+
+否（方案已由用户确认）。

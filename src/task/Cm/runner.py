@@ -63,6 +63,34 @@ def internal_flow_smooth_l1(
 
 
 class CmActionRunner(BaseRunner):
+    def _gate_warmup_state(self, epoch: int) -> Tuple[bool, float, float, float]:
+        """Return force-all, threshold, count weight, and ramp progress."""
+        base_threshold = float(self.cfg.meta.slot_threshold)
+        base_count_weight = float(self.cfg.meta.loss_slot_count_weight)
+        if not bool(getattr(self.cfg.meta, "gate_warmup_enabled", False)):
+            return False, base_threshold, base_count_weight, 1.0
+        if not bool(getattr(self.cfg.meta, "use_slot_gate", True)):
+            raise ValueError("gate_warmup_enabled requires meta.use_slot_gate=true.")
+        full_epochs = int(getattr(self.cfg.meta, "gate_warmup_full_epochs", 0))
+        ramp_epochs = int(getattr(self.cfg.meta, "gate_warmup_ramp_epochs", 0))
+        if full_epochs < 0 or ramp_epochs < 2:
+            raise ValueError("Gate warm-up requires full_epochs >= 0 and ramp_epochs >= 2.")
+        if epoch < full_epochs:
+            return True, 0.0, 0.0, 0.0
+        ramp_index = epoch - full_epochs
+        if ramp_index < ramp_epochs:
+            progress = float(ramp_index) / float(ramp_epochs - 1)
+            return False, base_threshold * progress, base_count_weight * progress, progress
+        return False, base_threshold, base_count_weight, 1.0
+
+    def _set_train_epoch(self, epoch: int) -> None:
+        super()._set_train_epoch(epoch)
+        force_all, threshold, count_weight, progress = self._gate_warmup_state(epoch)
+        self._runtime_slot_count_weight = count_weight
+        self._runtime_gate_warmup_progress = progress
+        model = self.model.module if hasattr(self.model, "module") else self.model
+        model.set_slot_gate_runtime(force_all_slots=force_all, threshold=threshold)
+
     def evaluate_all(self) -> Dict[str, float]:
         detailed = super().evaluate_all()
         return {**detailed, **self._summarize_stride_metrics(detailed, split="val")}
@@ -186,6 +214,7 @@ class CmActionRunner(BaseRunner):
             "loss", "flow/loss_scaled", "flow/epe_mm", "lr", "grad_norm",
             "slot/expected_active_mean", "slot/hard_active_mean", "slot/fallback_ratio",
             "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
+            "slot/gate_threshold", "slot/gate_force_all", "slot/gate_warmup_progress",
             "flow/epe_object_mm", "flow/epe_environment_mm", "flow/pred_norm_environment_mm",
         )
         aliases = {"lr": "optim/lr", "grad_norm": "optim/grad_norm"}
@@ -203,6 +232,7 @@ class CmActionRunner(BaseRunner):
             "slot/effective_branch_count", "slot/global_top1_usage", "slot/per_sample_top1_usage",
             "slot/assignment_entropy",
             "slot/max_probability_mean", "slot/count_loss", "slot/confidence_loss",
+            "slot/gate_threshold", "slot/gate_force_all", "slot/gate_warmup_progress",
             "flow/epe_object_mm", "flow/gt_norm_object_mm",
             "flow/epe_environment_mm", "flow/gt_norm_environment_mm",
             "flow/pred_norm_environment_mm",
@@ -468,12 +498,14 @@ class CmActionRunner(BaseRunner):
             active_overlap_loss = (slot_similarity * active_pair_weight).sum() / active_pair_weight.sum().clamp_min(1e-8)
         else:
             active_overlap_loss = cm_slot_weights.new_zeros(())
-        confidence_loss = torch.relu(
-            float(self.cfg.meta.slot_threshold) - max_slot_probability
-        ).square().mean()
+        effective_threshold = prediction["slot_gate_threshold"]
+        confidence_loss = torch.relu(effective_threshold - max_slot_probability).square().mean()
+        slot_count_weight = float(getattr(
+            self, "_runtime_slot_count_weight", self.cfg.meta.loss_slot_count_weight,
+        ))
         total_loss = (
             float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
-            + float(self.cfg.meta.loss_slot_count_weight) * slot_count_loss
+            + slot_count_weight * slot_count_loss
             + float(self.cfg.meta.loss_slot_confidence_weight) * confidence_loss
             + float(self.cfg.meta.loss_active_overlap_weight) * active_overlap_loss
         )
@@ -497,6 +529,11 @@ class CmActionRunner(BaseRunner):
             "slot/assignment_entropy": slot_assignment_entropy,
             "slot/count_loss": slot_count_loss,
             "slot/confidence_loss": confidence_loss,
+            "slot/gate_threshold": effective_threshold,
+            "slot/gate_force_all": prediction["slot_gate_force_all"],
+            "slot/gate_warmup_progress": cm_slot_weights.new_tensor(float(getattr(
+                self, "_runtime_gate_warmup_progress", 1.0,
+            ))),
         }
         metrics.update(source_metrics)
         if float(self.cfg.meta.loss_active_overlap_weight) != 0.0:

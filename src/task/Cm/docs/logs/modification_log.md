@@ -465,3 +465,36 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 按分钟级观察 GPU 6、7 上的稳定吞吐和 mixed 恢复情况；完成后追加正式 EXP 结果。
+
+## 2026-08-20 — 增加 gate warm-up 配置与训练策略
+
+- branch: `oyx`
+- post-commit: `待提交`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/Cm/config.py` — 增加 gate warm-up 开关、全开 epoch 和渐进 epoch 配置。
+- `src/task/Cm/model.py` — 支持按 epoch 动态设置 gate threshold，并在 warm-up 阶段强制所有 slot 参与 decoder。
+- `src/task/Cm/runner.py` — 实现 5 epoch 全开、5 epoch threshold/count weight 线性 ramp 的调度与指标记录。
+- `src/task/Cm/configs/object_v2_grab_gate_cm64_warmup.yaml` — 新增 GRAB-only gate+cm64 warm-up 正式训练入口。
+- `tests/test_cm_slot_attention.py` — 增加 warm-up 全 slot 路径和调度测试。
+
+**改动原因**
+
+原 gate+cm64 训练出现 effective branch count 约 1、global top-1 usage 约 1 的严重 slot collapse。用户确认采用 warm-up 后重新训练。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**
+
+- 当前: 代码、配置、单测和配置调度 smoke 已完成；待启动独立正式训练。
+- 剩余: 提交后选择可容纳的 GPU 启动训练并记录吞吐、slot 使用和 EPE。
+- 续接点: 新配置 `object_v2_grab_gate_cm64_warmup.yaml`。
+
+**项目阶段进度**
+
+- 阶段: V1.2.1 gate warm-up candidate
+- 进度: 代码实现完成，实验尚未开始。

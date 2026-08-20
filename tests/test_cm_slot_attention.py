@@ -156,6 +156,50 @@ def test_no_gate_routes_through_every_configured_slot() -> None:
     torch.testing.assert_close(output["decoder_slot_usage"].sum(dim=-1), torch.ones(2))
 
 
+def test_gate_warmup_forces_all_slots_without_changing_gate_probabilities() -> None:
+    torch.manual_seed(18)
+    head = CmFlowHead(
+        dense_token_dim=4, cm_dim=8, num_cm_tokens=4, num_slot_iters=1,
+        use_slot_gate=True, slot_threshold=0.85,
+    )
+    head.eval()
+    with torch.no_grad():
+        head.slot_gate_head[-1].weight.zero_()
+        head.slot_gate_head[-1].bias.fill_(-100.0)
+    head.set_slot_gate_runtime(force_all_slots=True, threshold=0.0)
+    output = head(
+        z_obj=torch.randn(2, 3, 4), z_hand=torch.randn(2, 5, 4),
+        dense_hand_contact=torch.rand(2, 5), obj_points=torch.randn(2, 3, 3),
+        obj_normals=torch.randn(2, 3, 3), hand_points=torch.randn(2, 5, 3),
+        hand_normals=torch.randn(2, 5, 3), hand_flow=torch.randn(2, 5, 3),
+        obj_valid_mask=torch.ones(2, 3, dtype=torch.bool),
+    )
+    torch.testing.assert_close(output["slot_hard_mask"], torch.ones(2, 4, dtype=torch.bool))
+    assert torch.all(output["slot_nonzero_prob"] < 1e-4)
+    assert float(output["slot_gate_threshold"]) == 0.0
+    assert float(output["slot_gate_force_all"]) == 1.0
+
+
+def test_gate_warmup_schedule_has_full_open_and_linear_ramp() -> None:
+    runner = object.__new__(CmActionRunner)
+    runner.cfg = SimpleNamespace(meta=SimpleNamespace(
+        use_slot_gate=True,
+        gate_warmup_enabled=True,
+        gate_warmup_full_epochs=5,
+        gate_warmup_ramp_epochs=5,
+        slot_threshold=0.85,
+        loss_slot_count_weight=1e-3,
+    ))
+    assert runner._gate_warmup_state(4) == (True, 0.0, 0.0, 0.0)
+    assert runner._gate_warmup_state(5) == (False, 0.0, 0.0, 0.0)
+    force_all, threshold, count_weight, progress = runner._gate_warmup_state(7)
+    assert not force_all
+    assert threshold == 0.425
+    assert count_weight == 5e-4
+    assert progress == 0.5
+    assert runner._gate_warmup_state(9) == (False, 0.85, 1e-3, 1.0)
+
+
 def test_time_condition_requires_and_uses_physical_seconds() -> None:
     torch.manual_seed(19)
     head = CmFlowHead(

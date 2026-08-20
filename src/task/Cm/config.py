@@ -43,6 +43,12 @@ class Config(TaskConfig):
         # Keep the default enabled so existing hard-gate checkpoints retain
         # their exact behaviour.
         use_slot_gate: bool = True
+        # Optional curriculum for hard gating.  During the full warm-up all
+        # slots participate in the decoder; the following ramp raises the
+        # threshold and L0 count weight to their configured target values.
+        gate_warmup_enabled: bool = False
+        gate_warmup_full_epochs: int = 5
+        gate_warmup_ramp_epochs: int = 5
         # Condition on the physical endpoint interval in seconds.  Disabled
         # by default to preserve existing checkpoints and experiments.
         use_time_condition: bool = False

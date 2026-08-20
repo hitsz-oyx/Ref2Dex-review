@@ -167,6 +167,8 @@ class CmFlowHead(nn.Module):
         self.hand_flow_input_scale = float(hand_flow_input_scale)
         self.object_flow_target_scale = float(object_flow_target_scale)
         self.slot_threshold = float(slot_threshold)
+        self.runtime_slot_threshold = self.slot_threshold
+        self.runtime_force_all_slots = False
         self.use_slot_gate = bool(use_slot_gate)
         self.use_time_condition = bool(use_time_condition)
         if min(self.geometry_input_scale, self.hand_flow_input_scale, self.object_flow_target_scale) <= 0.0:
@@ -209,6 +211,13 @@ class CmFlowHead(nn.Module):
         nn.init.zeros_(self.edge_logit_head.bias)
         nn.init.zeros_(self.edge_flow_head.weight)
         nn.init.zeros_(self.edge_flow_head.bias)
+
+    def set_slot_gate_runtime(self, *, force_all_slots: bool, threshold: float) -> None:
+        """Set the epoch-level gate curriculum without changing checkpoints."""
+        if not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("Runtime slot threshold must be in [0, 1].")
+        self.runtime_force_all_slots = bool(force_all_slots)
+        self.runtime_slot_threshold = float(threshold)
 
     def forward(
         self,
@@ -254,7 +263,7 @@ class CmFlowHead(nn.Module):
         if self.use_slot_gate:
             slot_gate_logits = self.slot_gate_head(cm_tokens).squeeze(-1)
             slot_nonzero_prob = self.hard_concrete.nonzero_probability(slot_gate_logits)
-            hard_slot_mask = slot_nonzero_prob >= self.slot_threshold
+            hard_slot_mask = slot_nonzero_prob >= self.runtime_slot_threshold
             all_below_threshold = ~hard_slot_mask.any(dim=-1, keepdim=True)
             selection_score = slot_gate_logits
             if self.training:
@@ -262,6 +271,9 @@ class CmFlowHead(nn.Module):
             fallback_index = selection_score.argmax(dim=-1, keepdim=True)
             fallback_mask = torch.zeros_like(slot_nonzero_prob).scatter_(1, fallback_index, 1.0).bool()
             hard_slot_mask = torch.where(all_below_threshold, fallback_mask, hard_slot_mask)
+            if self.runtime_force_all_slots:
+                hard_slot_mask = torch.ones_like(hard_slot_mask)
+                all_below_threshold = torch.zeros_like(all_below_threshold)
         else:
             # Pure Slot Attention ablation: every configured slot participates
             # in the decoder's ordinary softmax, with no gate or L0 pressure.
@@ -325,6 +337,8 @@ class CmFlowHead(nn.Module):
             "slot_nonzero_prob": slot_nonzero_prob,
             "slot_fallback_used": all_below_threshold.squeeze(-1),
             "slot_fallback_index": fallback_index.squeeze(-1),
+            "slot_gate_threshold": cm_tokens.new_tensor(self.runtime_slot_threshold),
+            "slot_gate_force_all": cm_tokens.new_tensor(float(self.runtime_force_all_slots)),
             "decoder_slot_usage": decoder_slot_usage,
             "dynamic_candidate_flow": dynamic_flow_scaled / self.object_flow_target_scale,
         }
@@ -398,6 +412,12 @@ class CmFlowModel(nn.Module):
     @property
     def num_cm_tokens(self) -> int:
         return self.head.num_cm_tokens
+
+    def set_slot_gate_runtime(self, *, force_all_slots: bool, threshold: float) -> None:
+        self.head.set_slot_gate_runtime(
+            force_all_slots=force_all_slots,
+            threshold=threshold,
+        )
 
     def forward(
         self,
