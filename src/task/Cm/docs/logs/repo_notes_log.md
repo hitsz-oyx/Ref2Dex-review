@@ -29,3 +29,4 @@
 - Stage4 输出的 `meta.json` 必须记录 `source_grab_root`、`resolved_sequence_root` 和 `subject_vtemplate_policy`。这三项用于确认 cache 是否由正确的 raw layout 和手型语义生成。
 - 当前 `cm_stage4_v2` / `cm_object_v2` cache 是在上述路径修复前生成的，GRAB 手点和 candidate mask 可能使用平均 MANO；在正式比较或长训前必须重建对应 GRAB cache。不要直接覆盖旧 cache，先写到新输出目录并保留旧产物用于追溯。
 - V2 的其他合同保持不变：4 倍下采样（30 Hz）、4096 object pool、当前帧 5 cm candidate、object-only mmap/ragged 转换、B=4 sampling bank、sequence fixed split、train-only calibration。
+- 当前可用于训练的修复版 GRAB object-v2 根目录为 `data/processed_data/cm_object_v2_subject_template_20260820/grab`；包含 1335 sequences、2670 hand streams、seed42 split、sampling bank 和 train-only calibration。对应的 Stage4 中间目录已在校验完成后删除，旧版 `cm_stage4_v2` / `cm_object_v2` 保持不动。

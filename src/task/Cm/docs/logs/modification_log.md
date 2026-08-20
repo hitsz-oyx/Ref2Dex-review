@@ -1,5 +1,27 @@
 # Cm AI 修改记录
 
+## 2026-08-20 — 重建并整理 subject-template 修复版 GRAB cache
+
+- branch: `oyx`
+- post-commit: `2842637`
+- 范围: task 内部数据产物与文档记录
+
+**文件 / 产物**
+
+- `data/processed_data/cm_object_v2_subject_template_20260820/grab` — 新生成的 1335-sequence object-v2 GRAB cache，含 2670 个 sampling bank、固定 split 和 calibration metadata。
+- `data/processed_data/cm_stage4_v2_subject_template_20260820` — 已在转换、统计和校验完成后删除的 Stage4 中间产物。
+- 旧版 `data/processed_data/cm_stage4_v2`、`data/processed_data/cm_object_v2` — 保持不动。
+
+**改动原因**
+
+按 V2 数据脚本修复后的 subject-specific `v_template` 重新生成 GRAB cache，避免旧 cache 的平均 MANO 语义；为控制磁盘占用，转换完成后删除新 Stage4 中间目录。
+
+**验证**
+
+- Stage4 生成：1335 sequences / 2670 hand streams / 0 failed。
+- object-v2 转换：1335 converted / 0 failed。
+- train-only flow RMS：`0.0932494331 m`，train sequences `1067`。
+
 ## 2026-08-20 — 修正 V2 GRAB subject template 解析
 
 - branch: `oyx`
