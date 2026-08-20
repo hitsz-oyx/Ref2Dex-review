@@ -35,8 +35,10 @@ def infer_stage3_dataset_id(data: Any) -> str:
         if prefix in _DATASET_ALIASES:
             return normalize_dataset_id(prefix)
 
-    use_pca = bool(np.asarray(data.get("mano_use_pca", True)).item())
     pose = np.asarray(data.get("mano_pose", np.empty((0, 0))))
+    if pose.size == 0:
+        return "unknown"
+    use_pca = bool(np.asarray(data.get("mano_use_pca", True)).item())
     pose_dim = int(np.asarray(data.get("mano_num_pca_comps", pose.shape[-1])).item())
     flat = bool(np.asarray(data.get("mano_flat_hand_mean", True)).item())
     signature = (use_pca, pose_dim, flat)

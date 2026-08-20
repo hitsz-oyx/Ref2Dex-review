@@ -110,6 +110,12 @@ class Config(TaskConfig):
         # and shared by the whole process; the runtime just does an
         # ``index_select`` on the hand input.
         hand_proxy_face_count: int = 256
+        # Optional fixed proxy indices into the stored 1538 hand points.
+        # This decouples runtime object resampling from MANO reconstruction
+        # and MANO model assets for clean-geometry datasets such as OakInk.
+        # When use_mano_reconstruction=False and runtime_resample_object=True,
+        # this path is required and validated fail-fast by the runner.
+        stored_hand_proxy_indices_path: str | None = None
         runtime_resample_object: bool = True
         runtime_near_pool_points: int = 1024
         runtime_near_obj_points: int = 384
@@ -137,6 +143,9 @@ class Config(TaskConfig):
         group_val_by_sequence = True
         sequence_locality_shuffle = True
         blacklist_path = None
+        # Optional persistent file/frame-count index. Keep it outside the
+        # dataset tree so NAS data stays read-only.
+        cache_index_path = None
 
     class train(TaskConfig.train):
         amp = False

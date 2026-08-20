@@ -1,0 +1,9 @@
+_base_: src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_exclusive_ddp2.yaml
+
+name: correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2
+
+meta:
+  apply_hand_perturb: false
+
+wandb:
+  tags: [correspondence, ptv3, v2, full-grab, geometry-5mm, no-pca, runtime-resample, ddp2]

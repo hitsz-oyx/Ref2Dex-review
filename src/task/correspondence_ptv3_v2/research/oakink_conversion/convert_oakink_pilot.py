@@ -1,10 +1,13 @@
-"""Convert a small OakInk annotation subset to compact correspondence Stage 3.
+"""Convert OakInk annotations to compact correspondence Stage 3.
 
 OakInk's released annotations are per-view/per-frame pickles rather than the
-project's Stage 2 schema.  This pilot keeps the camera frame as the common
-``object`` frame, samples the static object mesh to 4096 points, upsamples the
-778 MANO vertices to the 1538-point training contract, and derives contact
-distance targets with a KD-tree.  It is intentionally bounded by group count.
+project's Stage 2 schema. The converter uses the 778-vertex MANO mesh with the
+MANO topology to produce 1538 face centers and true face normals. OakInk does
+not provide MANO pose/shape parameters in these annotations, so the output is
+clean fixed geometry with the wrist as hand-root origin. Since the released
+annotations do not include MANO global orientation, the hand-root rotation is
+the OakInk camera rotation (a wrist-centered approximation, not a parametric
+MANO reconstruction).
 """
 
 from __future__ import annotations
@@ -73,6 +76,23 @@ def _transform_normals(normals: np.ndarray, transform: np.ndarray) -> np.ndarray
     return (out / np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-8, None)).astype(np.float32)
 
 
+def _load_mano_faces(path: Path) -> np.ndarray:
+    with path.open("rb") as handle:
+        payload = pickle.load(handle, encoding="latin1")
+    faces = np.asarray(payload["f"], dtype=np.int32)
+    if faces.shape != (1538, 3):
+        raise ValueError(f"Expected MANO faces with shape (1538, 3), got {faces.shape}")
+    return faces
+
+
+def _mano_face_geometry(vertices: np.ndarray, faces: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    tri = vertices[faces]
+    centers = tri.mean(axis=1).astype(np.float32)
+    normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    normals /= np.clip(np.linalg.norm(normals, axis=1, keepdims=True), 1e-8, None)
+    return centers, normals.astype(np.float32)
+
+
 def _sample(points: np.ndarray, normals: np.ndarray, count: int) -> tuple[np.ndarray, np.ndarray]:
     # Deterministic farthest-like coverage without introducing a dependency on
     # a second mesh sampler; OakInk meshes are already densely tessellated.
@@ -86,12 +106,19 @@ def main() -> None:
     ap.add_argument("--output-root", required=True)
     ap.add_argument("--max-groups", type=int, default=20)
     ap.add_argument("--max-frames", type=int, default=0)
+    ap.add_argument("--start-group", type=int, default=0, help="Resume at this sorted group index.")
+    ap.add_argument(
+        "--mano-model",
+        default="/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano/MANO_RIGHT.pkl",
+        help="MANO model pickle used only for the 1538-face topology.",
+    )
     args = ap.parse_args()
     root = Path(args.oakink_root).resolve()
     anno = root / "downloads" / "image" / "anno"
     obj_root = root / "downloads" / "image" / "obj"
     out_root = Path(args.output_root).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
+    mano_faces = _load_mano_faces(Path(args.mano_model).resolve())
 
     hand_dir = anno / "hand_v"
     groups: dict[tuple[str, str, int], list[Path]] = defaultdict(list)
@@ -104,13 +131,18 @@ def main() -> None:
 
     mesh_cache: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     rows = []
-    for group_idx, key in enumerate(group_keys):
+    skipped = []
+    for group_idx, key in enumerate(group_keys[int(args.start_group):], start=int(args.start_group)):
         obj_id, timestamp, view = key
         paths = sorted(groups[key], key=lambda p: _parse_name(p)[3])
         if args.max_frames > 0:
             paths = paths[: int(args.max_frames)]
         mesh_id = obj_id.split("_", 1)[0]
         mesh_path = obj_root / f"{mesh_id}.obj"
+        if not mesh_path.is_file():
+            skipped.append({"seq_id": f"{obj_id}/{timestamp}/view{view}", "reason": "missing_object_mesh", "path": str(mesh_path)})
+            print(f"[skip] {obj_id}/{timestamp}/view{view}: missing {mesh_path.name}", flush=True)
+            continue
         if mesh_id not in mesh_cache:
             mesh_cache[mesh_id] = _mesh(mesh_path)
         canonical_v, canonical_n = mesh_cache[mesh_id]
@@ -123,26 +155,23 @@ def main() -> None:
             obj_id2, _timestamp, _view, frame, _camera = _parse_name(path)
             hand_cam = np.asarray(_load_pickle(path), dtype=np.float32)
             transf = np.asarray(_load_pickle(anno / "obj_transf" / path.name), dtype=np.float32)
-            # obj_transf maps object coordinates to camera coordinates.  Invert
-            # it so object and hand are represented in one object-fixed frame.
-            cam_to_obj = np.linalg.inv(transf).astype(np.float32)
+            # obj_transf maps object coordinates to camera coordinates. Keep
+            # that frame and subtract the OakInk wrist for hand-root output.
             obj_cam = _transform(canonical_v, transf)
             obj_n_cam = _transform_normals(canonical_n, transf)
-            obj_o = _transform(obj_cam, cam_to_obj)
-            obj_n = _transform_normals(obj_n_cam, cam_to_obj)
-            hand_o = _transform(hand_cam, cam_to_obj)
-            # MANO vertex normals are not distributed by OakInk.  A radial
-            # proxy is sufficient for this pilot and is recorded explicitly.
-            wrist = hand_o[0]
-            hand_n = hand_o - wrist
-            hand_n /= np.clip(np.linalg.norm(hand_n, axis=1, keepdims=True), 1e-8, None)
-            hand_idx = np.linspace(0, len(hand_o) - 1, 1538, dtype=np.int64)
+            joints_cam = np.asarray(_load_pickle(anno / "hand_j" / path.name), dtype=np.float32)
+            if joints_cam.shape != (21, 3):
+                raise ValueError(f"Expected OakInk hand_j shape (21, 3), got {joints_cam.shape}")
+            wrist = joints_cam[0]
+            obj_o = obj_cam - wrist
+            obj_n = obj_n_cam
+            hand_o = hand_cam - wrist
+            hand_p, hand_n = _mano_face_geometry(hand_o, mano_faces)
             obj_p, obj_nn = _sample(obj_o, obj_n, 4096)
-            hand_p, hand_nn = hand_o[hand_idx], hand_n[hand_idx]
             obj_points.append(obj_p)
             obj_normals.append(obj_nn)
             hand_points.append(hand_p)
-            hand_normals.append(hand_nn)
+            hand_normals.append(hand_n)
             raw_ids.append(frame)
         obj_arr = np.asarray(obj_points, dtype=np.float32)
         obj_n_arr = np.asarray(obj_normals, dtype=np.float32)
@@ -163,7 +192,7 @@ def main() -> None:
             obj_points=obj_arr, obj_normals=obj_n_arr,
             hand_points=hand_arr, hand_normals=hand_n_arr,
             hand_to_obj_min_dist=distances,
-            coordinate_frame=np.asarray("object"),
+            coordinate_frame=np.asarray("hand_root"),
         )
         rows.append({
             "seq_id": seq_id, "object_id": obj_id, "view": view,
@@ -177,10 +206,12 @@ def main() -> None:
     summary = {
         "source": str(root), "output_root": str(out_root),
         "num_groups": len(rows), "num_frames": int(sum(x["frames"] for x in rows)),
-        "schema_version": "2.0.0", "coordinate_frame": "object",
-        "hand_points_source": "OakInk hand_v 778 vertices, deterministic upsample to 1538",
-        "hand_normals_source": "radial proxy from wrist (pilot only)",
+        "schema_version": "2.0.0", "coordinate_frame": "hand_root",
+        "hand_root_orientation": "oakink_camera_rotation_no_mano_global_orient",
+        "hand_points_source": "OakInk hand_v 778 MANO vertices -> MANO 1538 face centers",
+        "hand_normals_source": "MANO face cross-product normals",
         "contact_source": "KD-tree distance to 4096 sampled object vertices",
+        "skipped_groups": skipped,
         "groups": rows,
     }
     (out_root / "oakink_pilot_stats.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

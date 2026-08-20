@@ -47,6 +47,14 @@
 
 baseline.yaml 当前默认使用 AdamW、lr 1e-4、cosine + 3% warmup、100 epoch、batch size 8、val batch size 24，并启用 object pose perturbation 和 dense hand heatmap 监督。
 
+OakInk 的 clean Stage 3 没有 MANO pose/betas，可用存储的 1538 个 hand face-center 代理点保留 full-pool runtime object resampling，而不执行 MANO forward 或 PCA 扰动：
+
+    PYTHONPATH=. python -m src.task.correspondence_ptv3_v2.train \
+      --config src/task/correspondence_ptv3_v2/configs/oakink_50ep_no_hand_perturb_runtime.yaml \
+      --set train.output_dir=output/exp/<run_name>
+
+该配置必须同时设置 `use_mano_reconstruction=false`、`apply_hand_perturb=false`、`runtime_resample_object=true` 和版本化的 `stored_hand_proxy_indices_path`。缺少 proxy 时 runner 会 fail-fast，不会静默回退到 MANO 或 face-index linspace。
+
 实验参数通过重复传入 --set 覆盖，例如：
 
     --set train.epochs=50
@@ -72,7 +80,7 @@ baseline.yaml 当前默认使用 AdamW、lr 1e-4、cosine + 3% warmup、100 epoc
 
     src/task/correspondence_ptv3_v2/configs/mixed_stage3_geometry_9mm_sample.yaml
 
-该配置严格要求 GRAB PCA24、ARCTIC axis-angle45 和 ContactPose PCA15 的 9 mm profile 都能命中。工程 `tmp/mano_geometry_calibration/` 中 GRAB JSON 来自 1024 帧统计；文件名带 `_sample` 的 ARCTIC 和 ContactPose JSON 是用于兼容验证的初步样本统计，全量训练前应从更广的数据覆盖重新标定。NAS 中旧 ContactPose Stage 3 v2.0 没有 MANO 字段，不能直接混训；应使用 `process/ContactPose/stage3_export.py` 导出到新的 v2.1 目录，不要覆盖备份。
+该配置严格要求 GRAB PCA24、ARCTIC axis-angle45 和 ContactPose PCA15 的 9 mm profile 都能命中。工程 `tmp/mano_geometry_calibration/` 中 GRAB JSON 来自 1024 帧统计；文件名带 `_sample` 的 ARCTIC 和 ContactPose JSON 是用于兼容验证的初步样本统计，全量训练前应从更广的数据覆盖重新标定。只有启用 `meta.apply_hand_perturb=true` 时才要求样本携带 MANO 字段；关闭手部扰动时，旧 Stage 3 的 `schema_version` 只作为标识，不阻止加载。但所有混合数据仍必须使用同一个 `coordinate_frame`；若要启用 MANO 扰动，应使用 `process/ContactPose/stage3_export.py` 导出带 MANO 字段的数据。
 
 ## 评估
 

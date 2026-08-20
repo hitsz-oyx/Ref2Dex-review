@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
+import os
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +76,7 @@ class CorrStaticDatasetV2(Dataset):
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
         dataset_id: str | None = None,
+        cache_index_path: str | Path | None = None,
         **_: Any,
     ) -> None:
         super().__init__()
@@ -104,6 +107,7 @@ class CorrStaticDatasetV2(Dataset):
         self.runtime_resample_object = bool(runtime_resample_object)
         self.use_mano_reconstruction = bool(use_mano_reconstruction)
         self.dataset_id_override = None if dataset_id in {None, ""} else str(dataset_id)
+        self.cache_index_path = None if cache_index_path in {None, ""} else Path(cache_index_path)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -128,23 +132,19 @@ class CorrStaticDatasetV2(Dataset):
         # Per-NPZ coordinate_frame is the source of truth (not the root
         # meta.json, which is only written once at generation time). If the
         # caller specified an expected frame, every file must agree with it.
-        # Fix #8 (docs/指导.md): when ``use_mano_reconstruction`` is set, the
-        # schema MUST be v2.1+ and every required MANO field must be present.
-        # We refuse to silently fall back to the legacy hand_points because
-        # that path produces empty gradients on the hand side and corrupts
-        # every metric that depends on the MANO reconstruction.
+        # MANO fields are required only when the runtime will actually apply
+        # hand perturbation.  ``schema_version`` is an identifier, not a
+        # capability gate: clean legacy Stage 3 geometry remains valid when
+        # the hand-noise path is disabled.
         per_file_frames: set[str] = set()
-        per_file_schema_versions: set[str] = set()
+        require_mano_fields = bool(use_mano_reconstruction and apply_hand_perturb)
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
-                if use_mano_reconstruction:
+                if require_mano_fields:
                     self._validate_mano_schema(path, data)
-                    per_file_schema_versions.add(
-                        self._scalar_string(data, "schema_version", "0.0.0")
-                    )
                 frame = _resolve_coordinate_frame_from_npz(
                     data,
                     fallback=self.root_coordinate_frame,
@@ -156,18 +156,6 @@ class CorrStaticDatasetV2(Dataset):
                         "prepare_corr_static.py."
                     )
                 per_file_frames.add(frame)
-
-        if use_mano_reconstruction and per_file_schema_versions:
-            if any(
-                self._schema_version_tuple(v) < (2, 1, 0)
-                for v in per_file_schema_versions
-            ):
-                raise ValueError(
-                    f"Stage 3 .npz at {self.data_root} has schema_version "
-                    f"{sorted(per_file_schema_versions)} but use_mano_reconstruction=True "
-                    "requires schema_version >= 2.1.0. Re-run Stage 3 with the current "
-                    "process/common/stage3_corr.py on the same Stage 2 root."
-                )
 
         if len(per_file_frames) != 1:
             raise ValueError(
@@ -184,12 +172,59 @@ class CorrStaticDatasetV2(Dataset):
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
-        for path in self.file_paths:
-            with np.load(path, allow_pickle=False) as data:
-                num_frames = int(data["raw_frame_id"].shape[0])
+        frame_counts = self._load_or_build_index(frame_paths=self.file_paths)
+        for path, num_frames in zip(self.file_paths, frame_counts):
             start = len(self._samples)
             self._samples.extend((path, frame_idx) for frame_idx in range(num_frames))
             self.file_sample_ranges.append((start, len(self._samples)))
+
+    def _load_or_build_index(self, *, frame_paths: list[Path]) -> list[int]:
+        """Reuse a validated JSON file/frame-count index across training runs.
+
+        The cache only accelerates dataset construction; sample arrays remain
+        loaded through the existing per-worker NPZ cache, so stale or missing
+        cache entries cannot change training data silently.
+        """
+        if self.cache_index_path is None:
+            return [self._count_frames(path) for path in frame_paths]
+        cache_path = self.cache_index_path
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            payload = {"version": 1, "files": {}}
+        entries = payload.get("files", {})
+        counts: list[int] = []
+        changed = False
+        for path in frame_paths:
+            key = str(path.resolve())
+            stat = path.stat()
+            item = entries.get(key)
+            valid = (
+                item is not None
+                and int(item.get("size", -1)) == int(stat.st_size)
+                and float(item.get("mtime", -1)) == float(stat.st_mtime)
+            )
+            frames = int(item["frames"]) if valid else self._count_frames(path)
+            counts.append(frames)
+            if not valid:
+                entries[key] = {
+                    "size": int(stat.st_size),
+                    "mtime": float(stat.st_mtime),
+                    "frames": frames,
+                }
+                changed = True
+        if changed:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"version": 1, "files": entries}
+            tmp_path = cache_path.with_suffix(cache_path.suffix + f".tmp.{os.getpid()}")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=True, separators=(",", ":")), encoding="utf-8")
+            tmp_path.replace(cache_path)
+        return counts
+
+    @staticmethod
+    def _count_frames(path: Path) -> int:
+        with np.load(path, allow_pickle=False) as data:
+            return int(data["raw_frame_id"].shape[0])
 
     @property
     def epoch(self) -> int:
@@ -226,8 +261,6 @@ class CorrStaticDatasetV2(Dataset):
     # fallback to the legacy hand_points field.
     # ------------------------------------------------------------------
     _MANO_REQUIRED_FIELDS: tuple[str, ...] = (
-        "schema_name",
-        "schema_version",
         "mano_global_orient",
         "mano_transl",
         "mano_pose",
@@ -237,8 +270,6 @@ class CorrStaticDatasetV2(Dataset):
         "mano_num_pca_comps",
         "mano_flat_hand_mean",
         "mano_pose_repr",
-        "hand_root_pose",
-        "hand_to_obj_min_dist",
     )
 
     @classmethod
@@ -254,16 +285,6 @@ class CorrStaticDatasetV2(Dataset):
                 f"required MANO fields {missing}. Re-run Stage 3 with the current "
                 "process/common/stage3_corr.py on the same Stage 2 root."
             )
-
-    @staticmethod
-    def _schema_version_tuple(value: str) -> tuple[int, ...]:
-        parts: list[int] = []
-        for chunk in str(value).split("."):
-            try:
-                parts.append(int(chunk))
-            except ValueError:
-                parts.append(0)
-        return tuple(parts) or (0, 0, 0)
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         path, frame_idx = self._samples[index]
@@ -676,6 +697,7 @@ def make_dataloaders(
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
         "dataset_id": getattr(data_cfg, "dataset_id", None),
+        "cache_index_path": getattr(data_cfg, "cache_index_path", None),
     }
     val_clean_kwargs = {
         **train_kwargs,

@@ -130,7 +130,7 @@ ARCTIC 原始 Stage 3 位于 NAS 的 `processed_data_backup/arctic/arctic_initon
 | missed-contact recovery Brier | 0.7687 | 0.7507 | -2.3% |
 
 **诊断**
-在 ARCTIC 子集上，联合训练的 correspondence 拟合指标变差，但 object perturb recovery 指标小幅改善。该结果与 ContactPose 全量上的“拟合明显改善、recovery 恶化”不同，说明跨数据集结论依赖数据分布和指标；ARCTIC 结果目前只能作为方向性证据，不能外推到全量 ARCTIC。
+在 ARCTIC 子集上，联合训练的 correspondence 拟合指标变差，且按任务架构定义（`pseudo_recovery_*` 越大越好）看，object perturb recovery 也从纯 GRAB 的 0.8383 / 0.8120 降到联合训练的 0.8000 / 0.7728。此前这段“recovery 指标小幅改善”的表述方向有误，当前以实际指标和架构定义为准。该结果与 ContactPose 全量上的“拟合明显改善、recovery 恶化”方向一致，但幅度和数据分布不同；ARCTIC 结果目前只能作为方向性证据，不能外推到全量 ARCTIC。
 
 **产物**
 结果 JSON：`output/research/contactpose_checkpoint_compare/arctic_pure_20260817_132348.json`、`arctic_mixed_20260817_132348.json`。
@@ -167,3 +167,62 @@ NAS pilot 目录 `OakInk/processed/stage3_corr_oakink_pilot_20260817` 已生成 
 
 **下一步**
 训练开始后记录 NAS 读取下的 step/s、GPU utilization 和 DataLoader 等待表现，并与本地旧 run 对比。
+
+## 实验：OakInk / ContactPose / GRAB 混训前 schema 与启动缓存检查
+
+**假设**
+三套数据可以通过关闭 MANO/PCA 手部扰动后直接混训；持久化文件索引可以减少 NAS 大目录的启动扫描时间。
+
+**观察到的失败 / 现象**
+当前 OakInk 全量 Stage 3 样本为 `schema_version=2.0.0`、`coordinate_frame=object`，不含 MANO 字段；当前 ContactPose `use_stage3_v2` 也为 `schema_version=2.0.0`、`hand_root`，不含 MANO 字段。可读 GRAB v2.1 重建目录存在文件权限 `000`，无法完成内容读取。
+
+**改动**
+`CorrStaticDatasetV2` 新增可选 `data.cache_index_path`。该 JSON 缓存每个 NPZ 的绝对路径、mtime、大小和帧数；缓存命中前会校验文件状态，失效后自动重建，且不写入 NAS 数据目录。
+
+**结果**
+缓存代码通过 `graspenv` Python 语法检查。OakInk/ContactPose 的实际 schema 检查确认：二者不能直接进入当前 `use_mano_reconstruction=true` 的混合训练；OakInk 还与默认 `hand_root` 坐标系不一致。
+
+**决策**
+保留启动索引缓存。正式混训前必须重新导出 OakInk 与 ContactPose 为统一的 Stage 3 v2.1 `hand_root`，并确认 GRAB 文件可读；“无 PCA 扰动”应配置为 `meta.apply_hand_perturb=false`，不是把 PCA 改成另一种 MANO 噪声。
+
+## 实验：关闭手部扰动时放宽 MANO/schema 约束
+
+**假设**
+`schema_version` 只是样本标识；当训练不执行 MANO 手部重建或扰动时，缺少 MANO 字段不应阻止旧 Stage 3 几何混训。
+
+**改动**
+Dataset 仅在 `use_mano_reconstruction && apply_hand_perturb` 时检查 MANO 字段，并移除 `schema_version >= 2.1.0` 的硬判断。Runner 只有在 `apply_hand_perturb=true` 时才触发 MANO forward。没有 MANO 描述的数据集 ID 推断为 `unknown`，不再因缺少描述失败。启动索引 cache 改为增量合并，并使用进程独立临时文件。
+
+**结果**
+OakInk `schema 2.0.0/object` 与 ContactPose `schema 2.0.0/hand_root` 均可在关闭手部扰动时加载；打开手部扰动时仍会对缺少 MANO 字段的文件 fail-fast。代码和 Dataset smoke 通过。
+
+**决策**
+保留该行为。三数据集正式混训仍需先统一 `coordinate_frame`；OakInk 不能直接与 `hand_root` 数据混合，必须重新导出或转换坐标。若关闭 runtime object resampling，则不需要 MANO 模型参与输入重建。
+
+## 实验：OakInk 手点改为 MANO face-center
+
+**假设**
+OakInk 的 778 个 `hand_v` 顶点可以使用 MANO 拓扑转换为与 GRAB/ContactPose 一致的 1538 个面中心和真实面法线。
+
+**改动**
+`research/oakink_conversion/convert_oakink_pilot.py` 新增 MANO topology 读取：对每帧 778 顶点计算 1538 个三角面中心和 cross-product normals；使用 `hand_j[0]` wrist 将手和物体变换到 wrist-centered `hand_root`。由于 OakInk annotation 未提供 MANO global orientation/pose/betas，输出明确记录为 camera-rotation hand-root 近似，不能用于运行时 MANO 扰动。
+
+**结果**
+一组一帧转换 smoke 通过：`hand_points=(1,1538,3)`、`hand_normals=(1,1538,3)`，法线范数在 1.0 附近，所有坐标和距离均为有限值；Dataset 以 `coordinate_frame=hand_root` 读取通过。
+
+**决策**
+保留转换逻辑。需要重新运行全量 OakInk 导出到 NAS；在没有 OakInk MANO global orientation 的前提下，该版本适用于无手部扰动训练，不宣称与 GRAB 的 MANO 参数路径等价。
+
+## 实验：OakInk 全量 MANO face-center / hand-root 导出
+
+**假设**
+统一为真实 MANO 1538 个三角面中心、面法线和 `hand_root` 后，OakInk 可以与 GRAB/ContactPose 在关闭手部扰动的配置下共同读取。
+
+**改动**
+从断点继续导出全部 3168 个 OakInk 视角组；缺少物体 OBJ 的组记录并跳过，不阻塞其余数据。输出目录为 `OakInk/processed/stage3_corr_oakink_mano_face_handroot_20260818`。
+
+**结果**
+成功导出 1700 组、158364 帧、2596 个 NPZ；572 个视角因缺失物体网格跳过。随机样本均为 `coordinate_frame=hand_root`，手点和法线形状为 `(T,1538,3)`，法线范数约为 1，坐标和距离均有限。Dataset smoke（`use_mano_reconstruction=true`、`apply_hand_perturb=false`、`runtime_resample_object=false`）通过，缓存索引可正常生成。
+
+**决策**
+保留该全量导出，作为无 PCA/无手部扰动联合训练的 OakInk 输入。OakInk 手根旋转来自 camera rotation 近似，且没有 MANO pose/betas；若未来重新开启 MANO 手扰动，仍需带完整 MANO 参数的数据版本。

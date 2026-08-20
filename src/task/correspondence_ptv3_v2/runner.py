@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -40,30 +42,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        # Fix #4 (docs/指导.md): legacy mode (``use_mano_reconstruction=False``)
-        # is documented as "no MANO forward, just pre-stored hand_points".
-        # But ``runtime_resample_object`` independently calls
-        # ``get_proxy_face_idx`` to score the object pool against a hand
-        # proxy, which still requires smplx + MANO .pkl on disk. Make the
-        # conflict loud at construction time instead of crashing deep in
-        # the training loop.
-        if (
-            not bool(getattr(self.cfg.meta, "use_mano_reconstruction", False))
-            and bool(getattr(self.cfg.meta, "runtime_resample_object", True))
-        ):
-            raise ValueError(
-                "cfg.meta.use_mano_reconstruction=False but "
-                "cfg.meta.runtime_resample_object=True. The runtime object "
-                "resampler still needs smplx + MANO .pkl to build a hand "
-                "proxy (see hand_noise_profiles.get_proxy_face_idx), which "
-                "contradicts the legacy 'no MANO forward' contract. Pick "
-                "one of:\n"
-                "  - use_mano_reconstruction: true  (full MANO path, current default)\n"
-                "  - runtime_resample_object: false (pure pre-stored hand_points, "
-                "no runtime obj resampling)\n"
-                "If you want a true zero-smplx legacy smoke test, set BOTH "
-                "explicitly in your YAML."
-            )
+        self._stored_hand_proxy_idx = self._load_stored_hand_proxy_indices()
         # Lazily-built MANO layer cache. Only populated when MANO forward
         # is actually needed (i.e. the batch has hand MANO parameters and
         # cfg.meta.use_mano_reconstruction is True).
@@ -81,14 +60,68 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             profile_paths,
             base_dir=_REPO_ROOT,
         )
-        from src.task.correspondence_ptv3_v2.mano_recon import resolve_mano_model_dir
-        resolved_mano_dir = resolve_mano_model_dir(
-            getattr(self.cfg.meta, "mano_model_dir", None)
+        if bool(getattr(self.cfg.meta, "use_mano_reconstruction", False)) or (
+            self._stored_hand_proxy_idx is None
+        ):
+            from src.task.correspondence_ptv3_v2.mano_recon import resolve_mano_model_dir
+
+            resolved_mano_dir = resolve_mano_model_dir(
+                getattr(self.cfg.meta, "mano_model_dir", None)
+            )
+            if resolved_mano_dir is not None:
+                # Store the canonical value so MANO reconstruction, proxy FPS
+                # and serialized runtime config agree regardless of cwd.
+                self.cfg.meta.mano_model_dir = str(resolved_mano_dir)
+
+    def _load_stored_hand_proxy_indices(self) -> np.ndarray | None:
+        runtime_resample = bool(getattr(self.cfg.meta, "runtime_resample_object", True))
+        use_mano = bool(getattr(self.cfg.meta, "use_mano_reconstruction", False))
+        raw_path = getattr(self.cfg.meta, "stored_hand_proxy_indices_path", None)
+        if raw_path in {None, ""}:
+            if runtime_resample and not use_mano:
+                raise ValueError(
+                    "runtime_resample_object=True with use_mano_reconstruction=False "
+                    "requires meta.stored_hand_proxy_indices_path. The index file "
+                    "must select a fixed spatial proxy from the stored hand_points; "
+                    "the runner will not silently fall back to MANO or linspace indices."
+                )
+            return None
+
+        from src.task.correspondence_ptv3_v2.config import ROOT as repo_root
+
+        path = Path(str(raw_path)).expanduser()
+        if not path.is_absolute():
+            path = repo_root / path
+        path = path.resolve()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("schema") != "ref2dex_stored_hand_proxy_indices_v1":
+            raise ValueError(f"Unsupported stored hand proxy schema: {path}")
+        indices = np.asarray(payload.get("indices", []), dtype=np.int64)
+        expected_points = int(self.cfg.meta.num_hand_points)
+        expected_count = min(
+            int(getattr(self.cfg.meta, "hand_proxy_face_count", expected_points)),
+            expected_points,
         )
-        if resolved_mano_dir is not None:
-            # Store the canonical value so MANO reconstruction, proxy FPS and
-            # serialized runtime config all agree regardless of cwd.
-            self.cfg.meta.mano_model_dir = str(resolved_mano_dir)
+        if indices.ndim != 1 or len(indices) != expected_count:
+            raise ValueError(
+                f"{path}: expected {expected_count} one-dimensional proxy indices, "
+                f"got shape={indices.shape}."
+            )
+        if len(np.unique(indices)) != len(indices):
+            raise ValueError(f"{path}: proxy indices must be unique.")
+        if np.any(indices < 0) or np.any(indices >= expected_points):
+            raise ValueError(
+                f"{path}: proxy indices must be in [0, {expected_points}), "
+                f"got min={indices.min()} max={indices.max()}."
+            )
+        declared_points = int(payload.get("num_hand_points", expected_points))
+        if declared_points != expected_points:
+            raise ValueError(
+                f"{path}: num_hand_points={declared_points} does not match "
+                f"config value {expected_points}."
+            )
+        self.cfg.meta.stored_hand_proxy_indices_path = str(path)
+        return indices
 
     @classmethod
     def configure_overfit_mode(
@@ -190,6 +223,10 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
     def _should_reconstruct_mano(self, batch: dict[str, torch.Tensor]) -> bool:
         if not bool(getattr(self.cfg.meta, "use_mano_reconstruction", False)):
+            return False
+        # Clean training consumes the stored hand geometry directly. MANO is
+        # only needed when the configured experiment applies hand noise.
+        if not bool(getattr(self.cfg.meta, "apply_hand_perturb", False)):
             return False
         has_mano = batch.get("has_mano")
         if has_mano is None:
@@ -750,8 +787,6 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         if torch.is_tensor(flag) and not bool(flag.all().item()):
             return
 
-        from src.task.correspondence_ptv3_v2.mano_recon import get_proxy_face_idx
-
         num_obj = int(self.cfg.meta.num_obj_points)
         num_hand = int(self.cfg.meta.num_hand_points)
         near_quota = min(int(getattr(self.cfg.meta, "runtime_near_obj_points", 384)), num_obj)
@@ -789,79 +824,91 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         else:
             per_sample_sides = ["right"] * batch_size
 
-        # Build per-side proxy indices. The MANO left/right hand meshes
-        # share the face topology but their face indices are NOT in the
-        # same spatial order, so a single shared index would mix
-        # fingertip points with palm points when the batch contains
-        # both sides. We build one proxy per side and select by sample
-        # later. The over-broad ``except`` is gone (Fix #5): a
-        # missing model dir is now a hard failure, only an explicit
-        # linspace fallback runs on a controlled exception.
-        mano_model_dir = str(self.cfg.meta.mano_model_dir)
-
-        def _proxy_for(side: str) -> torch.Tensor:
-            try:
-                proxy_idx_np = get_proxy_face_idx(
-                    side=side,
-                    count=int(proxy_count),
-                    model_dir=mano_model_dir,
-                )
-            except FileNotFoundError as e:
-                raise FileNotFoundError(
-                    f"MANO model dir {mano_model_dir!r} is required to build "
-                    f"the FPS proxy for side={side!r}. Set meta.mano_model_dir "
-                    "to the directory that contains the .pkl files."
-                ) from e
-            except Exception as e:
-                # Any other failure (e.g. smplx import error) bubbles
-                # up: the runner must not silently degrade to linspace.
-                raise RuntimeError(
-                    f"get_proxy_face_idx(side={side!r}) failed: {e}. "
-                    "This is a hard failure; do not silently fall back."
-                ) from e
-            return torch.as_tensor(
-                np.unique(proxy_idx_np), dtype=torch.long, device=device
-            )
-
-        proxy_per_side: dict[str, torch.Tensor] = {
-            "right": _proxy_for("right"),
-            "left": _proxy_for("left"),
-        }
-
-        # Per-side min-distance accumulator. We do not rely on a single
-        # shared proxy; each sample's hand is indexed with the proxy
-        # matching its own side. The cdist is still chunked (Fix #7).
         obj_min_dist = torch.full(
-            (batch_size, pool_size), float("inf"), device=device, dtype=hand_input.dtype
+            (batch_size, pool_size),
+            float("inf"),
+            device=device,
+            dtype=hand_input.dtype,
         )
-        for side_name in set(per_sample_sides):
-            side_idx_list = [i for i, s in enumerate(per_sample_sides) if s == side_name]
-            if not side_idx_list:
-                continue
-            proxy = proxy_per_side.get(side_name, proxy_per_side["right"])
-            side_idx_t = torch.as_tensor(side_idx_list, dtype=torch.long, device=device)
-            side_hand_proxy = hand_input.index_select(0, side_idx_t).index_select(1, proxy)
-            side_obj = full_input_obj.index_select(0, side_idx_t)
+
+        # A versioned fixed proxy can index the stored hand geometry directly,
+        # avoiding MANO reconstruction and MANO model assets entirely. When no
+        # stored proxy is configured, retain the existing per-side MANO proxy.
+        if self._stored_hand_proxy_idx is not None:
+            proxy = torch.as_tensor(
+                self._stored_hand_proxy_idx, dtype=torch.long, device=device
+            )
+            hand_proxy = hand_input.index_select(1, proxy)
             for start in range(0, pool_size, cdist_chunk):
                 end = min(start + cdist_chunk, pool_size)
-                dist = torch.cdist(side_obj[:, start:end], side_hand_proxy)  # (b, chunk, P)
-                obj_min_dist[side_idx_t, start:end] = dist.amin(dim=-1)
-        # Any sample whose side was missing gets the right-hand proxy
-        # as a defensive fallback (the locality sampler keeps mixed
-        # batches rare, so this branch almost never fires).
-        if not torch.isfinite(obj_min_dist).all():
-            fallback_idx = torch.nonzero(
-                ~torch.isfinite(obj_min_dist).all(dim=-1), as_tuple=False
-            ).squeeze(-1)
-            if fallback_idx.numel() > 0:
-                proxy = proxy_per_side["right"]
-                side_hand_proxy = hand_input.index_select(0, fallback_idx).index_select(1, proxy)
+                dist = torch.cdist(full_input_obj[:, start:end], hand_proxy)
+                obj_min_dist[:, start:end] = dist.amin(dim=-1)
+        else:
+            from src.task.correspondence_ptv3_v2.mano_recon import get_proxy_face_idx
+
+            # Build per-side proxy indices. The MANO left/right hand meshes
+            # share the face topology but their face indices are NOT in the
+            # same spatial order, so a single shared index would mix
+            # fingertip points with palm points when the batch contains
+            # both sides. We build one proxy per side and select by sample.
+            mano_model_dir = str(self.cfg.meta.mano_model_dir)
+
+            def _proxy_for(side: str) -> torch.Tensor:
+                try:
+                    proxy_idx_np = get_proxy_face_idx(
+                        side=side,
+                        count=int(proxy_count),
+                        model_dir=mano_model_dir,
+                    )
+                except FileNotFoundError as e:
+                    raise FileNotFoundError(
+                        f"MANO model dir {mano_model_dir!r} is required to build "
+                        f"the FPS proxy for side={side!r}. Set meta.mano_model_dir "
+                        "to the directory that contains the .pkl files."
+                    ) from e
+                except Exception as e:
+                    raise RuntimeError(
+                        f"get_proxy_face_idx(side={side!r}) failed: {e}. "
+                        "This is a hard failure; do not silently fall back."
+                    ) from e
+                return torch.as_tensor(
+                    np.unique(proxy_idx_np), dtype=torch.long, device=device
+                )
+
+            proxy_per_side: dict[str, torch.Tensor] = {
+                "right": _proxy_for("right"),
+                "left": _proxy_for("left"),
+            }
+
+            # Each sample's stored/reconstructed hand is indexed with the
+            # proxy matching its own side. The cdist remains chunked.
+            for side_name in set(per_sample_sides):
+                side_idx_list = [i for i, s in enumerate(per_sample_sides) if s == side_name]
+                if not side_idx_list:
+                    continue
+                proxy = proxy_per_side.get(side_name, proxy_per_side["right"])
+                side_idx_t = torch.as_tensor(side_idx_list, dtype=torch.long, device=device)
+                side_hand_proxy = hand_input.index_select(0, side_idx_t).index_select(1, proxy)
+                side_obj = full_input_obj.index_select(0, side_idx_t)
                 for start in range(0, pool_size, cdist_chunk):
                     end = min(start + cdist_chunk, pool_size)
-                    dist = torch.cdist(
-                        full_input_obj[fallback_idx, start:end], side_hand_proxy
-                    )
-                    obj_min_dist[fallback_idx, start:end] = dist.amin(dim=-1)
+                    dist = torch.cdist(side_obj[:, start:end], side_hand_proxy)
+                    obj_min_dist[side_idx_t, start:end] = dist.amin(dim=-1)
+            # Any sample whose side was missing gets the right-hand proxy as
+            # a defensive fallback.
+            if not torch.isfinite(obj_min_dist).all():
+                fallback_idx = torch.nonzero(
+                    ~torch.isfinite(obj_min_dist).all(dim=-1), as_tuple=False
+                ).squeeze(-1)
+                if fallback_idx.numel() > 0:
+                    proxy = proxy_per_side["right"]
+                    side_hand_proxy = hand_input.index_select(0, fallback_idx).index_select(1, proxy)
+                    for start in range(0, pool_size, cdist_chunk):
+                        end = min(start + cdist_chunk, pool_size)
+                        dist = torch.cdist(
+                            full_input_obj[fallback_idx, start:end], side_hand_proxy
+                        )
+                        obj_min_dist[fallback_idx, start:end] = dist.amin(dim=-1)
 
         near_pool = min(int(getattr(self.cfg.meta, "runtime_near_pool_points", 1024)), pool_size)
         # Fix #7: batched topk instead of per-sample ``topk(...).cpu()``.
