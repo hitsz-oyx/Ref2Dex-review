@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-已完成 OakInk 坐标和无 MANO runtime sampling 的实现 gate，正式训练进行中；同时已完成 GRAB 5 mm PCA 互斥扰动版与两条 9 mm baseline 的当前 `best.pt` 对比。5 mm 版在 correspondence QFL 上更好，但 recovery 指标整体落后于 9 mm rebuilt baseline；和旧 no-PCA legacy run 比，clean QFL 更好，但 perturbed / recovery 指标更差；后续 no-PCA 默认对照已切到 8 月中旬的 `old1797_compact_repro`，它和当前 5 mm 语境更接近。当前 GRAB “5 mm 配置 + runtime sampling + no-PCA hand perturb”训练目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614`；该 run 原进程停在日志 step 36320 / epoch 4 附近，但可用 `latest.pt` 只保存到 step 27240 / epoch 3，2026-08-20 已从该 checkpoint 放入 tmux `grab5mm_no_pca_runtime_resume_20260820` 继续两卡训练，W&B run id 为 `zeqrhxyk`。
+已完成 OakInk 坐标和无 MANO runtime sampling 的实现 gate，正式训练进行中；同时已完成 GRAB 5 mm PCA 互斥扰动版与两条 9 mm baseline 的当前 `best.pt` 对比。5 mm 版在 correspondence QFL 上更好，但 recovery 指标整体落后于 9 mm rebuilt baseline；和旧 no-PCA legacy run 比，clean QFL 更好，但 perturbed / recovery 指标更差；后续 no-PCA 默认对照已切到 8 月中旬的 `old1797_compact_repro`，它和当前 5 mm 语境更接近。当前 GRAB “5 mm 配置 + runtime sampling + no-PCA hand perturb”训练目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614`；该 run 原进程停在日志 step 36320 / epoch 4 附近，但可用 `latest.pt` 只保存到 step 27240 / epoch 3，2026-08-20 已从该 checkpoint 放入 tmux `grab5mm_no_pca_runtime_resume_20260820` 继续两卡训练，W&B run id 为 `zeqrhxyk`。V1 指导下的 ARCTIC 外部评估也已完成：分层子集覆盖 11 个 object / 5 个 subject，共 179 条序列、93,968 帧；pure GRAB 在 micro 和 object-macro 上都略优于 GRAB+ContactPose，差距幅度有限，结果页已写入 `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.md`。
 
 2026-08-20 这条 GRAB 续跑又中断了，根因不是模型报错，而是根分区 `/` 已满到 100%，当前只剩约 3.1 GiB 可用；训练日志停在 step 36320 / epoch 4 附近，checkpoint 目录里留下了未完成的 `.tmp` 文件，说明中断发生在保存权重过程中。已把 `dataset/GRAB/data` 切到 NAS 软链并释放本地空间，随后又用 tmux `grab5mm_no_pca_runtime_resume_20260820` 从 `latest.pt` 重新拉起。
 
@@ -126,6 +126,98 @@ CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/pyth
 - `/tmp/oakink_arctic_eval_20260820.json`
 - `output/research/contactpose_checkpoint_compare/arctic_pure_20260817_132348.json`
 - `output/research/contactpose_checkpoint_compare/arctic_mixed_20260817_132348.json`
+
+## EXP-006 — V1 ARCTIC 分层外部评估与 object-macro 汇总
+
+### 日期
+
+2026-08-20
+
+### 对应指导
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+### 假设
+
+如果把 ARCTIC 评估从旧的 box 偏置子集改成覆盖全部 object / subject / action 的确定性分层子集，那么纯 GRAB 与 GRAB+ContactPose 的对比会更接近 V1 的 held-out 域外比较；若 GRAB+ContactPose 真有稳定退化，object-macro 也应该和 micro 一样维持同向排序。
+
+### Baseline
+
+- pure GRAB：`outputs/train/correspondence_ptv3_v2_old1797_compact_repro_ddp2_20260816_103130/checkpoints/latest.pt`
+- GRAB+ContactPose：`outputs/train/correspondence_ptv3_v2_old1797_grab_contactpose_full_gpu3_20260816_110237/checkpoints/latest.pt`
+- 分层子集：`/tmp/arctic_eval_stratified_v1`
+
+### 本次修改
+
+- 新增确定性分层子集构造脚本。
+- 新增 object 级软链子集构造脚本。
+- 在同一 evaluator 下跑 pure GRAB / GRAB+ContactPose 的 micro 结果。
+- 对 11 个 object 单独评估并取算术平均，得到 object-macro。
+
+### 实现审查
+
+Verdict: PASS
+
+- 覆盖全部 11 个 object、5 个 subject。
+- 维持固定的手输入、hand perturb、runtime resampling 和 object perturb 协议。
+- 没有改 evaluator、模型或 loss。
+- object-macro 来自 per-object 重跑后的算术平均，可复查。
+
+### 实验命令
+
+```bash
+PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python \
+  -m src.task.correspondence_ptv3_v2.research.contactpose_checkpoint_compare.evaluate \
+  --checkpoint outputs/train/correspondence_ptv3_v2_old1797_compact_repro_ddp2_20260816_103130/checkpoints/latest.pt \
+  --test-root /tmp/arctic_eval_stratified_v1 \
+  --output output/research/arctic_v1/stratified/pure_grab.json \
+  --device cuda:0 --batch-size 16 --num-workers 0
+```
+
+### 结果
+
+| 指标 | pure GRAB micro | GRAB+ContactPose micro | pure GRAB object-macro | GRAB+ContactPose object-macro |
+| --- | ---: | ---: | ---: | ---: |
+| clean random QFL | 0.0002657 | 0.0002645 | 0.0002789 | 0.0002750 |
+| clean random MAE | 0.0037520 | 0.0047859 | 0.0038794 | 0.0048947 |
+| clean contact QFL | 0.0057336 | 0.0055567 | 0.0059288 | 0.0056918 |
+| perturbed random QFL | 0.0003378 | 0.0003621 | 0.0003500 | 0.0003733 |
+| perturbed random MAE | 0.0046071 | 0.0061020 | 0.0047317 | 0.0062039 |
+| perturbed contact QFL | 0.0075595 | 0.0078594 | 0.0077316 | 0.0080088 |
+| perturbed recovery Brier | 0.7981 | 0.7775 | 0.8102 | 0.7880 |
+| perturbed recovery projection | 0.7761 | 0.7452 | 0.7852 | 0.7536 |
+| fake-contact recovery Brier | 0.8821 | 0.8397 | 0.8918 | 0.8495 |
+| missed-contact recovery Brier | 0.7101 | 0.7125 | 0.7239 | 0.7233 |
+
+### 关键观察
+
+纯 GRAB 在 micro 和 object-macro 上都略优于 GRAB+ContactPose。差距不大，但排序一致；object-macro 没有推翻 micro 结论。
+
+### 解释
+
+这说明旧的 box 子集偏置不是唯一证据来源后，GRAB 仍然保持轻微优势。GRAB+ContactPose 没有在这条 held-out ARCTIC 子集上形成稳定增益。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+V1 指导下的 held-out ARCTIC 对比有效，但两条 checkpoint 的训练预算仍不完全相同，因此只能说明当前协议下 pure GRAB 略优，不能进一步做严格单变量归因。
+
+### 决策
+
+把 `pure GRAB` 视为当前 ARCTIC held-out 的参考基线；如果后续要再比较，优先补同预算的对照，而不是直接改 evaluator。
+
+### 下一步
+
+若需要更强结论，再补同训练预算、同数据协议的 GRAB+ContactPose 或 OakInk 对照。
+
+### 证据
+
+- `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.md`
+- `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.json`
+- `output/research/arctic_v1/arctic_v1_summary.json`
+- `output/research/arctic_v1/stratified/manifest.json`
+- `output/research/arctic_v1/objectwise/*/*.json`
 
 ## EXP-001 — OakInk wrist 坐标与 stored-hand runtime proxy 验证
 

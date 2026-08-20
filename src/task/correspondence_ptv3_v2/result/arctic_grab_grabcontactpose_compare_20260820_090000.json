@@ -1,0 +1,80 @@
+{
+  "micro": {
+    "pure_grab": {
+      "test_clean/cross_edge_random_qfl": 0.0002656962139610941,
+      "test_clean/cross_edge_random_mae": 0.0037520077531796063,
+      "test_clean/contact_aux_qfl": 0.005733632887118155,
+      "test_perturbed/cross_edge_random_qfl": 0.00033781267848470315,
+      "test_perturbed/cross_edge_random_mae": 0.0046070806216527834,
+      "test_perturbed/contact_aux_qfl": 0.007559520553206943,
+      "test_perturbed/pseudo_recovery_brier": 0.7981146511369119,
+      "test_perturbed/pseudo_recovery_projection": 0.7760975893972438,
+      "test_perturbed/pseudo_fake_contact_recovery_brier": 0.8821414715498662,
+      "test_perturbed/pseudo_missed_contact_recovery_brier": 0.7101249937269694
+    },
+    "grab_contactpose": {
+      "test_clean/cross_edge_random_qfl": 0.0002645222673459981,
+      "test_clean/cross_edge_random_mae": 0.0047859375062355,
+      "test_clean/contact_aux_qfl": 0.005556742783281277,
+      "test_perturbed/cross_edge_random_qfl": 0.0003621334236361963,
+      "test_perturbed/cross_edge_random_mae": 0.006102033394596432,
+      "test_perturbed/contact_aux_qfl": 0.007859417593663867,
+      "test_perturbed/pseudo_recovery_brier": 0.7775316847950772,
+      "test_perturbed/pseudo_recovery_projection": 0.7452399924377119,
+      "test_perturbed/pseudo_fake_contact_recovery_brier": 0.8396722309354764,
+      "test_perturbed/pseudo_missed_contact_recovery_brier": 0.712460491237899
+    }
+  },
+  "macro_object": {
+    "pure_grab": {
+      "test_clean/cross_edge_random_qfl": 0.00027894399788399866,
+      "test_clean/cross_edge_random_mae": 0.0038794178984407077,
+      "test_clean/contact_aux_qfl": 0.005928781389779317,
+      "test_perturbed/cross_edge_random_qfl": 0.0003500446045631078,
+      "test_perturbed/cross_edge_random_mae": 0.00473170934868835,
+      "test_perturbed/contact_aux_qfl": 0.00773156335018428,
+      "test_perturbed/pseudo_recovery_brier": 0.8101849147122052,
+      "test_perturbed/pseudo_recovery_projection": 0.785228130277059,
+      "test_perturbed/pseudo_fake_contact_recovery_brier": 0.8918232614240695,
+      "test_perturbed/pseudo_missed_contact_recovery_brier": 0.7238988401733062
+    },
+    "grab_contactpose": {
+      "test_clean/cross_edge_random_qfl": 0.0002749686342350858,
+      "test_clean/cross_edge_random_mae": 0.004894665088474225,
+      "test_clean/contact_aux_qfl": 0.005691769710851957,
+      "test_perturbed/cross_edge_random_qfl": 0.00037328722320458023,
+      "test_perturbed/cross_edge_random_mae": 0.006203945741346881,
+      "test_perturbed/contact_aux_qfl": 0.008008771668354396,
+      "test_perturbed/pseudo_recovery_brier": 0.7879994993500391,
+      "test_perturbed/pseudo_recovery_projection": 0.7536250825597632,
+      "test_perturbed/pseudo_fake_contact_recovery_brier": 0.8494764037936966,
+      "test_perturbed/pseudo_missed_contact_recovery_brier": 0.7232769675626531
+    }
+  },
+  "objects": [
+    "box",
+    "capsulemachine",
+    "espressomachine",
+    "ketchup",
+    "laptop",
+    "microwave",
+    "mixer",
+    "notebook",
+    "phone",
+    "scissors",
+    "waffleiron"
+  ],
+  "macro_object_counts": {
+    "box": 10777,
+    "capsulemachine": 9731,
+    "espressomachine": 9859,
+    "ketchup": 5430,
+    "laptop": 9762,
+    "microwave": 9519,
+    "mixer": 8668,
+    "notebook": 7455,
+    "phone": 7757,
+    "scissors": 7821,
+    "waffleiron": 7189
+  }
+}

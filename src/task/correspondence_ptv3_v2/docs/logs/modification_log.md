@@ -1,5 +1,55 @@
 # Modification log
 
+## 2026-08-20 — 完成 V1 ARCTIC 分层外部评估与 object-macro 汇总
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `25262bc`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/research/arctic_v1/build_stratified_subset.py` — 构造覆盖全部 object / subject / action 的确定性分层软链子集。
+- `src/task/correspondence_ptv3_v2/research/arctic_v1/build_object_subsets.py` — 为每个 object 构造单独的软链子集，便于按 object 汇总 macro。
+- `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.md` — 写入 V1 ARCTIC micro / object-macro 对比结果。
+- `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.json` — 保存 V1 汇总 JSON。
+
+**改动原因**
+
+用户要求按照 V1 指导实现：在不训练 ARCTIC 的前提下，用 held-out ARCTIC 评估纯 GRAB 与 GRAB+ContactPose。由于现有 evaluator 只输出全局 micro，需要额外构造 object 子集来计算 object-macro。
+
+**对应指导**
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+**影响范围**
+
+仅 task 内部实验、结果和研究脚本，不改变训练代码、模型、loss 或 evaluator 协议。
+
+## 2026-08-20 — 新增 ARCTIC 全量/分层外部评估 V1 指导
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `25262bc`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/docs/指导/V1.md` — 规定现有纯 GRAB 与 GRAB+ContactPose checkpoint 的全量 ARCTIC 或全类别分层子集评测流程。
+- `src/task/correspondence_ptv3_v2/docs/logs/repo_notes_log.md` — 将 V1 与 ARCTIC 外部评估更新为当前任务入口和研究近况。
+- `src/task/correspondence_ptv3_v2/docs/logs/decision_log.md` — 记录时间受限时采用 subject/object/action 确定性分层的自主选择。
+- `src/task/correspondence_ptv3_v2/docs/logs/modification_log.md` — 记录本次指导文档新增。
+
+**改动原因**
+
+响应用户要求，将启动三数据集混训前首先要完成的 ARCTIC 外部评估固化为可执行指导，修正旧 20 文件子集仅含 `box_*` 的类别偏置，并明确统一协议、结果统计和后续决策门。
+
+**对应指导**
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+**影响范围**
+
+仅 task 内部研究指导与记录，不修改代码、checkpoint、训练进程或评测实现。
+
 ## 2026-08-20 — 重新拉起 GRAB 5 mm no-PCA runtime 训练
 
 - branch: `feature/hand-pca-perturbation`
