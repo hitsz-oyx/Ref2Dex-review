@@ -136,7 +136,7 @@ train-only benchmark 显示 mixed 的纯训练吞吐在 3 GPU 下随 batch 增�
 ## 2026-08-20 — gate+cm64 采用全开后渐进启用的 warm-up
 
 - branch: `oyx`
-- post-commit: `待提交`
+- post-commit: `453806a`
 
 **未指定点**
 

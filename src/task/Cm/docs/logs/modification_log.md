@@ -469,7 +469,7 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 ## 2026-08-20 — 增加 gate warm-up 配置与训练策略
 
 - branch: `oyx`
-- post-commit: `待提交`
+- post-commit: `453806a`
 - 范围: task 内部
 
 **文件**
@@ -490,9 +490,9 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 
 **单次修改进度**
 
-- 当前: 代码、配置、单测和配置调度 smoke 已完成；待启动独立正式训练。
-- 剩余: 提交后选择可容纳的 GPU 启动训练并记录吞吐、slot 使用和 EPE。
-- 续接点: 新配置 `object_v2_grab_gate_cm64_warmup.yaml`。
+- 当前: 代码、配置、单测、配置调度 smoke 和独立正式训练启动均已完成；W&B run `8grohy8u`，GPU 0、1 共享运行。
+- 剩余: 持续观察第 1、5、10 个 epoch 的 slot 使用和 EPE，确认渐进 gate 是否避免 collapse。
+- 续接点: `output/exp/cm_v121/cm_v121_grab_gate_cm64_warmup_2gpu_bs48_50ep_gpu01_20260820_111403.log`。
 
 **项目阶段进度**
 

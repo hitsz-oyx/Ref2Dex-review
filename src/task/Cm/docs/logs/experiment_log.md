@@ -17,6 +17,92 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 - V1.1.1 downstream cache parity：`SUPPORTED`；feature 逐元素差异归因于 spconv 非确定性，不作为科学反证。
 - V1.1.2 全量 DenseToken bank：`INVALID_IMPLEMENTATION`/路线撤回，因资源成本过高而停止，不用于效果结论。
 
+## EXP-005 — GRAB gate+cm64 全 slot warm-up
+
+### 日期
+
+2026-08-20
+
+### 对应指导
+
+`docs/指导/V1.2.1.md`
+
+### 假设
+
+先让 16 个 slot 在无 hard gate 的条件下共同训练，再逐步引入 gate threshold 与稀疏 count loss，可以让低维 `cm_dim=64` 的模型先形成分工，降低原 gate 训练中单 slot fallback 导致的 branch collapse。
+
+### Baseline
+
+- commit: `453806a`
+- config: `src/task/Cm/configs/object_v2_grab_gate_cm64.yaml`
+- checkpoint: 原候选迁移训练的 step 16188 checkpoint 仅作诊断对照，不续训
+
+### 本次修改
+
+- 新配置使用 GRAB-only、time condition、gate、`cm_dim=64` 和相同 fixed split/calibration；
+- 前 5 epoch 强制所有 16 个 slot 参与 decoder，关闭 count loss；
+- 后 5 epoch 将 threshold 从 0 线性升到 0.85、count loss 权重从 0 线性升到 `1e-3`；
+- 第 11 epoch 起使用完整 gate 配置；其余数据、GT、评估和 50 epoch budget 保持不变。
+
+### 实现审查
+
+Verdict: PASS
+
+关键检查：
+- 11 个 `tests/test_cm_slot_attention.py` 单测通过；
+- warm-up 调度 smoke 输出 epoch 0/4 全开、epoch 5/7 ramp、epoch 9 完整 gate；
+- 首个训练日志显示 `gate_force_all=1`、`hard_active_mean=16`、`effective_branch_count=16`、`global_top1_usage≈0.0625`；
+- 无 OOM、NaN 或 DDP 崩溃。
+
+### 实验命令
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 \
+  torchrun --standalone --nproc_per_node=2 \
+  -m src.task.Cm.train \
+  --config src/task/Cm/configs/object_v2_grab_gate_cm64_warmup.yaml \
+  --distributed
+```
+
+### 结果
+
+正式训练刚启动，当前只有 step 100 的 warm-up 观测：
+
+| Metric | Step 100 |
+| --- | ---: |
+| train flow EPE | `46.376 mm` |
+| hard active mean | `16.0` |
+| effective branch count | `16.0` |
+| global top-1 usage | `0.06251` |
+| samples/s | `102.1` |
+
+### 关键观察
+
+warm-up 初始阶段确实实现了全 slot 参与，未复现原候选的单 slot collapse；吞吐因 GPU 0、1 与 mixed 共享而只有约 102 samples/s。
+
+### 解释
+
+当前证据只说明 warm-up 路径和全 slot forward 生效，尚不足以判断 gate 启用后能否保持多 slot 使用或改善 EPE。
+
+### 结论状态
+
+INCONCLUSIVE
+
+### 决策
+
+保留训练继续运行，至少观察第 5、10、11 个 epoch 的 transition 和验证结果；若 ramp 后 effective branch count 再次降至 1，则需要重新设计 gate 的 active-count 目标，而不是只调整 count loss 权重。
+
+### 下一步
+
+记录第 5/10/11 epoch 的验证 EPE、threshold、active count、top-1 usage 和吞吐，并与原 gate+cm64 对照。
+
+### 证据
+
+- log: `output/exp/cm_v121/cm_v121_grab_gate_cm64_warmup_2gpu_bs48_50ep_gpu01_20260820_111403.log`
+- metrics: `outputs/cm/cm_object_v2_grab_gate_cm64_warmup_20260820_111406/metrics.jsonl`
+- W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/8grohy8u`
+- commit: `453806a`
+
 ## EXP-002 — V1.2.1 fixed split + no-gate/time mixed short training
 
 ### 日期
