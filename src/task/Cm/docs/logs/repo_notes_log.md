@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-主路线是 V1.2.1 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank、E1 统计、sequence 固定 split、train-only calibration 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 300-step 短训都已完成；随后做了 train-only 吞吐 benchmark：GRAB 1/2/3 GPU 约 73.4 / 143.1 / 209.9 samples/s，ARCTIC 3 GPU 约 209.2 samples/s；mixed 3 GPU batch-size sweep 在 8/16/24/32/48/64 上得到约 207.1 / 282.6 / 329.3 / 343.5 / 366.7 / 357.1 samples/s。当前 mixed 正式入口按 3 GPU + batch_size=48、50 epochs/184650 steps 运行。用户追加的 GRAB gate+cm64 候选在共享 GPU 1、5 上按 batch 48、50 epochs/134900 steps 运行；共享初始吞吐约 111 samples/s，不得与独占卡 benchmark 直接比较。
+主路线是 V1.2.1 object-only GRAB + ARCTIC；左右手独立采样，`dataset_id` 仅用于诊断。Scene Cache V1.1.2 为历史对照，正式训练在线运行 Frozen DenseToken。full-data Stage4、object-v2 cache、sampling bank、E1 统计、sequence 固定 split、train-only calibration 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 300-step 短训都已完成；随后做了 train-only 吞吐 benchmark：GRAB 1/2/3 GPU 约 73.4 / 143.1 / 209.9 samples/s，ARCTIC 3 GPU 约 209.2 samples/s；mixed 3 GPU batch-size sweep 在 8/16/24/32/48/64 上得到约 207.1 / 282.6 / 329.3 / 343.5 / 366.7 / 357.1 samples/s。当前 mixed 正式入口按 3 GPU + batch_size=48、50 epochs/184650 steps 运行。用户追加的 GRAB gate+cm64 候选先在 GPU 1、5 共享运行，后从安全 checkpoint step 16188 迁移到空闲 GPU 6、7；共享阶段约 111 samples/s，不得与独占卡 benchmark 直接比较，迁移后首段约 270 samples/s。
 
 ## 文档索引
 

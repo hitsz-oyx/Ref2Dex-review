@@ -2,7 +2,7 @@
 
 ## 当前研究状态
 
-V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 小规模短训；随后完成 train-only 吞吐 benchmark，3 GPU + batch 48 是 mixed 路线的峰值点。mixed 已从 10000-step pilot 续训至 50 epochs/184650 steps；用户追加的 GRAB-only + gate + `cm_dim=64` 复合候选也已按 50 epochs 启动。两者均在运行中，尚无正式效果结论。
+V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 小规模短训；随后完成 train-only 吞吐 benchmark，3 GPU + batch 48 是 mixed 路线的峰值点。mixed 已从 10000-step pilot 续训至 50 epochs/184650 steps；用户追加的 GRAB-only + gate + `cm_dim=64` 复合候选已从 step 16188 迁移到空闲 GPU 6、7，二者均在运行中，尚无正式效果结论。
 
 ## 历史证据索引
 

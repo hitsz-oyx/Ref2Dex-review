@@ -429,3 +429,39 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **下一步打算做什么**（可选）
 
 确认两个任务在共享卡下持续前进且无 OOM/NaN；完成后分别整理 mixed 和复合候选的正式 EXP。
+
+## 2026-08-20 — 将 GRAB gate+cm64 从共享 GPU 迁移到 GPU 6、7
+
+- branch: `oyx`
+- post-commit: `878da54`
+- 范围: task 内部
+
+**文件**
+
+- `output/exp/cm_v121/cm_v121_grab_gate_cm64_2gpu_bs48_50ep_gpu67_resume_20260820_090438.log` — GPU 6、7 续训日志（运行产物，不纳入版本管理）。
+- `output/exp/cm_v121/migration_artifacts/grab_gate_cm64_step_16188_epoch6.pt` — 迁移前安全 checkpoint 备份。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 更新迁移后 GPU 与吞吐状态。
+- `src/task/Cm/docs/logs/experiment_log.md` — 更新当前运行位置。
+
+**改动原因**
+
+用户确认将 GRAB gate+cm64 从共享的 GPU 1、5 移到已空闲的 GPU 6、7，以恢复吞吐并降低对 mixed 的资源干扰。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**单次修改进度**（可选）
+
+- 当前: 原 rank 已停止；从 step 16188/epoch 6 恢复到 GPU 6、7，W&B 新 run 为 `o6zlc1nu`，首个完整 step 吞吐约 270 samples/s。
+- 剩余: 重跑 epoch 7 并继续至 step 134900；验证迁移后 mixed 吞吐是否恢复。
+- 续接点: `output/exp/cm_v121/cm_v121_grab_gate_cm64_2gpu_bs48_50ep_gpu67_resume_20260820_090438.log`。
+
+**项目阶段进度**（可选）
+
+- 阶段: V1.2.1 composite candidate
+- 进度: GRAB gate+cm64 已完成资源迁移，继续正式长训。
+
+**下一步打算做什么**（可选）
+
+按分钟级观察 GPU 6、7 上的稳定吞吐和 mixed 恢复情况；完成后追加正式 EXP 结果。
