@@ -1,5 +1,30 @@
 # Cm AI 修改记录
 
+## 2026-08-20 — 修正 V2 GRAB subject template 解析
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: 跨 task（共享 `process/GRAB`，Cm/V2 为直接使用者）
+
+**文件**
+
+- `process/GRAB/raw.py` — 支持两种 GRAB root 布局解析 subject asset，并为正式调用提供严格 template 检查。
+- `process/GRAB/stage4_cm.py` — V2 Stage4 默认启用严格 subject template，记录解析 root 和 template policy，提供显式兼容开关。
+- `tests/test_cm_sequence_dataset.py` — 覆盖 `dataset/GRAB` 布局下 `v_template` 路径解析。
+- `src/task/Cm/docs/logs/repo_notes_log.md` — 记录 V2 数据合同及旧 cache 重建要求。
+
+**改动原因**
+
+实测发现原始 GRAB 的 `vtemp` 相对路径位于 `dataset/GRAB/data/tools/...`，旧脚本直接拼接 `dataset/GRAB/tools/...` 后静默使用平均 MANO，导致手几何和 candidate mask 偏离 subject-specific 语义。
+
+**对应指导**（如有）
+
+`src/task/Cm/docs/指导/V1.2.1.md`
+
+**下一步打算做什么**
+
+用新输出目录重建 GRAB Stage4/object-v2 cache，再重新进行正式训练比较。
+
 ## 2026-08-18 — 建立 Cm 规范日志入口
 
 - branch: 当前工作分支

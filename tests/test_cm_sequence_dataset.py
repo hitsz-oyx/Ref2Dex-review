@@ -9,6 +9,20 @@ from torch.utils.data import SequentialSampler
 from src.base.distributed import DistributedState, make_default_eval_sampler
 from src.task.Cm.dataset import Stage4CmDataset
 from process.GRAB.stage4_cm import build_hand_sequence, build_shared_sequence
+from process.GRAB.raw import GRABRawAdapter
+
+
+def test_grab_asset_resolution_handles_dataset_root_layout(tmp_path: Path) -> None:
+    sequence_root = tmp_path / "data" / "grab"
+    (sequence_root / "s1").mkdir(parents=True)
+    template = tmp_path / "data" / "tools" / "subject_meshes" / "male" / "s1_rhand.ply"
+    template.parent.mkdir(parents=True)
+    template.write_text("ply\n", encoding="utf-8")
+    adapter = GRABRawAdapter.__new__(GRABRawAdapter)
+    adapter.grab_root = str(tmp_path)
+    adapter._sequence_root = sequence_root
+    resolved = adapter._resolve_grab_asset_path("tools/subject_meshes/male/s1_rhand.ply")
+    assert Path(resolved) == template
 
 
 def test_runtime_stride_uses_current_hand_frame_and_epoch_seed() -> None:

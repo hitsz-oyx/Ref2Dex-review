@@ -21,3 +21,11 @@
 ## 主要入口
 
 `process/GRAB/stage4_cm.py`、`process/ARCTIC/stage4_cm.py`、`process/common/object_cache_v2.py`、`src/task/Cm/build_object_v2_splits.py`、`src/task/Cm/dataset_object_v2.py`、`src/task/Cm/compute_flow_scale.py`、`src/task/Cm/model.py`、`src/task/Cm/runner.py`、`src/task/Cm/train.py`、`src/task/Cm/eval.py`。
+
+## V2 数据链路关键约定
+
+- GRAB 原始根目录允许传 `dataset/GRAB` 或 `dataset/GRAB/data`；必须先解析出直接包含 `subject/*.npz` 的 sequence root。`rhand/lhand` 中的 `vtemp` 是相对路径（例如 `tools/subject_meshes/male/s1_rhand.ply`），解析时要相对于 raw asset 根（通常为 `dataset/GRAB/data`），不能简单拼到 `dataset/GRAB`。
+- 正式 Cm/V2 Stage4 默认要求每条 GRAB 手都加载 subject-specific `v_template`；缺失时应失败而不是静默回退平均 MANO。只有调试/兼容旧数据时显式传 `--allow-default-mano` 才允许回退。
+- Stage4 输出的 `meta.json` 必须记录 `source_grab_root`、`resolved_sequence_root` 和 `subject_vtemplate_policy`。这三项用于确认 cache 是否由正确的 raw layout 和手型语义生成。
+- 当前 `cm_stage4_v2` / `cm_object_v2` cache 是在上述路径修复前生成的，GRAB 手点和 candidate mask 可能使用平均 MANO；在正式比较或长训前必须重建对应 GRAB cache。不要直接覆盖旧 cache，先写到新输出目录并保留旧产物用于追溯。
+- V2 的其他合同保持不变：4 倍下采样（30 Hz）、4096 object pool、当前帧 5 cm candidate、object-only mmap/ragged 转换、B=4 sampling bank、sequence fixed split、train-only calibration。

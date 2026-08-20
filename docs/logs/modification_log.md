@@ -1,5 +1,25 @@
 # 全局 AI 修改记录
 
+## 2026-08-20 — 修正共享 GRAB raw asset 解析
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: 跨 task
+
+**文件**
+
+- `process/GRAB/raw.py` — 统一 sequence root 与 subject `v_template` 的相对路径解析，并支持严格失败。
+- `process/GRAB/stage4_cm.py` — 正式 Cm Stage4 默认禁止缺失 subject template，写入可追溯 metadata。
+- `tests/test_cm_sequence_dataset.py` — 增加 raw layout 回归测试。
+
+**改动原因**
+
+共享 GRAB adapter 的旧拼接逻辑会在 `dataset/GRAB` root 下找错 `tools/subject_meshes`，静默回退平均 MANO；这会污染 Cm/V2 hand geometry。
+
+**影响范围**
+
+共享 GRAB 数据处理；Cm/V2 需重建受影响 cache。
+
 ## 2026-08-18 — 建立根级规范文档入口
 
 - branch: 当前工作分支

@@ -98,6 +98,41 @@ train-only benchmark 显示 mixed 的纯训练吞吐在 3 GPU 下随 batch 增�
 
 **建议用户确认**
 
+否
+
+## 2026-08-20 — V2 GRAB 数据脚本采用 raw asset 解析与严格 subject template
+
+- branch: `oyx`
+- post-commit: `HEAD`
+
+**未指定点**
+
+用户要求修正 V2 数据脚本，但没有指定当 `v_template` 缺失时是继续生成还是停止。
+
+**实际选择**
+
+按正式 Cm/V2 数据的语义要求，默认停止并报错；保留显式 `--allow-default-mano` 作为调试/旧流程兼容开关，并让 adapter 同时支持 `dataset/GRAB` 与 `dataset/GRAB/data` 两种 root。
+
+**其他合理选择**
+
+继续静默回退平均 MANO，或在脚本中固定一种 root 布局。
+
+**选择理由**
+
+平均 MANO 会改变手点、手根和当前 candidate mask，结果不能作为 V2 正式实验；严格失败能尽早暴露路径/资产问题。
+
+**对结果的影响**
+
+只改变数据生成的资产解析和错误处理，不改变模型、loss、GT 定义或评估口径；已有错误 cache 不会自动修复。
+
+**可逆性**
+
+完全可逆；可用兼容开关恢复旧回退行为。
+
+**建议用户确认**
+
+否
+
 是（建议时机：启动正式长训前）
 
 ## 2026-08-19 — GRAB gate+cm64 候选保持 time condition 并按 50 epochs 比较

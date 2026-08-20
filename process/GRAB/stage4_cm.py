@@ -186,6 +186,8 @@ def _write_meta(output_root: Path, args: argparse.Namespace, stats: dict[str, in
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "source": "raw GRAB; no Stage 2 or Stage 3 dependency",
         "source_grab_root": str(Path(args.grab_root).resolve()),
+        "resolved_sequence_root": str(resolve_grab_sequence_root(args.grab_root)),
+        "subject_vtemplate_policy": "required" if not args.allow_default_mano else "allow_default_mano",
         "output_root": str(output_root.resolve()),
         "sample_unit": "one shared sequence file plus one hand-side file",
         "coordinate_frame": "world; Dataset maps endpoints to hand_root_t",
@@ -232,6 +234,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--obj-unit", choices=["m", "mm", "auto"], default="m")
     parser.add_argument("--save-compressed", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--allow-default-mano",
+        action="store_true",
+        help="允许缺失 subject v_template 时回退平均 MANO；正式 Cm/V2 数据默认禁止",
+    )
     return parser.parse_args()
 
 
@@ -264,6 +271,7 @@ def main() -> None:
         ds_rate=args.ds_rate,
         obj_unit=args.obj_unit,
         nn_batch_size=args.nn_batch_size,
+        require_subject_vtemplate=not args.allow_default_mano,
     )
     sides = ("left", "right") if args.side == "both" else (args.side,)
     stats = {"source_sequences": len(sequences), "shared_written": 0, "hand_written": 0,

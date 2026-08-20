@@ -574,6 +574,7 @@ class GRABRawAdapter:
         ds_rate: int = 1,
         obj_unit: str = "m",
         nn_batch_size: int = DEFAULT_NN_BATCH_SIZE,
+        require_subject_vtemplate: bool = False,
     ):
         self.num_obj_points = num_obj_points
         self.device = resolve_torch_device(device)
@@ -583,6 +584,8 @@ class GRABRawAdapter:
         self.ds_rate = max(1, int(ds_rate))
         self.obj_unit = obj_unit
         self.nn_batch_size = max(1, int(nn_batch_size))
+        self.require_subject_vtemplate = bool(require_subject_vtemplate)
+        self._sequence_root = resolve_grab_sequence_root(self.grab_root)
 
         # 默认 MANO（用于手部语义标签等静态分析）
         print("[Preprocessor] Loading default MANO for both hands (flat_hand_mean=True)...")
@@ -619,8 +622,7 @@ class GRABRawAdapter:
         self._obj_cache = {}
         # 环境资产 canonical surface 采样缓存：key -> (points, normals)
         self._env_cache: dict = {}
-        # 序列根目录（懒解析，用于环境 mesh 相对路径）
-        self._sequence_root: Optional[Path] = None
+        # 解析后的 sequence 根目录，用于环境 mesh 与 subject asset 相对路径
         print(
             f"[Preprocessor] Device: {self.device} | "
             f"NN batch size: {self.nn_batch_size}"
@@ -643,6 +645,12 @@ class GRABRawAdapter:
             if op.exists(vtemp_path):
                 v_template = trimesh.load(vtemp_path, process=False).vertices.astype(np.float32)
                 mano_kwargs["v_template"] = v_template  # type: ignore[assignment]
+            elif self.require_subject_vtemplate:
+                raise FileNotFoundError(
+                    f"Missing required GRAB subject v_template: {vtemp_path}. "
+                    "Check --grab-root (expected dataset/GRAB or dataset/GRAB/data) "
+                    "and the raw GRAB tools/subject_meshes assets."
+                )
             elif vtemp_path not in self._missing_vtemp_warned:
                 print(
                     f"[Preprocessor] WARNING: missing subject v_template {vtemp_path}. "
@@ -652,6 +660,23 @@ class GRABRawAdapter:
             m = MANO(self.mano_path, **mano_kwargs).to(self.device)
             self._mano_cache[key] = m
         return self._mano_cache[key]
+
+    def _resolve_grab_asset_path(self, relative_path: str) -> str:
+        """Resolve GRAB assets for both dataset/GRAB and dataset/GRAB/data roots."""
+        candidate = Path(str(relative_path))
+        if candidate.is_absolute():
+            return str(candidate)
+        roots = (
+            Path(self.grab_root).resolve(),
+            Path(self.grab_root).resolve() / "data",
+            self._sequence_root,
+            self._sequence_root.parent,
+        )
+        for root in roots:
+            resolved = root / candidate
+            if resolved.exists():
+                return str(resolved)
+        return str(Path(self.grab_root).resolve() / candidate)
 
     def _get_obj_sampling(self, obj_name: str):
         if obj_name not in self._obj_cache:
@@ -702,8 +727,6 @@ class GRABRawAdapter:
         static_world / dynamic_world 存储方式；本函数保持通用。
         """
         assets = seq_data.get_environment_assets()
-        if self._sequence_root is None:
-            self._sequence_root = resolve_grab_sequence_root(self.grab_root)
         seq_root = str(self._sequence_root)
         result: list[dict] = []
         for asset in assets:
@@ -786,7 +809,7 @@ class GRABRawAdapter:
                 hand_params_sel[k] = v
 
         vtemp_relpath = seq_data.get_hand_vtemp_relpath(side)
-        vtemp_path = op.join(self.grab_root, vtemp_relpath)
+        vtemp_path = self._resolve_grab_asset_path(vtemp_relpath)
         mano_for_seq = self._get_mano_for_vtemp(vtemp_path, is_rhand=(side == "right"))
 
         verts_t, joints_t = self._mano_forward(mano_for_seq, T, hand_params_sel)

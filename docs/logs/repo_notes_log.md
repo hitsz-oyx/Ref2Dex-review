@@ -15,3 +15,8 @@
 - 全局自主决策：[`decision_log.md`](decision_log.md)
 - 全局修改记录：[`modification_log.md`](modification_log.md)
 - Cm 任务入口：[`src/task/Cm/docs/logs/repo_notes_log.md`](../../src/task/Cm/docs/logs/repo_notes_log.md)
+
+## 共享 GRAB 数据资产约定
+
+- `process/GRAB/raw.py` 被 Cm、Stage2、GeneOH 和 InteractionDynamics 共用。GRAB 的 sequence root 与 `tools/subject_meshes` 可能分别位于 `dataset/GRAB/data/grab` 和 `dataset/GRAB/data/tools`，调用方不得假设所有相对 asset 都直接位于传入 root 下。
+- 正式 Cm/V2 Stage4 通过 `require_subject_vtemplate=True` 强制使用 subject-specific MANO template；缺失 template 会显式报错，避免生成语义错误的 cache。旧流程如确需兼容可显式使用 `--allow-default-mano`。
