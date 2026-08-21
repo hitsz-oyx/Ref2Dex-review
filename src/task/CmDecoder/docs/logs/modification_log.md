@@ -335,3 +335,25 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **统计状态**
 
 约 85.18% 的 pair 满足最大关节变化小于 0.5°，约 6.50% 达到至少 1°；dt 中位数约 30 ms，但存在 105.8 ms 最大值。
+
+## 2026-08-21 — 统计多时间间隔 q 差分
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-009，记录 stride 1/2/3/5/6/10/15/30 的 q 差分统计。
+
+**改动原因**
+
+用户要求确认改用 3 Hz 等更长时间间隔后相邻 GT q 的变化幅度；本次从已有 geometry cache 的 `q_full` 只读统计，不改变训练代码。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**统计状态**
+
+3 Hz（stride=10）共 10,948 pairs，最大关节变化 P50=0.505°、P90=6.819°，超过 0.5° 的比例为 51.04%。

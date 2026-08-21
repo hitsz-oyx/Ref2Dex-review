@@ -573,3 +573,62 @@ active-motion（0.5° 阈值；val 240 / test 162 samples）：
 
 - cache manifest: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_20_seed42.json`
 - task sidecars: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/episodes/*/task/`
+
+## EXP-009 — 多时间间隔 q 差分统计
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+将预测间隔从 30 Hz 的 1 帧扩大到更长时间，可以提高相邻目标帧的动作幅度，减少 near-zero residual 对训练和评价的支配。
+
+### Baseline
+
+- 数据范围：v4 20-episode geometry cache 的 `q_full`
+- 仅保留 source frame id 差值等于 stride 的配对
+- 30 Hz stride=1 作为基准
+
+### 结果
+
+按 `q_t → q_{t+stride}` 统计每帧最大关节变化 `max_j |Δq_j|`：
+
+| 目标频率 | stride | pairs | P50 (deg) | P90 (deg) | `>=0.5°` | `>=1°` | `>=2°` |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 30 Hz | 1 | 13,039 | 0.074 | 0.690 | 14.82% | 6.50% | 2.32% |
+| 15 Hz | 2 | 12,780 | 0.100 | 1.339 | 24.53% | 13.90% | 6.30% |
+| 10 Hz | 3 | 12,541 | 0.139 | 1.997 | 30.56% | 19.33% | 9.96% |
+| 6 Hz | 5 | 12,079 | 0.280 | 3.328 | 38.86% | 26.40% | 16.23% |
+| 5 Hz | 6 | 11,852 | 0.300 | 4.117 | 42.04% | 29.22% | 18.76% |
+| 3 Hz | 10 | 10,948 | **0.505** | **6.819** | **51.04%** | **38.18%** | **26.12%** |
+| 2 Hz | 15 | 9,866 | 0.800 | 10.221 | 58.11% | 46.43% | 34.15% |
+| 1 Hz | 30 | 7,285 | 1.921 | 17.281 | 71.94% | 62.91% | 49.33% |
+
+3 Hz 的各关节平均绝对差分为 `[1.277°, 0.181°, 0.900°, 1.091°, 1.286°, 0.979°]`。
+
+### 关键观察
+
+3 Hz 相比 30 Hz，P50 最大关节变化约增大 6.8 倍，超过 0.5° 的 pair 从 14.82% 增加到 51.04%；因此 3 Hz 确实能显著减弱 zero-residual 问题。更低频率继续增大动作幅度，但 pair 数量减少。
+
+### 解释
+
+当前 cache 已保存完整 `geometry/q_full` 和 `frame_time`，因此上述统计不需要重新读取原始 mesh。它还表明多时间尺度需要显式记录 stride/真实 `Δt`，不能继续把所有样本都标成单一 30 Hz。
+
+### 结论状态
+
+**SUPPORTED**
+
+### 下一步
+
+- 若进入训练，建议先做 3 Hz 单尺度 baseline：生成 stride=10 的 hand flow、`q_t/q_next` 和真实 `delta_time_s`。
+- Decoder 可将 `Δt` 作为显式标量输入；Cm 的时间条件同步使用该 `Δt`。
+- 再比较 30 Hz、3 Hz 和混合时间间隔，而不是直接把不同 stride 混在同一标签定义中。
+
+### 证据
+
+- geometry cache: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/episodes/*/geometry/q_full.npy`
