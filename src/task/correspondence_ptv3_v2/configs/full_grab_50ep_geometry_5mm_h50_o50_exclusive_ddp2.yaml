@@ -1,0 +1,14 @@
+_base_: src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_exclusive_ddp2.yaml
+
+name: correspondence_ptv3_v2_full_grab_geometry_5mm_h50_o50_exclusive_ddp2
+
+meta:
+  # Mutually exclusive corruption: 50% hand-only, 50% object-only, 0% joint.
+  apply_hand_perturb: true
+  exclusive_hand_object_perturb: true
+  hand_perturb_prob: 0.5
+  apply_obj_perturb: true
+  obj_perturb_prob: 1.0
+
+wandb:
+  tags: [correspondence, ptv3, v2, full-grab, geometry-5mm, h50-o50, exclusive-perturb, ddp2]

@@ -73,6 +73,10 @@ class Config(TaskConfig):
         obj_perturb_prob: float = 1.0
         apply_obj_perturb: bool = True
         val_obj_perturb_prob: float = 1.0
+        # Evaluation-only override for the perturbed validation stream. Keep
+        # true for the historical object-only protocol; hand-only evaluation
+        # sets this false without changing clean validation semantics.
+        val_apply_obj_perturb: bool = True
 
         # v2.1: hand-side MANO reconstruction on the GPU.  GRAB carries
         # PCA24 pose coefficients; ARCTIC carries axis-angle45.  The
@@ -140,6 +144,10 @@ class Config(TaskConfig):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"
 
     class data(TaskConfig.data):
+        # Optional multi-domain input. The task loader creates one dataset per
+        # entry and applies an equal-domain sampler instead of frame-count
+        # weighting the concatenated directory.
+        domain_paths: list[dict[str, str]] = []
         group_val_by_sequence = True
         sequence_locality_shuffle = True
         blacklist_path = None

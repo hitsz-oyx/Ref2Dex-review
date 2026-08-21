@@ -11,3 +11,19 @@
 ## OakInk 无 MANO runtime 路径
 
 OakInk 样本没有 MANO 参数，所以 `apply_hand_perturb=false` 时不进行 MANO forward。如果仍要 runtime resampling，必须提供 `meta.stored_hand_proxy_indices_path`；该 JSON 版本化一组直接索引存储 hand points 的空间 FPS proxy。Runner 会校验索引数量、范围和唯一性，缺失时 fail-fast。
+
+## 三域等比例混训路径
+
+`configs/mixed_grab_contactpose_oakink_equal.yaml` 使用 `data.domain_paths` 为
+GRAB、ContactPose、OakInk 分别构造 `CorrStaticDatasetV2`，再由
+`DomainConcatDataset` 合并索引。`DomainBalancedSampler` 在每个本地 batch
+中固定抽取三个域相同数量的样本，并在 DDP 下按 rank 切分每个域的采样流；它
+不会按三个数据集的 frame 数量加权，也不会把较小域静默耗尽后改变比例，而是
+按确定性 seed 循环采样。
+
+该首轮 baseline 显式设置 `use_mano_reconstruction=false`、
+`apply_hand_perturb=false` 和 `runtime_resample_object=false`。因此三个域共享
+存储的 clean hand/object 几何和普通 512 点 object sampling；object pose
+rotation/translation perturbation 仍可按统一配置开启。每个域拥有独立的
+`val_clean/<domain>/` 与 `val_perturbed/<domain>/` loader，checkpoint 选择指标
+不应只依赖混合平均值。

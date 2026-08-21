@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
+import copy
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.base import make_file_split_dataloaders
-from src.base.data import make_dataloader_kwargs
+from src.base.data import make_dataloader_kwargs, resolve_data_path
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
 from src.task.correspondence_ptv3_v2.sampling import (
     perturb_object_geometry,
@@ -463,7 +465,7 @@ class CorrStaticDatasetV2(Dataset):
         # The runner groups samples by (side, use_pca, num_pca_comps,
         # flat_hand_mean, v_template_sha) so a single batch can mix
         # GRAB (PCA24) and ARCTIC (axis-angle45) without crashing.
-        if "mano_pose" in data and "mano_global_orient" in data:
+        if self.use_mano_reconstruction and "mano_pose" in data and "mano_global_orient" in data:
             # Fix #1 (docs/指导.md): explicitly tell the runner this sample
             # has MANO parameters, so it actually runs the reconstruction
             # path instead of falling back to the legacy hand_points.
@@ -488,7 +490,6 @@ class CorrStaticDatasetV2(Dataset):
             result["hand_perturb_seed"] = torch.tensor(
                 int(hand_perturb_seed & ((1 << 63) - 1)), dtype=torch.long
             )
-            result["__dataset_id__"] = dataset_id
             result["__mano_side__"] = side
             result["mano_global_orient"] = torch.from_numpy(
                 np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)
@@ -554,7 +555,140 @@ class CorrStaticDatasetV2(Dataset):
                 bool(np.asarray(data.get("mano_flat_hand_mean", True)).item()),
                 dtype=torch.bool,
             )
+        # Keep the domain tag present for clean mixed batches as well. It is
+        # used for per-domain validation/logging and does not require MANO.
+        result["__dataset_id__"] = dataset_id
         return result
+
+
+class DomainConcatDataset(Dataset):
+    """Concatenate per-domain datasets while retaining domain boundaries."""
+
+    def __init__(self, datasets: list[CorrStaticDatasetV2], domain_ids: list[str]) -> None:
+        if not datasets or len(datasets) != len(domain_ids):
+            raise ValueError("DomainConcatDataset requires one id for every non-empty dataset.")
+        if len(set(domain_ids)) != len(domain_ids):
+            raise ValueError(f"Domain ids must be unique, got {domain_ids!r}.")
+        self.datasets = list(datasets)
+        self.domain_ids = [str(value) for value in domain_ids]
+        self.cumulative_sizes: list[int] = []
+        total = 0
+        for dataset in self.datasets:
+            if len(dataset) <= 0:
+                raise ValueError("Domain datasets must not be empty.")
+            total += len(dataset)
+            self.cumulative_sizes.append(total)
+
+    def __len__(self) -> int:
+        return self.cumulative_sizes[-1]
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        domain_idx = next(
+            idx for idx, end in enumerate(self.cumulative_sizes) if index < end
+        )
+        start = 0 if domain_idx == 0 else self.cumulative_sizes[domain_idx - 1]
+        return self.datasets[domain_idx][index - start]
+
+    def set_epoch(self, epoch: int) -> None:
+        for dataset in self.datasets:
+            dataset.set_epoch(epoch)
+
+
+class DomainBalancedSampler(Sampler[int]):
+    """Yield a fixed equal-domain stream for every local training batch.
+
+    The sampler creates one independent stream per domain and shards each
+    domain chunk across DDP ranks. Consequently every rank receives the same
+    domain quota and the all-reduce sees a 1/3 mixture as well.
+    """
+
+    def __init__(
+        self,
+        dataset: DomainConcatDataset,
+        *,
+        batch_size: int,
+        seed: int,
+        rank: int = 0,
+        world_size: int = 1,
+        drop_last: bool = True,
+    ) -> None:
+        if batch_size <= 0 or batch_size % len(dataset.datasets) != 0:
+            raise ValueError(
+                "Domain-balanced training requires batch_size divisible by the number "
+                f"of domains ({len(dataset.datasets)}), got {batch_size}."
+            )
+        if not 0 <= rank < world_size:
+            raise ValueError(f"rank must be in [0, {world_size}), got {rank}.")
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.rank = int(rank)
+        self.world_size = int(world_size)
+        self.drop_last = bool(drop_last)
+        self.domain_quota = self.batch_size // len(dataset.datasets)
+        # A domain is exposed for at least one full pass per epoch. Smaller
+        # domains cycle deterministically rather than changing the 1/3 ratio.
+        self.steps_per_epoch = max(
+            1,
+            max(
+                math.ceil(len(domain) / self.domain_quota)
+                for domain in dataset.datasets
+            ),
+        )
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __len__(self) -> int:
+        return self.steps_per_epoch * self.batch_size
+
+    @staticmethod
+    def _cycle_indices(length: int, count: int, rng: np.random.Generator) -> np.ndarray:
+        chunks: list[np.ndarray] = []
+        remaining = int(count)
+        while remaining > 0:
+            permutation = rng.permutation(length)
+            take = min(remaining, length)
+            chunks.append(permutation[:take])
+            remaining -= take
+        return np.concatenate(chunks, axis=0) if chunks else np.empty((0,), dtype=np.int64)
+
+    def __iter__(self):
+        offsets = [0]
+        for domain in self.dataset.datasets[:-1]:
+            offsets.append(offsets[-1] + len(domain))
+        streams: list[np.ndarray] = []
+        for domain_idx, domain in enumerate(self.dataset.datasets):
+            rng = np.random.default_rng(
+                stable_frame_seed(
+                    base_seed=self.seed,
+                    seq_id=f"domain-balanced-{domain_idx}",
+                    side="",
+                    raw_frame_id=0,
+                    epoch=self.epoch,
+                    namespace="sampler",
+                )
+            )
+            streams.append(
+                self._cycle_indices(
+                    len(domain),
+                    self.steps_per_epoch * self.domain_quota * self.world_size,
+                    rng,
+                )
+            )
+
+        for step in range(self.steps_per_epoch):
+            for domain_idx, stream in enumerate(streams):
+                global_start = step * self.domain_quota * self.world_size
+                local_start = global_start + self.rank * self.domain_quota
+                local_indices = stream[local_start : local_start + self.domain_quota]
+                offset = offsets[domain_idx]
+                yield from (int(value) + offset for value in local_indices)
 
 
 def _resolve_hand_to_obj_min_dist(
@@ -667,6 +801,16 @@ def make_dataloaders(
     meta_cfg: Any,
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    domain_specs = getattr(data_cfg, "domain_paths", None) or []
+    if domain_specs:
+        return _make_domain_balanced_dataloaders(
+            data_cfg,
+            seed,
+            meta_cfg=meta_cfg,
+            distributed=distributed,
+            domain_specs=domain_specs,
+        )
+
     expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
     runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
     use_mano_reconstruction = bool(getattr(meta_cfg, "use_mano_reconstruction", False))
@@ -709,7 +853,7 @@ def make_dataloaders(
     }
     val_perturbed_kwargs = {
         **train_kwargs,
-        "apply_obj_perturb": True,
+        "apply_obj_perturb": bool(getattr(meta_cfg, "val_apply_obj_perturb", True)),
         "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
         "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
         "runtime_resample_object": runtime_resample_object,
@@ -780,3 +924,171 @@ def make_dataloaders(
     test_loaders = {"test/": test_loader} if test_loader is not None else {}
     metadata["test_loader_names"] = sorted(test_loaders)
     return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders
+
+
+def _make_domain_balanced_dataloaders(
+    data_cfg: Any,
+    seed: int,
+    *,
+    meta_cfg: Any,
+    distributed: Any | None,
+    domain_specs: list[Any],
+) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    """Build equal-domain train batches and independent per-domain validation."""
+    expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
+    runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
+    use_mano_reconstruction = bool(getattr(meta_cfg, "use_mano_reconstruction", False))
+    train_kwargs = {
+        "num_obj_points": int(meta_cfg.num_obj_points),
+        "num_hand_points": int(meta_cfg.num_hand_points),
+        "num_supervision_edges": int(meta_cfg.num_supervision_edges),
+        "contact_supervision_quotas": tuple(getattr(meta_cfg, "contact_supervision_quotas", (16, 16, 16, 16))),
+        "contact_supervision_hard_negative_quota": int(
+            getattr(meta_cfg, "contact_supervision_hard_negative_quota", 16)
+        ),
+        "contact_supervision_hard_negative_distance_range": tuple(
+            getattr(meta_cfg, "contact_supervision_hard_negative_distance_range", (0.02, 0.03))
+        ),
+        "contact_radius": float(meta_cfg.contact_radius),
+        "base_seed": int(seed),
+        "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "exclusive_hand_object_perturb": bool(
+            getattr(meta_cfg, "exclusive_hand_object_perturb", False)
+        ),
+        "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
+        "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
+        "obj_trans_std": float(meta_cfg.obj_trans_std),
+        "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
+        "runtime_resample_object": runtime_resample_object,
+        "use_mano_reconstruction": use_mano_reconstruction,
+        "coordinate_frame": expected_coordinate_frame,
+    }
+    val_clean_kwargs = {
+        **train_kwargs,
+        "apply_obj_perturb": False,
+        "apply_hand_perturb": False,
+        "obj_perturb_prob": 0.0,
+        "eval_sampling_epoch": 0,
+    }
+    val_perturbed_kwargs = {
+        **train_kwargs,
+        "apply_obj_perturb": bool(getattr(meta_cfg, "val_apply_obj_perturb", True)),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
+        "eval_sampling_epoch": 0,
+    }
+
+    domain_ids: list[str] = []
+    train_datasets: list[CorrStaticDatasetV2] = []
+    val_loaders: dict[str, DataLoader] = {}
+    metadata_domains: list[dict[str, Any]] = []
+    for raw_spec in domain_specs:
+        if isinstance(raw_spec, dict):
+            domain_id = str(raw_spec.get("id", raw_spec.get("dataset_id", ""))).strip()
+            domain_path = raw_spec.get("path", raw_spec.get("train_path"))
+            domain_val_path = raw_spec.get("val_path")
+            domain_cache = raw_spec.get("cache_index_path")
+        else:
+            raise TypeError("data.domain_paths entries must be mappings with id and path.")
+        if not domain_id or domain_path in {None, ""}:
+            raise ValueError(f"Each data.domain_paths entry needs non-empty id/path, got {raw_spec!r}.")
+        if domain_id in domain_ids:
+            raise ValueError(f"Duplicate domain id {domain_id!r}.")
+
+        domain_cfg = copy.copy(data_cfg)
+        domain_cfg.train_path = str(resolve_data_path(domain_path, root=getattr(data_cfg, "root", None)))
+        domain_cfg.val_path = (
+            None
+            if domain_val_path in {None, ""}
+            else str(resolve_data_path(domain_val_path, root=getattr(data_cfg, "root", None)))
+        )
+        domain_cfg.test_path = None
+        domain_cfg.domain_paths = []
+        domain_cfg.cache_index_path = (
+            domain_cache
+            if domain_cache not in {None, ""}
+            else getattr(data_cfg, "cache_index_path", None)
+        )
+        domain_train_kwargs = {**train_kwargs, "dataset_id": domain_id}
+        domain_val_kwargs = {**val_clean_kwargs, "dataset_id": domain_id}
+        train_loader, val_loader, _, domain_metadata = make_file_split_dataloaders(
+            domain_cfg,
+            seed,
+            dataset_cls=CorrStaticDatasetV2,
+            file_pattern="**/*.npz",
+            train_dataset_kwargs=domain_train_kwargs,
+            val_dataset_kwargs=domain_val_kwargs,
+            split_group_fn=_sequence_group_key
+            if bool(getattr(data_cfg, "group_val_by_sequence", True))
+            else None,
+            distributed=distributed,
+        )
+        train_datasets.append(train_loader.dataset)
+        domain_ids.append(domain_id)
+        if val_loader is not None:
+            val_loader.dataset.set_epoch(0)
+            val_loaders[f"val_clean/{domain_id}/"] = val_loader
+            val_perturbed_dataset = CorrStaticDatasetV2(
+                val_loader.dataset.data_root,
+                file_list=val_loader.dataset.file_paths,
+                **{**val_perturbed_kwargs, "dataset_id": domain_id},
+            )
+            val_perturbed_dataset.set_epoch(0)
+            loader_seed = int(seed) + int(
+                getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0
+            )
+            val_loaders[f"val_perturbed/{domain_id}/"] = DataLoader(
+                val_perturbed_dataset,
+                batch_size=int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
+                shuffle=False,
+                sampler=make_default_eval_sampler(val_perturbed_dataset, distributed=distributed),
+                **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
+            )
+        metadata_domains.append(
+            {
+                "id": domain_id,
+                "path": str(domain_cfg.train_path),
+                "num_train_samples": len(train_loader.dataset),
+                "num_val_samples": 0 if val_loader is None else len(val_loader.dataset),
+                **{key: value for key, value in domain_metadata.items() if key.startswith("num_")},
+            }
+        )
+
+    combined_dataset = DomainConcatDataset(train_datasets, domain_ids)
+    rank = int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
+    world_size = int(
+        getattr(distributed, "world_size", 1) if getattr(distributed, "enabled", False) else 1
+    )
+    sampler = DomainBalancedSampler(
+        combined_dataset,
+        batch_size=int(data_cfg.batch_size),
+        seed=int(seed),
+        rank=rank,
+        world_size=world_size,
+        drop_last=bool(data_cfg.drop_last),
+    )
+    loader_seed = int(seed) + rank
+    train_loader = DataLoader(
+        combined_dataset,
+        batch_size=int(data_cfg.batch_size),
+        shuffle=False,
+        sampler=sampler,
+        **make_dataloader_kwargs(data_cfg, loader_seed),
+    )
+    metadata = {
+        "train_path": "domain_paths",
+        "val_path": None,
+        "test_path": None,
+        "num_train_samples": len(combined_dataset),
+        "num_val_samples": sum(item["num_val_samples"] for item in metadata_domains),
+        "domain_sampling": "equal",
+        "domain_ids": domain_ids,
+        "domain_steps_per_epoch": sampler.steps_per_epoch,
+        "domains": metadata_domains,
+        "runtime_resample_object": runtime_resample_object,
+        "coordinate_frame": expected_coordinate_frame,
+        "val_loader_names": sorted(val_loaders),
+        "test_loader_names": [],
+    }
+    return train_loader, None, metadata, val_loaders

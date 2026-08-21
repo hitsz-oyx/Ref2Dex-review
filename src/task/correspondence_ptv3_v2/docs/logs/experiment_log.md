@@ -4,6 +4,264 @@
 
 已完成 OakInk 坐标和无 MANO runtime sampling 的实现 gate，正式训练进行中；同时已完成 GRAB 5 mm PCA 互斥扰动版与两条 9 mm baseline 的当前 `best.pt` 对比。5 mm 版在 correspondence QFL 上更好，但 recovery 指标整体落后于 9 mm rebuilt baseline；和旧 no-PCA legacy run 比，clean QFL 更好，但 perturbed / recovery 指标更差；后续 no-PCA 默认对照已切到 8 月中旬的 `old1797_compact_repro`，它和当前 5 mm 语境更接近。当前 GRAB “5 mm 配置 + runtime sampling + no-PCA hand perturb”训练目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614`；该 run 原进程停在日志 step 36320 / epoch 4 附近，但可用 `latest.pt` 只保存到 step 27240 / epoch 3，2026-08-20 已从该 checkpoint 放入 tmux `grab5mm_no_pca_runtime_resume_20260820` 继续两卡训练，W&B run id 为 `zeqrhxyk`。V1 指导下的 ARCTIC 外部评估也已完成：分层子集覆盖 11 个 object / 5 个 subject，共 179 条序列、93,968 帧；pure GRAB 在 micro 和 object-macro 上都略优于 GRAB+ContactPose，差距幅度有限，结果页已写入 `src/task/correspondence_ptv3_v2/result/arctic_grab_grabcontactpose_compare_20260820_090000.md`。
 
+2026-08-21 已完成一个受控的 ARCTIC min11 快速筛查：11 个物体各取一个确定性文件、约 4175 帧；noPCA 与 5mm 均关闭 hand/PCA perturb 和 runtime resampling，只开启相同的 10°/10 mm object perturb。5mm 在 clean 拟合上更好，但 noPCA 的 recovery 明显更好，且 perturbed correspondence QFL 略好。由于两条 checkpoint 的训练步数不同且子集只有 s01，该证据仅作方向性判断；完整 hand+object 公平对比仍未完成。
+
+2026-08-21 已从 ARCTIC raw `.mano.npy` 重导出带 MANO 的 min11 Stage 3 到 NAS，并完成 noPCA / 5mm 的 object-only、hand-only、hand+object 三条件评估。5mm 明显改善 hand-only，但在 object-only 和 joint recovery 上仍低于 noPCA；这说明当前互斥训练配方的 object/compound exposure 仍不足。
+
+三域等比例混训 run `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_20260820_141453` 已停止。`train.log` 和 `metrics.jsonl` 的最后有效记录均为 step 27980 / epoch 2；`latest.pt`、`best.pt` 和 step checkpoint 均只保存到 step 22748 / epoch 1。日志无 Python traceback、CUDA OOM、kernel OOM、SIGTERM/SIGKILL 或保存 `.tmp` 残留，当前也没有对应 tmux 会话和训练进程。因此只能确认它是在 checkpoint 周期之间被外部停止或会话消失，不能从本地日志判断具体是哪个终止动作。
+
+已按用户确认建立 H50/O50 互斥配置：`src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_h50_o50_exclusive_ddp2.yaml`。其 corruption gate 为 hand-only 50%、object-only 50%、compound 0%；训练启动记录见 EXP-010。
+
+## EXP-010 — GRAB 5 mm H50/O50 互斥扰动
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+当前 H50/O50 对照方案；ARCTIC 外部评估使用 `src/task/correspondence_ptv3_v2/docs/指导/V1.md` 的统一协议。
+
+### 假设
+
+相较当前 H80/O20/no-compound 配方，H50/O50 能在保持 hand-noise recovery 能力的同时增加 object-only exposure；如果 object-only 与 joint ARCTIC recovery 的下降主要来自 object exposure 不足，H50/O50 应缩小与 noPCA 的 object-only 差距，而 hand-only 不应完全退化。
+
+### Baseline
+
+- 5 mm H80/O20：`src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_exclusive_ddp2.yaml`
+- noPCA H0/O100：`src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_no_pca_runtime_ddp2.yaml`
+- 训练从随机初始化开始，保持 5 mm hand geometry noise、optimizer、loss 和 object perturb 标准不变。
+
+### 本次修改
+
+- `hand_perturb_prob=0.5`、`exclusive_hand_object_perturb=true`；
+- `apply_obj_perturb=true`、`obj_perturb_prob=1.0`；
+- 因互斥 gate，实际为 50% hand-only、50% object-only、0% hand+object；
+- 不加入 scale augmentation，不引入新的 runtime sampling 机制。
+
+### 实现审查
+
+Verdict: PASS
+
+- gate 先以 0.5 概率决定 hand perturb，再在 hand 分支关闭 object perturb；
+- object 分支保留 object perturb；
+- 配置继承既有 5 mm H80/O20 recipe，未改模型、loss 或 evaluator。
+
+### 实验命令
+
+```bash
+CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
+/home/wbcd/miniconda3/envs/graspenv/bin/python \
+-m src.task.correspondence_ptv3_v2.train \
+--config src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_h50_o50_exclusive_ddp2.yaml \
+--set train.distributed.enable=false train.max_steps=454000
+```
+
+### 结果
+
+已启动，当前 run 目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_h50_o50_exclusive_ddp2_20260821_073040`，tmux 会话为 `grab5mm_h50_o50_20260821_gpu0`。由于 GPU 1/2/3 正在被其他任务占用，本次先使用物理 GPU 0 单卡（`world_size=1`、global batch 16）运行；optimizer step 上限仍设为 454000，但每步样本数相较原两卡 H80/O20 减半，后续不能把它称为严格 matched-sample budget。当前模型已完成初始化并占用约 19.7 GiB 显存，尚无 validation checkpoint。
+
+### 关键观察
+
+待比较 hand-only、object-only、hand+object 三种 ARCTIC MANO 条件，以及训练日志中的 grad norm / clipping ratio。
+
+### 解释
+
+当前实验首先验证 exposure 平衡是否解释 H80/O20 的 object/joint recovery 劣势；若 H50/O50 仍显著落后，下一步应检查扰动强度、域差异和 joint compound 缺失，而不是继续单纯增加 hand 概率。
+
+### 结论状态
+
+INCONCLUSIVE
+
+### 决策
+
+保留 H50/O50 作为独立 matched recipe；不覆盖旧 H80/O20 或 noPCA checkpoint。
+
+### 下一步
+
+- 完成训练或取得稳定中期 checkpoint；
+- 用同一带 MANO ARCTIC min11 三条件协议快速筛查；
+- 若方向明确，再扩展全物体分层 ARCTIC。
+
+### 证据
+
+- 配置：`src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_h50_o50_exclusive_ddp2.yaml`
+- 训练输出：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_h50_o50_exclusive_ddp2_20260821_073040`
+- tmux：`grab5mm_h50_o50_20260821_gpu0`
+- W&B：`gi854jvw`（本地 `wandb/run-20260821_073221-gi854jvw`）
+
+## EXP-009 — 带 MANO 的 ARCTIC min11 三条件鲁棒性评估
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+### 假设
+
+如果 5mm hand perturb 训练确实学到了 hand-noise recovery，那么在同一 ARCTIC MANO 输入上，5mm 应优于未训练 hand perturb 的 noPCA；如果互斥门控减少了 object/compound exposure，则 5mm 在 object-only 或 hand+object 上可能仍然落后。
+
+### Baseline
+
+- noPCA: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614/checkpoints/latest.pt`，step 317800。
+- 5mm: `outputs/correspondence_ptv3_v2/grab5mm_exclusive_ddp2_retry_20260817_20260817_233019/checkpoints/latest.pt`，step 454000。
+- 数据：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1`。
+
+### 本次修改
+
+- 从 ARCTIC raw MANO `.mano.npy` 重建 11 个 Stage 3 文件到 NAS。
+- evaluator 增加 `object_only`、`hand_only`、`hand_object` 条件开关；默认 object-only 行为保持不变。
+- ARCTIC axis-angle45 hand noise 使用 9mm calibration 缩放到 5mm RMS。
+
+### 实现审查
+
+Verdict: PASS
+
+- 11 个输出文件均含 `mano_pose (T,45)`、`mano_global_orient`、`mano_transl`、`mano_betas`。
+- 所有文件标记 `mano_pose_repr=axis_angle`、`mano_use_pca=false`。
+- 三种条件使用同一 4175 帧 NAS 数据，runtime resampling 关闭。
+- 训练步数和 subject 覆盖不匹配，结果只作方向性比较。
+
+### 实验命令
+
+```bash
+PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python \
+  -m src.task.correspondence_ptv3_v2.research.contactpose_checkpoint_compare.evaluate \
+  --checkpoint <checkpoint> \
+  --test-root /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1 \
+  --output output/research/arctic_min11_mano_v1/<name>.json \
+  --condition {object_only|hand_only|hand_object} \
+  --hand-target-rms-mm 5.0 --device cuda:0 --batch-size 16 --num-workers 0
+```
+
+### 结果
+
+| 条件 | noPCA recovery Brier | 5mm recovery Brier |
+| --- | ---: | ---: |
+| object-only | **0.5355** | 0.2929 |
+| hand-only | -0.5066 | **0.2112** |
+| hand+object | **0.5356** | 0.2813 |
+
+### 关键观察
+
+5mm 的 hand-only recovery 从 noPCA 的负值提升到正值，说明 hand perturb 训练路径确实有效；但它没有转化为 object-only 或 hand+object recovery 优势。clean QFL 三种条件都由 5mm 明显更好。
+
+### 解释
+
+当前 5mm exclusive 配方约为 H80/O20/no-compound，noPCA 约为 H0/O100。这个 exposure 差异足以解释 object-only 和 joint 的排序，但不能排除 recovery 指标与 clean 拟合之间的行为差异。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+局部证据支持“5mm hand perturb 训练改善 hand-only recovery”；但由于训练步数和 exposure 配方未严格匹配，当前实验不足以对整体 hand/object/joint robustness 做因果结论。
+
+### 决策
+
+保留当前两条 checkpoint；不把 5mm exclusive 作为全面替代 noPCA。下一轮加入 H80/O100 compound 对照。
+
+### 下一步
+
+- 用共同 optimizer step 做 H0/O100、H80/O20、H80/O100 对照。
+- 继续使用 object-only、hand-only、hand+object 三条件和 absolute changed-edge error。
+
+### 证据
+
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_v1_compare_20260821.md`
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_v1_manifest.json`
+- `output/research/arctic_min11_mano_v1/*.json`
+
+## EXP-008 — ARCTIC min11 上 noPCA 与 5mm 的 matched object-only 快速筛查
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+### 假设
+
+在统一的 object-only corruption 下，5mm 训练是否能改善 object perturb recovery；使用覆盖全部物体类别的极小分层集先判断方向，可避免直接支付全量 ARCTIC 的计算成本。
+
+### Baseline
+
+- noPCA checkpoint: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614/checkpoints/latest.pt`，step 317800。
+- 5mm checkpoint: `outputs/correspondence_ptv3_v2/grab5mm_exclusive_ddp2_retry_20260817_20260817_233019/checkpoints/latest.pt`，step 454000。
+- 子集：`src/task/correspondence_ptv3_v2/result/arctic_min11_v1_manifest.json`。
+
+### 本次修改
+
+- 不修改模型、loss 或 evaluator。
+- 对两条 checkpoint 使用相同 stored clean hand / object-only protocol。
+- 每个物体仅保留一个确定性 ARCTIC 文件，以控制评测时间。
+
+### 实现审查
+
+Verdict: PASS
+
+- 11/11 物体类别均覆盖。
+- 两个 checkpoint 的 hand/PCA perturb、runtime resampling、object perturb probability 均由 evaluator 统一设置。
+- 结果 JSON 已保存到 `output/research/arctic_min11_v1/`。
+- 限制：仅 `s01`，且训练步数不匹配，因此不作为最终 causal comparison。
+
+### 实验命令
+
+```bash
+PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python \
+  -m src.task.correspondence_ptv3_v2.research.contactpose_checkpoint_compare.evaluate \
+  --checkpoint <checkpoint> \
+  --test-root /tmp/arctic_eval_min11_v1 \
+  --output output/research/arctic_min11_v1/<name>.json \
+  --device cuda:0 --batch-size 16 --num-workers 0
+```
+
+### 结果
+
+| 指标 | noPCA | 5mm |
+| --- | ---: | ---: |
+| clean random QFL | 0.0007073 | **0.0001345** |
+| perturbed random QFL | **0.0008409** | 0.0009378 |
+| perturbed recovery Brier | **0.5760** | 0.3404 |
+| perturbed recovery projection | **0.4967** | 0.2447 |
+
+### 关键观察
+
+5mm 的 clean 拟合明显优于 noPCA，但 recovery 明显更差；perturbed correspondence QFL 也略差。这说明 recovery 与 clean correspondence QFL 不是同一个轴，不能只看 clean 拟合指标。
+
+### 解释
+
+该 protocol 对 object-only robustness 是公平的，不能用来回答 hand-only 或 hand+object robustness。5mm 的优势还可能混入更长训练预算（454k vs 317.8k）和 checkpoint 选择差异。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+方向上不支持“当前 5mm 互斥配置提升 object recovery”；当前规模、subject 覆盖和训练预算仍不足以确认更广泛的因果结论。
+
+### 决策
+
+保留该快速筛查，不把它升级为最终 benchmark；下一轮优先记录并对齐实际 perturb exposure，在相同 PCA 强度下补 hand-only / object-only / hand+object 评测。
+
+### 下一步
+
+- 用同一 object-only protocol 对齐到共同训练 step 或各自 best checkpoint。
+- 再抽一个跨 `s01/s02/s04/s05` 的小型版本，保持每物体相同样本数。
+- 若要回答完整鲁棒性，再补 hand-only 与 hand+object matched evaluation。
+
+### 证据
+
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_v1_compare_20260821.md`
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_v1_manifest.json`
+- `output/research/arctic_min11_v1/nopca.json`
+- `output/research/arctic_min11_v1/5mm.json`
+
+2026-08-21 已停止上述 no-PCA runtime 续训，保留 run 目录和 checkpoint：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614`。停止前最新日志为 step 331300 / epoch 37，`latest.pt` 保存到 step 317800 / epoch 35，`best.pt` 仍为 clean QFL 最优的早期 checkpoint。停止原因是转向验证“5 mm exclusive hand/object gate 是否使 object perturb 暴露不足”的独立对照，不再继续消耗 GPU。
+
 2026-08-20 这条 GRAB 续跑又中断了，根因不是模型报错，而是根分区 `/` 已满到 100%，当前只剩约 3.1 GiB 可用；训练日志停在 step 36320 / epoch 4 附近，checkpoint 目录里留下了未完成的 `.tmp` 文件，说明中断发生在保存权重过程中。已把 `dataset/GRAB/data` 切到 NAS 软链并释放本地空间，随后又用 tmux `grab5mm_no_pca_runtime_resume_20260820` 从 `latest.pt` 重新拉起。
 
 正式 OakInk-only 训练已于 2026-08-18 启动：单卡物理 GPU 3（训练进程 `cuda:0`）、50 epoch、batch 16、无手部 PCA 扰动、stored-hand runtime proxy。Run 目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_oakink_50ep_no_hand_perturb_runtime_20260818_145747`，原 W&B run id 为 `d74pw3bu`。该训练在 2026-08-19 08:03 UTC 前后停在日志 step 255300、epoch 19，未留下 Python traceback；由于 `latest.pt` 仅保存到 step 211410、epoch 15，2026-08-19 08:53 UTC 已从该 checkpoint 放入 tmux `oakink_no_hand_runtime_resume_20260819` 继续单卡 GPU 3 训练，新 W&B run id 为 `umayygiz`。
@@ -577,3 +835,96 @@ PY
 | ARCTIC（按 10% sequence validation 近似估算） | ~145k | ~9066 | ~453k |
 
 ContactPose 与 ARCTIC 的最后三列仅是按当前 batch/validation 比例的规模估算；因 sequence-level split 和 `drop_last`，正式 run 应以启动后的实际 `steps_per_epoch` 为准。
+
+## EXP-007 — 三域等比例从头混训 baseline
+
+### 日期
+
+2026-08-20
+
+### 对应指导
+
+当前三域混训方案；V1 ARCTIC 外部评估作为启动前依据。
+
+### 假设
+
+在不引入 runtime object resampling 和 scale augmentation 的条件下，按 GRAB、ContactPose、OakInk 各 1/3 的 domain-balanced sampling 训练，可以避免原始 frame 数量导致的域偏置，并提供可解释的三域互补 baseline。
+
+### Baseline
+
+- commit: `working tree`
+- config: `src/task/correspondence_ptv3_v2/configs/mixed_grab_contactpose_oakink_equal.yaml`
+- checkpoint: random initialization；无 resume
+
+### 本次修改
+
+- 独立构造 GRAB / ContactPose / OakInk Dataset；
+- 每个 local batch 固定 `16/16/16`；
+- `runtime_resample_object=false`；
+- 无 scale augmentation；
+- `use_mano_reconstruction=false`、`apply_hand_perturb=false`；
+- 保留统一 object rotation/translation perturbation；
+- optimizer budget 临时以历史 mixed 的 `154670` optimizer steps 对齐。
+
+### 实现审查
+
+Verdict: PASS（截至 step 20）
+
+关键检查：
+- 三域 batch 比例为 1/3；
+- 无 runtime full-pool 字段；
+- 无 MANO / non-MANO collate 冲突；
+- DDP world size 2，物理 GPU 0、3；
+- `grad_clipped=0`，首个记录的 `grad_norm=0.825555`；
+- 无 checkpoint resume。
+
+### 实验命令
+
+```bash
+CUDA_VISIBLE_DEVICES=0,3 PYTHONPATH=. \
+python -m torch.distributed.run --standalone --master_port=29504 \
+  --nproc_per_node=2 --module src.task.correspondence_ptv3_v2.train \
+  --config src/task/correspondence_ptv3_v2/configs/mixed_grab_contactpose_oakink_equal.yaml \
+  --set train.max_steps=154670 --distributed
+```
+
+### 结果
+
+训练进行中，当前仅有启动阶段结果，尚无 validation checkpoint。
+
+| Metric | Value |
+|---|---:|
+| world size | 2 |
+| global batch | 96 |
+| total steps | 154670 |
+| first logged grad norm | 0.825555 |
+| first logged loss | 0.152940 |
+
+### 关键观察
+
+等比例 sampler 使每 epoch 约 24985 steps，因此配置中的 100 epoch 若不加 max_steps 会展开到约 227 万 steps；本次已在首个 optimizer step 前改用 154670-step 上限。
+
+### 解释
+
+当前尚不能判断三域混合是否提升 ARCTIC。需要等待至少一个完整 validation 周期，并分别查看三个训练域与 ARCTIC 的指标。
+
+### 结论状态
+
+INCONCLUSIVE
+
+### 决策
+
+保留当前 run；不再修改采样比例、runtime 或 scale 设置。若出现明显域间 loss/gradient 差异，先记录诊断，再单独设计 loss balancing 消融。
+
+### 下一步
+
+- 等待首个 validation checkpoint；
+- 检查每域 `val_clean` / `val_perturbed` 指标；
+- 训练完成后按 V1 方案评估全量或全类别 ARCTIC；
+- 统计三域曝光量、梯度范数和 clipping ratio。
+
+### 证据
+
+- run: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_20260820_141453`
+- tmux: `mixed_grab_contactpose_oakink_equal_20260820_v1`
+- W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/div3m72u`

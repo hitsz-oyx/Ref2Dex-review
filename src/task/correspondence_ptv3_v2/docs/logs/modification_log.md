@@ -1,5 +1,155 @@
 # Modification log
 
+## 2026-08-21 — 固定 GRAB H50/O50 互斥扰动配置并核对三域混训中断
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_h50_o50_exclusive_ddp2.yaml` — 新增 H50/O50 互斥扰动训练配置。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 记录三域混训的实际停止证据及 H50/O50 实验入口。
+
+**改动原因**
+
+用户确认采用方案 A：在保持 5 mm hand noise 和既有 object pose perturbation 的前提下，严格互斥地以 50% hand-only、50% object-only 训练，禁止 hand+object compound 样本。
+
+同时复核已停止的三域混训目录：日志最后写到 step 27980，无 Python traceback、CUDA OOM、kernel OOM 或 checkpoint 临时文件；现有 checkpoint 只到 step 22748，支持“外部停止/会话结束发生在保存周期之间”的判断。
+
+补充证据：W&B 本地日志 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_20260820_141453/wandb/run-20260820_141505-div3m72u/files/output.log` 同样以 step 27980 结束，未出现终止原因。
+
+**对应指导**（如有）
+
+当前三域混训方案；ARCTIC 外部评估遵循 `docs/指导/V1.md`。
+
+**影响范围**
+
+仅 task 内部配置和实验记录；未修改三域 loader 或旧 checkpoint。
+
+## 2026-08-21 — 导出 ARCTIC MANO min11 并扩展三条件评估入口
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部
+
+**文件 / 数据**
+
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage2/arctic_min11_mano_v1` — 从 raw ARCTIC MANO 生成 11 个 Stage 2 文件。
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1` — 生成 11 个带 MANO 的 Stage 3 `.npz`，共 4175 帧。
+- `src/task/correspondence_ptv3_v2/config.py` — 增加 validation object perturb 开关，保留默认行为。
+- `src/task/correspondence_ptv3_v2/dataset.py` — validation perturbed loader 可按 condition 关闭 object perturb。
+- `src/task/correspondence_ptv3_v2/research/contactpose_checkpoint_compare/evaluate.py` — 增加 `object_only` / `hand_only` / `hand_object` 条件和 ARCTIC axis-angle45 5mm calibration。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_v1_manifest.json` — 固化 NAS 数据清单和 MANO schema。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_v1_compare_20260821.md` — 记录三条件结果。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md`、`decision_log.md`、`repo_notes_log.md` — 同步实验、决策和路径。
+
+**改动原因**
+
+响应用户要求先导出部分含 MANO 的 ARCTIC 数据，补齐 hand-only / hand+object 公平评估；不覆盖旧无 MANO缓存或全量数据。
+
+**验证**
+
+- 11/11 文件均含 `mano_pose (T,45)`、`mano_global_orient`、`mano_transl`、`mano_betas`。
+- 全部标记 `mano_pose_repr=axis_angle`、`mano_use_pca=false`。
+- evaluator `py_compile` 通过；三条件六个 JSON 结果均生成。
+
+**影响范围**
+
+仅 task 内部数据、评估入口和实验记录；默认 object-only evaluator 语义保持兼容。
+
+## 2026-08-21 — 修正 min11 recovery 结果方向并确认互斥暴露差异
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_v1_compare_20260821.md` — 将 recovery 指标按“越高越好”修正为 noPCA 优于 5mm，并补充 object exposure 解释。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 修正 EXP-008 的结论和下一步。
+
+**改动原因**
+
+复核 `pseudo_recovery_brier = (E_pseudo - E_model) / E_pseudo` 后，发现前一版结果表错误地把 5mm 的较低 recovery 标成了更优。代码指标方向本身正确；差异主要与 5mm 互斥门控的约 20% object-only 暴露、noPCA 的 100% object-only 暴露有关。
+
+**影响范围**
+
+仅修正科研记录，不修改模型、训练代码或评测实现。
+
+## 2026-08-21 — 新增 ARCTIC min11 快速评估结果记录
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_v1_manifest.json` — 固化覆盖 11 个物体的最小评估文件清单。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_v1_compare_20260821.md` — 记录 noPCA / 5mm 的统一 object-only 协议、结果和限制。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 新增 EXP-008，记录方向性证据和后续 matched evaluation。
+
+**改动原因**
+
+响应用户“先评估、控制规模但覆盖类别”的要求；使用 11 个物体各一个文件的快速筛查，避免全量 ARCTIC 评测耗时过长。
+
+**对应指导**
+
+`src/task/correspondence_ptv3_v2/docs/指导/V1.md`
+
+**影响范围**
+
+仅 task 内部评测结果和科研记录；未修改模型、loss、训练代码或 evaluator。
+
+## 2026-08-20 — 新增 GRAB/ContactPose/OakInk 等比例从头混训入口
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/dataset.py` — 新增 `DomainConcatDataset` 和 `DomainBalancedSampler`；支持按域独立切分 train/val，并在每个 batch 固定 1/3 域比例；`use_mano_reconstruction=false` 时不再把 GRAB 的 MANO 字段混入无 MANO 域的 batch。
+- `src/task/correspondence_ptv3_v2/config.py` — 增加 task 级 `data.domain_paths` 配置字段。
+- `src/task/correspondence_ptv3_v2/configs/mixed_grab_contactpose_oakink_equal.yaml` — 新增三域从随机初始化开始的 baseline 配置；显式关闭 runtime object resampling、MANO/hand perturb 和 scale augmentation，保留 object pose perturbation。
+- `src/task/correspondence_ptv3_v2/docs/logs/architecture_log.md` — 记录三域 loader、采样和 validation 数据流。
+- `src/task/correspondence_ptv3_v2/docs/logs/decision_log.md` — 记录等比例 sampler、batch size 48 和独立 validation loader 的自主选择。
+
+**改动原因**
+
+落实用户确认的三域从头训练协议：GRAB、ContactPose、OakInk 各 1/3，使用 domain sampling，不开启 runtime object resampling，不加入 scale augmentation。
+
+**对应指导**
+
+当前三域混训方案；V1 的 ARCTIC 外部评估指导仍作为启动前评测依据。
+
+**验证**
+
+- 配置成功加载；
+- 实际 NAS 数据 Dataset smoke 成功，三个域 train/val 均构造完成；
+- 首个 batch 为 `16 grab + 16 contactpose + 16 oakink`；
+- batch 不含 runtime full-pool 字段，且无 MANO schema collate 冲突；
+- `py_compile` 通过。
+
+## 2026-08-21 — 记录并停止 no-PCA runtime 续训
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- 范围: task 内部实验状态
+
+**文件**
+
+- `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614` — 保留 no-PCA runtime run 的日志和 checkpoint，停止前 step 331300 / epoch 37，最新保存 checkpoint 为 step 317800 / epoch 35。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 记录 run 路径、停止状态及后续 object-perturb exposure 对照方向。
+
+**改动原因**
+
+用户要求保留 no-PCA 版本路径并停止当前训练，转向验证 5 mm exclusive hand/object perturbation 是否降低了 object perturb 暴露比例。
+
+**影响范围**
+
+仅 task 内部实验进程和记录；未修改模型或数据。
+
 ## 2026-08-20 — 完成 V1 ARCTIC 分层外部评估与 object-macro 汇总
 
 - branch: `feature/hand-pca-perturbation`

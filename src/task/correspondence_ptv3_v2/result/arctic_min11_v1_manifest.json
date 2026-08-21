@@ -1,0 +1,33 @@
+{
+  "source_root": "/mnt/ugreen_nas/storage/oyx_storage/processed_data_backup/arctic/arctic_initonly_4096_hand_root_v2",
+  "selection_rule": "one deterministic first file per object from the V1 manifest",
+  "objects": [
+    "box",
+    "capsulemachine",
+    "espressomachine",
+    "ketchup",
+    "laptop",
+    "microwave",
+    "mixer",
+    "notebook",
+    "phone",
+    "scissors",
+    "waffleiron"
+  ],
+  "selected_files": [
+    "s01/box_grab_01_left.npz",
+    "s01/capsulemachine_grab_01_left.npz",
+    "s01/espressomachine_grab_01_left.npz",
+    "s01/ketchup_grab_01_left.npz",
+    "s01/laptop_grab_01_left.npz",
+    "s01/microwave_grab_01_left.npz",
+    "s01/mixer_grab_01_left.npz",
+    "s01/notebook_use_01_left.npz",
+    "s01/phone_grab_01_left.npz",
+    "s01/scissors_grab_01_left.npz",
+    "s01/waffleiron_grab_01_left.npz"
+  ],
+  "selected_npz_count": 11,
+  "approx_frames": 4175,
+  "runtime_subset_root": "/tmp/arctic_eval_min11_v1"
+}

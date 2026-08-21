@@ -14,5 +14,6 @@
 - GRAB 数据根：`/mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/data/GRAB`
 - OakInk 全量 Stage 3：`/mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk/processed/stage3_corr_oakink_mano_face_handroot_20260818`
 - 处理后中间数据：`data/processed_data -> /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data`
+- 带 MANO 的 ARCTIC min11 评测 Stage 3：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1`；仅 11 个物体、4175 帧，用于小规模 hand/object/joint robustness 对照。
 
 OakInk 导出没有 MANO pose/betas，但有 4096 物点、1538 手面中心和 clean 最短距离。当前导出是 wrist-centered camera frame，不是真实 MANO rotation-canonicalized hand-root。

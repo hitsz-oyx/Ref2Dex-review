@@ -1,0 +1,38 @@
+{
+  "source_root": "/mnt/ugreen_nas/storage/Ref2Dex_storage/arctic/data/arctic_data/data/raw_seqs",
+  "stage2_root": "/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage2/arctic_min11_mano_v1",
+  "stage3_root": "/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1",
+  "selection_rule": "reuse the V1 min11 object list; one deterministic left-hand file per object",
+  "objects": [
+    "box",
+    "capsulemachine",
+    "espressomachine",
+    "ketchup",
+    "laptop",
+    "microwave",
+    "mixer",
+    "notebook",
+    "phone",
+    "scissors",
+    "waffleiron"
+  ],
+  "selected_stage3_files": [
+    "s01/box_grab_01_left.npz",
+    "s01/capsulemachine_grab_01_left.npz",
+    "s01/espressomachine_grab_01_left.npz",
+    "s01/ketchup_grab_01_left.npz",
+    "s01/laptop_grab_01_left.npz",
+    "s01/microwave_grab_01_left.npz",
+    "s01/mixer_grab_01_left.npz",
+    "s01/notebook_use_01_left.npz",
+    "s01/phone_grab_01_left.npz",
+    "s01/scissors_grab_01_left.npz",
+    "s01/waffleiron_grab_01_left.npz"
+  ],
+  "selected_npz_count": 11,
+  "selected_frames": 4175,
+  "mano_pose_repr": "axis_angle",
+  "mano_pose_dim": 45,
+  "mano_use_pca": false,
+  "hand_noise_target_rms_mm": 5.0
+}
