@@ -154,3 +154,69 @@ Decoder 在 active-motion 训练窗口上低于 identity baseline；验证集是
 
 - checkpoint: `outputs/cmdecoder/cm_decoder_20260821_192109/checkpoints/best.pt`
 - log: 训练输出 `cmdecoder_active_overfit_v1_500`
+
+## EXP-003 — active-motion Decoder 输入对照
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+如果 Cm tokens 携带当前动作相关信息，`q_t + Cm` 应不劣于 `q_t-only`，而打乱 flow 后性能应下降；`Cm-only` 用于衡量不提供当前 q 时的解码能力。
+
+### Baseline
+
+- 同 EXP-002 的 1 episode、32 个 active-motion pair
+- 500 optimizer steps，GPU 6、7
+- identity: `q_next=q_t`
+
+### 本次修改
+
+- `qt_cm`：当前主模型，使用预缓存 Cm tokens
+- `qt_only`：不输入 Cm
+- `cm_only`：不输入 `q_t`
+- `shuffled-flow`：在线 Cm 编码，但 batch 内打乱 hand flow
+
+### 结果
+
+| Variant | Train q MAE (deg) | Val q MAE (deg) | 时间 |
+|---|---:|---:|---:|
+| identity | 0.647 | 0.471 | — |
+| qt_cm | **0.294** | 4.12 | 00:40 |
+| qt_only | 0.302 | 2.71 | 00:40 |
+| cm_only | 0.453 | 4.08 | 00:40 |
+| shuffled-flow | 0.464 | 3.99 | 11:20 |
+
+### 关键观察
+
+四个可训练变体都低于 identity。`qt_cm` 相比 `qt_only` 仅有小幅训练集优势；`cm_only` 和 shuffled-flow 明显更差。验证集来自不同 episode，且规模很小，不能据此判断泛化。
+
+### 解释
+
+当前结果支持 Cm tokens 包含可用信息，但其独立贡献相对当前 q shortcut 较小；shuffled-flow 对照的下降与动作信息被破坏的预期一致。由于是单 episode overfit，仍可能受样本和优化设置影响。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+结果支持继续进行 held-out episode 对照，但不足以确认 Cm 在正式数据上的独立增益。
+
+### 决策
+
+不选择任何 overfit checkpoint 作为正式模型；保留四个输出用于回归和后续对照复现。
+
+### 下一步
+
+在 20-episode split 上固定 optimizer/budget，运行四个 variant 的 held-out episode 评测；正式结论以 active-motion 子集和 identity baseline 为主。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_20260821_192109/`
+- qt_only: `outputs/cmdecoder/cm_decoder_20260821_193337/`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260821_193442/`
+- shuffled-flow: `outputs/cmdecoder/cm_decoder_20260821_193549/`

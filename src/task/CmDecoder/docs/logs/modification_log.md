@@ -20,6 +20,25 @@
 
 按 `docs/指导/V1.md` 修正静止帧 overfit 误判、时间语义和 cache 可复现性，并为 Cm 独立贡献对照准备接口。
 
+## 2026-08-21 — 完成 active-motion Decoder 输入对照
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-003，记录 qt_cm、qt_only、cm_only、shuffled-flow 对照。
+- `outputs/cmdecoder/cm_decoder_20260821_{193337,193442,193549}/` — 对照训练输出（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求先运行 V1 中的 overfit 对照，检查 Cm 相对当前 q shortcut 的独立作用。
+
+**结果摘要**
+
+`qt_cm=0.294°`，`qt_only=0.302°`，`cm_only=0.453°`，`shuffled-flow=0.464°`，identity=`0.647°`；当前结论为 INCONCLUSIVE。
+
 ## 2026-08-21 — 改为分层增量 cache 并构建 50 episode 子集
 
 - branch: working tree
