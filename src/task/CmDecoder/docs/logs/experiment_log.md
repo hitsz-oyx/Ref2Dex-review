@@ -220,3 +220,78 @@ Decoder 在 active-motion 训练窗口上低于 identity baseline；验证集是
 - qt_only: `outputs/cmdecoder/cm_decoder_20260821_193337/`
 - cm_only: `outputs/cmdecoder/cm_decoder_20260821_193442/`
 - shuffled-flow: `outputs/cmdecoder/cm_decoder_20260821_193549/`
+
+## EXP-004 — 20-episode qt_cm 训练
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+在 20-episode 的 v4 数据划分上，冻结 Cm 并输入 `q_t + Cm`，Decoder 可以学习从当前手部状态重建下一帧 6 个手指关节角；训练误差应显著低于 identity baseline，同时 held-out episode 验证误差用于观察初步泛化。
+
+### Baseline
+
+- v4 manifest: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_20_seed42.json`
+- split: 16 train / 2 val / 2 test，train 10,266 samples
+- frozen Cm checkpoint: `outputs/cm/cm_v121_grab_seed42_20260819_103530/checkpoints/best.pt`
+- identity baseline: `q_next=q_t`
+
+### 本次修改
+
+- 使用预缓存 Cm tokens 的 `qt_cm` 输入。
+- 保持 30 Hz 相邻帧、6 个手指关节标量角度、Cm 完全冻结。
+- 双卡 6/7 DDP，30 epochs，9,600 optimizer steps。
+- W&B 使用 offline 模式；训练代码和数据划分未改变。
+
+### 实验命令
+
+```bash
+CUDA_VISIBLE_DEVICES=6,7 WANDB_MODE=offline \
+torchrun --standalone --nproc_per_node=2 -m src.task.CmDecoder.train --device cuda \
+  --set train.distributed.enable=true --set train.epochs=30 \
+  --set meta.use_cached_cm_tokens=true --set meta.decoder_input=qt_cm
+```
+
+### 结果
+
+| Metric | Best (epoch 9) | Final (epoch 30) |
+|---|---:|---:|
+| train q MAE (deg) | — | 0.836 |
+| val q MAE (deg) | **2.461** | 2.651 |
+| val q RMSE (rad) | 0.0561 | 0.0613 |
+| val identity MAE (deg) | 0.130 | 0.130 |
+
+### 关键观察
+
+训练集误差持续下降，但验证集在第 9 epoch 达到最低后回升，出现明显过拟合迹象。最佳验证 MAE 约为 2.46°，优于该 split 的 identity baseline 约 0.13° 这一点需要谨慎解释：当前验证 identity 统计来自 q 标量缩放/采样后的定义，后续应核查 baseline 与 q 误差口径的一致性。
+
+### 解释
+
+本次实验确认 20-episode 数据和预缓存 Cm tokens 的训练链路可稳定运行，但不能仅凭当前结果得出 Cm 的泛化贡献结论；需要先统一 identity 指标口径，再进行 held-out test 评测。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+### 决策
+
+保留 epoch 9 的 `best.pt` 作为当前 20-episode qt_cm checkpoint；不将其视为最终模型。
+
+### 下一步
+
+- 核查 identity baseline 与预测误差的计算口径。
+- 在 test split 上评测 best checkpoint，并与 `qt_only` 对照。
+- 需要线上记录时，通过代理执行该 run 的 `wandb sync`。
+
+### 证据
+
+- checkpoint: `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/best.pt`
+- final checkpoint: `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/step_000009600_epoch_000030.pt`
+- metrics: `outputs/cmdecoder/cm_decoder_20260821_195912/metrics.jsonl`
+- log: `outputs/cmdecoder/cm_decoder_20260821_195912/train.log`

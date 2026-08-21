@@ -197,3 +197,26 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 
 - `apple/2` 第 200 帧产生 7646 顶点、15220 三角面；首次建拓扑约 0.93 秒，后续帧 KNN 变形约 0.004 秒。
 - viewer 在 `8098` 端口成功启动；物体点数保持 512，手部点数保持 1538。
+
+## 2026-08-21 — 完成 20-episode qt_cm 离线训练
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-004，记录 20-episode qt_cm 训练配置、结果和后续判断。
+- `outputs/cmdecoder/cm_decoder_20260821_195912/` — 训练 checkpoint、metrics 和离线 W&B 日志（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求在 20 个 episode 上运行 qt_cm 版本训练；W&B 在线证书异常，因此本次采用 offline 模式完成训练。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**训练状态**
+
+30 epochs / 9,600 steps 已完成；best checkpoint 位于 `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/best.pt`。
