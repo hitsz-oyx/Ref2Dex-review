@@ -244,3 +244,25 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **训练状态**
 
 两组均完成 30 epochs / 9,600 steps；最佳验证 q MAE 分别为 qt_only 1.423°、cm_only 5.028°。
+
+## 2026-08-21 — 完成 active-motion 子集评估
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-006，记录活动帧验证/测试结果。
+
+**改动原因**
+
+用户要求单独评估活动帧上的三组模型效果；采用现有 `0.5°` 阈值和 30 Hz 相邻帧定义，不改动模型或训练结果。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**评估状态**
+
+完成 val 240 samples、test 162 samples 的 active-motion 评估；qt_only test q MAE 1.691°，qt_cm 4.821°，cm_only 9.262°。

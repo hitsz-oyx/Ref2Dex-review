@@ -356,3 +356,64 @@ torchrun --standalone --nproc_per_node=2 -m src.task.CmDecoder.train --device cu
 
 - qt_only: `outputs/cmdecoder/cm_decoder_20260821_200732/`
 - cm_only: `outputs/cmdecoder/cm_decoder_20260821_201002/`
+
+## EXP-006 — active-motion 子集评估
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+仅在实际发生明显手指运动的相邻 30 Hz 帧上评估，可以排除静止帧主导的平均误差，更直接观察三种输入对动作重建的影响。
+
+### Baseline
+
+- v4 manifest：同 EXP-004/005
+- active-motion 条件：`is_30hz_pair=true` 且 `q_delta_abs_max >= 0.5°`
+- val active samples：240；test active samples：162
+- 使用各组训练得到的 best checkpoint，不重新训练
+
+### 本次修改
+
+- 仅改变评估数据筛选为 active-motion；模型、checkpoint 和 q 误差计算保持不变。
+
+### 结果
+
+| Variant | Val active q MAE (deg) | Test active q MAE (deg) | Val identity (deg) | Test identity (deg) |
+|---|---:|---:|---:|---:|
+| qt_cm | 2.827 | 4.821 | 0.679 | 0.369 |
+| qt_only | **2.593** | **1.691** | 0.679 | 0.369 |
+| cm_only | 6.148 | 9.262 | 0.679 | 0.369 |
+
+### 关键观察
+
+活动帧上 identity baseline 的 q MAE 仅为 0.679°（val）/ 0.369°（test），三组 Decoder 均未超过 identity；`qt_only` 在 test 上明显优于 `qt_cm`，`cm_only` 误差最大。
+
+### 解释
+
+当前训练目标是重建 `q_{t+1}`，而活动帧筛选只要求存在至少一个关节变化，并不保证下一帧变化幅度大于 identity 误差。现有模型在 held-out active-motion 上尚未学到足够稳定的一步预测能力；Cm 在本次实验中没有表现出独立增益。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+### 决策
+
+不把活动帧结果解释为 Cm 表示无效；保留结果作为当前 V1 的诊断证据。后续应考虑只在动作幅度更高的帧上定义动作子集，或改用 flow/增量目标评估。
+
+### 下一步
+
+- 分析更高阈值（例如 1°/2°）的活动帧分布和误差。
+- 评估预测增量 `q_{t+1}-q_t`，避免静止分量掩盖动作重建。
+- 再决定是否调整 Decoder 输入或训练目标。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/best.pt`
+- qt_only: `outputs/cmdecoder/cm_decoder_20260821_200732/checkpoints/best.pt`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260821_201002/checkpoints/best.pt`
