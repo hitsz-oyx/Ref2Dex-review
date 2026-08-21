@@ -266,3 +266,25 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **评估状态**
 
 完成 val 240 samples、test 162 samples 的 active-motion 评估；qt_only test q MAE 1.691°，qt_cm 4.821°，cm_only 9.262°。
+
+## 2026-08-21 — Decoder 改为预测关节残差
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/config.py` — 新增默认 `prediction_target=delta_q`。
+- `src/task/CmDecoder/model.py` — Decoder 输出 `pred_delta_q`，通过 `q_t + pred_delta_q` 重建下一帧 q。
+- `src/task/CmDecoder/runner.py` — SmoothL1 监督改为 `q_next-q_t`，重建 q 指标保持不变。
+- `src/task/CmDecoder/docs/logs/architecture_log.md` — 同步残差预测张量流。
+- `src/task/CmDecoder/docs/logs/decision_log.md` — 记录旧 direct-q checkpoint 兼容策略。
+
+**改动原因**
+
+用户要求预测动作残差而非直接预测绝对关节角，以便模型聚焦相邻 30 Hz 帧的关节变化。
+
+**对应指导**
+
+`docs/指导/V1.md`

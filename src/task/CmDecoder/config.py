@@ -25,6 +25,7 @@ class Config(TaskConfig):
         q_loss_beta_rad: float = 0.02
         q_input_scale: float = 1.0
         q_target_scale: float = 1.0
+        prediction_target: str = "delta_q"
         decoder_input: str = "qt_cm"
         flow_mode: str = "normal"
         use_cached_cm_tokens: bool = False

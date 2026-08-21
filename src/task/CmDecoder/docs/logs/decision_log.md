@@ -98,3 +98,36 @@ flatten 不额外引入 slot pooling 假设，最直接检验冻结 Cm 是否携
 **建议用户确认**
 
 否；正式全量实验前应固定并审查最终 split manifest。
+
+## 2026-08-21 — 残差预测保留旧 checkpoint 兼容分支
+
+- branch: working tree
+- post-commit: HEAD
+
+**未指定点**
+
+用户要求改为预测残差，但未指定此前 direct-q checkpoint 是否仍需可加载。
+
+**实际选择**
+
+新增 `prediction_target=delta_q` 作为新训练默认值；若旧 checkpoint/config 中缺少该字段，则按 `q_next` direct prediction 语义加载。
+
+**其他合理选择**
+
+彻底移除 direct-q 路径，使旧 checkpoint 无法通过当前代码按原语义评估。
+
+**选择理由**
+
+兼容分支不改变新训练目标，同时保留 EXP-004/005/006 的可复现性，且两种模式共用相同网络参数结构。
+
+**对结果的影响**
+
+新 checkpoint 的 Decoder 输出监督为 `q_next-q_t`；旧 checkpoint 结果不受默认目标切换影响。
+
+**可逆性**
+
+完全可逆。
+
+**建议用户确认**
+
+否。

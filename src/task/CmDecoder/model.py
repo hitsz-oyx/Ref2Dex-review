@@ -11,7 +11,7 @@ from src.task.Cm.model import CmFlowModel
 
 
 class CmDecoderModel(nn.Module):
-    """Frozen GRAB-Cm encoder followed by a small q-to-next-q decoder."""
+    """Frozen GRAB-Cm encoder followed by a hand-q residual decoder."""
 
     def __init__(self, cfg: Any, *, condition_shape: Any = None, target_shape: Any = None) -> None:
         del condition_shape, target_shape
@@ -31,6 +31,11 @@ class CmDecoderModel(nn.Module):
             raise ValueError(f"Unsupported flow_mode: {self.flow_mode}")
         self.q_input_scale = float(getattr(cfg.meta, "q_input_scale", 1.0))
         self.q_target_scale = float(getattr(cfg.meta, "q_target_scale", 1.0))
+        # Checkpoints created before residual prediction did not store this
+        # field and must retain their original direct-q semantics when loaded.
+        self.prediction_target = str(getattr(cfg.meta, "prediction_target", "q_next"))
+        if self.prediction_target not in {"delta_q", "q_next"}:
+            raise ValueError(f"Unsupported prediction_target: {self.prediction_target}")
         cm_dim = int(self.cm.num_cm_tokens * self.cm.cm_dim) if self.decoder_input != "qt_only" else 0
         input_dim = cm_dim + (6 if self.decoder_input != "cm_only" else 0)
         self.decoder = nn.Sequential(
@@ -68,6 +73,19 @@ class CmDecoderModel(nn.Module):
             features.append(cm_tokens.flatten(1))
         if self.decoder_input != "cm_only":
             features.append(batch["q_t"] * self.q_input_scale)
-        pred_q_next_scaled = self.decoder(torch.cat(features, dim=-1))
-        pred_q_next = pred_q_next_scaled / self.q_target_scale
-        return {"pred_q_next": pred_q_next, "pred_q_next_scaled": pred_q_next_scaled, "cm_tokens": cm_tokens}
+        pred_target_scaled = self.decoder(torch.cat(features, dim=-1))
+        pred_target = pred_target_scaled / self.q_target_scale
+        if self.prediction_target == "delta_q":
+            pred_delta_q = pred_target
+            pred_q_next = batch["q_t"] + pred_delta_q
+        else:
+            pred_q_next = pred_target
+            pred_delta_q = pred_q_next - batch["q_t"]
+        return {
+            "pred_q_next": pred_q_next,
+            "pred_q_next_scaled": pred_q_next * self.q_target_scale,
+            "pred_delta_q": pred_delta_q,
+            "pred_delta_q_scaled": pred_delta_q * self.q_target_scale,
+            "pred_target_scaled": pred_target_scaled,
+            "cm_tokens": cm_tokens,
+        }

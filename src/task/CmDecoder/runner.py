@@ -22,8 +22,15 @@ class CmDecoderRunner(BaseRunner):
     def step(self, model: torch.nn.Module, batch: dict[str, torch.Tensor], mode: str = "train") -> RunnerOutput:
         prediction = model(batch)
         residual = prediction["pred_q_next"] - batch["q_next"]
+        prediction_target = str(getattr(self.cfg.meta, "prediction_target", "q_next"))
+        if prediction_target == "delta_q":
+            target = batch["q_next"] - batch["q_t"]
+        elif prediction_target == "q_next":
+            target = batch["q_next"]
+        else:
+            raise ValueError(f"Unsupported prediction_target: {prediction_target}")
         loss = F.smooth_l1_loss(
-            prediction["pred_q_next_scaled"], batch["q_next"] * float(self.cfg.meta.q_target_scale),
+            prediction["pred_target_scaled"], target * float(self.cfg.meta.q_target_scale),
             beta=float(self.cfg.meta.q_loss_beta_rad) * float(self.cfg.meta.q_target_scale)
         )
         mae_rad = residual.abs().mean()

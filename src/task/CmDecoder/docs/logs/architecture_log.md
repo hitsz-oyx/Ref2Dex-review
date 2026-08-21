@@ -70,13 +70,19 @@ q_t       [B,6]
              ▼
         Linear(256,6)
              ▼
-        pred_q_next [B,6]
+        pred_delta_q [B,6]
+             │
+             └─ q_t + pred_delta_q
+                        ▼
+                 pred_q_next [B,6]
 ```
 
 ## 训练目标
 
 ```text
-loss = SmoothL1(pred_q_next, q_next)
+delta_q = q_next - q_t
+loss = SmoothL1(pred_delta_q, delta_q)
+pred_q_next = q_t + pred_delta_q
 ```
 
-记录 `MAE`（弧度、角度）和 `RMSE`（弧度）；只有 Decoder 参数更新。
+loss 监督残差，但指标仍在重建后的 `pred_q_next` 上记录 `MAE`（弧度、角度）和 `RMSE`（弧度）；只有 Decoder 参数更新。旧 checkpoint 未保存 `prediction_target` 时按历史的 direct-q 语义加载。
