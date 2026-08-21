@@ -313,3 +313,25 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **实验状态**
 
 三组训练与全量 test、active-motion val/test 评估均完成；qt_only 最佳，但未稳定优于 identity。
+
+## 2026-08-21 — 统计 20-episode 30 Hz q 差分分布
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-008，记录 13,039 个相邻 pair 的 q 差分和时间间隔统计。
+
+**改动原因**
+
+用户要求确认 30 ms 相邻 GT 帧的 q 是否普遍只变化很小；本次只读统计 cache，不改变训练代码或数据。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**统计状态**
+
+约 85.18% 的 pair 满足最大关节变化小于 0.5°，约 6.50% 达到至少 1°；dt 中位数约 30 ms，但存在 105.8 ms 最大值。

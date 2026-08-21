@@ -501,3 +501,75 @@ active-motion（0.5° 阈值；val 240 / test 162 samples）：
 - qt_cm: `outputs/cmdecoder/cm_decoder_20260821_210013/`
 - qt_only: `outputs/cmdecoder/cm_decoder_20260821_210256/`
 - cm_only: `outputs/cmdecoder/cm_decoder_20260821_210526/`
+
+## EXP-008 — 20-episode 30 Hz q 差分分布统计
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+如果 HRDexDB 的相邻 30 Hz 帧大多是静止或低速帧，直接用平均 q MAE 评估动作重建会被大量近零残差主导。
+
+### Baseline
+
+- 数据范围：当前已构建的 v4 20-episode split（16 train / 2 val / 2 test）
+- 筛选：`is_30hz_pair=true`，共 13,039 pairs
+- q 差分：`abs(q_next-q_t)`，单位转换为角度
+
+### 结果
+
+所有 split 合并后的每帧最大关节变化 `max_j |Δq_j|`：
+
+| 分位数 | 变化角度 |
+|---|---:|
+| P25 | 0° |
+| P50 | 0.074° |
+| P75 | 0.262° |
+| P90 | 0.690° |
+| P95 | 1.206° |
+| P99 | 3.158° |
+| P100 | 6.131° |
+
+帧比例：
+
+| 条件 | 比例 |
+|---|---:|
+| `max|Δq| >= 0.1°` | 39.27% |
+| `max|Δq| >= 0.25°` | 25.55% |
+| `max|Δq| >= 0.5°` | 14.82% |
+| `max|Δq| >= 1°` | 6.50% |
+| `max|Δq| >= 2°` | 2.32% |
+| `max|Δq| >= 5°` | 0.12% |
+
+各关节绝对差分均值（deg）为 `[0.1317, 0.0246, 0.0885, 0.1072, 0.1246, 0.0971]`；六个关节的中位数均为 0°，说明大量帧对应关节没有可观测变化。
+
+### 关键观察
+
+当前 20-episode 数据中约 85.18% 的相邻帧最大关节变化小于 0.5°，约 93.50% 小于 1°，因此零残差/identity 是非常强的 baseline；但仍有约 6.5% 的帧变化至少 1°，不能把整个数据集视为静止。
+
+`source_frame_delta` 在 13,039 个 pair 中全部为 1；`delta_time_s` 中位数为 29.999 ms，但范围为 0.263 ms–105.794 ms，说明 `is_30hz_pair` 当前表达的是相邻源帧映射，不是严格的时间间隔阈值。
+
+### 解释
+
+残差训练出现接近 identity 的结果与数据分布一致。后续动作建模需要显式重采样/筛选更高幅度帧，或者使用按动作幅度加权的训练与评价，避免近零残差淹没有效动作样本。
+
+### 结论状态
+
+**SUPPORTED**
+
+### 下一步
+
+- 统计完整 HRDexDB（当前只覆盖已缓存的 20 episode）。
+- 比较 0.5°、1°、2° 阈值下的训练/评测样本数和模型表现。
+- 核查并决定是否将 `delta_time_s` 纳入严格 30 ms 过滤。
+
+### 证据
+
+- cache manifest: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_20_seed42.json`
+- task sidecars: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/episodes/*/task/`
