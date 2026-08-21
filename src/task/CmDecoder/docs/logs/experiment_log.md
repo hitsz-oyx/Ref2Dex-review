@@ -632,3 +632,78 @@ active-motion（0.5° 阈值；val 240 / test 162 samples）：
 ### 证据
 
 - geometry cache: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/episodes/*/geometry/q_full.npy`
+
+## EXP-010 — 3 Hz（stride=10）残差预测三组对照
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+3 Hz 的 `q_t → q_{t+10}` 具有更大的动作残差，能够减弱 30 Hz near-zero residual 的影响；若 Cm 对动作预测有贡献，`qt_cm` 应优于 `qt_only`。
+
+### Baseline
+
+- 独立 3 Hz cache：stride=10，真实 `delta_time_s≈0.3 s`
+- split：16 train / 2 val / 2 test
+- train/val/test pairs：8,480 / 1,346 / 1,122
+- 30 epochs，训练步数因数据量为 7,950
+- identity：`q_next=q_t`
+
+### 本次修改
+
+- 从 v4 geometry layer 派生 3 Hz hand flow、q pair、真实 dt 和 source stride。
+- 三组均使用残差目标：`qt_cm / qt_only / cm_only`。
+- 预缓存 3 Hz Cm tokens；不运行 shuffled-flow。
+
+### 结果
+
+全量 split：
+
+| Variant | Best val q MAE (deg) | Test q MAE (deg) | Test identity (deg) |
+|---|---:|---:|---:|
+| qt_cm | 1.370 | 0.737 | 0.648 |
+| qt_only | **1.329** | **0.699** | 0.648 |
+| cm_only | 1.376 | 0.759 | 0.648 |
+
+高动作子集（`max|Δq|>=0.5°`；val 557 / test 511）：
+
+| Variant | Val q MAE (deg) | Test q MAE (deg) | Val/Test identity (deg) |
+|---|---:|---:|---:|
+| qt_cm | 3.108 | 1.449 | 3.094 / 1.389 |
+| qt_only | **3.096** | **1.409** | 3.094 / 1.389 |
+| cm_only | 3.115 | 1.462 | 3.094 / 1.389 |
+
+### 关键观察
+
+3 Hz 将 identity 的 val MAE 从 30 Hz 的约 0.13° 提高到 1.30°，动作信号明显增强；但三组模型仍只接近 identity，`qt_only` 略好于 `qt_cm`，Cm 没有显现独立增益。高动作子集上三组仍未明显超过 identity。
+
+### 解释
+
+时间间隔增大成功解决了“所有标签几乎为零”的数据分布问题，但仅改变 horizon 不足以让当前 Decoder 学到可泛化的动作残差。可能需要将 `delta_time_s` 显式输入 Decoder、按动作幅度重采样，或改为直接优化 flow/增量方向。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+### 决策
+
+保留 3 Hz cache 和三组 checkpoint 作为后续多时间尺度 baseline；暂不宣称 Cm 有效或无效。
+
+### 下一步
+
+- 将 `delta_time_s` 作为 Decoder 显式条件，比较 30 Hz/3 Hz/混合 horizon。
+- 评估 delta-q MAE、方向准确率和相对 identity improvement。
+- 在 3 Hz 上尝试 active-motion 加权训练。
+
+### 证据
+
+- 3 Hz cache：`data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/v1/selection_20_seed42.json`
+- qt_cm: `outputs/cmdecoder/cm_decoder_20260821_214719/`
+- qt_only: `outputs/cmdecoder/cm_decoder_20260821_214933/`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260821_215143/`

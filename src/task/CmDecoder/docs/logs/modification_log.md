@@ -357,3 +357,31 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **统计状态**
 
 3 Hz（stride=10）共 10,948 pairs，最大关节变化 P50=0.505°、P90=6.819°，超过 0.5° 的比例为 51.04%。
+
+## 2026-08-21 — 完成 3 Hz 三组残差对照训练
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/build_horizon_cache.py` — 从 v4 geometry 派生 stride=10 的 3 Hz task cache。
+- `src/task/CmDecoder/build_cm_cache.py` — 支持 `--set`，为派生 cache 预计算 Cm tokens。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-010，记录 3 Hz 三组训练和评估。
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/` — 3 Hz cache（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_214719/` — 3 Hz qt_cm 输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_214933/` — 3 Hz qt_only 输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_215143/` — 3 Hz cm_only 输出（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求将时间间隔改为 3 Hz，并继续运行 qt_cm、qt_only、cm_only 三组对照。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**实验状态**
+
+3 Hz cache、Cm token sidecar、三组 30 epoch 训练以及全量/高动作 val/test 评估均完成；qt_only 最佳但未超过 identity。
