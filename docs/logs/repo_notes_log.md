@@ -7,6 +7,7 @@
 - GRAB：`dataset/GRAB`；ARCTIC：`data/raw_data/ARCTIC/arctic`，raw sequences 位于其下的 `data/arctic_data/data/raw_seqs`。
 - 派生 cache：`data/processed_data/`；训练/诊断产物：`output/exp/`、`output/research/`、`outputs/`，均不提交。
 - 测试：`/home2/wyy/miniconda3/bin/conda run -n graspenv python -m pytest ...`。
+- HRDexDB：代码与 Inspire F1 数据位于 `/home2/wyy/oyx_ws/HRDexDB`，数据根为其下 `v0/`；CmDecoder 使用 `/home2/wyy/oyx_ws/HRDexDB/assets/robots/xarm_inspire_f1_right.urdf`。HF LFS 控制面可走 `hf-mirror.com`，真实 Xet/CDN 内容在本机需临时使用 `127.0.0.1:7897` 代理。
 
 ## 文档入口
 

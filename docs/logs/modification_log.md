@@ -1,5 +1,20 @@
 # 全局 AI 修改记录
 
+## 2026-08-20 — 接入外部 HRDexDB Inspire F1 数据路径
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: 跨 task
+
+**文件**
+
+- `docs/logs/repo_notes_log.md` — 记录 HRDexDB 数据根、Inspire F1 URDF 和 LFS 下载环境约定。
+- `src/task/CmDecoder/` — 新建 frozen-Cm 动作重建任务（详细改动见任务级 modification log）。
+
+**改动原因**
+
+用户要求利用外部 HRDexDB Inspire F1 数据和既有 GRAB-only Cm checkpoint 训练关节角 Decoder；外部数据路径与下载约定具有仓库级复用意义。
+
 ## 2026-08-20 — 修正共享 GRAB raw asset 解析
 
 - branch: `oyx`

@@ -1,5 +1,24 @@
 # Cm AI 修改记录
 
+## 2026-08-21 — 补充 Cm 当前架构与张量规格
+
+- branch: `oyx`
+- post-commit: `HEAD`
+- 范围: task 内部文档
+
+**文件**
+
+- `src/task/Cm/docs/logs/architecture_log.md` — 补充当前 DenseToken、Dataset、Slot Attention、gate、object flow decoder 的张量形状、单位、输入边界和 warm-up 行为。
+- `src/task/Cm/docs/logs/modification_log.md` — 记录本次架构文档更新。
+
+**改动原因**
+
+用户要求将 Cm 当前架构和张量规格沉淀到任务级 architecture log，便于后续分析 gate、slot routing 和数据/模型接口时直接对照实际代码。
+
+**影响范围**
+
+仅 task 内部文档，不改变代码、配置或实验定义。
+
 ## 2026-08-20 — 重建并整理 subject-template 修复版 GRAB cache
 
 - branch: `oyx`
