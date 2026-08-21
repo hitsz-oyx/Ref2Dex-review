@@ -295,3 +295,64 @@ torchrun --standalone --nproc_per_node=2 -m src.task.CmDecoder.train --device cu
 - final checkpoint: `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/step_000009600_epoch_000030.pt`
 - metrics: `outputs/cmdecoder/cm_decoder_20260821_195912/metrics.jsonl`
 - log: `outputs/cmdecoder/cm_decoder_20260821_195912/train.log`
+
+## EXP-005 — 20-episode qt_only / cm_only 对照
+
+### 日期
+
+2026-08-21
+
+### 对应指导
+
+`docs/指导/V1.md`
+
+### 假设
+
+在与 EXP-004 完全相同的数据、优化器和训练预算下，`qt_only` 用于测量当前关节状态 shortcut，`cm_only` 用于测量不提供当前 q 时 Cm 的独立解码能力；两者可作为 `qt_cm` 的输入消融。
+
+### Baseline
+
+- 同 EXP-004 的 v4 20-episode split、10,266 train samples
+- 30 epochs / 9,600 steps，GPU 6、7，Cm checkpoint 冻结
+- `qt_cm` 最佳 val q MAE：2.461°
+
+### 本次修改
+
+- 运行 `qt_only`：仅输入 `q_t`。
+- 运行 `cm_only`：仅输入冻结 Cm tokens。
+- 其余数据、训练预算和评价方式保持不变。
+
+### 结果
+
+| Variant | Best epoch | Best val q MAE (deg) | Final val q MAE (deg) | Final train q MAE (deg) |
+|---|---:|---:|---:|---:|
+| qt_cm | 9 | 2.461 | 2.651 | 0.836 |
+| qt_only | 24 | **1.423** | 1.434 | 2.527 |
+| cm_only | 7 | 5.028 | 5.941 | 1.547 |
+
+### 关键观察
+
+在该 20-episode split 上，`qt_only` 验证误差低于 `qt_cm`，而 `cm_only` 明显更差。`qt_only` 的训练误差反而高于 `qt_cm`，说明当前结果不能简单归因于训练集拟合程度。
+
+### 解释
+
+当前证据表明，下一帧 q 的主要可预测信息来自当前 q；Cm 单独输入不足以稳定重建下一帧，且将 Cm 与 q_t 拼接并未在本次设置下带来验证集收益。由于尚未进行 test split、多个 seed 和统一 baseline 口径复核，这仍是初步结果。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+### 决策
+
+保留两组 checkpoint 作为输入消融结果；不据此移除 Cm 或改变正式模型定义。
+
+### 下一步
+
+- 在固定 best checkpoint 上评测 test split。
+- 核查 identity baseline 与 q MAE 的统计口径。
+- 如需判断 Cm 的增益，增加多 seed 或 active-motion 子集评测。
+
+### 证据
+
+- qt_only: `outputs/cmdecoder/cm_decoder_20260821_200732/`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260821_201002/`

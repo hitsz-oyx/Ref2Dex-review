@@ -220,3 +220,27 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **训练状态**
 
 30 epochs / 9,600 steps 已完成；best checkpoint 位于 `outputs/cmdecoder/cm_decoder_20260821_195912/checkpoints/best.pt`。
+
+## 2026-08-21 — 完成 qt_only 与 cm_only 对照训练
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-005，记录两组 20-episode 输入消融。
+- `outputs/cmdecoder/cm_decoder_20260821_200732/` — qt_only 训练输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_201002/` — cm_only 训练输出（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求继续运行除 shuffled-flow 外的另外两组对照；两组均沿用 EXP-004 的训练预算和数据划分。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**训练状态**
+
+两组均完成 30 epochs / 9,600 steps；最佳验证 q MAE 分别为 qt_only 1.423°、cm_only 5.028°。
