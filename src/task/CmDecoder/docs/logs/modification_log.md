@@ -288,3 +288,28 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **对应指导**
 
 `docs/指导/V1.md`
+
+## 2026-08-21 — 完成 20-episode 残差预测对照
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-007，记录三组残差训练及全量/活动帧评估。
+- `outputs/cmdecoder/cm_decoder_20260821_210013/` — residual qt_cm 输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_210256/` — residual qt_only 输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260821_210526/` — residual cm_only 输出（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求在 20 个 episode 上比较残差预测版本；保持数据和训练预算一致，并额外复核 active-motion 子集。
+
+**对应指导**
+
+`docs/指导/V1.md`
+
+**实验状态**
+
+三组训练与全量 test、active-motion val/test 评估均完成；qt_only 最佳，但未稳定优于 identity。
