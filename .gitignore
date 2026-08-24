@@ -28,6 +28,7 @@ dataset/*/object_models/
 dataset/*/MANO*/
 dataset/*/SMPL*/
 dataset/*/SMPLX*/
+/dataset/HRDexDB/
 dataset/*/*.pkl
 dataset/*/*.npz
 dataset/*/*.npy
