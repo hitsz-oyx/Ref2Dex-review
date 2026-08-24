@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from src.base import load_checkpoint, task_config_from_dict
+from src.task.correspondence_ptv3_v2.config import Config
 from src.task.correspondence_ptv3_v2.runner import CorrespondencePTV3V2Runner
 
 
@@ -55,9 +56,20 @@ def main() -> None:
     cfg.data.persistent_workers = args.num_workers > 0
     is_hand_condition = args.condition in {"hand_only", "hand_object"}
     if is_hand_condition:
+        # Historical v2.0 checkpoints predate the MANO config fields. Use the
+        # current task default so their weights can still be evaluated on a
+        # regenerated MANO test set without mutating the checkpoint itself.
+        if not getattr(cfg.meta, "mano_model_dir", None):
+            cfg.meta.mano_model_dir = Config.meta.mano_model_dir
         cfg.meta.use_mano_reconstruction = True
         cfg.meta.apply_hand_perturb = True
         cfg.meta.exclusive_hand_object_perturb = False
+        # Evaluation conditions describe a deterministic corruption stream,
+        # not the checkpoint's training-time hand/object exposure ratio.
+        # Without this override H80 and H50 checkpoints inherit 0.8 and 0.5,
+        # respectively, so they are evaluated on different fractions of
+        # perturbed frames despite sharing the same condition name.
+        cfg.meta.hand_perturb_prob = 1.0
         cfg.meta.hand_geometry_calibration_paths = {
             "arctic": str(
                 Path("src/task/correspondence_ptv3_v2/calibration/arctic_axis_angle45_target_9mm_sample.json")
@@ -98,6 +110,7 @@ def main() -> None:
             "hand_input": "stored_clean_hand_points",
             "condition": args.condition,
             "hand_perturb": is_hand_condition,
+            "hand_perturb_probability": 1.0 if is_hand_condition else 0.0,
             "hand_perturb_representation": "axis_angle45" if is_hand_condition else None,
             "hand_target_rms_mm": float(args.hand_target_rms_mm) if is_hand_condition else None,
             "runtime_resample_object": False,

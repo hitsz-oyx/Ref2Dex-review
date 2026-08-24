@@ -1,5 +1,7 @@
 # ARCTIC min11 MANO：noPCA 与 5mm 三条件评估
 
+> **失效说明（2026-08-23）**：旧 evaluator 在 hand-only / hand+object 中继承了 checkpoint 的训练时 `hand_perturb_prob`，没有实现固定 100% 手扰动的评估语义。这两类结果标记为 `INVALID_IMPLEMENTATION`；object-only 仍有效。修复后的统一 10 mm 协议 E 见 [`arctic_min11_mano_protocol_e_10mm_compare_20260823.md`](arctic_min11_mano_protocol_e_10mm_compare_20260823.md)。
+
 ## 数据
 
 - NAS Stage 3：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1`

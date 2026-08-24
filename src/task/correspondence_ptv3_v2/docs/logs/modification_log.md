@@ -1,5 +1,203 @@
 # Modification log
 
+## 2026-08-24 — 完成纯 GRAB noPCA 的 HOCap subject_1 外部测试
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件 / 产物**
+
+- `output/research/hocap_subject1_grab_nopca_20260824/smoke_object_only.json` — 保存单文件 676 帧兼容性小测结果。
+- `output/research/hocap_subject1_grab_nopca_20260824/full_object_only.json` — 保存 subject_1 全量 28 文件 / 23,896 帧的 clean 与 object perturb 指标。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 新增 EXP-012，记录 checkpoint、HOCap 协议、指标和结论边界。
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 将 HOCap 从转换完成更新为首条外部基线已完成。
+- `src/task/correspondence_ptv3_v2/docs/logs/modification_log.md` — 记录本次评估与文档同步。
+
+**改动原因**
+
+响应用户要求，选取训练时关闭手部扰动的纯 GRAB noPCA checkpoint，在新转换的 HOCap subject_1 上先做实际验证。
+
+**验证**
+
+- checkpoint step 317800 / epoch 35，配置 `apply_hand_perturb=false`；
+- 评估端手扰动关闭、runtime resampling 关闭，object perturb 固定 10°/10 mm；
+- smoke 与全量均成功结束，无 schema、坐标系、CUDA 或有限值错误。
+
+## 2026-08-23 — 后台启动全量 ARCTIC MANO Stage 2/3 导出
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: 跨 task / 全局
+
+**文件 / 数据**
+
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 增加全量 ARCTIC 导出运行状态、风险和后续核验步骤。
+- `docs/logs/status_log.md` — 同步跨 task 的后台数据处理状态。
+- `output/research/arctic_full_mano_v21_20260823/run_export.sh` — 在 GPU 3 顺序运行 ARCTIC Stage 2 与 Stage 3。
+- NAS `processed_data/stage2/arctic_full_mano_v21_20260823`、`processed_data/stage3/arctic_full_mano_v21_20260823` — 新建独立输出，不覆盖旧数据。
+
+**改动原因**
+
+为后续 GRAB / ContactPose / OakInk / ARCTIC 四域训练准备全量、带 MANO 描述的 hand-root Stage 3 数据。后台进程已成功加载 MANO 与物体模板，并写出首批 Stage 2 文件。
+
+## 2026-08-23 — 将历史 GRAB+ContactPose 两域模型加入协议 E
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/research/contactpose_checkpoint_compare/evaluate.py` — 为缺少 `meta.mano_model_dir` 的历史 v2.0 checkpoint 使用当前 Task 默认 MANO 路径。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_protocol_e_10mm_compare_20260823.md` — 加入历史 GRAB+ContactPose latest 的三条件、ΔQFL 和等权汇总。
+- `src/task/correspondence_ptv3_v2/result/comprehensive_comparison_20260823.md` — 同步协议 E 五模型表和结论边界。
+- `src/task/correspondence_ptv3_v2/docs/logs/architecture_log.md` — 记录旧 checkpoint 的 MANO 路径兼容规则。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 扩展 EXP-011 的 checkpoint、结果与解释。
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 更新最近可靠结论。
+- `output/research/arctic_min11_mano_protocol_e_10mm_20260823/grab_contactpose_latest_*` — 保存三条件 JSON / log。
+
+**改动原因**
+
+用户明确选择历史 GRAB+ContactPose 两域 mixed latest.pt 加入协议 E。旧 checkpoint config 早于 MANO 字段，首次 hand-only 在缺少 `mano_model_dir` 时 fail-fast；补当前默认只读路径后重跑成功。
+
+**验证**
+
+- object-only、hand-only、hand+object 均完成 11 序列 / 4,175 帧；
+- hand 条件协议字段为 10 mm、概率 1.0，changed-edge fraction 与协议 E 其他模型一致；
+- 最终三个日志无 traceback 或错误。
+
+## 2026-08-23 — 新增协议 E 并修复评估端手扰动概率漂移
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/research/contactpose_checkpoint_compare/evaluate.py` — hand-only / hand+object 评估显式固定 `hand_perturb_prob=1.0`，输出增加实际手扰动概率字段。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_protocol_e_10mm_compare_20260823.md` — 新增协议 E 的三条件分项、ΔQFL、等权汇总和限制。
+- `src/task/correspondence_ptv3_v2/result/comprehensive_comparison_20260823.md` — 增加协议 E，并把旧协议 D hand/joint 结果标记为 `INVALID_IMPLEMENTATION`。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_h80_h50_bestpt_compare_20260823.md` — 增加旧评估失效说明。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_v1_compare_20260821.md` — 增加旧评估失效说明。
+- `src/task/correspondence_ptv3_v2/docs/logs/architecture_log.md` — 固化评估条件不得继承训练 exposure 的不变量和 ΔQFL 定义。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 新增 EXP-011，并更正 EXP-009/010 的有效性。
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 更新最近可靠结论、风险和下一步。
+- `output/research/arctic_min11_mano_protocol_e_10mm_20260823/` — 保存 8 个修正后 hand 条件 JSON / log；object-only 复用协议 D 的有效产物。
+
+**改动原因**
+
+用户要求用协议 E 在 10 mm hand perturb 下评估四个 checkpoint，并保留实际退化量。首次运行的一致性核验发现旧 evaluator 会继承 checkpoint 的 H80/H50 训练门控比例，导致不同模型收到不同 fraction 的手扰动；为实现固定评估协议，统一覆盖为 100% 后重新运行。
+
+**验证**
+
+- 8 个新 JSON 均为 4,175 帧，协议字段为 hand 10 mm / probability 1.0；
+- 四个 checkpoint 的 hand-only changed-edge fraction 均为 0.003200，hand+object 均为 0.004462；
+- 8 个日志未发现 traceback、ERROR 或协议失败。
+- evaluator 语法检查通过；`tests/test_hand_pca_perturbation.py` 为 9 passed / 1 skipped / 2 个既有失败，失败分别来自测试 fixture 缺少 `apply_hand_perturb` 和旧错误消息正则，与本次 evaluator 改动无关。
+
+## 2026-08-23 — 补充综合报告 A/B/C/D 协议口径
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/comprehensive_comparison_20260823.md` — 分别补充协议 A/B/C/D 的数据来源和选择规则、checkpoint、clean/perturbed 输入、hand/object 扰动、聚合方式、可回答问题与限制。
+
+**改动原因**
+
+用户要求报告明确说明 A/B/C/D 各自的评测口径，使后续读者能判断哪些结果可以直接横向比较，以及每套结果实际回答的研究问题。
+
+**影响范围**
+
+仅综合报告说明；未修改结果数字、原始 JSON、评测代码或训练。
+
+## 2026-08-23 — 统一当前报告的总体 recovery 主指标
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/comprehensive_comparison_20260823.md` — 增加 `pseudo_recovery_brier` 定义，并将其设为唯一总体 recovery 主指标；fake/missed/projection 降级为诊断指标，不再参与主表排名。
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_h80_h50_bestpt_compare_20260823.md` — 同步 H80/H50 直接对比的报告口径。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 同步 EXP-010 主结果表和关键观察的指标名。
+
+**改动原因**
+
+用户要求使用合并 fake-contact 与 missed-contact changed edges 的综合 `pseudo_recovery_brier` 报道当前结果，避免把两类 failure-mode 分解或 projection 当作总体模型排名依据。
+
+**影响范围**
+
+仅报告表达与实验日志；没有重新计算指标，也未修改原始 JSON、evaluator、模型或训练。
+
+## 2026-08-23 — 汇总 result 目录的全方位对比
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/comprehensive_comparison_20260823.md` — 按四套评测协议汇总全部现有结果，补充 checkpoint/预算索引、协议内排名、跨协议一致性、目标导向选模建议和待补实验。
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 将综合结果页更新为当前结果入口。
+
+**改动原因**
+
+用户要求整理 `result/` 当前结果并形成全方位对比。汇总时保持不同数据子集、MANO 能力、扰动条件和 checkpoint 口径的边界，避免把不可直接比较的绝对指标合并成单一排名；同时明确区分历史 GRAB+ContactPose mixed 与正在训练的三域等比例 mixed。
+
+**影响范围**
+
+仅 Task 级结果汇总和状态入口；未修改原始结果、训练代码、评测代码或正在运行的训练。
+
+## 2026-08-23 — 完成 5 mm H80/O20 与 H50/O50 best.pt 三条件对比
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/result/arctic_min11_mano_h80_h50_bestpt_compare_20260823.md` — 新增两条 best.pt 的统一协议结果表、分解指标和限制说明。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 更新 EXP-010 的完成状态、三条件结果、解释和下一步。
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 更新最近可靠结论和研究风险。
+- `output/research/arctic_min11_mano_bestpt_h80_h50_20260823/` — 保存六个被忽略的评测 JSON 与日志。
+
+**改动原因**
+
+用户要求沿用上一版 5 mm 的评测方法，并进一步指定新旧版本都使用各自 `best.pt`。因此在同一 ARCTIC MANO min11、三种扰动条件、相同 batch/seed/evaluator 下重跑 H80/O20 与 H50/O50，避免把旧 latest.pt 结果与新 best.pt 混用。
+
+**影响范围**
+
+仅 Task 级评测产物和研究文档；未修改 evaluator、模型、训练配置或正在运行的 mixed 训练。
+
+## 2026-08-22 — 在 GPU 1、2 恢复三域等比例 mixed 训练
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/docs/logs/status_log.md` — 新建 Task 当前状态入口，记录 mixed 续训进度、运行资源和风险。
+- `src/task/correspondence_ptv3_v2/docs/logs/experiment_log.md` — 更新 EXP-007 的中断证据、恢复入口和新 W&B run。
+- `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_resume_gpu12_20260822_050212/` — 从 step 22748 checkpoint 建立独立续训输出并启动双卡 DDP；该目录属于被忽略的实验产物。
+
+**改动原因**
+
+用户确认使用空闲物理 GPU 1、2 继续三域等比例 mixed baseline，并要求创建新的 W&B run ID。为避免新旧 run 的指标文件混写，将旧 `latest.pt` 复制到独立输出目录后恢复；训练已确认从 step 22748 继续写出，新 W&B run ID 为 `d5yvor4z`。
+
+**对应指导**
+
+当前三域混训方案；ARCTIC 外部评估继续遵循 `docs/指导/V1.md`。
+
+**影响范围**
+
+仅 Task 实验运行与状态文档；未修改训练代码、采样协议或模型配置。
+
 ## 2026-08-21 — 固定 GRAB H50/O50 互斥扰动配置并核对三域混训中断
 
 - branch: `feature/hand-pca-perturbation`
@@ -530,3 +728,33 @@
 - OakInk 8 个多视角组、24 个 view pair：只减 wrist 的手点跨视角 RMS 平均 163.14 mm；用 `cam_extr^{-1}` 后为 0.000080 mm；接触距离跨视角 MAE 为 0.000035 mm。
 - stored proxy 与 MANO proxy 的 top-1024 near-pool Jaccard 平均 0.948。
 - 无 MANO 模型目录下 dataset/runtime smoke、PTv3 forward、loss 和反向传播均通过。
+## 2026-08-24 — 新增 HOCap annotation-only Stage 3 转换器并启动 subject_1 导出
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部 / 外部数据处理
+
+**文件 / 数据**
+
+- `process/HOCap/__init__.py` — 新增 HOCap 处理包入口。
+- `process/HOCap/stage3_export.py` — 读取 HOCap `meta.yaml`、`poses_m.npy`、`poses_o.npy`、MANO betas 和 clean object mesh，按序列/物体/手生成 Ref2Dex Stage 3 v2.1。
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hocap_subject1_annotation_v1_smoke*` — 20 帧 smoke 输出，已通过 schema 和几何检查。
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hocap_subject1_annotation_v1` — subject_1 完整转换目标目录，CPU tmux `hocap_subject1_stage3_20260824` 后台运行。
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/HOCap/logs/subject_1_stage3_export_20260824.log` — 转换日志。
+
+**改动原因**
+
+HOCap 原始数据不是当前 loader 直接接受的 Stage 3 schema；先完成单序列 smoke，再后台转换 subject_1，保持原始 tar、annotation-only metadata 和现有训练配置不变。
+
+## 2026-08-24 — HOCap subject_1 Stage 3 转换完成并通过全量核验
+
+- branch: `feature/hand-pca-perturbation`
+- post-commit: `working tree`
+- scope: task 内部 / 外部数据处理
+
+**验证**
+
+- 7 个序列、28 个序列/物体/手 NPZ、23,896 个 frame samples，转换失败数为 0。
+- 所有文件包含 Stage3 必需字段；物体池 `(N,4096,3)`、手点 `(N,1538,3)`、距离 `(N,1538)`、hand-root pose `(N,4,4)` 均通过 shape 和 finite 检查。
+- 物体和手部法线单位长度检查通过。
+- `CorrStaticDatasetV2` clean loader 扫描 28 个文件并成功读取样本；coordinate frame 为 `hand_root`，dataset id 为 `hocap`。

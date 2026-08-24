@@ -12,6 +12,131 @@
 
 已按用户确认建立 H50/O50 互斥配置：`src/task/correspondence_ptv3_v2/configs/full_grab_50ep_geometry_5mm_h50_o50_exclusive_ddp2.yaml`。其 corruption gate 为 hand-only 50%、object-only 50%、compound 0%；训练启动记录见 EXP-010。
 
+2026-08-23 完成协议 E：在同一 MANO min11 上使用统一 100% 的 10 mm hand perturb，并新增 ΔQFL。noPCA 的实际退化量最小但最终 QFL 较差；H80 best 的 hand-only 最终质量最好；H50 best 的三条件等权 perturbed QFL 最好。核验中发现旧协议 D evaluator 继承 checkpoint 的 `hand_perturb_prob`，因此旧 hand-only / hand+object 比较为 `INVALID_IMPLEMENTATION`，object-only 仍有效。
+
+2026-08-24 已用纯 GRAB、训练时关闭手部扰动的 noPCA latest checkpoint 完成 HOCap subject_1 首次外部评估。28 个序列/物体文件共 23,896 个帧样本全部通过；clean random QFL 为 0.00016607，固定 10°/10 mm object perturb 后为 0.00020392，recovery Brier 为 0.5267。该结果只覆盖一个 subject，且接触 GT 为几何派生，因此先作为可运行基线，不作模型优劣定论。
+
+## EXP-012 — 纯 GRAB noPCA 在 HOCap subject_1 的外部测试
+
+### 日期
+
+2026-08-24
+
+### 目的
+
+确认训练时没有加入手部扰动的纯 GRAB checkpoint 能否直接消费新转换的 HOCap Stage 3，并建立后续与三域 mixed checkpoint 对照的首条外部基线。
+
+### 协议
+
+- checkpoint：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_no_pca_runtime_ddp2_20260819_124614/checkpoints/latest.pt`，step 317800 / epoch 35；checkpoint 配置中 `apply_hand_perturb=false`；
+- 数据：NAS `processed_data/stage3/hocap_subject1_annotation_v1`，28 个序列/物体文件、23,896 个帧样本；
+- clean：直接使用存储的 clean hand points，不重建 MANO；
+- perturbed：手扰动关闭，物体固定启用 10° rotation / 10 mm translation；
+- 两条流均关闭 runtime object resampling，batch size 16，在物理 GPU 3 上评估。
+
+### 实现核验
+
+Verdict: PASS
+
+- 先用 `G18_1_left.npz` 的 676 帧完成 smoke，再运行全量；
+- 全量 JSON 记录 `hand_perturb=false`、`hand_perturb_probability=0.0`、`runtime_resample_object=false`；
+- 28 个文件、23,896 个帧样本全部完成 clean / perturbed 推理，无 schema、坐标系、CUDA 或有限值错误。
+
+### 结果
+
+| Metric | clean | object perturbed |
+| --- | ---: | ---: |
+| random QFL ↓ | 0.00016607 | 0.00020392 |
+| random MAE ↓ | 0.00702896 | 0.00731687 |
+| random nonzero MAE ↓ | 0.03092725 | 0.03283193 |
+| contact auxiliary QFL ↓ | 0.00526155 | 0.00657405 |
+| hand contact QFL ↓ | 0.00042121 | 0.00046103 |
+| recovery Brier ↑ | — | 0.5267 |
+| recovery projection ↑ | — | 0.4541 |
+
+object perturb 使 random QFL 增加 0.00003785，约为 clean 的 +22.8%；random MAE 增加约 4.1%。
+
+### 解释
+
+该 checkpoint 能直接迁移到 HOCap 的 hand-root 几何表示，且在 object perturb 后仍输出有效的 recovery 指标，说明新数据导出与现有评估链路在工程上兼容。当前没有同协议的 HOCap checkpoint 横向对照，不能仅凭绝对值判断泛化是否足够好。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+工程兼容性已确认，但科研结论仍受 subject_1 单主体、几何派生接触 GT、micro 聚合以及缺少 matched baseline 限制。
+
+### 下一步
+
+三域 mixed 获得可用 checkpoint 后，使用完全相同的 HOCap object-only 协议比较；若要形成正式 benchmark，再增加 subject 覆盖并补 sequence/object-macro 汇总。
+
+### 证据
+
+- `output/research/hocap_subject1_grab_nopca_20260824/full_object_only.json`
+- smoke：`output/research/hocap_subject1_grab_nopca_20260824/smoke_object_only.json`
+
+## EXP-011 — 协议 E：10 mm MANO min11 三条件评估
+
+### 日期
+
+2026-08-23
+
+### 假设
+
+5 mm hand perturb 的伪几何能量较小时，比例型 `pseudo_recovery_brier` 可能放大很小的绝对误差。把 hand 几何扰动提高到 10 mm，并同时报告 `ΔQFL = perturbed QFL - clean QFL`，应能区分相对恢复效率、实际退化量和最终绝对质量。
+
+### 协议
+
+- 数据：ARCTIC MANO min11，11 文件 / 4,175 帧 / s01 / 11 objects；
+- checkpoint：noPCA latest、H80 latest、H80 best、H50 best，以及追加的历史 GRAB+ContactPose 两域 mixed latest；
+- object-only：clean hand + object 10°/10 mm；
+- hand-only：hand axis-angle45 10 mm RMS + clean object；
+- hand+object：同时施加上述两种扰动；
+- hand 条件固定 `hand_perturb_prob=1.0`，runtime resampling 关闭。
+
+### 实现核验
+
+首次运行后发现 evaluator 会继承 checkpoint 的训练时 `hand_perturb_prob`：noPCA/H80 为 0.8，H50 为 0.5，导致 changed-edge 支持量不同。修复为评估端统一 1.0 后覆盖重跑最初 8 个 hand 条件；追加历史两域模型后，五个 checkpoint 的 hand-only changed-edge fraction 均为 0.003200，hand+object 均为 0.004462。全部输出均为 4,175 帧且无错误。
+
+该缺陷同时影响旧协议 D 的 hand-only / hand+object 公平比较，因此 EXP-009 与 EXP-010 中依赖这些条件的历史结论标记为 `INVALID_IMPLEMENTATION`；object-only 数字不受影响。
+
+### 结果
+
+| checkpoint | Balanced perturbed QFL ↓ | Balanced ΔQFL ↓ | Balanced recovery Brier ↑ |
+| --- | ---: | ---: | ---: |
+| noPCA latest | 0.00027900 | **+0.00005226** | **0.4339** |
+| H80 latest | 0.00025684 | +0.00021759 | 0.3053 |
+| H80 best | 0.00025872 | +0.00022123 | 0.2981 |
+| H50 best | **0.00023450** | +0.00014843 | 0.3755 |
+| GRAB+ContactPose latest | 0.00097292 | **-0.00000792** | 0.1672 |
+
+Hand-only 分项：noPCA / H80 latest / H80 best / H50 best 的 recovery 分别为 0.2295 / 0.3598 / 0.3621 / 0.3117，ΔQFL 分别为 +0.00002624 / +0.00006907 / +0.00006986 / +0.00006339。
+
+### 解释
+
+noPCA 在 10 mm 下没有出现旧 5 mm 表中的巨大负 recovery，且绝对退化最小，支持“小分母会放大 recovery 观感”的假设。但 noPCA 的 clean 基线较差，所以最终 perturbed QFL 仍是 hand-only 四者最高；小 ΔQFL 不能等价为最好模型。H80 best 的 hand-only 最终质量和 recovery 最好，H50 best 则取得最低的三条件等权 perturbed QFL。
+
+joint recovery 仍可能由 object changed-edge 能量主导，不能把 noPCA 的高 joint recovery 解读为良好的 hand robustness。
+
+追加的历史 GRAB+ContactPose 两域 mixed 在三个条件上的 perturbed QFL 分别为 0.00098546 / 0.00096150 / 0.00097180，Balanced recovery 为 0.1672，整体明显落后于另外四条新路线。它的 hand-only 和 joint ΔQFL 为负，但这是相对约 0.000981 的高 clean 误差略有下降，不能解释成最佳鲁棒性。
+
+### 结论状态
+
+SUPPORTED
+
+### 限制与下一步
+
+- min11 只有 s01，结果只作机制筛查；
+- checkpoint 选择与训练预算不匹配；
+- 若需要严谨比较 5 mm 与 10 mm，应使用修复后的 evaluator 重跑 5 mm，而不是与旧协议 D 数字直接比较。
+
+### 证据
+
+- 结果：`src/task/correspondence_ptv3_v2/result/arctic_min11_mano_protocol_e_10mm_compare_20260823.md`
+- JSON / log：`output/research/arctic_min11_mano_protocol_e_10mm_20260823/`
+- evaluator：`src/task/correspondence_ptv3_v2/research/contactpose_checkpoint_compare/evaluate.py`
+- 历史两域 checkpoint：`outputs/train/correspondence_ptv3_v2_old1797_grab_contactpose_full_gpu3_20260816_110237/checkpoints/latest.pt`
+
 ## EXP-010 — GRAB 5 mm H50/O50 互斥扰动
 
 ### 日期
@@ -59,15 +184,29 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. \
 
 ### 结果
 
-已启动，当前 run 目录为 `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_h50_o50_exclusive_ddp2_20260821_073040`，tmux 会话为 `grab5mm_h50_o50_20260821_gpu0`。由于 GPU 1/2/3 正在被其他任务占用，本次先使用物理 GPU 0 单卡（`world_size=1`、global batch 16）运行；optimizer step 上限仍设为 454000，但每步样本数相较原两卡 H80/O20 减半，后续不能把它称为严格 matched-sample budget。当前模型已完成初始化并占用约 19.7 GiB 显存，尚无 validation checkpoint。
+> 2026-08-23 更正：下表 hand-only / hand+object 因 evaluator 分别继承 H80=0.8、H50=0.5 的手扰动概率而输入不一致，标记为 `INVALID_IMPLEMENTATION`；object-only 仍有效。修复后的统一评估见 EXP-011。
+
+训练已于 2026-08-22 完成 454000 step。按 GRAB `val_clean/cross_edge_random_qfl` 选择的 `best.pt` 位于 step 236067 / epoch 13。2026-08-23 使用与旧 H80/O20 完全相同的 ARCTIC MANO min11 三条件协议，重新评估两条 run 各自的 `best.pt`；旧 H80/O20 best 位于 step 399520 / epoch 44。
+
+| 条件 | 指标 | H80/O20 best | H50/O50 best |
+| --- | --- | ---: | ---: |
+| object-only | clean random QFL | **0.00003749** | 0.00008600 |
+| object-only | perturbed random QFL | 0.00030386 | **0.00025914** |
+| object-only | `pseudo_recovery_brier` | 0.2787 | **0.4119** |
+| hand-only | perturbed random QFL | **0.00005050** | 0.00009518 |
+| hand-only | `pseudo_recovery_brier` | **0.2122** | -0.0074 |
+| hand+object | perturbed random QFL | 0.00031991 | **0.00026396** |
+| hand+object | `pseudo_recovery_brier` | 0.2693 | **0.4116** |
 
 ### 关键观察
 
-待比较 hand-only、object-only、hand+object 三种 ARCTIC MANO 条件，以及训练日志中的 grad norm / clipping ratio。
+H50/O50 的 object-only 与 hand+object 综合 `pseudo_recovery_brier` 分别比 H80/O20 提高 0.1332 和 0.1423，perturbed QFL 也分别改善 14.7% 和 17.5%；但 hand-only `pseudo_recovery_brier` 从 0.2122 降到 -0.0074，hand-only perturbed QFL 变差 88.5%，clean QFL 约变为 2.29 倍。
 
 ### 解释
 
-当前实验首先验证 exposure 平衡是否解释 H80/O20 的 object/joint recovery 劣势；若 H50/O50 仍显著落后，下一步应检查扰动强度、域差异和 joint compound 缺失，而不是继续单纯增加 hand 概率。
+结果支持 object exposure 不足确实是 H80/O20 object/joint recovery 较弱的重要原因；把比例改为 H50/O50 后，object-only 与未在训练中出现的 compound 条件均明显改善。但 hand-only 与 clean 拟合同步退化，说明当前变化是 robustness trade-off，而不是全面提升。
+
+两条 best checkpoint 的 optimizer step 和 global batch 不匹配：H80/O20 为双卡 global batch 32、step 399520；H50/O50 为单卡 global batch 16、step 236067。因此这里只能确认当前 checkpoint 行为和 exposure 方向，不能写成严格 matched-sample 因果消融。
 
 ### 结论状态
 
@@ -79,9 +218,9 @@ INCONCLUSIVE
 
 ### 下一步
 
-- 完成训练或取得稳定中期 checkpoint；
-- 用同一带 MANO ARCTIC min11 三条件协议快速筛查；
-- 若方向明确，再扩展全物体分层 ARCTIC。
+- 若目标偏 object/joint robustness，H50/O50 是更好的候选；若更重视 clean/hand-only，H80/O20 当前更好。
+- 做严格结论前，应按相同 global sample exposure 或相同 global batch 重跑 matched 对照。
+- 若要寻找折中点，可单独测试 H60/O40 或 H70/O30，不应把本结果解释为比例越均等越好。
 
 ### 证据
 
@@ -89,8 +228,12 @@ INCONCLUSIVE
 - 训练输出：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_full_grab_geometry_5mm_h50_o50_exclusive_ddp2_20260821_073040`
 - tmux：`grab5mm_h50_o50_20260821_gpu0`
 - W&B：`gi854jvw`（本地 `wandb/run-20260821_073221-gi854jvw`）
+- best.pt 对比结果：`src/task/correspondence_ptv3_v2/result/arctic_min11_mano_h80_h50_bestpt_compare_20260823.md`
+- 评测 JSON / log：`output/research/arctic_min11_mano_bestpt_h80_h50_20260823/`
 
 ## EXP-009 — 带 MANO 的 ARCTIC min11 三条件鲁棒性评估
+
+> 2026-08-23 更正：本实验的 hand-only / hand+object 继承了 checkpoint 内的 `hand_perturb_prob=0.8`，没有实现“所有帧统一施加手扰动”的协议语义，标记为 `INVALID_IMPLEMENTATION`；object-only 仍有效。修复后的统一 10 mm 评估见 EXP-011。
 
 ### 日期
 
@@ -890,7 +1033,7 @@ python -m torch.distributed.run --standalone --master_port=29504 \
 
 ### 结果
 
-训练进行中，当前仅有启动阶段结果，尚无 validation checkpoint。
+旧 run 后续在日志 step 27980 中断，最近完整 checkpoint 为 step 22748 / epoch 1；未发现 Python traceback、CUDA OOM 或 kernel OOM。2026-08-22 05:02 UTC 已在物理 GPU 1、2 上从该 checkpoint 恢复到独立输出目录，并创建新的 W&B run。恢复后已确认 step 22760 至 22820 连续写出，尚无恢复后的新 validation checkpoint。
 
 | Metric | Value |
 |---|---:|
@@ -912,6 +1055,15 @@ python -m torch.distributed.run --standalone --master_port=29504 \
 
 INCONCLUSIVE
 
+### 2026-08-22 续训状态
+
+- physical GPU: 1、2；DDP world size 2；global batch 96；
+- resume checkpoint: 旧 run `latest.pt`，step 22748 / epoch 1；
+- output: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_resume_gpu12_20260822_050212`；
+- W&B run ID: `d5yvor4z`（新 run，不续接旧 run ID）；
+- total optimizer-step budget: 154670；
+- 启动初期 NAS data wait 偏高，短窗口吞吐不作为稳定 ETA 依据。
+
 ### 决策
 
 保留当前 run；不再修改采样比例、runtime 或 scale 设置。若出现明显域间 loss/gradient 差异，先记录诊断，再单独设计 loss balancing 消融。
@@ -928,3 +1080,6 @@ INCONCLUSIVE
 - run: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_20260820_141453`
 - tmux: `mixed_grab_contactpose_oakink_equal_20260820_v1`
 - W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/div3m72u`
+- resumed run: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_resume_gpu12_20260822_050212`
+- resumed tmux: `mixed_equal_resume_20260822_gpu12`
+- resumed W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/d5yvor4z`

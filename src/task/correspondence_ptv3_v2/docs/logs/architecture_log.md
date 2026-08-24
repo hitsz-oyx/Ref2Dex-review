@@ -1,5 +1,10 @@
 # correspondence_ptv3_v2 architecture log
 
+- scope: task:correspondence_ptv3_v2
+- last_updated: 2026-08-23
+- last_verified: 2026-08-23
+- related: [当前状态](status_log.md) / [实验](experiment_log.md)
+
 ## 当前架构入口
 
 详细 pipeline 保留在任务文档 [`../架构.md`](../架构.md)。本日志记录该架构最近的跨数据集约定：
@@ -27,3 +32,11 @@ GRAB、ContactPose、OakInk 分别构造 `CorrStaticDatasetV2`，再由
 rotation/translation perturbation 仍可按统一配置开启。每个域拥有独立的
 `val_clean/<domain>/` 与 `val_perturbed/<domain>/` loader，checkpoint 选择指标
 不应只依赖混合平均值。
+
+## MANO 扰动评估不变量
+
+`research/contactpose_checkpoint_compare/evaluate.py` 的 hand-only / hand+object 条件必须显式固定 `hand_perturb_prob=1.0`，不得继承 checkpoint 的 H80/H50 训练门控比例。评估条件表示所有样本采用同一 corruption stream；训练 exposure 只能作为被比较的模型属性，不能改变评估输入分布。
+
+历史 v2.0 checkpoint 的 config 可能没有 `meta.mano_model_dir`；评估器在 hand 条件下使用当前 Task `Config.meta.mano_model_dir` 作为只读兼容默认值，不修改 checkpoint，也不改变模型权重或协议扰动。
+
+协议 E 使用 ARCTIC axis-angle45 的 10 mm RMS hand perturb；object 扰动保持 rotation std 10° / translation std 10 mm。绝对退化定义为同条件 `perturbed random QFL - clean random QFL`，并与 perturbed QFL、`pseudo_recovery_brier` 并列报告。
