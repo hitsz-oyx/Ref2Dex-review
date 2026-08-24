@@ -1,8 +1,8 @@
 # Ref2Dex 接手记忆
 
 - scope: root
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
+- last_updated: 2026-08-24
+- last_verified: 2026-08-24
 - related: [仓库常识](repo_notes_log.md)
 
 ## 2026-08-22 — HRDexDB 非视频资产下载状态
@@ -62,3 +62,11 @@
 - last_verified: 2026-08-24
 - fact: `data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json` 是四手型 HRDexDB 的正式 object-disjoint manifest，共 2088 个有效 episode，train/val/test=`1642/232/214`。缺少机器人 `C2R.npy` 的 16 个 episode 被 selector 排除；cache 不包含 DenseToken 输出。
 - source / anchor: builder resume log、正式 manifest、`src/task/CmDecoder/build_cache.py`。
+
+## 2026-08-24 — GitHub 远程推送代理
+
+- category: environment / convention
+- status: active
+- last_verified: 2026-08-24
+- fact: 当前环境向 GitHub 远程推送需要使用本地 HTTP 代理 `127.0.0.1:7897`。命令入口前设置 `http_proxy`、`https_proxy`、`HTTP_PROXY`、`HTTPS_PROXY` 均为 `http://127.0.0.1:7897`；未设置代理时向 `origin` 推送会返回 HTTP 403。
+- source / anchor: `git push origin oyx` 在 2026-08-24 的失败/代理重试记录。
