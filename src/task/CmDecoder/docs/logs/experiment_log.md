@@ -4,6 +4,51 @@
 
 已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。当前仍未进行泛化结论实验。
 
+## EXP-016 — GRAB 30Hz 右手无配对重定向 smoke test
+
+### 日期
+
+2026-08-23
+
+### 设置
+
+- cache: `cm_object_v2_subject_template_20260820/grab`
+- side / rate: GRAB right / 30Hz (`ds_rate=4`, fixed stride=1)
+- sequence: `s1/scissors_offhand_1`
+- Cm: 旧版 C=256 frozen checkpoint
+- decoder: `outputs/cmdecoder/cm_decoder_20260823_000423/checkpoints/best.pt`
+- robot initialization: Inspire F1 joint-limit midpoint q0；object-center outward approach 0.12m
+
+### 结果
+
+8 帧 CUDA smoke test 成功，产物为 `output/research/grab_retarget_30hz.npz` 和
+`output/research/grab_retarget_30hz.png`。数据读取、GRAB hand-flow→Cm token、机器人
+几何输入、point-flow、q fitting 和 wrist 更新链路均可运行。
+
+2026-08-24 重新检查发现默认起始帧0的前32帧右手 candidate 全空，旧图中的物体输入
+实际是 padding，不能评价效果。入口增加 `--start-frame` 后，改用右手第一个连续有效
+窗口 `start=131` 重跑32帧；每帧512个物体点均有效。有效窗口结果：
+
+- 机器人手—物体质心距离从 `22.1 mm` 增至 `327.3 mm`；
+- object-relative 机器人手质心漂移 `324.2 mm`；
+- 机器人点到物体最近距离的均值从 `33.5 mm` 增至 `329.9 mm`；
+- `<20 mm` 接触点比例从 `34.5%` 降为 `0%`；
+- 单关节32帧范围约 `9.0°—17.7°`，逐帧 q 变化均值 `0.53°`，表明主要失败不是
+  关节爆炸，而是无约束 wrist SE(3) 逐帧积分漂移。
+
+有效窗口产物：`output/research/grab_retarget_30hz_baseline_eval_active_20260824.{npz,png}`。
+
+### 诊断
+
+有效 object candidate 下预测机器人手仍快速离开物体，因此当前单序列实现不能作为成功
+的重定向结果。这暴露出两个后续问题：HRDexDB 训练的 point decoder 尚未证明能接受
+GRAB 人手产生的 Cm token 分布；逐帧无约束 wrist fitting 会累积漂移。下一步应先增加
+wrist step clamp / 物体接触约束，并用多序列统计，而不是直接扩大运行规模。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
 ## EXP-001 — 单 episode overfit sanity check
 
 ### 日期
@@ -707,3 +752,377 @@ active-motion（0.5° 阈值；val 240 / test 162 samples）：
 - qt_cm: `outputs/cmdecoder/cm_decoder_20260821_214719/`
 - qt_only: `outputs/cmdecoder/cm_decoder_20260821_214933/`
 - cm_only: `outputs/cmdecoder/cm_decoder_20260821_215143/`
+
+## EXP-011 — object-v2 GRAB+ARCTIC Cm 的20-episode 3 Hz三组对照
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+训练更充分且覆盖 object-v2 GRAB+ARCTIC 的 Cm checkpoint 应比早期 GRAB checkpoint 提供更可迁移的动作表示，使 `qt_cm` 或 `cm_only` 相对 `qt_only`/identity 获益。
+
+### Baseline 与控制变量
+
+- 沿用 EXP-010 的3 Hz（stride=10）20-episode manifest：16 train / 2 val / 2 test，8,480 / 1,346 / 1,122 pairs。
+- frozen Cm：`outputs/cm/cm_object_v2_grab_arctic_20260819_165241/checkpoints/best.pt`。
+- `qt_cm / qt_only / cm_only` 均为 residual prediction、seed=42、30 epochs、全局 batch 32、7,950 optimizer steps。
+- identity：`pred_q_next=q_t`；高动作阈值为 `max|Δq|>=0.5°`。
+- 只重建20个 episode 的 Cm token sidecar，没有导出全量 cache。
+
+### 结果
+
+全量 split：
+
+| Variant | Best epoch | Best val q MAE (deg) | Test q MAE (deg) | Test identity (deg) |
+|---|---:|---:|---:|---:|
+| qt_cm | 11 | 1.228 | 0.826 | 0.648 |
+| qt_only | 30 | 1.331 | **0.695** | 0.648 |
+| cm_only | 10 | **1.200** | 0.773 | 0.648 |
+
+高动作子集（val 557 / test 511）：
+
+| Variant | Val q MAE (deg) | Test q MAE (deg) | Val/Test identity (deg) |
+|---|---:|---:|---:|
+| qt_cm | **2.293** | 1.423 | 3.094 / 1.389 |
+| qt_only | 3.096 | 1.404 | 3.094 / 1.389 |
+| cm_only | 2.299 | **1.342** | 3.094 / 1.389 |
+
+相对旧 EXP-010，新 Cm 将 `qt_cm/cm_only` 的最佳 val MAE 分别改善 `0.142°/0.176°`；高动作 val 分别改善约 `0.815°/0.816°`。高动作 test 的 `cm_only` 从 `1.462°` 改善到 `1.342°`，并首次优于 identity `0.047°`。但全量 test 上 `qt_cm/cm_only` 分别比旧实验退化 `0.089°/0.014°`，且仍不如 `qt_only`。
+
+### 实现有效性说明
+
+第一次并行启动时，自动输出目录按秒命名导致 `qt_cm/qt_only` 同目录混写；同时单卡 batch 16 产生15,900 steps，与旧 EXP-010 的双卡全局 batch 32不一致。该批输出 `cm_decoder_20260822_{125826,125827}` 标记为 **INVALID_IMPLEMENTATION**，不参与上表。随后改为单卡 batch 32、错开目录，三组均完成7,950 steps并独立复评。
+
+### 结论状态
+
+**INCONCLUSIVE**
+
+### 解释与决策
+
+新 Cm 确实改变了可解码信息：验证集和高动作 `cm_only` test 均出现明显改善，不能再简单认为 Cm 完全没有动作信号。但增益未稳定传递到 `qt_cm` 的 held-out test，全量 test 仍由不使用 Cm 的 `qt_only` 最佳。当前 test 只有2个 episode，且并非 object-disjoint，因此不足以支持稳定泛化结论。
+
+暂不导出全量 cache。后续扩大数据时按用户指定采用 object-disjoint split，再判断新 Cm 的跨物体贡献。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_20260822_130259/`
+- qt_only: `outputs/cmdecoder/cm_decoder_20260822_130301/`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260822_130305/`
+- 临时评估日志：`/tmp/cmdecoder_objectv2_3hz_eval_20260822/`
+
+## EXP-012 — 全量 object-disjoint 3 Hz qt_cm
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+扩大到跨89个互斥物体的 object-disjoint 数据后，新 object-v2 GRAB+ARCTIC Cm 的动作信息若具有跨物体泛化能力，`qt_cm` 应在 held-out object 的 full/high-motion 指标上稳定改善 identity，并为后续 `qt_only/cm_only` 全量消融提供主模型基线。
+
+### Baseline 与配置
+
+- 3 Hz（stride=10）object-disjoint manifest：568 episodes、284,414 pairs。
+- train/val/test：448/58/62 episodes，70/10/9 objects，228,977/28,391/27,046 pairs。
+- frozen Cm：`outputs/cm/cm_object_v2_grab_arctic_20260819_165241/checkpoints/best.pt`。
+- `qt_cm` residual prediction，seed=42，两卡 DDP，每卡 batch 16、全局 batch 32，30 epochs / 214,650 steps。
+- 使用预缓存 normal-flow Cm tokens；checkpoint SHA256 为 `64737bf4453b4ed37de105ea4c17a5e235e63c8bf2df7338c4c88a9d0817ebb5`。
+
+### 结果
+
+训练完成30 epochs / 214,650 steps，用时44分08秒。best checkpoint 出现在 epoch 1（step 7,155）；最终 epoch 的 val MAE 回升到 `0.945°`，表明继续训练没有改善泛化。
+
+| 子集 | Val q MAE (deg) | Val identity | Test q MAE (deg) | Test identity |
+|---|---:|---:|---:|---:|
+| full | **0.882** | 0.933 | **1.231** | 1.298 |
+| high-motion (`>=0.5°`) | **1.485** | 1.638 | **1.931** | 2.092 |
+
+相对 identity，full val/test 分别改善约 `5.4%/5.2%`，high-motion val/test 分别改善约 `9.4%/7.7%`。四个 held-out 口径方向一致。
+
+### 关键观察
+
+- object-disjoint 扩大数据后，`qt_cm` 首次在 full 与 high-motion 的 val/test 上全部超过 identity。
+- best epoch=1，后续训练虽然继续降低 train MAE，但没有改善验证泛化；当前30 epochs预算明显过长。
+- 本实验只有 `qt_cm`，尚不能区分收益来自当前 q 的跨物体统计、Cm tokens，还是两者组合。
+
+### 结论状态
+
+**SUPPORTED**：支持“全量 object-disjoint 设置下，当前 `qt_cm` 主模型优于 identity”。不支持“增益可独立归因于 Cm”，该结论需要同 split 的 `qt_only/cm_only`。
+
+### 下一步
+
+- 运行全量 `qt_only/cm_only`，保持相同 split、seed 和全局 batch。
+- 后续采用 early stopping，或先将预算缩短到约5 epochs。
+- 在三组 best checkpoint 上统一报告 full/high-motion test。
+
+### 证据
+
+- cache: `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/v1/selection_576_object_disjoint_seed42.json`
+- output: `outputs/cmdecoder/cm_decoder_20260822_143843/`
+- best: `outputs/cmdecoder/cm_decoder_20260822_143843/checkpoints/best.pt`
+
+## EXP-013 — 全量 object-disjoint 3 Hz 三组归因对照
+
+### 日期
+
+2026-08-22
+
+### 目的与控制变量
+
+在 EXP-012 的同一全量 object-disjoint split 上补齐 `qt_only/cm_only`，判断 `qt_cm` 的跨物体增益来自当前关节状态、Cm token，还是二者组合。
+
+- cache、split、frozen Cm、seed、residual prediction 与 EXP-012 完全相同。
+- `qt_only/cm_only` 均使用两卡 DDP、每卡 batch 16、全局 batch 32。
+- 根据 EXP-012 的 epoch 1 最优现象，将两组预算缩短为 5 epochs / 35,775 steps。
+- 模型选择只依据 full validation q MAE；最终统一评估各自 `best.pt` 的 full/high-motion val/test。
+
+### 结果
+
+| Variant | Best epoch | Full val | Full test | High-motion val | High-motion test |
+|---|---:|---:|---:|---:|---:|
+| identity | — | 0.933 | 1.298 | 1.638 | 2.092 |
+| qt_cm | 1 | **0.882** | **1.231** | **1.485** | 1.931 |
+| qt_only | 5 | 0.965 | 1.328 | 1.636 | 2.082 |
+| cm_only | 1 | 0.907 | 1.238 | 1.492 | **1.918** |
+
+单位均为 q MAE（deg），高动作阈值为 `max|Δq|>=0.5°`。
+
+- `qt_only` 在 full val/test 分别比 identity 差约 `3.4%/2.3%`；高动作仅有约 `0.1%/0.5%` 的微弱改善。
+- `cm_only` 在 full val/test 分别优于 identity 约 `2.8%/4.6%`，高动作 val/test 分别改善约 `8.9%/8.3%`，四个 held-out 口径方向一致。
+- `qt_cm` 与 `cm_only` 非常接近：`qt_cm` 在 full val/test 和 high-motion val 分别领先 `0.025°/0.008°/0.008°`，`cm_only` 在 high-motion test 领先 `0.013°`。
+- `cm_only` 的 best epoch=1，epoch 2—5 的 full val 为 `0.936/0.948/0.927/0.915°`，均未超过 epoch 1；5 epoch 预算足以识别当前最优区间。
+
+### 结论状态
+
+**SUPPORTED**：支持“全量 object-disjoint 的跨物体改善主要由 Cm token 提供”。`cm_only` 在四个 held-out 口径上均稳定超过 identity，而 `qt_only` 在 full val/test 退化；`qt_cm` 相比 `cm_only` 的差异很小且方向不完全一致，当前没有证据证明显式加入 `q_t` 能稳定进一步改善泛化。
+
+### 后续建议
+
+- 后续优先围绕 `cm_only/qt_cm` 做多 seed 或 decoder 容量/正则化验证，不再将 `qt_only` 作为主要候选。
+- 当前模型选择集中在 epoch 1，后续训练应加入 early stopping，5 epochs 可作为初始上限。
+- 若要声称 `qt_cm` 优于 `cm_only`，需多 seed 验证；当前 `0.008°` 量级差异不足以作该结论。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_20260822_143843/`
+- qt_only: `outputs/cmdecoder/cm_decoder_20260822_152742/`
+- cm_only: `outputs/cmdecoder/cm_decoder_20260822_153543/`
+
+## EXP-014 — wrist-aware baseline 全量三组对照
+
+### 日期
+
+2026-08-22
+
+### 目的与控制变量
+
+在 EXP-013 的同一 object-disjoint 3 Hz split 上，将 baseline 输出扩为 `6维手指 delta-q + 当前腕到目标腕的相对 SE(3)`，比较 `qt_cm / qt_only / cm_only` 三种输入。
+
+- manifest：`selection_576_object_disjoint_seed42.json`，568 episodes、284,414 pairs。
+- frozen Cm 与 token sidecar 沿用 SHA256 `64737bf4453b4ed37de105ea4c17a5e235e63c8bf2df7338c4c88a9d0817ebb5`。
+- 相对腕监督为 `inverse(wrist_t) @ wrist_next`，平移单位米、旋转为 rotvec；未来 arm FK 不参与。
+- seed=42，单卡 batch 32，全局 batch 32，3 epochs / 21,465 steps；三组只改变 `decoder_input`。
+- 选模指标为 full `val/loss`，最终需同时报告 q MAE、wrist translation EPE 与 wrist rotation geodesic error。
+
+### 运行状态
+
+三组于 2026-08-22 20:16 CST 启动，GPU 0 运行 `qt_cm/qt_only`，GPU 5 运行 `cm_only`；均完成21,465 steps，无 OOM，单组用时约5分38秒至5分53秒。
+
+### 结果
+
+`qt_cm/cm_only` 的 best 均在 epoch 1，`qt_only` best 在 epoch 3。下表均来自各自 `best.pt`；q 为 MAE（deg），wrist translation 为 EPE（mm），wrist rotation 为 SO(3) 测地误差（deg）。identity wrist 指零相对平移与单位旋转。
+
+Full split：
+
+| Variant | Best epoch | q val/test | Wrist trans val/test | Wrist rot val/test |
+|---|---:|---:|---:|---:|
+| identity | — | 0.933 / 1.298 | **10.376 / 10.693** | **2.115 / 2.288** |
+| qt_cm | 1 | **0.936 / 1.267** | 11.212 / 11.426 | 2.321 / 2.456 |
+| qt_only | 3 | 0.974 / 1.333 | 10.615 / 10.877 | 2.176 / 2.331 |
+| cm_only | 1 | 0.980 / 1.321 | 11.040 / 11.262 | 2.267 / 2.449 |
+
+High-motion（`max|delta-q|>=0.5°`）：
+
+| Variant | q val/test | Wrist trans val/test | Wrist rot val/test |
+|---|---:|---:|---:|
+| identity | 1.638 / 2.092 | 13.709 / 13.686 | 2.986 / 3.128 |
+| qt_cm | **1.528 / 1.967** | 13.989 / 13.857 | 3.072 / 3.176 |
+| qt_only | 1.640 / 2.086 | **13.520 / 13.537** | **2.979 / 3.120** |
+| cm_only | 1.583 / 2.016 | 13.785 / 13.691 | 3.030 / 3.192 |
+
+Full validation 总 loss 为 `qt_cm=0.328862`、`qt_only=0.323572`、`cm_only=0.324775`。当前 translation loss 约 `0.30`，而 q/rotation loss 各约 `0.01`，所以等权相加后的 checkpoint 选模事实上主要由 wrist translation 决定。
+
+### 关键观察
+
+- `qt_cm` 在 full test 和 high-motion val/test 的 q 指标三组最好，高动作 q 相对 identity 改善约6%—7%，Cm 对手指动作仍有可解码信息。
+- 三组 wrist 在 full val/test 均没有超过零腕运动 baseline；`qt_only` 仅在 high-motion wrist 上有约0.1—1.2%的微小改善，不能证明模型学会了可泛化腕部运动。
+- `qt_only` 因腕部误差相对较小而获得最低 full val 总 loss，但其 q 最差；当前总 loss/选模权重不适合直接代表“整体手运动质量”。
+
+### 结论状态
+
+**INCONCLUSIVE**：3-epoch 结果支持 Cm 改善高动作手指 q，但不支持当前 baseline 已学会腕部相对运动。正式与逐点模型比较前，应先规范化三类 loss 权重或采用分项选模，并分析 wrist target 分布/可预测性。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_wrist_qt_cm_20260822_201608/`
+- qt_only: `outputs/cmdecoder/cm_decoder_wrist_qt_only_20260822_201608/`
+- cm_only: `outputs/cmdecoder/cm_decoder_wrist_cm_only_20260822_201607/`
+
+## EXP-015 — wrist-aware baseline 纯点 loss 三组对照
+
+### 日期
+
+2026-08-22
+
+### 假设与控制变量
+
+将 EXP-014 中量纲不一致的 q/translation/rotation 参数 loss 替换为统一的整手固定对应点误差，可能更直接地监督整体手运动，并避免总 loss 被 translation 分项主导。
+
+- 数据、split、Cm/token、seed、三种 `decoder_input`、全局 batch 32和3-epoch预算均与 EXP-014 相同。
+- 输出仍为6维 finger delta-q、3维相对 wrist translation 和3维相对 wrist rotvec。
+- 唯一反传目标为1538个固定对应点的米制 Smooth-L1，beta=`0.01 m`；原 q/translation/rotation loss 权重均为0但继续记录。
+- checkpoint 按 `val/hand_points/epe_mm` 选取。
+
+### 实现有效性
+
+- GT q+wrist 重建 cache target point 的平均/最大 EPE 为 `0.000007/0.000170 mm`。
+- q、translation、rotvec 均从 point loss 获得有限非零梯度。
+- 100倍点缩放 smoke 每步触发梯度裁剪，已废弃；正式配置使用原始米制点，8-step smoke 梯度范数约0.312且不裁剪。
+
+### 运行状态
+
+三组于 2026-08-22 20:39 CST 在 GPU 0/5 启动，epoch 1 后发现3 Hz v1 cache 的目标点坐标错误，已主动停止全部进程。
+
+### 结果
+
+无有效科研结果。启动期 `identity_hand/epe_mm≈0.36 mm`，但独立 wrist identity translation EPE 约 `10.4 mm`；代码核验确认 `build_horizon_cache.py` 使用了 `_to_frame(hand[target], wrist[target])`，而联合运动监督必须使用 `_to_frame(hand[target], wrist[current])`。因此当前 point target 已消除 wrist 运动，继续训练会错误地推动预测 wrist 接近单位变换。
+
+### 结论状态
+
+**INVALID_IMPLEMENTATION**：输入监督不包含任务要求的腕部运动，不能用于评价纯点 loss 假设。
+
+### 证据
+
+- qt_cm: `outputs/cmdecoder/cm_decoder_wrist_pointloss_qt_cm_20260822_203951/`
+- qt_only: `outputs/cmdecoder/cm_decoder_wrist_pointloss_qt_only_20260822_203951/`
+- cm_only: `outputs/cmdecoder/cm_decoder_wrist_pointloss_cm_only_20260822_203951/`
+- stable smoke: `outputs/cmdecoder/cm_decoder_wrist_pure_point_meters_smoke_20260822_203820/`
+
+上述 smoke 来自近静止 episode，只验证数值反传，不足以验证全量 target 坐标语义。
+
+### 修正后 v2 复跑
+
+保留 v1 以复现历史实验，新建3 Hz v2：目标点改为在当前腕坐标系表达，并由 manifest `hand_flow_frame=current_wrist` 与 dataset fail-fast 共同约束。v2 仍为568个 episode、284,414 pairs，object-disjoint split 与 frozen Cm checkpoint 均不变；568个 token sidecar 重导后全量扫描0错误。
+
+三组均训练3 epochs / 21,465 steps，无 OOM、无梯度裁剪：
+
+| Variant | Best epoch | 用时 |
+|---|---:|---:|
+| qt_cm | 3 | 52:05 |
+| qt_only | 2 | 52:35 |
+| cm_only | 3 | 48:39 |
+
+直接参数 loss 的 EXP-014 单组仅约5分38秒至5分53秒。纯点 loss 每 step 需要点到 link 反绑、预测 q 可微 FK、1538点腕部变换及其反传，实测约 `115—140 ms/step`，而原实现约 `15 ms/step`；GPU 0 上 `qt_cm/qt_only` 并发还会互相争用。
+
+Full split（点与 wrist translation 单位 mm；q 与 wrist rotation 单位 deg）：
+
+| Variant | Point EPE val/test | q val/test | Wrist trans val/test | Wrist rot val/test |
+|---|---:|---:|---:|---:|
+| identity | 12.118 / 12.697 | **0.933 / 1.298** | 10.376 / 10.693 | 2.115 / 2.288 |
+| qt_cm | **3.412 / 3.801** | 1.239 / 1.593 | **3.772 / 4.030** | **1.697 / 1.908** |
+| qt_only | 12.360 / 12.887 | 1.095 / 1.437 | 10.552 / 10.842 | 2.235 / 2.376 |
+| cm_only | 3.467 / 3.838 | 1.222 / 1.575 | 3.776 / 4.051 | 1.701 / 1.889 |
+
+High-motion（`max|delta-q|>=0.5°`）：
+
+| Variant | Point EPE val/test | q val/test | Wrist trans val/test | Wrist rot val/test |
+|---|---:|---:|---:|---:|
+| identity | 16.175 / 16.323 | **1.638 / 2.092** | 13.709 / 13.686 | 2.986 / 3.128 |
+| qt_cm | **3.988 / 4.494** | 1.768 / 2.234 | **4.444 / 4.764** | **2.158 / 2.441** |
+| qt_only | 15.953 / 16.153 | 1.719 / 2.145 | 13.536 / 13.561 | 2.995 / 3.131 |
+| cm_only | 4.052 / 4.514 | 1.757 / 2.217 | 4.489 / 4.786 | 2.181 / 2.436 |
+
+### 修正后结论状态
+
+**SUPPORTED（几何目标）**：纯点监督使 `qt_cm` full test 点 EPE 相对 identity 改善约70%，wrist translation 改善约62%，wrist rotation 改善约17%，且 high-motion 方向一致。Cm token 是主要信息来源；`qt_only` 基本不能预测整体手运动，`qt_cm/cm_only` 差异很小且无稳定归因证据。
+
+**REFUTED（参数可辨识性）**：仅最小化对应点误差不能保证恢复更准确的 q。`qt_cm` full/high-motion test q MAE 均差于 identity，说明 wrist 与关节自由度可用不同参数组合产生接近的点几何；若下游需要准确 q，应恢复一个小权重 q 辅助约束或其他参数先验。
+
+### v2 证据
+
+- cache: `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/v2/selection_576_object_disjoint_seed42.json`
+- qt_cm: `outputs/cmdecoder/cm_decoder_wrist_v2_pointloss_qt_cm_20260822_215718/`
+- qt_only: `outputs/cmdecoder/cm_decoder_wrist_v2_pointloss_qt_only_20260822_215718/`
+- cm_only: `outputs/cmdecoder/cm_decoder_wrist_v2_pointloss_cm_only_20260822_215718/`
+
+## EXP-016 — 旧版 Cm 下逐点 flow 新架构十 epoch训练
+
+### 日期
+
+2026-08-23
+
+### 对应指导
+
+当前 CmDecoder 逐点 flow 架构记录（见 `architecture_log.md`）。
+
+### 假设
+
+在相同旧版 frozen Cm C=256 token、相同 v2 object-disjoint 3 Hz 数据和固定对应点监督下，逐点 slot-routing flow decoder 直接预测整手对应点运动，可能比整体 q+wrist baseline 更好地拟合几何运动；q fitting 只作为训练后处理，不改变表示学习。
+
+### Baseline
+
+- frozen Cm checkpoint: `outputs/cm/cm_object_v2_grab_arctic_20260819_165241/checkpoints/best.pt`
+- cache: `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/v2/selection_576_object_disjoint_seed42.json`
+- 对照: EXP-015 v2 `qt_cm` wrist-aware pure-point baseline
+
+### 本次修改
+
+- 使用 `src/task/CmDecoder/point_config.py` 的 `CmPointFlowModel`
+- 训练预算从5 epoch改为10 epoch
+- 使用已迁移的 v2 cache；静态 point-to-link/local-point 字段已具备，但逐点网络训练路径不读取 q 或该 binding，binding 优化主要服务 wrist baseline 和后处理
+- 其余数据 split、Cm checkpoint、batch、flow loss 保持不变
+
+### 实验命令
+
+```bash
+CUDA_VISIBLE_DEVICES=5 \
+  /home2/wyy/miniconda3/envs/graspenv/bin/python \
+  -m src.task.CmDecoder.train \
+  --config src.task.CmDecoder.point_config:Config \
+  --set train.epochs=10 \
+  --set train.description=cmdecoder_point_flow_old_cm_10ep \
+  --set wandb.enable=false
+```
+
+### 结果
+
+训练已完成 10 epoch / 143,110 steps。验证集 `val/hand_flow/epe_mm` 最好为 `3.3256 mm`
+（epoch 9，step 128,799），最终 epoch 10 为 `3.3297 mm`；zero-flow 验证基线为
+`12.1176 mm`，相对改善约 `72.5%`。输出：`outputs/cmdecoder/cm_decoder_20260823_000423/`。
+
+随后使用 best checkpoint 做 held-out point-flow 评估：
+
+| 口径 | 样本数 | hand-flow EPE | zero-flow EPE |
+|---|---:|---:|---:|
+| full val | 28,391 | 3.325 mm | 12.118 mm |
+| full test | 27,046 | 3.726 mm | 12.697 mm |
+| high-motion val | 15,905 | 3.725 mm | 16.175 mm |
+| high-motion test | 16,618 | 4.192 mm | 16.323 mm |
+
+point-flow → q/wrist fitting 先做每个 split 256 样本、100 步的 pilot。full val/test 的
+拟合后整手点 EPE 为 `3.182/3.501 mm`，high-motion val/test 为 `3.200/3.447 mm`；
+腕平移误差约 `3.53—3.64 mm`，旋转误差约 `1.16—2.10°`。q MAE 在 full test 和
+high-motion test 为 `1.68°/2.22°`，未稳定优于 identity 的 `1.48°/2.10°`。
+
+### 结论状态
+
+INCONCLUSIVE（point-flow 的 full/high-motion val/test 已完成；q/wrist fitting 目前仍是
+每个 split 256 样本的 pilot，尚未完成全量 fitting）。
+
+### 下一步
+
+- 完成10 epoch后按 `val/hand_flow/epe_mm` 选择 best checkpoint；
+- 如需正式结论，运行 point-flow → q/wrist fitting 的全量 full/high-motion val/test；
+- 与 EXP-015 的 `qt_cm` point EPE、wrist EPE 和 q MAE 对比。

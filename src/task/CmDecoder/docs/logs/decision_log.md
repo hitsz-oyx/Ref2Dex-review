@@ -131,3 +131,99 @@ flatten 不额外引入 slot pooling 假设，最直接检验冻结 Cm 是否携
 **建议用户确认**
 
 否。
+
+## 2026-08-22 — 对比 mesh 固定当前 arm/wrist 位姿
+
+- scope: task 内部可视化
+- anchor: working tree / 2026-08-22
+
+> 状态：已被下方“统一采用相对 wrist SE(3)”决策取代；仅保留为历史记录。
+
+**未指定点**
+
+用户要求同时显示当前手、GT 手和 Decoder 预测手，但 Decoder 只预测6维手指关节，未指定 GT/预测 mesh 应采用当前帧还是目标帧的 arm/wrist 位姿。
+
+**实际选择**
+
+三张 mesh 均采用当前帧 arm/wrist 位姿；GT 和预测 mesh 只分别替换为 `q_next` 与 `pred_q_next` 的6维手指关节角。
+
+**选择理由与影响**
+
+叠加差异只反映 CmDecoder 的手指预测，不会混入3 Hz间隔内机械臂整体运动。该约定在 viewer 状态栏明确显示，只影响可视化，不改变训练数据、loss 或评价指标。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；不改变科研语义，无需额外确认。
+
+## 2026-08-22 — 逐点模型采用 slot candidate flow 并将 q fitting 隔离于训练
+
+- scope: task 内部模型与评估
+- anchor: working tree / 2026-08-22
+
+**未指定点**
+
+用户确认以当前手点/法向/DenseToken/contact 和 Cm 为输入、逐点预测 flow，再从 `q_t` 初始化优化 q；未指定 point-slot decoder 的具体宽度、q 优化算法、正则和 checkpoint 选模指标。
+
+**实际选择**
+
+- 每个手点和每个 Cm slot 构造 edge，分别预测 candidate 3D flow 与 slot routing，沿 slot 加权得到逐点 flow；隐维度跟随 frozen Cm 的 `cm_dim`。
+- 训练仅以 hand-flow Smooth-L1 更新逐点 decoder，以 validation point EPE 选模，不对 q optimizer 反传。
+- q fitting 使用 Adam，默认100 steps、lr=0.05、q prior=`1e-4`；从 `q_t` 开始并按 URDF joint limit 截断，保留优化过程中 loss 最低的 q。
+- cache 点先在 `q_t` 处反绑到各自 URDF link，避免重复 surface sampling 的浮点边界差异破坏逐点 correspondence。
+
+**选择理由与影响**
+
+该结构最直接对应 Cm object-flow decoder 的逐点 slot routing，同时保持当前整体 q baseline 不变。独立选模避免 q 优化超参数反向影响表示学习；保留 best iterate 防止近零动作样本被 Adam 数值步长劣化。
+
+**可逆性 / 是否需要用户确认**
+
+网络宽度、优化步数/lr/prior 均可配置；不改变用户已确认的输入、监督和训练边界，无需再次确认。
+
+## 2026-08-22 — baseline 与逐点后处理统一采用相对 wrist SE(3)
+
+- scope: task 内部模型、监督与可视化
+- anchor: working tree / 2026-08-22
+
+**未指定点**
+
+用户已指定方案 A：baseline 直接预测腕部运动，且腕部仍预测相对运动；逐点路线需从完整手点运动恢复腕部与手指，但未指定旋转参数化及旧 checkpoint 兼容方式。
+
+**实际选择**
+
+- 相对变换统一定义为 `inverse(wrist_t) @ wrist_next`，平移以米表示、旋转以3维 axis-angle 表示。
+- baseline 前6维保持手指 `delta_q` 语义，后6维回归相对腕平移与 rotvec；用显式配置开关保留历史6维 checkpoint 的 strict-load 兼容性。
+- 逐点后处理从 `q_t`、单位 wrist 变换开始，联合优化6维 q、3维平移和3维 rotvec；使用小 wrist prior，并保留 loss 最低迭代。
+- viewer 的 GT 和预测手均应用各自相对 wrist 变换；不通过未来 arm q/FK 获得目标腕。
+
+**选择理由与影响**
+
+6D axis-angle 是当前差值回归与可微优化都可直接使用的最小 SE(3) 参数化；显式兼容开关避免改变历史实验 checkpoint 的网络 shape。联合拟合消除了“完整 point flow 与固定腕”之间的人为不可约残差。
+
+**可逆性 / 是否需要用户确认**
+
+参数化和 prior 可配置；相对运动语义与不使用未来 arm FK 已由用户确认。
+
+## 2026-08-22 — wrist-aware baseline 改用纯固定对应点 loss
+
+- scope: task 内部训练目标与选模
+- anchor: working tree / 2026-08-22
+
+**未指定点**
+
+用户确认先试纯点 loss，并要求保留原 q、平移、旋转 loss 代码但将权重设为0；未指定点坐标缩放和选模指标。
+
+**实际选择**
+
+- 使用现有1538个固定 correspondence 手点，不使用 Chamfer；目标为 `hand_points + hand_flow`。
+- 预测 q 和相对 wrist SE(3) 经可微 FK 重建预测点，米制 Smooth-L1（beta=`0.01 m`）为唯一反传目标。
+- 参数 loss 均继续计算和记录，wrist baseline 配置中权重置0；基础配置保留旧默认值以兼容历史 checkpoint。
+- checkpoint 按 `val/hand_points/epe_mm` 选取。
+- 不缩放点坐标；100倍缩放 smoke 中梯度范数约40且每步触发裁剪，米制原值梯度范数约0.31且不裁剪。
+
+**选择理由与影响**
+
+固定对应点直接测量整手几何误差，并让 q 与 wrist head 通过同一几何目标接收梯度。米制原值避免人为缩放配合全局梯度裁剪改变有效优化方向；mm EPE 提供直观展示。纯点监督仍可能存在 wrist/q 分解不唯一，必须继续独立报告参数指标。
+
+**可逆性 / 是否需要用户确认**
+
+四类 loss 权重与选模字段均可配置；纯点设置已由用户确认。

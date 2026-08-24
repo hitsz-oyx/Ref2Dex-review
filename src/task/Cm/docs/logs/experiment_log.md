@@ -1,8 +1,13 @@
 # Cm 实验记录
 
+- scope: task:Cm
+- last_updated: 2026-08-23
+- last_verified: 2026-08-23
+- related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](memory_log.md)、[V1.2.1 指导](../指导/V1.2.1.md)
+
 ## 当前研究状态
 
-V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成，共得到 662557 个有效 sample。V1.2.1 已补上 sequence 固定 split、train-only calibration、`mp.Value` worker epoch 同步、LRU cache 和 no-gate + time condition 的 mixed / GRAB-only / ARCTIC-only 小规模短训；随后完成 train-only 吞吐 benchmark，3 GPU + batch 48 是 mixed 路线的峰值点。mixed 已从 10000-step pilot 续训至 50 epochs/184650 steps；原 GRAB-only + gate + `cm_dim=64` 复合候选已从 step 16188 迁移到 GPU 6、7，新增 gate warm-up 候选尚未启动。
+V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成。2026-08-20 确认旧 GRAB cache 因 raw asset root 解析错误使用平均 MANO template；修复版 GRAB 已重建。2026-08-22 已用修复版 GRAB 和既有 ARCTIC 建立新版 mixed 链接 cache并重算元数据；当前 C=256 与仅改变 `cm_dim=64` 的两条新版 mixed 正式长训都已启动。旧 gate+cm64 warm-up 在 epoch 38 按用户要求停止。DexYCB subject-10/right 修复 cache 已重建，并用成熟 C=256 checkpoint 完成正式跨数据集评测。2026-08-23 新增 GRAB object-only、C=32、物体侧 geometry-only、无时间条件的 hard-gate 瓶颈实验并从头启动。
 
 ## 历史证据索引
 
@@ -14,8 +19,298 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 - V1.2.1 mixed data-only short training：`INCONCLUSIVE`（实现有效，但 300-step 级别未形成明确效果结论）。
 - V1.2.1 single-dataset short training：`INCONCLUSIVE`（GRAB-only / ARCTIC-only 300-step 级别也未形成明确效果结论）。
 - V1.2.1 throughput-guided full-data start：`SUPPORTED`（3 GPU + batch 48 为当前吞吐峰值点）。
+- DexYCB subject-10 首次跨数据集评估：`INVALID_IMPLEMENTATION`（旧 cache 坐标错误 + epoch 1 checkpoint）；修复版 C=256 重测：`SUPPORTED`（平均 EPE `14.92 mm`，zero-flow 改善 `68.27%`）。
+- subject-template 修复版 mixed C=256 正式长训：`INCONCLUSIVE`（训练进行中）。
+- subject-template 修复版 mixed C=64 正式长训：`INCONCLUSIVE`（已启动，当前只有 step 100--200 启动证据）。
+- GRAB C=32 geometry-only/no-time hard-gate：`INCONCLUSIVE`（实现 gate 已通过，正式训练刚启动）。
 - V1.1.1 downstream cache parity：`SUPPORTED`；feature 逐元素差异归因于 spconv 非确定性，不作为科学反证。
 - V1.1.2 全量 DenseToken bank：`INVALID_IMPLEMENTATION`/路线撤回，因资源成本过高而停止，不用于效果结论。
+
+## EXP-011 — GRAB C=32 geometry-only/no-time hard-gate 瓶颈实验
+
+### 日期
+
+2026-08-23
+
+### 假设与边界
+
+若 object-flow decoder 不直接接收 DenseToken `z_obj/object_context`，而只接收原始物体几何和 `C_m`，当前交互信息将更难绕过 `C_m` 瓶颈；同时去掉 `delta_time_s` 可以将本实验限定为 endpoint action representation，而不是显式动力学建模。本实验只用 GRAB object-only，不包含 environment/scene points。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time.yaml`；
+- data: `data/processed_data/cm_object_v2/grab`，固定 seed42 split，stride 1--10；
+- `cm_dim=32`、`num_cm_tokens=16`；
+- `use_object_context=false`：object edge 输入为 raw point/normal、Cm token、object-to-anchor 和 anchor normal，不使用 `z_obj`；
+- `use_time_condition=false`：数据兼容字段 `delta_time_s` 保留但模型忽略；
+- Hard-Concrete gate：count/confidence/active-overlap 权重=`1e-3/0.1/0`，前 5 epoch 全开，随后 5 epoch 线性恢复 threshold/count loss；
+- DenseToken 保持冻结，训练从头开始，不载入旧 Cm checkpoint。
+
+### 实现 gate
+
+- geometry-only decoder 对不同 `z_obj` 扰动输出不变；edge 输入维度为 `C+12=44`；
+- 相关 Cm/CmDecoder tests 共 36 passed；
+- 首次在线 W&B 启动因系统时间超过服务端证书有效期而在 step 0 前失败，不构成实验结果；正式 run 改用 offline W&B。
+
+### 当前运行
+
+- GPU 7 单卡，per-device/global batch=48，50 epoch，计划总步数 269750；
+- output: `outputs/cm/cm_object_v2_grab_gate_cm32_geometry_only_no_time_20260823_235356`；
+- launcher log: `output/exp/cm_v121/cm_object_v2_grab_gate_cm32_geometry_only_no_time_offline_gpu7.log`；
+- 启动状态：模型、数据、optimizer 和 offline W&B 初始化完成；已稳定运行到至少 step 800，无 OOM/NaN。step 100--800 吞吐约 `130--149 samples/s`，data wait 约 `0.09%--0.13%`；warmup 按设计显示 threshold=0、force-all=1、hard active=16。
+
+### 结论状态
+
+`INCONCLUSIVE`
+
+当前只有实现与启动证据；必须等待固定 stride validation、zero-flow improvement、slot active count/fallback/effective branch 指标后再判断瓶颈假设。
+
+## EXP-010 — DexYCB subject-10 修复版正式评估
+
+### 日期
+
+2026-08-22
+
+### 假设与边界
+
+修复 DexYCB object/MANO 坐标适配并用成熟的新版 mixed C=256 checkpoint 重测后，可以区分“旧实现错误”与“真实跨数据集泛化不足”。本实验仅覆盖 subject-10 的 50 条右手 capture，不代表全部 DexYCB 主体。
+
+### 数据与实现 gate
+
+- cache: `data/processed_data/stage4/data/dexycb`，50 sequences / 50 right streams / 2853 frames，0 skipped/failed；
+- all-finite，50/50 序列在 `max_stride=10` 前均有 active current frame；active frame=`2291/2853=80.30%`，旧错误 cache 为 `287/3650=7.86%`；
+- object 刚体回代跨帧漂移 mean/max=`3.48e-5/4.06e-5 mm`；法向单位长度误差 mean/max=`2.65e-8/1.79e-7`；
+- 与官方 reference-camera label 对齐的最大首帧偏差为 rotation `1.744°`、translation `1.266 mm`；
+- split: `data/processed_data/stage4/splits/dexycb_subject10_fixed_v1/split.json`，test 保留全部 50 条 DexYCB。框架要求的非空 train split 仅含一条不参与评测的 GRAB 占位 stream，元数据已显式标注。
+
+### 评测配置
+
+- checkpoint: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_20260822_125835/checkpoints/step_000036900_epoch_000010.pt`；C=256、no-gate + time condition，in-domain best=`13.604 mm`；
+- config: `src/task/Cm/configs/eval_dexycb_subject10_c256_fixed_20260822.yaml`；
+- stride: 1/5/10；batch 32；沿用 checkpoint 的 `object_flow_target_scale=13.645122770626802`；
+- C=64 当前仍在早期训练，未纳入主结论。
+
+### 结果
+
+| Stride | GT flow norm | EPE | Relative EPE | Zero-flow 改善 | Pred/GT norm |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 10.96 mm | 4.54 mm | 0.415 | 58.54% | 0.869 |
+| 5 | 52.35 mm | 14.76 mm | 0.282 | 71.80% | 0.896 |
+| 10 | 99.70 mm | 25.46 mm | 0.255 | 74.47% | 0.873 |
+| 三 stride 均值 | — | **14.92 mm** | **0.317** | **68.27%** | **0.879** |
+
+旧错误 cache + 未成熟 C=64 checkpoint 的平均 EPE/relative EPE/zero-flow 改善为 `57.58 mm / 1.030 / -3.03%`；两次实验同时改变了数据实现和 checkpoint，因此该差值不能作为 C=64 对 C=256 的 capacity ablation，但足以说明旧“接近 zero-flow”表现不是可信泛化结论。
+
+### 结论状态
+
+`SUPPORTED`
+
+### 解释
+
+修复后模型在三个时间跨度都显著优于 zero-flow，预测流幅值约为 GT 的 87.9%，没有旧评估中的近零输出塌缩。对当前 subject-10/right 而言，泛化并非“太差到不可用”；仍存在约 25%--41% 的 relative EPE，且缺少跨主体方差，不能据此宣称 DexYCB 全数据集泛化已经解决。
+
+### 证据
+
+- 新评测：`outputs/cm/cm_eval_dexycb_subject10_c256_fixed_20260822/eval.log`
+- 旧无效评测：`outputs/cm/cm_eval_dexycb_subject10/eval.log`
+- cache 与 split：`data/processed_data/stage4/data/dexycb`、`data/processed_data/stage4/splits/dexycb_subject10_fixed_v1/split.json`
+
+## EXP-009 — DexYCB subject-10 首次评估无效性诊断
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+`outputs/cm/cm_eval_dexycb_subject10` 中接近 zero-flow 的结果可能反映 GRAB+ARCTIC 训练模型对 DexYCB 的真实泛化差距。EXP-010 已用修复 cache 证伪这一旧观察；本 EXP 仍保留为实现无效性记录。
+
+### 实现审查与定量证据
+
+- 评估加载 C=64 step 3690 / epoch 1 checkpoint，其 in-domain best metric 仍为 `23.09 mm`；
+- 本地 `pose.npz` object quaternion 按 `xyzw` 还原时与 reference-camera 官方 3x4 label 旋转误差仅 `0.0013°`，旧 adapter 按 `wxyz` 解析时误差约 `149.8°`；
+- 旧物体点按代码声称的 pose 回代到局部系，48 条 test sequence 的平均跨帧漂移为 `25.54 mm`，使用反向旋转只剩 `3.5e-5 mm`；
+- sequence-level `pose_m` 已精确匹配 identity-extrinsic reference camera label，旧 adapter 又按 `serials[0]` 重复施加 extrinsic；
+- 旧 adapter 将 `pose_m[3:48]` 的 PCA 系数直接当 axis-angle，且使用 `flat_hand_mean=true`；按官方 PCA basis + non-flat mean 解码后，21 关节与 reference-camera `joint_3d` 直接对齐平均误差为 `0.78 mm`（旧解码约 `12.69 mm`）；
+- 旧 cache 50 条右手 sequence / 3650 帧中只有 287 帧（7.86%）存在 5 cm candidate，手物质心距离中位数约 `258.6 mm`。
+
+修复后单条 `20201022_113530` 不落盘 smoke 自动裁掉无标注前缀，保留 raw frame 21--71；物体局部刚体漂移为 `3.6e-5 mm`，51 帧中 43 帧有 5 cm candidate。
+
+### 结论状态
+
+`INVALID_IMPLEMENTATION`
+
+### 解释
+
+旧评估同时受错误 GT/手物坐标和未收敛 checkpoint 影响，不能支持或反驳跨数据集泛化假设。实现错误不记为科研反证。
+
+### 下一步
+
+重建 DexYCB Stage4 cache 与 split，检查全量 right-hand candidate/rigidity 统计，并在 C=64 或 C=256 收敛 checkpoint 上重新评估。
+
+### 证据
+
+- 旧评估：`outputs/cm/cm_eval_dexycb_subject10/eval.log`
+- 旧 cache：`data/processed_data/stage4/data/dexycb`
+- 修复实现：`process/DexYCB/raw.py`、`process/DexYCB/stage4_cm.py`
+- 回归测试：`tests/test_dexycb_raw.py`
+
+## EXP-008 — subject-template 修复版 mixed C=64 长训
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+在新版 mixed cache、训练预算和优化设置完全不变时，仅将 `cm_dim` 从 256 降到 64，可以直接比较 Cm capacity 对效果和吞吐的影响。
+
+### 对照约束
+
+resolved config 静态比较确认只有三处差异：实验名、`meta.cm_dim: 256→64` 和 W&B 标签；数据、split、calibration、no-gate、time condition、batch、学习率、scheduler、loss 与预算均一致。
+
+### 训练配置
+
+- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820_cm64.yaml`
+- data: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`
+- GPU: `CUDA_VISIBLE_DEVICES=1,6,7`
+- world size: 3
+- per-device / global batch: 48 / 144
+- budget: 50 epochs / 184650 steps
+- model: no-gate + time condition，`cm_dim=64`
+- initialization: 从头训练
+
+### 启动结果
+
+step 100--200 无 cache/calibration/schema 报错，无 OOM/NaN；grad norm 约 `0.110--0.111`，吞吐约 `237 samples/s`，data wait 低于 0.1%。当前 C=256 与 C=64 共占用六张 GPU，首段吞吐不解释为单模型 capacity 的最终速度结论。
+
+2026-08-23 19:42 CST 按用户要求释放两张 GPU：从最近完整 `latest.pt`（step 84870 / epoch 23 / best `13.024 mm`）恢复到 GPU 1/6，改为 2 GPU × per-device batch 72，global batch 仍为 144。首步确认 optimizer/scheduler 正确恢复，无 OOM/NaN；单卡显存约 `3.5--3.6 GB`、吞吐约 `243 samples/s`。step 84870 之后尚未落盘的约 1.5 epoch 不纳入续训。
+
+### 结论状态
+
+`INCONCLUSIVE`（训练进行中）
+
+### 下一步
+
+保持当前配置运行，使用与 EXP-007 相同的 validation 指标和训练覆盖比较 C=64/C=256。
+
+### 证据
+
+- output: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_cm64_20260822_190435`
+- log: `output/exp/cm_v121/cm_object_v2_grab_arctic_subject_template_cm64_3gpu_bs48_50ep_gpu167_20260822_190414.log`
+- resume log: `output/exp/cm_v121/cm_object_v2_grab_arctic_subject_template_cm64_2gpu_bs72_resume_20260823.log`
+- metrics: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_cm64_20260822_190435/metrics.jsonl`
+- W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/cgtaodph`
+
+## EXP-007 — subject-template 修复版 mixed 正式长训
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+在 EXP-006 的修复版 mixed cache 上复用既有吞吐峰值配置（3 GPU DDP、per-device batch 48），可以不改变模型、loss 和预算地从头训练一版数据语义正确的 mixed baseline。
+
+### Baseline
+
+- 旧吞吐 sweep 峰值：3 GPU、per-device batch 48、global batch 144，`366.732 samples/s`；
+- 旧 mixed 正式 run 使用受平均 MANO template 影响的 GRAB，不作为新版数据的有效结果；
+- 新 cache 与配置见 EXP-006。
+
+### 训练配置
+
+- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml`
+- data: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`
+- GPU: `CUDA_VISIBLE_DEVICES=2,3,4`
+- world size: 3
+- per-device / global batch: 48 / 144
+- budget: 50 epochs / 184650 steps
+- model: no-gate + time condition，`cm_dim=256`
+- initialization: 从头训练，不复用旧 cache checkpoint
+
+### 启动结果
+
+step 100--1000 已完成：无 cache/calibration/schema 报错，无 OOM/NaN；10 个 performance 记录点的吞吐范围为 `282.993--328.158 samples/s`、均值约 `302 samples/s`，data wait ratio 约 `0.07%--0.12%`。step 1000 grad norm 为 `1.1899`，训练按既有 `grad_clip_norm=1` 处理。当前未稳定复现旧 benchmark 的 `366.732 samples/s`；整机同时运行旧 mixed、warm-up、Viewer 和图形上下文，因此旧独占条件吞吐不能直接视为当前保证值。
+
+2026-08-23 19:42 CST 按用户要求释放两张 GPU：从最近完整 `latest.pt`（step 118080 / epoch 32 / best `12.066 mm`）恢复到 GPU 2/3，改为 2 GPU × per-device batch 72，global batch 仍为 144。首步确认 optimizer/scheduler 正确恢复，无 OOM/NaN；单卡显存约 `7.6--7.9 GB`、吞吐约 `200 samples/s`。step 118080 之后尚未落盘的约 1 epoch 不纳入续训。
+
+### 结论状态
+
+`INCONCLUSIVE`（训练进行中）
+
+### 下一步
+
+观察首个完整 epoch 的 train/validation、实际平均吞吐和 checkpoint；在没有 OOM、NaN 或持续退化前保持当前配置，不做额外微调。
+
+### 证据
+
+- output: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_20260822_125835`
+- log: `output/exp/cm_v121/cm_object_v2_grab_arctic_subject_template_3gpu_bs48_50ep_gpu234_20260822_125824.log`
+- resume log: `output/exp/cm_v121/cm_object_v2_grab_arctic_subject_template_2gpu_bs72_resume_20260823.log`
+- metrics: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_20260822_125835/metrics.jsonl`
+- W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/ih6ia14q`
+
+## EXP-006 — subject-template 修复版 GRAB+ARCTIC mixed cache
+
+### 日期
+
+2026-08-22
+
+### 假设
+
+复用已验证的修复版 GRAB ObjectV2 与既有 ARCTIC ObjectV2，通过不复制实体数组的链接 cache 重新生成联合 split/statistics/calibration，可以恢复正确 GRAB hand geometry，同时保持现有 mixed Dataset、模型、loss 和评估合同不变。
+
+### Baseline
+
+- 旧 mixed root: `data/processed_data/cm_object_v2`
+- 修复版 GRAB: `data/processed_data/cm_object_v2_subject_template_20260820/grab`
+- 复用 ARCTIC: `data/processed_data/cm_object_v2/arctic`
+- 旧 config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+
+### 本次修改
+
+- 建立 `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`；dataset/subject/sequence 是真实目录，每条 sequence 的 `shared/left/right` 是相对软链接；
+- seed42 按 dataset 分层重新生成 sequence-disjoint split；
+- 重新计算全量 E1 statistics 和只读 train split 的 stride 1--10 calibration；
+- 新增独立 no-gate + time condition 训练配置，不启动训练。
+
+### 结果
+
+| 项目 | 结果 |
+| --- | ---: |
+| 总 sequences | 1636 |
+| train / val / test | 1308 / 164 / 164 |
+| GRAB samples | 327798 |
+| ARCTIC samples | 334248 |
+| train hand streams | 2616 |
+| train pairs（10 strides 合计） | 5313210 |
+| train-only flow RMS | 0.07328625889337191 m |
+| object flow target scale | 13.645122770626802 |
+| 软链接数 / 断链数 | 4908 / 0 |
+| 链接 cache 自身占用 | 约 24M |
+
+配置加载、split 全覆盖与互斥、数据集标签、scale/metadata 精确一致性均通过静态校验。没有启动训练，也没有产生新版模型指标。
+
+### 解释
+
+该结果只支持新版数据入口的实现与元数据闭环，不证明修复 hand template 会提高模型效果。旧 mixed calibration 为 RMS `0.0732755479335936 m`，新版为 `0.07328625889337191 m`；尺度变化很小不代表几何修复影响很小，因为 subject template 主要改变 hand geometry、candidate mask 和 DenseToken 输入，而不是物体 flow 本身。
+
+### 结论状态
+
+`SUPPORTED`（cache / metadata implementation gate）
+
+### 下一步
+
+获得用户确认后从头启动新版 mixed 训练；不得从旧数据 checkpoint 续训后将结果解释为严格的数据修复对照。
+
+### 证据
+
+- cache: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`
+- split: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/splits_seed42/splits.json`
+- statistics: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/object_v2_statistics.json`
+- calibration: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/metadata.json`
+- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml`
 
 ## EXP-005 — GRAB gate+cm64 全 slot warm-up
 
@@ -66,7 +361,7 @@ CUDA_VISIBLE_DEVICES=0,1 \
 
 ### 结果
 
-正式训练刚启动，当前只有 step 100 的 warm-up 观测：
+该 run 最终按用户要求在 step 102524 / epoch 38 停止；最后一个完整 checkpoint 为 `step_000094430_epoch_000035.pt`，同时是停止时的 `best.pt` / `latest.pt`。epoch 38 的 train EPE 为 `11.362 mm`，zero-flow improvement 为 `0.7756`；gate 已重新收缩到 effective branch count `1.05`、global top-1 usage `0.9773`，说明 warm-up 没有在长程保持多 slot 分工。
 
 | Metric | Step 100 |
 | --- | ---: |
@@ -78,11 +373,11 @@ CUDA_VISIBLE_DEVICES=0,1 \
 
 ### 关键观察
 
-warm-up 初始阶段确实实现了全 slot 参与，未复现原候选的单 slot collapse；吞吐因 GPU 0、1 与 mixed 共享而只有约 102 samples/s。
+warm-up 初始阶段实现了全 slot 参与，但进入完整 gate 后仍逐渐回到近单 slot 路由；它改善了早期启动，却没有解决长程 branch collapse。
 
 ### 解释
 
-当前证据只说明 warm-up 路径和全 slot forward 生效，尚不足以判断 gate 启用后能否保持多 slot 使用或改善 EPE。
+当前证据表明 warm-up 路径有效，但不足以长期保持多 slot 使用。由于该 run 使用受平均 MANO template 影响的旧 GRAB cache，不继续消耗资源，也不作为新版 mixed 的有效效果结论。
 
 ### 结论状态
 
@@ -90,11 +385,11 @@ INCONCLUSIVE
 
 ### 决策
 
-保留训练继续运行，至少观察第 5、10、11 个 epoch 的 transition 和验证结果；若 ramp 后 effective branch count 再次降至 1，则需要重新设计 gate 的 active-count 目标，而不是只调整 count loss 权重。
+按用户要求停止训练并保留 epoch 35 best/latest checkpoint；后续若重访 gate，需要重新设计 active-count 目标，而不是继续延长该旧数据 run。
 
 ### 下一步
 
-记录第 5/10/11 epoch 的验证 EPE、threshold、active count、top-1 usage 和吞吐，并与原 gate+cm64 对照。
+不再续训该旧数据 run；新版 mixed 当前只比较 no-gate 的 C=256/C=64。
 
 ### 证据
 

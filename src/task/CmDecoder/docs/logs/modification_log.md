@@ -1,5 +1,211 @@
 # CmDecoder 修改记录
 
+## 2026-08-24 — 修正 GRAB 重定向起始窗口并记录有效窗口诊断
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验入口与文档
+
+**文件**
+
+- `src/task/CmDecoder/grab_retarget.py` — 新增 `--start-frame`，所有几何、human sample 和初始化均从指定帧开始，并在 NPZ 中记录起始帧。
+- `src/task/CmDecoder/docs/logs/architecture_log.md` — 补充有效 candidate 窗口约束。
+- `src/task/CmDecoder/docs/logs/{experiment,status}_log.md` — 记录默认空 candidate 窗口无效，以及 start=131 有效窗口仍发生 wrist 漂移的结果。
+
+**改动原因**
+
+默认序列前32帧右手没有物体 candidate，旧重定向图实际使用 padding 物体点；必须选择有效窗口后才能诊断当前 baseline 的真实重定向行为。
+
+## 2026-08-24 — 完成 point-flow baseline held-out 评估记录
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部文档
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 同步 full/high-motion point-flow 评估已完成、fitting 仍为 pilot 的状态。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 记录 baseline 的 full/high-motion val/test 以及 256 样本 q/wrist fitting pilot。
+
+**改动原因**
+
+用户要求评估 `cm_decoder_20260823_000423` baseline；评估确认 point-flow 泛化明显优于 zero-flow，但 q 分解仍存在 identity shortcut/不可辨识风险。
+
+## 2026-08-24 — 同步 CmDecoder baseline 完成状态
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部文档
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 将旧版 Cm point-flow baseline 和随机 horizon pilot 标记为已完成，并记录当前验证结果与后续评估项。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 补充 baseline 的10 epoch训练结果。
+
+**改动原因**
+
+核验 `outputs/cmdecoder/cm_decoder_20260823_000423/` 后确认训练已经结束；原状态记录仍将该实验和随机 horizon pilot 标为进行中。
+
+## 2026-08-23 — 切换 HRDexDB 规范数据路径
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / 跨 task 数据路径
+
+**文件**
+
+- `src/task/CmDecoder/config.py`、`build_cache.py`、`grab_retarget.py`、`migrate_point_bindings.py` — 默认 HRDexDB 数据与 URDF 路径改为仓库 `dataset/HRDexDB/`。
+- `src/task/CmDecoder/docs/logs/{status,memory,modification}_log.md` — 同步在途 cache 与规范路径。
+
+**改动原因**
+
+用户要求将 Cm 使用的 HRDexDB 非视频数据整理进 Ref2Dex；旧路径保留 symlink，使已经运行的四手型 cache builder 不丢进度。
+
+## 2026-08-23 — 优化 HRDexDB candidate mask 构建
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部 / 跨 task 共享 cache
+
+**文件**
+
+- `src/task/CmDecoder/build_cache.py` — 使用 `scipy.spatial.cKDTree` 做逐帧 5 cm 邻域查询，替代全量 object-pool/hand 距离张量。
+
+**改动原因**
+
+保持 candidate mask 语义不变，同时降低 4096×1538 距离计算的 CPU 和峰值内存；单 episode 探针约从 192.6 s 降至 37.4 s。
+
+## 2026-08-23 — 扩展 HRDexDB 多手型 layered cache builder
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部（依赖外部 HRDexDB 原始数据）
+
+**文件**
+
+- `src/task/CmDecoder/build_cache.py` — 按 episode 自动适配 MANO、Allegro-V5、Inspire-DFTP、Inspire-F1；统一读取对象 pose/mesh；保留机器人原始 q 维度并记录 `robot_type/q_semantics`。
+- `src/task/CmDecoder/dataset.py` — 混合手型 point-flow 读取时将非 Inspire q 规范为六维零占位，避免 Allegro 16 维与 MANO 不可用 q 破坏 batch collate。
+- `src/task/CmDecoder/docs/logs/{architecture,status,memory,modification}_log.md`、`docs/logs/memory_log.md` — 同步数据合同、状态、路径和修改记录。
+
+**验证**
+
+- 使用 `/home2/wyy/oyx_ws/HRDexDB/v0_nonvideo` 完成 robot smoke：Inspire-DFTP、Inspire-F1、Allegro-V5 各成功生成 `[T,1538,3]` 手点与对象点/法向。
+- MANO smoke 成功生成固定 1538 face-center 点、JSON wrist pose 与对应 hand flow。
+- 混合 `RandomHorizonGeometryDataset` 的 DataLoader batch shape 通过，`q_t/q_next` 均为 `[B,6]`；当前 flat point decoder 不使用 q。
+
+## 2026-08-23 — 增加随机时间间隔点流 pilot
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/dataset.py` — 新增逐帧 geometry reader，每个当前帧稳定伪随机选择 `stride=1..10`，在线构造当前 wrist frame 的 hand/object flow，不复制 horizon task cache。
+- `src/task/CmDecoder/random_horizon_config.py` — 新增 3 epoch pilot，关闭 Cm token sidecar，在线运行 frozen DenseToken/Cm head。
+
+**改动原因**
+
+验证固定 30Hz near-zero flow 是否是 decoder 迁移不佳的主要原因；本 pilot 不引入幅度分层、不改变 decoder 或 loss。
+
+**验证 / 状态**
+
+- 使用 `graspenv` 启动 3 GPU 训练；`fastwam` 缺少 `addict/spconv`，未用于正式实验。
+- 训练输出：`outputs/cmdecoder/cm_decoder_flat_point_random_horizon_20260823_145753/`。
+
+## 2026-08-22 — 完成全量 qt_cm 训练与 held-out 评估
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `outputs/cmdecoder/cm_decoder_20260822_143843/` — 完成30 epochs / 214,650 steps，生成 epoch 1 best checkpoint。
+- `src/task/CmDecoder/docs/logs/{experiment,status,modification}_log.md` — 写入 full/high-motion val/test 结果及当前结论。
+
+**改动原因**
+
+训练自然完成后核验最佳 checkpoint，并补齐 object-disjoint held-out 评价，回答当前训练状态。
+
+**验证**
+
+- 训练正常退出，用时44分08秒；best 为 epoch 1 / step 7,155。
+- best checkpoint 在 full 和 high-motion 的 val/test 四个口径上均优于各自 identity。
+- 结论仅支持 `qt_cm` 主模型有效；在全量 `qt_only/cm_only` 完成前不归因于 Cm。
+
+## 2026-08-22 — 导出全量 object-disjoint 3 Hz cache 并启动 qt_cm
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/build_cache.py` — 支持官方 compact pose v2→v1 fallback、可配置 object-disjoint split 及 split object 清单。
+- `src/task/CmDecoder/build_horizon_cache.py` — 3 Hz 派生遇到零连续 pair 时排除 episode，并同步过滤 splits/objects。
+- `tests/test_cmdecoder_build_cache.py` — 覆盖 compact 数字帧序、object-disjoint 不相交和零 pair 排除。
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1/` — 576-episode 30 Hz geometry/task cache，约44 GB（被 gitignore 忽略）。
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/` — 568-episode 3 Hz task/token cache，约23 GB（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260822_143843/` — 全量 object-disjoint 3 Hz `qt_cm` 训练输出（运行中，被 gitignore 忽略）。
+- `src/task/CmDecoder/docs/logs/{architecture,experiment,memory,repo_notes,status,modification}_log.md` — 同步数据合同、实验定义和运行状态。
+
+**改动原因**
+
+用户要求导出全量 cache，并基于此前确认的新 Cm checkpoint、3 Hz horizon 和 object-disjoint 语义启动一版 `qt_cm` 训练。
+
+**验证**
+
+- 单元测试3项通过；v1 fallback 端到端 FK/mesh/cache smoke 通过。
+- 576个 geometry manifest 完整，pose source 为539个 compact v2 + 37个 compact v1。
+- 3 Hz保留568个 episode、284,414 pairs；train/val/test object 交集为空。
+- 568个 token 的 checkpoint hash 唯一且 shape 检查0错误。
+- 两卡 DDP 已完成初始化并进入 epoch 1：global batch 32、total steps 214,650。
+
+## 2026-08-22 — 完成新 Cm 的20-episode 3 Hz三组对照
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: task 内部
+
+**文件**
+
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1_3hz/v1/episodes/*/cm` — 仅重建20个 episode 的 Cm token sidecar，绑定 object-v2 GRAB+ARCTIC best checkpoint。
+- `outputs/cmdecoder/cm_decoder_20260822_{130259,130301,130305}/` — `qt_cm / qt_only / cm_only` 的有效30-epoch训练输出（被 gitignore 忽略）。
+- `src/task/CmDecoder/docs/logs/{architecture,experiment,memory,repo_notes,status,modification}_log.md` — 记录新实验、cache checkpoint 绑定及后续 object-disjoint 约束。
+
+**改动原因**
+
+用户要求暂不导出全量 cache，先在现有20-episode 3 Hz设置上使用新 Cm checkpoint运行三组输入对照，并指定后续扩大数据采用 object-disjoint split。
+
+**验证**
+
+- 20/20 token manifest 的 checkpoint SHA256 一致；三组均完成30 epochs / 7,950 steps。
+- 对各自 `best.pt` 完成全量 val/test 与 `max|Δq|>=0.5°` 高动作子集评估。
+- 首次并行输出目录冲突且全局 batch 不一致的两项输出已在 EXP-011 标记为 `INVALID_IMPLEMENTATION`，不纳入结论。
+
+## 2026-08-22 — 补齐 HRDexDB 非视频运动资产并核验完整性
+
+- branch: working tree
+- post-commit: HEAD
+- 范围: 跨 task / 外部数据
+
+**文件**
+
+- `/home2/wyy/oyx_ws/HRDexDB/v0` — 新增1968个白名单文件，补齐 Inspire F1 arm 与 compact v1/v2 pose 等 CmDecoder 所需资产；未新增视频。
+- `src/task/CmDecoder/docs/logs/{memory_log,status_log,repo_notes_log,modification_log}.md` — 记录下载结果、可用规模和 builder 的 compact-pose 待办。
+- `docs/logs/{memory_log,repo_notes_log,modification_log}.md` — 同步仓库级外部数据事实。
+
+**改动原因**
+
+扩大 episode 前核查发现旧下载显式排除了 arm，且本地缺少大多数 object pose。改用官方 Hub、7897代理和精确白名单下载，避免视频与全仓库递归同步。
+
+**验证**
+
+- 1968/1968 文件成功，0失败；arm position/time 591/591，加载与 shape 检查0错误。
+- compact v1/v2 pose 为591/555组；完整模态交集576组，其中539组优先使用v2、37组回退v1。
+- Inspire F1 MP4 数量保持4119，未因本次下载增加。
+
 ## 2026-08-21 — 按 V1 修正时间/动作语义并加入 token cache 与对照接口
 
 - branch: working tree
@@ -385,3 +591,253 @@ HRDexDB 的 robot 流比视频/物体流早约 2.65 秒。原实现把两个流�
 **实验状态**
 
 3 Hz cache、Cm token sidecar、三组 30 epoch 训练以及全量/高动作 val/test 评估均完成；qt_only 最佳但未超过 identity。
+
+## 2026-08-22 — 完成全量 object-disjoint 3 Hz 归因对照
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-013，记录 `qt_only/cm_only` 5 epoch 训练及三组统一评估结果。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新为全量三组对照已完成，并记录当前可靠结论与风险。
+- `outputs/cmdecoder/cm_decoder_20260822_152742/` — 全量 object-disjoint `qt_only` 5 epoch 输出（被 gitignore 忽略）。
+- `outputs/cmdecoder/cm_decoder_20260822_153543/` — 全量 object-disjoint `cm_only` 5 epoch 输出（被 gitignore 忽略）。
+
+**改动原因**
+
+用户要求其余两组各运行 5 epochs，以归因 EXP-012 的 `qt_cm` 改善来源。
+
+**实验状态**
+
+两组均完成 35,775 steps，并以各自 full validation 最优 checkpoint 完成 full/high-motion val/test 评估。结果支持跨物体增益主要来自 Cm token；`qt_cm` 与 `cm_only` 当前近似持平。
+
+## 2026-08-22 — viewer 加入 Decoder 预测手叠加对比
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/viewer.py` — 默认加载全量 `qt_cm` best checkpoint，允许 CLI 覆盖；按 checkpoint cache pair 推理，并增加当前/GT/预测三张手 mesh 的独立 checkbox 与对比状态栏。
+- `tests/test_cmdecoder_viewer.py` — 覆盖 horizon pair 映射和固定 arm、替换手指 q 的组合逻辑。
+- `src/task/CmDecoder/docs/logs/{architecture,status,decision,modification}_log.md` — 同步可视化入口、坐标约定和当前状态。
+
+**改动原因**
+
+用户要求 viewer 可添加 CmDecoder 预测的优化后手，默认使用 `qt_cm` 且 checkpoint 可通过运行参数指定；当前手、GT 手和预测手可独立开关并适合透明叠加。
+
+**验证**
+
+- `tests/test_cmdecoder_viewer.py` 与 `tests/test_cmdecoder_build_cache.py` 共6项通过。
+- 默认 checkpoint 在 GPU 上成功读取 `inspire_f1/apple/2` 的329个3 Hz pair及匹配 token cache，生成三张 FK mesh 和预测 q。
+- Viser 在 `127.0.0.1:8097` 完成服务、GUI 和首帧 mesh 初始化，无运行时错误；smoke test 后由 `timeout` 正常结束。
+
+## 2026-08-22 — 新增逐手点 Cm flow 与 q fitting 模型
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/point_model.py` — 新增不读取 q 的逐手点 slot-routing flow decoder，使用当前手点/法向、frozen DenseToken `z_hand`/contact 和 Cm tokens。
+- `src/task/CmDecoder/q_optimizer.py` — 新增 Inspire F1 fixed-correspondence 可微 FK 与从 `q_t` 初始化的 bounded q fitting。
+- `src/task/CmDecoder/point_config.py` — 新增全量 object-disjoint 3 Hz 新模型配置，保留原 Config/模型作为 baseline。
+- `src/task/CmDecoder/runner.py` — 增加 hand-flow Smooth-L1、point EPE/RMSE 和 zero-flow 指标分支。
+- `src/task/CmDecoder/viewer.py` — 按 checkpoint 动态加载 baseline 或逐点模型；逐点输出经 q fitting 后进入原三手叠加视图。
+- `tests/test_cmdecoder_q_optimizer.py` — 覆盖关节旋转、q 初值优化、误差下降与 joint bound。
+- `src/task/CmDecoder/docs/logs/{architecture,status,decision,modification}_log.md` — 同步新模型合同、工程选择和当前状态。
+
+**改动原因**
+
+用户要求保留整体 q 回归为 baseline，新增不以 q 为网络输入的逐手点 Cm decoder；训练预测对应点 flow，推理时再从 `q_t` 初始化优化得到6维手指 q，且优化不参与训练。
+
+**验证**
+
+- 8项 CmDecoder cache/viewer/q-optimizer 测试通过，`git diff --check` 通过。
+- 真实 cache 点在 `q_t` 反绑再 FK 后平均/最大误差约 `0.000004/0.00003 mm`。
+- 真实高运动 batch 的逐点模型 forward/backward shape 正确、梯度有限；trainable 参数257,156。
+- `outputs/cmdecoder/cm_decoder_20260822_193946/` 完成1 episode × 16 pairs、8 steps 的端到端训练/验证/checkpoint smoke。
+- 新模型 best checkpoint 已通过 viewer 的 `pred_hand_flow → q fitting → predicted mesh` 分支。
+
+## 2026-08-22 — 为 baseline 与逐点路线补全相对腕部运动
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/dataset.py` — 从 geometry sidecar 只读派生 horizon pair 的相对 wrist 平移与 rotvec 监督，不重写 task/token cache。
+- `src/task/CmDecoder/model.py`、`config.py`、`wrist_baseline_config.py` — 新增 wrist-aware 12维 baseline 输出、loss 配置及独立5-epoch object-disjoint 3 Hz 训练入口，同时兼容历史6维 checkpoint。
+- `src/task/CmDecoder/runner.py` — 增加 wrist 平移/旋转 loss、mm EPE 和旋转测地角指标。
+- `src/task/CmDecoder/q_optimizer.py`、`point_config.py` — 将后处理扩为从 `q_t` 和单位 wrist 变换初始化的联合 wrist SE(3)+q 拟合。
+- `src/task/CmDecoder/viewer.py` — GT 与预测手应用相对 wrist 变换；未来 arm FK 不参与目标手重建。
+- `tests/test_cmdecoder_q_optimizer.py`、`tests/test_cmdecoder_viewer.py` — 增加 rotvec 数值稳定性、联合拟合回归及当前 arm 仅作坐标框架的测试/命名约定。
+- `src/task/CmDecoder/docs/logs/{architecture,status,decision,modification}_log.md` — 记录统一的腕部运动语义、兼容边界和当前状态。
+
+**改动原因**
+
+用户确认 baseline 使用方案 A 直接预测腕部，且两条路线均预测当前腕到目标腕的相对运动，不再用未来 arm FK 求目标腕。
+
+**验证**
+
+- wrist-aware baseline 完成1 episode × 16 pairs、8 steps 的训练/验证/checkpoint smoke：`outputs/cmdecoder/cm_decoder_20260822_195837/`。
+- 真实高运动样本联合拟合100步后 point EPE 从约 `2.270 mm` 降至 `0.859 mm`，手指 identity MAE 从 `5.734°` 降至 `1.668°`。
+- 历史6维 baseline、新12维 baseline 和逐点 checkpoint 均通过 viewer 模型分支兼容 smoke。
+
+## 2026-08-22 — 完成 wrist-aware baseline 三组3-epoch对照
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-014，记录三组配置、best checkpoint 的 full/high-motion q 与 wrist 指标、identity wrist 对照及结论。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 将三组训练更新为已完成，并记录当前 loss 权重风险与下一步。
+- `src/task/CmDecoder/docs/logs/modification_log.md` — 记录本次实验文档更新。
+
+**改动原因**
+
+用户要求使用当前剩余 GPU，将 wrist-aware baseline 的 `qt_cm / qt_only / cm_only` 三组在全量 object-disjoint 3 Hz 数据上各训练3 epochs。
+
+**验证**
+
+- 三组均完成21,465 steps，无 OOM；`qt_cm/cm_only` best epoch=1，`qt_only` best epoch=3。
+- 三个 `best.pt` 均完成 full/high-motion val/test 统一评估，并补算零相对腕运动 baseline。
+- 结果表与 checkpoint 路径见 EXP-014。
+
+## 2026-08-22 — 将 wrist-aware baseline 改为纯固定对应点 loss
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/config.py`、`wrist_baseline_config.py` — 增加 point/parameter loss 权重与米制 Smooth-L1 配置；wrist baseline 默认只启用 point loss并按 point EPE 选模。
+- `src/task/CmDecoder/q_optimizer.py` — 抽出从预测 q、相对 wrist 和当前点绑定进行可微目标点重建的公共函数。
+- `src/task/CmDecoder/runner.py` — baseline 分支加入固定对应点重建、纯点 loss、point EPE/RMSE 与 identity-hand 指标；原参数 loss 保留并由权重控制。
+- `tests/test_cmdecoder_q_optimizer.py` — 覆盖 point loss 到 q、translation、rotvec 的有限非零梯度。
+- `src/task/CmDecoder/docs/logs/{architecture,status,experiment,decision,modification}_log.md` — 同步训练目标、数值选择、EXP-015 和运行状态。
+
+**改动原因**
+
+用户要求 baseline 输出保持 q 与相对位姿，但改用采样点几何误差反传；先试纯点 loss，原参数 loss 保留且权重置0。
+
+**验证**
+
+- 10项 CmDecoder q-optimizer/viewer/cache 测试通过，`git diff --check` 通过。
+- GT 参数重建真实 cache target point 的平均/最大误差为 `0.000007/0.000170 mm`。
+- 原始米制 point loss 的真实8-step smoke 完成训练、验证和 checkpoint，梯度范数约0.312且未触发裁剪。
+
+### 后续有效性修正
+
+全量训练 epoch 1 暴露3 Hz v1 cache 的 `hand_flow` 使用目标腕坐标系、丢失 wrist 刚体运动。三组进程已停止，EXP-015 标记为 `INVALID_IMPLEMENTATION`；近静止 smoke 的 GT 点重建结论不得外推到全量数据。纯点 loss 代码本身保留，等待版本化 cache 修复后再验证。
+
+## 2026-08-22 — 修复 wrist-aware cache 并完成纯点 loss v2 三组复跑
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/build_horizon_cache.py` — 将目标手点统一变换到当前腕坐标系，增加显式输出版本与 v2 hand-flow 语义元数据。
+- `src/task/CmDecoder/dataset.py`、`point_config.py` — wrist-aware 训练切换至 v2 manifest，并按 `required_hand_flow_frame=current_wrist` fail-fast。
+- `tests/test_cmdecoder_horizon_cache.py` — 增加目标点必须保留当前腕到目标腕运动的回归测试。
+- `src/task/CmDecoder/docs/logs/{architecture,status,memory,experiment,modification}_log.md` — 同步版本边界、cache 路径、训练性能和 EXP-015 修正结果。
+
+**改动原因**
+
+v1 目标点坐标系会消除腕部运动；用户要求保留 v1，创建语义正确的 v2 cache，重导全量 token 并重跑纯点 loss 三组实验。
+
+**验证**
+
+- v2 共568个 episode、284,414 pairs；task/token schema、shape、dtype、checkpoint/hash 与 hand-flow 语义全量扫描0错误。
+- GT q+wrist 重建 target point 的抽样平均/最大 EPE 约 `0.000007/0.000226 mm`。
+- 11项 CmDecoder 相关测试通过，`git diff --check` 通过。
+- 三组均完成3 epochs / 21,465 steps，无 OOM、无梯度裁剪；best checkpoint 已完成 full/high-motion val/test 统一评估，结果见 EXP-015。
+
+## 2026-08-23 — 预计算点绑定并向量化 FK 点变换
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/build_cache.py`、`build_horizon_cache.py` — 在 layered v4/v2 cache 中保存静态 `hand_point_link_index` 与 `hand_points_local`。
+- `src/task/CmDecoder/migrate_point_bindings.py` — 复用已有全量 geometry，为576个 v4 episode 和568个 v2 episode补写绑定，不重算逐帧几何。
+- `src/task/CmDecoder/dataset.py` — 可选加载静态绑定，并处理 DataLoader collate 后的 batch 维度。
+- `src/task/CmDecoder/q_optimizer.py`、`runner.py` — 跳过当前 q 反绑，按全 URDF link index gather 后批量变换1538个点。
+- `src/task/CmDecoder/config.py`、`wrist_baseline_config.py` — 增加 `use_cached_point_bindings` 开关，wrist baseline 默认启用。
+- `tests/test_cmdecoder_q_optimizer.py`、`tests/test_cmdecoder_build_cache.py` — 增加 cache binding 接口覆盖。
+
+**改动原因**
+
+用户确认先按旧版 Cm 做逐点新架构10 epoch训练；在训练前消除纯点 baseline 中每 batch 的当前 q FK/逆变换和逐 link 点变换开销，同时保持固定 correspondence 和 loss 语义不变。
+
+**验证**
+
+- 12项 CmDecoder 测试通过。
+- 单 episode真实 cache 新旧重建最大差约 `1.2e-7 m`，平均误差 `4.2e-5 mm`。
+- CPU batch=32 点重建约 `2.7×` 加速。
+- 旧版 Cm、v2 cache 的逐点新架构10 epoch训练已启动：`outputs/cmdecoder/cm_decoder_20260823_000423/`。
+
+## 2026-08-23 — 增加 30Hz GRAB 右手到 Inspire F1 重定向 smoke test
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/grab_retarget.py` — 读取 subject-template GRAB 右手 30Hz cache，使用 GRAB hand flow 生成 Cm token，以物体中心外侧 12cm 接近位姿和关节限位中点 q0 初始化 Inspire F1，执行 point-flow→q/wrist fitting，并导出 NPZ/PNG。
+- `src/task/CmDecoder/q_optimizer.py` — 为静态采样点增加 hand-root 法向 FK 变换接口，供 decoder 接收机器人当前几何。
+
+**改动原因**
+
+验证“GRAB 参考轨迹生成 Cm、机器人当前状态送入 decoder”的无配对重定向路径，不把 GRAB 人手点云误当作 Inspire F1 的真实 q 监督。
+
+**验证**
+
+- `graspenv` CPU/GPU 依赖检查完成；CPU 由于 spconv implicit-gemm 仅支持 CUDA，预期失败。
+- CUDA 单帧 smoke test 成功，输出 `/tmp/grab_rt.npz` 与 `/tmp/grab_rt.png`。
+
+## 2026-08-23 — 增加 30Hz Cm-flat 逐点 baseline
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/flat_point_model.py` — 将每个当前手点 xyz 与 flatten 后的 `[16,256]` Cm token 拼接，经共享 MLP 预测该点 3D flow。
+- `src/task/CmDecoder/flat_point_config.py` — 使用 HRDexDB v4 30Hz 相邻帧和缓存 Cm token，配置10 epoch训练。
+
+**改动原因**
+
+建立不含 DenseToken/法向/slot edge routing 的快速结构 baseline，隔离“Cm-flat + 当前点坐标”对点流预测的贡献。
+
+**验证 / 状态**
+
+- 模型和配置可加载，训练参数量约95M（其中 frozen Cm 不更新，trainable MLP 约2.2M）。
+- 30Hz v4 token sidecar 仅预先覆盖部分 episode；576 episode 的全量 token 预计算已在3张 GPU 上运行，完成后再启动正式训练。
+## 2026-08-23 — 优化 HRDexDB candidate mask 构建
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部 / 跨 task 共享 cache
+
+**文件**
+
+- `src/task/CmDecoder/build_cache.py` — 使用 `scipy.spatial.cKDTree` 做逐帧 5 cm 邻域查询，替代全量 object-pool/hand 距离张量。
+
+**改动原因**
+
+保持 candidate mask 语义不变，同时降低 4096×1538 距离计算的 CPU 和峰值内存；单 episode 探针约从 192.6 s 降至 37.4 s。
