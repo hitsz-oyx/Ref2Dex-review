@@ -36,15 +36,23 @@ class CmDecoderModel(nn.Module):
         self.prediction_target = str(getattr(cfg.meta, "prediction_target", "q_next"))
         if self.prediction_target not in {"delta_q", "q_next"}:
             raise ValueError(f"Unsupported prediction_target: {self.prediction_target}")
+        self.predict_wrist_motion = bool(getattr(cfg.meta, "predict_wrist_motion", False))
+        self.wrist_translation_target_scale = float(
+            getattr(cfg.meta, "wrist_translation_target_scale", 100.0)
+        )
+        self.wrist_rotation_target_scale = float(
+            getattr(cfg.meta, "wrist_rotation_target_scale", 1.0)
+        )
         cm_dim = int(self.cm.num_cm_tokens * self.cm.cm_dim) if self.decoder_input != "qt_only" else 0
         input_dim = cm_dim + (6 if self.decoder_input != "cm_only" else 0)
+        output_dim = 12 if self.predict_wrist_motion else 6
         self.decoder = nn.Sequential(
             nn.LayerNorm(input_dim),
             nn.Linear(input_dim, 512),
             nn.GELU(),
             nn.Linear(512, 256),
             nn.GELU(),
-            nn.Linear(256, 6),
+            nn.Linear(256, output_dim),
         )
 
     def train(self, mode: bool = True):
@@ -73,7 +81,8 @@ class CmDecoderModel(nn.Module):
             features.append(cm_tokens.flatten(1))
         if self.decoder_input != "cm_only":
             features.append(batch["q_t"] * self.q_input_scale)
-        pred_target_scaled = self.decoder(torch.cat(features, dim=-1))
+        prediction_scaled = self.decoder(torch.cat(features, dim=-1))
+        pred_target_scaled = prediction_scaled[:, :6]
         pred_target = pred_target_scaled / self.q_target_scale
         if self.prediction_target == "delta_q":
             pred_delta_q = pred_target
@@ -81,7 +90,7 @@ class CmDecoderModel(nn.Module):
         else:
             pred_q_next = pred_target
             pred_delta_q = pred_q_next - batch["q_t"]
-        return {
+        result = {
             "pred_q_next": pred_q_next,
             "pred_q_next_scaled": pred_q_next * self.q_target_scale,
             "pred_delta_q": pred_delta_q,
@@ -89,3 +98,17 @@ class CmDecoderModel(nn.Module):
             "pred_target_scaled": pred_target_scaled,
             "cm_tokens": cm_tokens,
         }
+        if self.predict_wrist_motion:
+            result.update(
+                {
+                    "pred_wrist_delta_translation": (
+                        prediction_scaled[:, 6:9] / self.wrist_translation_target_scale
+                    ),
+                    "pred_wrist_delta_translation_scaled": prediction_scaled[:, 6:9],
+                    "pred_wrist_delta_rotvec": (
+                        prediction_scaled[:, 9:12] / self.wrist_rotation_target_scale
+                    ),
+                    "pred_wrist_delta_rotvec_scaled": prediction_scaled[:, 9:12],
+                }
+            )
+        return result

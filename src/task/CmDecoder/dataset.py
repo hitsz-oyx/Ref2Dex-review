@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation
 from torch.utils.data import DataLoader, Dataset
 
 
@@ -80,6 +81,48 @@ def _robot_hand_mesh(io: Any, urdf: Any, qpos: np.ndarray, mesh_cache: dict):
     if not vertices:
         raise RuntimeError("No hand visual mesh found in Inspire F1 URDF")
     return np.concatenate(vertices), np.concatenate(faces)
+
+
+def _robot_hand_binding(io: Any, urdf: Any, face: np.ndarray, bary: np.ndarray, mesh_cache: dict):
+    """Recover static link groups and link-local sampled points for a surface spec.
+
+    The surface spec is sampled on the concatenated hand mesh.  Each visual is
+    already expressed in its link-local frame (including URDF visual origin and
+    scale), so the selected face/barycentric samples can be stored once and
+    reused for every q/frame.
+    """
+    vertices, faces, face_links = [], [], []
+    offset = 0
+    for visual in urdf.visuals:
+        if io.is_arm_visual(visual):
+            continue
+        key = (visual.mesh_path.resolve(), tuple(float(x) for x in visual.scale), visual.origin.tobytes())
+        if key not in mesh_cache:
+            mesh_cache[key] = io.transformed_mesh(io.load_mesh(visual.mesh_path), visual.origin, visual.scale)
+        local = mesh_cache[key]
+        value = np.asarray(local.vertices, dtype=np.float32)
+        indices = np.asarray(local.indices, dtype=np.int64)
+        vertices.append(value)
+        faces.append(indices + offset)
+        face_links.extend([str(visual.link)] * len(indices))
+        offset += len(value)
+    all_vertices = np.concatenate(vertices)
+    all_faces = np.concatenate(faces)
+    selected_links = np.asarray(face_links, dtype=object)[np.asarray(face, dtype=np.int64)]
+    group_names = list(dict.fromkeys(selected_links.tolist()))
+    group_index = np.asarray([group_names.index(name) for name in selected_links], dtype=np.int16)
+    triangles = all_vertices[all_faces[np.asarray(face, dtype=np.int64)]]
+    local_points = (triangles * np.asarray(bary, dtype=np.float32)[:, :, None]).sum(axis=1).astype(np.float32)
+    return group_index, local_points, group_names
+
+
+def _urdf_link_order(urdf: Any) -> list[str]:
+    """Return a deterministic link order shared by cache and differentiable FK."""
+    names = {str(urdf.root_link)}
+    for parent, joints in urdf.child_joints.items():
+        names.add(str(parent))
+        names.update(str(joint.child) for joint in joints)
+    return sorted(names)
 
 
 def _to_world(points: np.ndarray, c2r: np.ndarray) -> np.ndarray:
@@ -237,7 +280,8 @@ class LayeredCacheDataset(Dataset):
     def __init__(self, cache_root: str, manifest_path: str, split: str, *, max_episodes: int | None = None,
                  max_frames_per_episode: int | None = None, active_motion_only: bool = False,
                  active_motion_threshold_deg: float = 0.5, require_30hz_pair: bool = True,
-                 episode_filter: str | None = None, include_cm_tokens: bool = False):
+                 episode_filter: str | None = None, include_cm_tokens: bool = False,
+                 include_point_bindings: bool = False):
         self.cache_root = Path(cache_root).expanduser().resolve()
         path = Path(manifest_path).expanduser()
         if not path.is_absolute():
@@ -246,16 +290,19 @@ class LayeredCacheDataset(Dataset):
         if manifest.get("schema") != "cmdecoder_layered_v4":
             raise ValueError(f"Unsupported cache schema in {path}: {manifest.get('schema')}")
         self.entries: list[tuple[Path, int]] = []
+        self._robot_types: dict[Path, str] = {}
         episodes = list(manifest["splits"][split])
         if episode_filter:
             episodes = [episode for episode in episodes if episode == episode_filter]
         if max_episodes is not None:
             episodes = episodes[:int(max_episodes)]
         self.include_cm_tokens = bool(include_cm_tokens)
+        self.include_point_bindings = bool(include_point_bindings)
         threshold_rad = float(active_motion_threshold_deg) * np.pi / 180.0
         for episode in episodes:
             task_dir = self.cache_root / manifest["cache_dirs"][episode] / "task"
             task_manifest = json.loads((task_dir / "manifest.json").read_text(encoding="utf-8"))
+            self._robot_types[task_dir] = str(task_manifest.get("robot_type", Path(episode).parts[0]))
             count = int(task_manifest["samples"])
             keep = np.ones(count, dtype=bool)
             if require_30hz_pair:
@@ -269,6 +316,38 @@ class LayeredCacheDataset(Dataset):
                 self.entries.append((task_dir, index))
         self._arrays: dict[Path, dict[str, np.ndarray]] = {}
 
+    def _derive_wrist_motion(self, task_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+        """Derive current-to-target wrist SE(3) without invalidating Cm token sidecars."""
+        cache_id = task_dir.parent.name
+        candidates = [task_dir.parent / "geometry"]
+        candidates.extend(self.cache_root.parent.glob(f"*/v4/episodes/{cache_id}/geometry"))
+        geometry = next((path for path in candidates if (path / "wrist_pose_world.npy").is_file()), None)
+        if geometry is None:
+            raise FileNotFoundError(f"Could not locate geometry wrist poses for {task_dir}")
+        wrist = np.load(geometry / "wrist_pose_world.npy", mmap_mode="r", allow_pickle=False)
+        source_ids = np.load(geometry / "source_frame_id.npy", mmap_mode="r", allow_pickle=False)
+        task_manifest = json.loads((task_dir / "manifest.json").read_text(encoding="utf-8"))
+        sample_count = int(task_manifest["samples"])
+        if task_manifest.get("layer") == "cmdecoder_task_horizon":
+            stride = int(task_manifest["horizon_stride"])
+            current = np.arange(0, len(wrist) - stride, dtype=np.int64)
+            target = current + stride
+            keep = (source_ids[target] - source_ids[current]) == stride
+            current, target = current[keep], target[keep]
+        else:
+            current = np.arange(sample_count, dtype=np.int64)
+            target = current + 1
+        if len(current) != sample_count:
+            raise ValueError(
+                f"Wrist/task pair mismatch for {task_dir}: wrist={len(current)}, task={sample_count}"
+            )
+        relative = np.linalg.inv(np.asarray(wrist[current], dtype=np.float64)) @ np.asarray(
+            wrist[target], dtype=np.float64
+        )
+        translation = relative[:, :3, 3].astype(np.float32)
+        rotvec = Rotation.from_matrix(relative[:, :3, :3]).as_rotvec().astype(np.float32)
+        return translation, rotvec
+
     def __len__(self):
         return len(self.entries)
 
@@ -279,22 +358,146 @@ class LayeredCacheDataset(Dataset):
                 field: np.load(task_dir / f"{field}.npy", mmap_mode="r", allow_pickle=False)
                 for field in self.FIELDS
             }
+            # The point-flow decoder does not consume q.  Keep a fixed six-
+            # dimensional compatibility view so mixed hand types can be
+            # collated without pretending Allegro/MANO q has Inspire meaning.
+            robot_type = self._robot_types.get(task_dir, "inspire_f1")
+            if robot_type not in {"inspire_f1", "inspire_dftp"}:
+                count = len(self._arrays[task_dir]["q_t"])
+                self._arrays[task_dir]["q_t"] = np.zeros((count, 6), dtype=np.float32)
+                self._arrays[task_dir]["q_next"] = np.zeros((count, 6), dtype=np.float32)
+            elif self._arrays[task_dir]["q_t"].shape[-1] != 6:
+                self._arrays[task_dir]["q_t"] = np.asarray(self._arrays[task_dir]["q_t"][:, :6], dtype=np.float32)
+                self._arrays[task_dir]["q_next"] = np.asarray(self._arrays[task_dir]["q_next"][:, :6], dtype=np.float32)
+            translation, rotvec = self._derive_wrist_motion(task_dir)
+            self._arrays[task_dir]["wrist_delta_translation"] = translation
+            self._arrays[task_dir]["wrist_delta_rotvec"] = rotvec
             if self.include_cm_tokens:
                 cm_path = task_dir.parent / "cm" / "cm_tokens.npy"
                 if not cm_path.exists():
                     raise FileNotFoundError(f"Cm token cache not found: {cm_path}")
                 self._arrays[task_dir]["cm_tokens"] = np.load(cm_path, mmap_mode="r", allow_pickle=False)
-        sample = {field: torch.from_numpy(np.array(array[frame], copy=True)) for field, array in self._arrays[task_dir].items()}
+            if self.include_point_bindings:
+                binding_fields = ("hand_point_link_index", "hand_points_local")
+                missing = [field for field in binding_fields if not (task_dir / f"{field}.npy").is_file()]
+                if missing:
+                    raise FileNotFoundError(
+                        f"Point binding cache missing {missing} for {task_dir}; rebuild the v4/v2 cache"
+                    )
+                self._arrays[task_dir].update({
+                    field: np.load(task_dir / f"{field}.npy", mmap_mode="r", allow_pickle=False)
+                    for field in binding_fields
+                })
+        static_fields = {"hand_point_link_index", "hand_points_local"}
+        sample = {
+            field: torch.from_numpy(np.array(array if field in static_fields else array[frame], copy=True))
+            for field, array in self._arrays[task_dir].items()
+        }
+        return sample
+
+
+class RandomHorizonGeometryDataset(Dataset):
+    """Sample one deterministic pseudo-random horizon per current geometry frame.
+
+    Unlike the task cache, this keeps only the frame-level geometry on disk and
+    constructs the current-wrist pair online.  The stride assignment is stable
+    for reproducible validation, while covering ``1..max_stride`` across the
+    dataset without multiplying the number of samples by ten.
+    """
+
+    FIELDS = ("hand_points", "hand_normals", "hand_flow", "obj_points", "obj_normals",
+              "obj_valid_mask", "q_t", "q_next", "delta_time_s")
+
+    def __init__(self, cache_root: str, manifest_path: str, split: str, *, max_stride: int = 10,
+                 max_episodes: int | None = None, seed: int = 42):
+        self.cache_root = Path(cache_root).expanduser().resolve()
+        manifest = json.loads(Path(manifest_path).expanduser().read_text(encoding="utf-8"))
+        self.max_stride = int(max_stride)
+        if self.max_stride < 1:
+            raise ValueError("max_stride must be positive")
+        episodes = list(manifest["splits"][split])
+        if max_episodes is not None:
+            episodes = episodes[:int(max_episodes)]
+        self.entries: list[tuple[Path, int, int]] = []
+        self._arrays: dict[Path, dict[str, np.ndarray]] = {}
+        self._robot_types: dict[Path, str] = {}
+        for episode in episodes:
+            geometry = self.cache_root / manifest["cache_dirs"][episode] / "geometry"
+            geometry_manifest = json.loads((geometry / "manifest.json").read_text(encoding="utf-8"))
+            self._robot_types[geometry] = str(geometry_manifest.get("robot_type", Path(episode).parts[0]))
+            source_ids = np.load(geometry / "source_frame_id.npy", mmap_mode="r", allow_pickle=False)
+            n = len(source_ids)
+            # One current frame per sample; choose a stable pseudo-random stride.
+            for frame in range(n - 1):
+                stride = 1 + ((frame * 1009 + int(seed) * 9176 + len(self.entries)) % self.max_stride)
+                target = frame + stride
+                if target < n and int(source_ids[target]) - int(source_ids[frame]) == stride:
+                    self.entries.append((geometry, frame, stride))
+
+    def __len__(self):
+        return len(self.entries)
+
+    def __getitem__(self, index):
+        geometry, frame, stride = self.entries[index]
+        robot_type = self._robot_types.get(geometry, "inspire_f1")
+        if geometry not in self._arrays:
+            names = ("hand_points_world", "hand_normals_world", "obj_points_world",
+                     "obj_normals_world", "wrist_pose_world", "q_full", "frame_time")
+            self._arrays[geometry] = {
+                name: np.load(geometry / f"{name}.npy", mmap_mode="r", allow_pickle=False)
+                for name in names
+            }
+        a = self._arrays[geometry]
+        target = frame + stride
+        wrist = np.asarray(a["wrist_pose_world"][frame], dtype=np.float32)
+        hand = np.asarray(a["hand_points_world"][frame], dtype=np.float32)
+        hand_target = np.asarray(a["hand_points_world"][target], dtype=np.float32)
+        obj = np.asarray(a["obj_points_world"][frame], dtype=np.float32)
+        hand_normals = np.asarray(a["hand_normals_world"][frame], dtype=np.float32)
+        obj_normals = np.asarray(a["obj_normals_world"][frame], dtype=np.float32)
+        if robot_type not in {"inspire_f1", "inspire_dftp"}:
+            q_t = np.zeros(6, dtype=np.float32)
+            q_next = np.zeros(6, dtype=np.float32)
+        else:
+            q_t = np.asarray(a["q_full"][frame, 6:12], dtype=np.float32)
+            q_next = np.asarray(a["q_full"][target, 6:12], dtype=np.float32)
+        sample = {
+            "hand_points": torch.from_numpy(_to_frame(hand, wrist)),
+            "hand_normals": torch.from_numpy(_rotate_to_frame(hand_normals, wrist)),
+            "hand_flow": torch.from_numpy(_to_frame(hand_target, wrist) - _to_frame(hand, wrist)),
+            "obj_points": torch.from_numpy(_to_frame(obj, wrist)),
+            "obj_normals": torch.from_numpy(_rotate_to_frame(obj_normals, wrist)),
+            "obj_valid_mask": torch.ones(len(obj), dtype=torch.bool),
+            "q_t": torch.from_numpy(np.array(q_t, dtype=np.float32, copy=True)),
+            "q_next": torch.from_numpy(np.array(q_next, dtype=np.float32, copy=True)),
+            "delta_time_s": torch.tensor(float(a["frame_time"][target] - a["frame_time"][frame]), dtype=torch.float32),
+        }
         return sample
 
 
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any = None):
     manifest_path = getattr(data_cfg, "cache_manifest", None)
     if manifest_path:
-        cache_kwargs = dict(max_episodes=getattr(data_cfg, "max_episodes", None), max_frames_per_episode=getattr(data_cfg, "max_frames_per_episode", None), active_motion_only=bool(getattr(data_cfg, "active_motion_only", False)), active_motion_threshold_deg=float(getattr(data_cfg, "active_motion_threshold_deg", 0.5)), require_30hz_pair=bool(getattr(data_cfg, "require_30hz_pair", True)), episode_filter=getattr(data_cfg, "episode_filter", None), include_cm_tokens=bool(getattr(meta_cfg, "use_cached_cm_tokens", False)))
-        train = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "train", **cache_kwargs)
-        val = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "val", **cache_kwargs)
-        test = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "test", **cache_kwargs)
+        required_hand_flow_frame = getattr(meta_cfg, "required_hand_flow_frame", None)
+        if required_hand_flow_frame is not None:
+            manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+            actual_hand_flow_frame = manifest.get("hand_flow_frame")
+            if actual_hand_flow_frame != required_hand_flow_frame:
+                raise ValueError(
+                    f"Cache hand_flow_frame={actual_hand_flow_frame!r}, required "
+                    f"{required_hand_flow_frame!r}: {manifest_path}"
+                )
+        cache_kwargs = dict(max_episodes=getattr(data_cfg, "max_episodes", None), max_frames_per_episode=getattr(data_cfg, "max_frames_per_episode", None), active_motion_only=bool(getattr(data_cfg, "active_motion_only", False)), active_motion_threshold_deg=float(getattr(data_cfg, "active_motion_threshold_deg", 0.5)), require_30hz_pair=bool(getattr(data_cfg, "require_30hz_pair", True)), episode_filter=getattr(data_cfg, "episode_filter", None), include_cm_tokens=bool(getattr(meta_cfg, "use_cached_cm_tokens", False)), include_point_bindings=bool(getattr(meta_cfg, "use_cached_point_bindings", False)))
+        random_horizon = int(getattr(data_cfg, "random_horizon_max_stride", 0))
+        if random_horizon > 0:
+            random_kwargs = dict(max_stride=random_horizon, seed=seed)
+            train = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "train", **random_kwargs)
+            val = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "val", **random_kwargs)
+            test = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "test", **random_kwargs)
+        else:
+            train = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "train", **cache_kwargs)
+            val = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "val", **cache_kwargs)
+            test = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "test", **cache_kwargs)
         sampler = None
         if distributed is not None and getattr(distributed, "enabled", False):
             from torch.utils.data.distributed import DistributedSampler

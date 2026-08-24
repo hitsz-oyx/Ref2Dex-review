@@ -16,25 +16,37 @@ class Config(TaskConfig):
         cm_checkpoint: str = str(
             ROOT / "outputs/cm/cm_v121_grab_seed42_20260819_103530/checkpoints/best.pt"
         )
-        dataset_root: str = "/home2/wyy/oyx_ws/HRDexDB/v0"
-        robot_urdf: str = "/home2/wyy/oyx_ws/HRDexDB/assets/robots/xarm_inspire_f1_right.urdf"
+        dataset_root: str = str(ROOT / "dataset" / "HRDexDB" / "v0_nonvideo")
+        robot_urdf: str = str(ROOT / "dataset" / "HRDexDB" / "assets" / "robots" / "xarm_inspire_f1_right.urdf")
         num_hand_points: int = 1538
         num_obj_points: int = 512
         sample_seed: int = 42
         cache_root: str = "data/processed_data/cm_decoder/hrdexdb_inspire_f1"
         q_loss_beta_rad: float = 0.02
+        q_loss_weight: float = 1.0
         q_input_scale: float = 1.0
         q_target_scale: float = 1.0
         prediction_target: str = "delta_q"
         decoder_input: str = "qt_cm"
         flow_mode: str = "normal"
         use_cached_cm_tokens: bool = False
+        use_cached_point_bindings: bool = False
+        predict_wrist_motion: bool = False
+        wrist_translation_target_scale: float = 100.0
+        wrist_rotation_target_scale: float = 1.0
+        wrist_translation_loss_beta_m: float = 0.01
+        wrist_rotation_loss_beta_rad: float = 0.05
+        wrist_translation_loss_weight: float = 1.0
+        wrist_rotation_loss_weight: float = 1.0
+        baseline_point_loss_weight: float = 0.0
+        baseline_point_target_scale: float = 1.0
+        baseline_point_loss_beta_m: float = 0.01
 
     class model(TaskConfig.model):
         class_path = "src.task.CmDecoder.model.CmDecoderModel"
 
     class data(TaskConfig.data):
-        root: str = "/home2/wyy/oyx_ws/HRDexDB/v0"
+        root: str = str(ROOT / "dataset" / "HRDexDB" / "v0_nonvideo")
         cache_manifest: str = "data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_20_seed42.json"
         batch_size: int = 16
         val_batch_size: int = 16
