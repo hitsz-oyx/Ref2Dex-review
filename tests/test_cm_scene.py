@@ -27,10 +27,10 @@ from process.GRAB.stage4_cm_scene import (
     summarize_scene_root,
 )
 from process.GRAB.build_cm_split import _read_source_scene_assignment
-from src.task.Cm.build_dense_cache import build_dense_cache
-from src.task.Cm.build_sampling_bank import build_all_banks
+from src.task.Cm.tools.data.build_dense_cache import build_dense_cache
+from src.task.Cm.tools.data.build_sampling_bank import build_all_banks
 from src.task.Cm.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
-from src.task.Cm.compute_flow_scale import (
+from src.task.Cm.tools.data.compute_flow_scale import (
     calibrate_flow_scale,
     calibrate_flow_scale_scene,
     scene_train_sequence_dirs,

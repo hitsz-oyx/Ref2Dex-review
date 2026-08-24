@@ -224,6 +224,38 @@ def test_time_condition_requires_and_uses_physical_seconds() -> None:
     assert not torch.allclose(short["cm_tokens"], long["cm_tokens"])
 
 
+def test_geometry_only_object_decoder_ignores_dense_object_context() -> None:
+    torch.manual_seed(23)
+    head = CmFlowHead(
+        dense_token_dim=4,
+        cm_dim=8,
+        num_cm_tokens=2,
+        num_slot_iters=1,
+        use_slot_gate=False,
+        use_object_context=False,
+        use_time_condition=False,
+    )
+    head.eval()
+    with torch.no_grad():
+        nn.init.normal_(head.edge_flow_head.weight, std=0.1)
+    inputs = dict(
+        z_hand=torch.randn(1, 5, 4),
+        dense_hand_contact=torch.rand(1, 5),
+        obj_points=torch.randn(1, 3, 3),
+        obj_normals=F.normalize(torch.randn(1, 3, 3), dim=-1),
+        hand_points=torch.randn(1, 5, 3),
+        hand_normals=F.normalize(torch.randn(1, 5, 3), dim=-1),
+        hand_flow=torch.randn(1, 5, 3),
+        obj_valid_mask=torch.ones(1, 3, dtype=torch.bool),
+    )
+    first = head(z_obj=torch.randn(1, 3, 4), **inputs)
+    second = head(z_obj=torch.randn(1, 3, 4) * 1000.0, **inputs)
+    assert head.object_context_encoder is None
+    assert head.edge_backbone[0].in_features == head.cm_dim + 12
+    torch.testing.assert_close(first["pred_obj_flow"], second["pred_obj_flow"])
+    torch.testing.assert_close(first["decoder_slot_usage"], second["decoder_slot_usage"])
+
+
 def test_dense_token_input_stays_in_metres_and_internal_loss_scales_gradient() -> None:
     class CapturingDense(nn.Module):
         def __init__(self) -> None:

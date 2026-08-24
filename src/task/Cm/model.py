@@ -150,6 +150,7 @@ class CmFlowHead(nn.Module):
         internal_point_flow_scale: float | None = None,
         slot_threshold: float = 0.5,
         use_slot_gate: bool = True,
+        use_object_context: bool = True,
         use_time_condition: bool = False,
     ) -> None:
         super().__init__()
@@ -170,6 +171,7 @@ class CmFlowHead(nn.Module):
         self.runtime_slot_threshold = self.slot_threshold
         self.runtime_force_all_slots = False
         self.use_slot_gate = bool(use_slot_gate)
+        self.use_object_context = bool(use_object_context)
         self.use_time_condition = bool(use_time_condition)
         if min(self.geometry_input_scale, self.hand_flow_input_scale, self.object_flow_target_scale) <= 0.0:
             raise ValueError("Cm input and target scales must be positive.")
@@ -194,13 +196,22 @@ class CmFlowHead(nn.Module):
         nn.init.normal_(self.slot_gate_head[-1].weight, std=1e-3)
         nn.init.zeros_(self.slot_gate_head[-1].bias)
         self.hard_concrete = HardConcreteGate()
-        self.object_context_encoder = _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
+        # Backward-compatible object-side DenseToken/context branch.  The
+        # geometry-only ablation disables this branch completely so z_obj
+        # cannot bypass the Cm bottleneck.  Raw object point/normal geometry
+        # remains available to localize each decoded point.
+        self.object_context_encoder = (
+            _mlp(self.dense_token_dim + 6, cm_dim, cm_dim)
+            if self.use_object_context
+            else None
+        )
         self.time_condition_encoder = _mlp(1, cm_dim, cm_dim) if self.use_time_condition else None
         # Object feature, Cm feature, relative object-to-soft-anchor position,
         # and soft-anchor hand normal.  Cm already contains the hand motion,
         # so exposing the pooled hand flow here would bypass the bottleneck.
+        edge_input_dim = cm_dim * 2 + 6 if self.use_object_context else cm_dim + 12
         self.edge_backbone = nn.Sequential(
-            nn.Linear(cm_dim * 2 + 6, cm_dim),
+            nn.Linear(edge_input_dim, cm_dim),
             nn.GELU(),
             nn.Linear(cm_dim, cm_dim // 2),
             nn.GELU(),
@@ -283,25 +294,40 @@ class CmFlowHead(nn.Module):
             all_below_threshold = torch.zeros_like(slot_gate_logits[:, :1], dtype=torch.bool)
             fallback_index = torch.zeros_like(slot_gate_logits[:, :1], dtype=torch.long)
 
-        obj_context = self.object_context_encoder(
-            torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
-        )
-        if time_context is not None:
-            obj_context = obj_context + time_context.unsqueeze(1)
         cm_anchor_pos_internal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_points_internal)
         cm_anchor_normal = torch.einsum("bkh,bhd->bkd", cm_slot_weights, hand_normals)
         cm_anchor_normal = F.normalize(cm_anchor_normal, dim=-1, eps=1e-6)
 
         num_obj = obj_points.shape[1]
-        edge_input = torch.cat(
-            [
-                obj_context.unsqueeze(2).expand(-1, -1, self.num_dynamic_slots, -1),
-                cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1),
-                obj_points_internal.unsqueeze(2) - cm_anchor_pos_internal.unsqueeze(1),
-                cm_anchor_normal.unsqueeze(1).expand(-1, num_obj, -1, -1),
-            ],
-            dim=-1,
-        )
+        cm_edge = cm_tokens.unsqueeze(1).expand(-1, num_obj, -1, -1)
+        relative_position = obj_points_internal.unsqueeze(2) - cm_anchor_pos_internal.unsqueeze(1)
+        anchor_normal = cm_anchor_normal.unsqueeze(1).expand(-1, num_obj, -1, -1)
+        if self.object_context_encoder is not None:
+            obj_context = self.object_context_encoder(
+                torch.cat([z_obj, obj_points_internal, obj_normals], dim=-1)
+            )
+            if time_context is not None:
+                obj_context = obj_context + time_context.unsqueeze(1)
+            edge_input = torch.cat(
+                [
+                    obj_context.unsqueeze(2).expand(-1, -1, self.num_dynamic_slots, -1),
+                    cm_edge,
+                    relative_position,
+                    anchor_normal,
+                ],
+                dim=-1,
+            )
+        else:
+            raw_object_geometry = torch.cat([obj_points_internal, obj_normals], dim=-1)
+            edge_input = torch.cat(
+                [
+                    raw_object_geometry.unsqueeze(2).expand(-1, -1, self.num_dynamic_slots, -1),
+                    cm_edge,
+                    relative_position,
+                    anchor_normal,
+                ],
+                dim=-1,
+            )
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
         dynamic_flow_scaled = self.edge_flow_head(edge_features)
@@ -347,7 +373,8 @@ class CmFlowHead(nn.Module):
 class CmFlowModel(nn.Module):
     """Frozen dense interaction state plus trainable hand-motion ``C_m`` head.
 
-    ``state_dict`` deliberately omits the immutable dense-token checkpoint.
+    Frozen-stage checkpoints omit the DenseToken checkpoint.  Fine-tuning
+    checkpoints include it so the adapted backbone can be resumed.
     Cm checkpoints contain only the temporal Slot Attention head and decoder.
     """
 
@@ -386,7 +413,11 @@ class CmFlowModel(nn.Module):
                     stacklevel=2,
                 )
                 legacy_scale = None
-        self.dense_encoder = FrozenDenseTokenEncoder(meta.dense_checkpoint)
+        self.freeze_dense_encoder = bool(getattr(meta, "freeze_dense_encoder", True))
+        self.dense_encoder = FrozenDenseTokenEncoder(
+            meta.dense_checkpoint,
+            freeze=self.freeze_dense_encoder,
+        )
         self.head = CmFlowHead(
             dense_token_dim=self.dense_encoder.token_dim,
             cm_dim=int(meta.cm_dim),
@@ -398,6 +429,7 @@ class CmFlowModel(nn.Module):
             internal_point_flow_scale=legacy_scale,
             slot_threshold=float(meta.slot_threshold),
             use_slot_gate=bool(getattr(meta, "use_slot_gate", True)),
+            use_object_context=bool(getattr(meta, "use_object_context", True)),
             use_time_condition=bool(getattr(meta, "use_time_condition", False)),
         )
 
@@ -427,6 +459,12 @@ class CmFlowModel(nn.Module):
         # frozen DenseToken features, skip the online PTv3 forward entirely.
         # ``use_dense_cache: false`` restores the online encoder at any time,
         # which is exactly how the cache parity is validated.
+        cached_dense = {"cached_z_obj", "cached_z_hand", "cached_hand_contact"}.intersection(batch)
+        if cached_dense and not self.freeze_dense_encoder:
+            raise RuntimeError(
+                "DenseToken is trainable, but the batch contains cached DenseToken outputs "
+                f"{sorted(cached_dense)}; disable dense feature caching to preserve gradients."
+            )
         if "cached_z_obj" in batch:
             z_obj = batch["cached_z_obj"].float()
             z_hand = batch["cached_z_hand"].float()
@@ -454,7 +492,9 @@ class CmFlowModel(nn.Module):
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
         state = super().state_dict(*args, **kwargs)
-        return {key: value for key, value in state.items() if not key.startswith(self._DENSE_PREFIX)}
+        if self.freeze_dense_encoder:
+            return {key: value for key, value in state.items() if not key.startswith(self._DENSE_PREFIX)}
+        return state
 
     def load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
         incompatible = super().load_state_dict(state_dict, strict=False)

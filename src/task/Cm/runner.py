@@ -101,12 +101,35 @@ class CmActionRunner(BaseRunner):
 
     @staticmethod
     def _summarize_stride_metrics(metrics: Dict[str, float], *, split: str) -> Dict[str, float]:
-        """Keep a compact validation/test panel instead of 10× metric curves."""
+        """Summarize fixed-stride metrics, optionally split by source bucket.
+
+        Object-v2 historically used ``val/stride_1/flow/epe_mm``.  The
+        HRDexDB fine-tune path uses ``val/stride_1/hrdexdb/flow/epe_mm`` so
+        source-specific results remain visible.  Both forms are accepted and
+        the global mean is weighted equally over the reported source/stride
+        panels, matching the balanced three-source evaluation contract.
+        """
+        panels: Dict[str, Dict[str, List[float]]] = {}
+        prefix = f"{split}/stride_"
+        for key, value in metrics.items():
+            if not key.startswith(prefix):
+                continue
+            remainder = key[len(prefix):]
+            stride_text, separator, tail = remainder.partition("/")
+            if not separator or not stride_text.isdigit():
+                continue
+            source, separator, metric_name = tail.partition("/")
+            if not separator:
+                continue
+            # Legacy object-v2 loaders omit a source component.
+            if metric_name not in {
+                "flow/epe_mm", "flow/relative_epe", "flow/zero_flow_improvement", "flow/norm_ratio",
+            }:
+                source, metric_name = "all", tail
+            panels.setdefault(source, {}).setdefault(metric_name, []).append(float(value))
+
         def values(name: str) -> List[float]:
-            return [
-                value for key, value in metrics.items()
-                if key.startswith(f"{split}/stride_") and key.endswith(f"/{name}")
-            ]
+            return [value for panel in panels.values() for value in panel.get(name, [])]
 
         epe = values("flow/epe_mm")
         relative_epe = values("flow/relative_epe")
@@ -121,6 +144,15 @@ class CmActionRunner(BaseRunner):
             summary[f"{split}/zero_flow_improvement"] = float(sum(improvement) / len(improvement))
         if norm_ratio:
             summary[f"{split}/norm_ratio"] = float(sum(norm_ratio) / len(norm_ratio))
+        for source, panel in panels.items():
+            if source == "all":
+                continue
+            if panel.get("flow/epe_mm"):
+                summary[f"{split}/{source}/mean_stride_epe_mm"] = float(sum(panel["flow/epe_mm"]) / len(panel["flow/epe_mm"]))
+            if panel.get("flow/relative_epe"):
+                summary[f"{split}/{source}/mean_stride_relative_epe"] = float(sum(panel["flow/relative_epe"]) / len(panel["flow/relative_epe"]))
+            if panel.get("flow/zero_flow_improvement"):
+                summary[f"{split}/{source}/zero_flow_improvement"] = float(sum(panel["flow/zero_flow_improvement"]) / len(panel["flow/zero_flow_improvement"]))
         # Scene V1 diagnostics (V1.md §25): object vs environment must be
         # reported separately so a zero-flow collapse on environment points
         # cannot hide behind an attractive overall EPE.
@@ -133,9 +165,19 @@ class CmActionRunner(BaseRunner):
             if panel:
                 summary[f"{split}/{key}"] = float(sum(panel) / len(panel))
         for stride in (1, 5, 10):
-            key = f"{split}/stride_{stride}/flow/epe_mm"
-            if key in metrics:
-                summary[f"{split}/stride_{stride}_epe_mm"] = metrics[key]
+            stride_values = [
+                value for source, panel in panels.items()
+                for value in panel.get("flow/epe_mm", [])
+                if any(key == f"{split}/stride_{stride}/{source}/flow/epe_mm" for key in metrics)
+            ]
+            # The source-aware branch above needs a direct key scan to avoid
+            # conflating values from different strides.
+            direct = [
+                float(value) for key, value in metrics.items()
+                if key.startswith(f"{split}/stride_{stride}/") and key.endswith("/flow/epe_mm")
+            ]
+            if direct:
+                summary[f"{split}/stride_{stride}_epe_mm"] = float(sum(direct) / len(direct))
         return summary
 
     def evaluate_loader(self, loader: Any, *, prefix: str) -> Dict[str, float]:
@@ -260,6 +302,14 @@ class CmActionRunner(BaseRunner):
         return result
 
     def make_dataloaders(self, data_cfg: Any, seed: int):
+        if str(getattr(data_cfg, "finetune_mode", "")).lower() == "hrdexdb":
+            from src.task.Cm.dataset_hrdexdb import make_dataloaders as make_hrdexdb_dataloaders
+            return make_hrdexdb_dataloaders(
+                data_cfg,
+                seed,
+                meta_cfg=self.cfg.meta,
+                distributed=self.distributed,
+            )
         scene_loader = self._resolve_scene_dataloaders(data_cfg, seed)
         if scene_loader is not None:
             return scene_loader
@@ -359,7 +409,7 @@ class CmActionRunner(BaseRunner):
             if missing:
                 raise ValueError(
                     "Missing Cm flow calibration metadata in the train root: "
-                    f"{missing}. Run src.task.Cm.compute_flow_scale or explicitly "
+                    f"{missing}. Run src.task.Cm.tools.data.compute_flow_scale or explicitly "
                     "set meta.require_flow_calibration=false for an ablation."
                 )
         calibration_checks = {

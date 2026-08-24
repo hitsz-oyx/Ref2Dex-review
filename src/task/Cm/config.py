@@ -15,6 +15,9 @@ class Config(TaskConfig):
 
     class meta(TaskConfig.meta):
         dense_checkpoint: str = str(ROOT / "src" / "task" / "Cm" / "densetoken_ckpt" / "best.pt")
+        # DenseToken is frozen for the GRAB/ARCTIC base stage and explicitly
+        # unfrozen by the HRDexDB fine-tuning config.
+        freeze_dense_encoder: bool = True
         coordinate_frame: str = "hand_root_t"
         num_obj_pool: int = 4096
         num_obj_points: int = 512
@@ -26,7 +29,7 @@ class Config(TaskConfig):
         # point-flow noise scale while retaining EPE-like gradients above it.
         flow_smooth_l1_beta: float = 0.005
         # Calibration values are computed from the train split only by
-        # ``python -m src.task.Cm.compute_flow_scale``.  They are stored in
+        # ``python -m src.task.Cm.tools.data.compute_flow_scale``.  They are stored in
         # config so every checkpoint/inference run can use the same scale.
         flow_target_rms_m: float | None = None
         # Formal experiments require train-root calibration metadata; legacy
@@ -43,6 +46,10 @@ class Config(TaskConfig):
         # Keep the default enabled so existing hard-gate checkpoints retain
         # their exact behaviour.
         use_slot_gate: bool = True
+        # Keep the legacy DenseToken z_obj context path by default.  Explicit
+        # bottleneck ablations can disable it while retaining raw object
+        # points/normals and Cm-relative geometry in the flow decoder.
+        use_object_context: bool = True
         # Optional curriculum for hard gating.  During the full warm-up all
         # slots participate in the decoder; the following ramp raises the
         # threshold and L0 count weight to their configured target values.

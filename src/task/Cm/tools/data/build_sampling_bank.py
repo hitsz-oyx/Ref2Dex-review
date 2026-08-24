@@ -12,7 +12,7 @@ bank ``b`` 的种子取 ``stable_frame_seed(..., epoch=b, namespace="cm-object-s
 
 用法::
 
-    python -m src.task.Cm.build_sampling_bank \
+    python -m src.task.Cm.tools.data.build_sampling_bank \
         --root data/processed_data/cm_scene_v1 \
         --bank-size 4 --num-points 512 --seed 42
 """

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.task.Cm.compute_flow_scale import calibrate_flow_scale
+from src.task.Cm.tools.data.compute_flow_scale import calibrate_flow_scale
 
 
 def _write_stream(root, *, frames: int, points: int, candidate_mask: np.ndarray) -> None:

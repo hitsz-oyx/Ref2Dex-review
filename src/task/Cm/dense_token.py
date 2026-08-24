@@ -11,13 +11,17 @@ from src.task.correspondence_ptv3_v2.model import StaticHOCPTv3V2
 
 
 class FrozenDenseTokenEncoder(nn.Module):
-    """Expose frozen current-frame dense interaction tokens and contact prior.
+    """Expose current-frame dense interaction tokens and contact prior.
+
+    The historical class name is retained for checkpoint/config compatibility.
+    ``freeze=False`` is used only by the HRDexDB fine-tuning stage, where the
+    DenseToken backbone is allowed to adapt jointly with the Cm head.
 
     The wrapped model receives `(O_t, H_t)` only.  In particular, neither
     `hand_flow` nor any future object field enters the old PTv3 encoder.
     """
 
-    def __init__(self, checkpoint: str | Path) -> None:
+    def __init__(self, checkpoint: str | Path, *, freeze: bool = True) -> None:
         super().__init__()
         self.checkpoint = str(Path(checkpoint).resolve())
         checkpoint_data = torch.load(self.checkpoint, map_location="cpu")
@@ -43,13 +47,14 @@ class FrozenDenseTokenEncoder(nn.Module):
             )
         self.model = StaticHOCPTv3V2(self.cfg)
         self.model.load_state_dict(checkpoint_data["model"], strict=True)
-        self.model.requires_grad_(False)
-        self.model.eval()
+        self.freeze = bool(freeze)
+        if self.freeze:
+            self.model.requires_grad_(False)
+            self.model.eval()
         self.token_dim = int(self.model.token_dim)
         self.num_obj_points = int(meta.num_obj_points)
         self.num_hand_points = int(meta.num_hand_points)
 
-    @torch.no_grad()
     def forward(
         self,
         *,
@@ -59,7 +64,32 @@ class FrozenDenseTokenEncoder(nn.Module):
         hand_normals: torch.Tensor,
         obj_valid_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        self.model.eval()
+        if self.freeze:
+            with torch.no_grad():
+                return self._forward_impl(
+                    obj_points=obj_points,
+                    obj_normals=obj_normals,
+                    hand_points=hand_points,
+                    hand_normals=hand_normals,
+                    obj_valid_mask=obj_valid_mask,
+                )
+        return self._forward_impl(
+            obj_points=obj_points,
+            obj_normals=obj_normals,
+            hand_points=hand_points,
+            hand_normals=hand_normals,
+            obj_valid_mask=obj_valid_mask,
+        )
+
+    def _forward_impl(
+        self,
+        *,
+        obj_points: torch.Tensor,
+        obj_normals: torch.Tensor,
+        hand_points: torch.Tensor,
+        hand_normals: torch.Tensor,
+        obj_valid_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size = obj_points.shape[0]
         points = torch.cat([obj_points.float(), hand_points.float()], dim=1)
         normals = torch.cat([obj_normals.float(), hand_normals.float()], dim=1)

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 
 from process.common.object_cache_v2 import SCHEMA_NAME, convert_root
-from src.task.Cm.build_object_sampling_bank import build_bank
+from src.task.Cm.tools.data.build_object_sampling_bank import build_bank
 from src.task.Cm.dataset_object_v2 import CmObjectV2Dataset, dataset_statistics, make_dataloaders
 
 

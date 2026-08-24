@@ -16,7 +16,7 @@ meta:
   loss_slot_count_weight: 0.0
   loss_slot_confidence_weight: 0.0
   loss_active_overlap_weight: 0.0
-  # Recompute with `python -m src.task.Cm.compute_flow_scale --train-path
+  # Recompute with `python -m src.task.Cm.tools.data.compute_flow_scale --train-path
   # data/processed_data/cm_scene_v1/...` after building the scene cache;
   # the object-only calibration no longer matches the scene distribution.
   flow_target_rms_m: null
