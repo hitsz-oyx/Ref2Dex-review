@@ -11,6 +11,8 @@ from typing import Any
 import numpy as np
 import torch
 
+from src.task.correspondence_ptv3_v2.hand_noise_profiles import normalize_dataset_id
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STAGE2_ROOT = ROOT / "data" / "processed_data" / "stage2" / "grab_initonly_4096"
@@ -18,7 +20,7 @@ DEFAULT_OUTPUT_ROOT = (
     ROOT / "data" / "processed_data" / "stage3" / "grab_initonly_4096_v2"
 )
 SCHEMA_NAME = "train_corr_static_v2"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 
 
 def _resolve_device(value: str) -> torch.device:
@@ -98,17 +100,17 @@ def _compute_contact_statistics(
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the only clean distance statistics consumed by v2.
+) -> np.ndarray:
+    """Compute clean hand-to-object distances consumed by v2.
 
-    obj_candidate_mask_5cm selects the runtime object-point pool.
-    hand_to_obj_min_dist provides the dense hand-contact target and must use
-    the complete object pool, not the runtime 512-point sample. Both values
-    are invariant under the Stage 3 rigid frame transform.
+    v2.1 deliberately does NOT persist a clean-hand 5 cm object mask: input
+    object sampling is done at train time from perturbed hand geometry.  The
+    only cached clean statistic is hand_to_obj_min_dist for the dense hand
+    contact target; it does not control the input point pool.
     """
-    num_frames, num_obj, _ = obj_points.shape
+    del candidate_threshold  # kept in the CLI for backward-compatible scripts
+    num_frames, _num_obj, _ = obj_points.shape
     num_hand = hand_points.shape[1]
-    candidate_mask = np.empty((num_frames, num_obj), dtype=bool)
     hand_to_obj_min_dist = np.empty((num_frames, num_hand), dtype=np.float32)
 
     batch_size = max(1, int(frame_batch_size))
@@ -117,13 +119,11 @@ def _compute_contact_statistics(
         obj = torch.from_numpy(obj_points[start:end]).to(device=device, dtype=torch.float32)
         hand = torch.from_numpy(hand_points[start:end]).to(device=device, dtype=torch.float32)
         dist = torch.cdist(obj, hand)  # (b, N_obj, N_hand)
-        batch_candidate = dist.amin(dim=-1) <= float(candidate_threshold)
         hand_min = dist.amin(dim=1)
-        candidate_mask[start:end] = batch_candidate.cpu().numpy()
         hand_to_obj_min_dist[start:end] = hand_min.cpu().numpy().astype(np.float32)
         del dist, obj, hand, hand_min
 
-    return candidate_mask, hand_to_obj_min_dist
+    return hand_to_obj_min_dist
 
 
 def _validate_stage2_geometry(
@@ -157,7 +157,6 @@ def build_stage3_sequence(
     candidate_threshold: float,
     frame_batch_size: int,
     device: torch.device,
-    mirror_left_to_right: bool,
     coordinate_frame: str = "hand_root",
 ) -> dict[str, np.ndarray]:
     """Build one minimal Stage 3 sample for correspondence_ptv3_v2.
@@ -220,13 +219,7 @@ def build_stage3_sequence(
             hand_root_poses,
         )
     side = str(payload["side"])
-    if mirror_left_to_right and side == "left":
-        obj_points[..., 0] *= -1
-        obj_normals[..., 0] *= -1
-        hand_points[..., 0] *= -1
-        hand_normals[..., 0] *= -1
-
-    candidate_mask, hand_to_obj_min = _compute_contact_statistics(
+    hand_to_obj_min = _compute_contact_statistics(
         obj_points,
         hand_points,
         candidate_threshold=candidate_threshold,
@@ -237,6 +230,10 @@ def build_stage3_sequence(
     out: dict[str, np.ndarray] = {
         "schema_name": np.asarray(SCHEMA_NAME),
         "schema_version": np.asarray(SCHEMA_VERSION),
+        "dataset_id": np.asarray(
+            normalize_dataset_id(payload.get("dataset_name", "unknown"))
+        ),
+        "dataset_name": np.asarray(str(payload.get("dataset_name", "unknown"))),
         "seq_id": np.asarray(str(payload["seq_id"])),
         "side": np.asarray(side),
         "raw_frame_id": _require_array(payload, "raw_frame_id", ndim=1, dtype=np.int32),
@@ -245,9 +242,93 @@ def build_stage3_sequence(
         "hand_points": hand_points,
         "hand_normals": hand_normals,
         "hand_to_obj_min_dist": hand_to_obj_min,
-        "obj_candidate_mask_5cm": candidate_mask,
         "coordinate_frame": np.asarray(coordinate_frame),
     }
+    # The hand_root pose (T, 4, 4) takes world-space geometry to the
+    # wrist frame. Stage 3 uses it once at build time to fold world
+    # points into hand_root; we also persist it so the train side can
+    # re-run MANO forward and bring the world-space vertices back into
+    # the stored hand_root frame for the cross-dataset path.
+    if "hand_root_pose" in payload:
+        out["hand_root_pose"] = _require_array(
+            payload, "hand_root_pose", ndim=3, dtype=np.float32
+        )
+    # ---- Object canonical / state fields (optional, cross-dataset schema) ----
+    # These fields are not yet consumed by the v2 runner, which still trains
+    # from per-frame obj_points.  They make the Stage 3 files self-describing
+    # enough to later recover the full object pool from canonical geometry:
+    # GRAB uses rigid_canonical; ARCTIC may use articulated_canonical with
+    # part IDs and an articulation angle.
+    if "obj_repr" in payload:
+        out["obj_repr"] = np.asarray(str(payload["obj_repr"]))
+    elif "obj_points_canonical" in payload:
+        out["obj_repr"] = np.asarray("rigid_canonical")
+    if "obj_points_canonical" in payload and payload["obj_points_canonical"] is not None:
+        out["obj_points_canonical"] = _require_array(
+            payload, "obj_points_canonical", ndim=2, dtype=np.float32
+        )
+    if "obj_normals_canonical" in payload and payload["obj_normals_canonical"] is not None:
+        out["obj_normals_canonical"] = _require_array(
+            payload, "obj_normals_canonical", ndim=2, dtype=np.float32
+        )
+    if "obj_point_id" in payload and payload["obj_point_id"] is not None:
+        out["obj_point_id"] = _require_array(
+            payload, "obj_point_id", ndim=1, dtype=np.int32
+        )
+    if "obj_root_pose" in payload and payload["obj_root_pose"] is not None:
+        out["obj_root_pose_world"] = _require_array(
+            payload, "obj_root_pose", ndim=3, dtype=np.float32
+        )
+    if "obj_part_id" in payload and payload["obj_part_id"] is not None:
+        out["obj_part_id"] = _require_array(
+            payload, "obj_part_id", ndim=1, dtype=np.int32
+        )
+    if "obj_articulation" in payload and payload["obj_articulation"] is not None:
+        out["obj_articulation"] = _require_array(
+            payload, "obj_articulation", ndim=2, dtype=np.float32
+        )
+    # ---- MANO cross-dataset fields (docs/指导.md) ----
+    # We forward the raw MANO parameters and the descriptive configuration
+    # unchanged from stage 2. v_template is per-subject (frame-invariant)
+    # so it is not re-indexed by frame.
+    num_frames = int(out["raw_frame_id"].shape[0])
+    for per_frame_key in (
+        "mano_global_orient",
+        "mano_transl",
+        "mano_pose",
+    ):
+        if per_frame_key in payload and payload[per_frame_key] is not None:
+            out[per_frame_key] = _require_array(
+                payload, per_frame_key, ndim=2, dtype=np.float32
+            )
+    # mano_betas is per-subject in ARCTIC ((10,)) and per-frame in GRAB
+    # ((T, 10)). Normalize to (T, 10) for the npz so train-time code can
+    # always index the leading dim by frame.
+    if "mano_betas" in payload and payload["mano_betas"] is not None:
+        betas_arr = np.asarray(payload["mano_betas"], dtype=np.float32)
+        if betas_arr.ndim == 1:
+            betas_arr = np.broadcast_to(betas_arr, (num_frames, betas_arr.shape[0])).astype(np.float32).copy()
+        if betas_arr.ndim != 2:
+            raise ValueError(
+                f"mano_betas: expected ndim=1 or 2, got shape={betas_arr.shape}"
+            )
+        out["mano_betas"] = betas_arr
+    if "mano_v_template" in payload and payload["mano_v_template"] is not None:
+        out["mano_v_template"] = _require_array(
+            payload, "mano_v_template", ndim=2, dtype=np.float32
+        )
+    # Frame-invariant descriptive fields. We store them as 0-d numpy arrays so
+    # `np.load(..., allow_pickle=False)` keeps the strict type. The dataset
+    # side reads them with `np.asarray(...).item()` to get the original
+    # Python scalar / str.
+    if "mano_use_pca" in payload:
+        out["mano_use_pca"] = np.asarray(bool(payload["mano_use_pca"]))
+    if "mano_num_pca_comps" in payload:
+        out["mano_num_pca_comps"] = np.asarray(int(payload["mano_num_pca_comps"]))
+    if "mano_flat_hand_mean" in payload:
+        out["mano_flat_hand_mean"] = np.asarray(bool(payload["mano_flat_hand_mean"]))
+    if "mano_pose_repr" in payload:
+        out["mano_pose_repr"] = np.asarray(str(payload["mano_pose_repr"]))
     return out
 
 
@@ -285,12 +366,38 @@ def _write_meta(
         "num_obj_train": int(args.num_obj_train),
         "num_hand_points": int(args.num_hand_points),
         "candidate_threshold": float(args.candidate_threshold),
-        "padding_policy": "pad_invalid_without_replacement",
+        "object_sampling_policy": "runtime_perturbed_hand_proxy_near384_global128",
+        "num_hand_proxy_points": 256,
+        "hand_proxy_method": "fixed_stride_faces",
+        "padding_policy": "runtime_resample_without_clean_mask",
         "epoch_sampling": True,
-        "mirror_left_to_right": bool(args.mirror_left_to_right),
+        # docs/指导.md cross-dataset compatibility.
+        "length_unit": "meter",
+        "mano_fields": [
+            "mano_global_orient",
+            "mano_transl",
+            "mano_pose",
+            "mano_betas",
+            "mano_v_template",
+            "mano_use_pca",
+            "mano_num_pca_comps",
+            "mano_flat_hand_mean",
+            "mano_pose_repr",
+        ],
+        "object_state_fields": [
+            "obj_repr",
+            "obj_points_canonical",
+            "obj_normals_canonical",
+            "obj_point_id",
+            "obj_root_pose_world",
+            "obj_part_id",
+            "obj_articulation",
+        ],
         "fields": [
             "schema_name",
             "schema_version",
+            "dataset_id",
+            "dataset_name",
             "seq_id",
             "side",
             "raw_frame_id",
@@ -299,8 +406,24 @@ def _write_meta(
             "hand_points",
             "hand_normals",
             "hand_to_obj_min_dist",
-            "obj_candidate_mask_5cm",
             "coordinate_frame",
+            "hand_root_pose",
+            "obj_repr",
+            "obj_points_canonical",
+            "obj_normals_canonical",
+            "obj_point_id",
+            "obj_root_pose_world",
+            "obj_part_id",
+            "obj_articulation",
+            "mano_global_orient",
+            "mano_transl",
+            "mano_pose",
+            "mano_betas",
+            "mano_v_template",
+            "mano_use_pca",
+            "mano_num_pca_comps",
+            "mano_flat_hand_mean",
+            "mano_pose_repr",
         ],
         "stats": stats,
     }
@@ -321,7 +444,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
     parser.add_argument("--frame-batch-size", type=int, default=1)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--mirror-left-to-right", action="store_true")
     parser.add_argument("--save-compressed", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument(
@@ -366,7 +488,6 @@ def main() -> None:
                 candidate_threshold=args.candidate_threshold,
                 frame_batch_size=args.frame_batch_size,
                 device=device,
-                mirror_left_to_right=args.mirror_left_to_right,
                 coordinate_frame=args.coordinate_frame,
             )
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -377,12 +498,7 @@ def main() -> None:
             num_frames = int(stage3["raw_frame_id"].shape[0])
             stats["written"] += 1
             stats["frames"] += num_frames
-            candidate_counts = stage3["obj_candidate_mask_5cm"].sum(axis=1)
-            print(
-                f"[stage3] wrote {output_path} frames={num_frames} "
-                f"candidate[min/median/max]="
-                f"{int(candidate_counts.min())}/{int(np.median(candidate_counts))}/{int(candidate_counts.max())}"
-            )
+            print(f"[stage3] wrote {output_path} frames={num_frames} clean_hand_min_dist=cached")
         except Exception as exc:
             stats["failed"] += 1
             print(f"[stage3] failed {source_path}: {exc}")

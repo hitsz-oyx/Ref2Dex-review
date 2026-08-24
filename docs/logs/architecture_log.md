@@ -3,7 +3,7 @@
 - scope: root
 - last_updated: 2026-08-23
 - last_verified: 2026-08-23
-- related: [接手记忆](memory_log.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
+- related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
 
 ## 1. 研究目标与总体架构
 

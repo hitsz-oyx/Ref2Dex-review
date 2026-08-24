@@ -209,9 +209,14 @@ class BaseRunner:
     def run(self) -> dict[str, float]:
         if self.mode == "train":
             return self.learn()
-        # Evaluation defaults to validation.  A command-line entrypoint must
-        # opt into the held-out test split explicitly.
-        metrics = self.evaluate_all()
+        # In eval mode prefer the held-out test split when it is configured;
+        # otherwise fall back to validation.  This keeps CLI checkpoint evals
+        # from silently reporting validation metrics when a test loader bundle
+        # is available.
+        if self._resolve_test_loaders():
+            metrics = self.evaluate_test_all()
+        else:
+            metrics = self.evaluate_all()
         if self.is_primary:
             for key, value in metrics.items():
                 self._log_line(f"{key}: {value:.6g}")
@@ -220,8 +225,9 @@ class BaseRunner:
     def learn(self) -> dict[str, float]:
         self._require_train_ready()
         # Profiler 只在 train 模式启动；用 try/finally 保证异常也能 stop。
-        if self.performance is not None:
-            self.performance.start()
+        performance = getattr(self, "performance", None)
+        if performance is not None:
+            performance.start()
         try:
             return self._learn_impl()
         except BaseException:
@@ -232,8 +238,8 @@ class BaseRunner:
                 self._log_line("Training failed:\n" + traceback.format_exc())
             raise
         finally:
-            if self.performance is not None:
-                self.performance.stop()
+            if performance is not None:
+                performance.stop()
 
     def _learn_impl(self) -> dict[str, float]:
         self._require_train_ready()
@@ -330,8 +336,9 @@ class BaseRunner:
             # 把每步 data_wait 数据喂给 monitor；轻量模式只在每 log_every_steps
             # 返回一次 ``perf/*`` 指标，profile 模式则同步推进 profiler.step()。
             performance_metrics: dict[str, float] | None = None
-            if self.performance is not None:
-                performance_metrics = self.performance.observe_step(
+            performance = getattr(self, "performance", None)
+            if performance is not None:
+                performance_metrics = performance.observe_step(
                     global_step=self.global_step,
                     batch_size=batch_size,
                     data_wait_seconds=data_wait_seconds,
@@ -931,9 +938,10 @@ class BaseRunner:
         其它场景（eval 模式、子类未走 ``_setup_train`` 等）退化为
         ``nullcontext()``，对正常路径无开销。
         """
-        if self.performance is None:
+        performance = getattr(self, "performance", None)
+        if performance is None:
             return nullcontext()
-        return self.performance.section(name)
+        return performance.section(name)
 
     def select_eval_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         """Return the evaluation subset sent to W&B; JSONL always keeps all metrics."""
@@ -944,7 +952,16 @@ class BaseRunner:
         if self.jsonl is not None:
             self.jsonl.write(payload)
         if self.wandb_run is not None:
-            is_evaluation = any(key.startswith(("val/", "test/")) for key in metrics)
+            # Match every metric that names a validation/test set, not just
+            # the historical ``val/`` / ``test/`` prefixes. v2 runners use
+            # ``val_clean/`` and ``val_perturbed/``; downstream code that
+            # filters by prefix (``val*/`` or ``test*/``) must keep working
+            # even when a new split name (e.g. ``val_smoke/``) is added.
+            eval_prefixes = ("val", "test")
+            is_evaluation = any(
+                any(key.startswith(prefix) and key[len(prefix):len(prefix) + 1] in ("/", "_") for prefix in eval_prefixes)
+                for key in metrics
+            )
             self.wandb_run.log(
                 self.select_eval_metrics(metrics) if is_evaluation else metrics,
                 step=self.global_step,
@@ -970,7 +987,9 @@ class BaseRunner:
             "job_type": self.cfg.wandb.job_type,
             "dir": str(self.output_dir),
             "config": to_jsonable(self.cfg.to_dict()),
-            "settings": wandb.Settings(init_timeout=120),
+            "settings": wandb.Settings(
+                init_timeout=int(getattr(self.cfg.wandb, "init_timeout", 600))
+            ),
         }
         if self.cfg.wandb.mode is not None:
             init_kwargs["mode"] = self.cfg.wandb.mode
@@ -1069,9 +1088,12 @@ class BaseRunner:
         ``train.log``; no log directories are pre-created.
         """
         print(message)
-        if self.mode != "train" or not self.is_primary:
+        if getattr(self, "mode", "train") != "train" or not getattr(self, "is_primary", False):
             return
-        log_path = self.output_dir / "train.log"
+        output_dir = getattr(self, "output_dir", None)
+        if output_dir is None:
+            return
+        log_path = Path(output_dir) / "train.log"
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(f"{message}\n")
 

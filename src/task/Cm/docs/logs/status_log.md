@@ -3,7 +3,7 @@
 - scope: task:Cm
 - last_updated: 2026-08-24
 - last_verified: 2026-08-24
-- related: [架构记录](architecture_log.md)、[接手记忆](memory_log.md)、[实验记录](experiment_log.md)、[训练结果对比](../../results/object_v2_training_comparison.md)
+- related: [架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[训练结果对比](../../results/object_v2_training_comparison.md)
 
 ## 当前状态
 

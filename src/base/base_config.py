@@ -176,6 +176,7 @@ class TaskConfig(BaseConfig):
         mode = "offline"
         job_type = "train"
         log_model = False
+        init_timeout = 600
 
 
 class ConfigNode(BaseConfig):

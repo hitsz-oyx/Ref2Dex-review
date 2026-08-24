@@ -836,12 +836,36 @@ class GRABRawAdapter:
         )
 
         min_per_frame = hand_to_obj_dist.min(axis=1)
+
+        # ---- MANO parameters (for stage 2/3 cross-dataset storage) ----
+        # Persist raw pose / orient / transl and the per-subject v_template so
+        # the train side can re-run MANO forward deterministically without
+        # depending on which hand_params were re-fitted downstream.
+        v_template = None
+        if op.exists(vtemp_path):
+            v_template = trimesh.load(vtemp_path, process=False).vertices.astype(np.float32)
+        betas_np = hand_params.get("betas", None)
+        if betas_np is None:
+            betas_out = np.zeros((T, 10), dtype=np.float32)
+        else:
+            betas_out = np.asarray(betas_np, dtype=np.float32)
+            if betas_out.ndim == 1:
+                betas_out = np.broadcast_to(betas_out, (T, betas_out.shape[0])).astype(np.float32).copy()
+        mano_payload = {
+            "mano_global_orient": np.asarray(hand_params_sel["global_orient"], dtype=np.float32).copy(),
+            "mano_transl": np.asarray(hand_params_sel["transl"], dtype=np.float32).copy(),
+            "mano_pose": np.asarray(hand_params_sel["hand_pose"], dtype=np.float32).copy(),
+            "mano_betas": betas_out,
+            "mano_v_template": v_template,
+        }
+
         return {
             "points": face_pts,
             "normals": normals,
             "to_obj_nn_id": hand_to_obj_nn_id,
             "min_dist_to_obj": min_per_frame.astype(np.float32),
             "root_pose": hand_root_pose,
+            "mano": mano_payload,
         }
 
     def process_sequence(self, seq_path: str) -> dict:
@@ -883,6 +907,18 @@ class GRABRawAdapter:
         action_name = op.basename(seq_path).replace(".npz", "")
         seq_id = f"{subj_id}/{action_name}"
 
+        # ---- MANO config (per docs/指导.md cross-dataset compatibility) ----
+        # GRAB is fixed: PCA24 + flat_hand_mean=True + per-subject v_template.
+        # We still emit the descriptive fields so the stage 3 schema is
+        # dataset-agnostic and the train-time MANO loader can dispatch on
+        # them.
+        mano_config = {
+            "mano_use_pca": True,
+            "mano_num_pca_comps": 24,
+            "mano_flat_hand_mean": True,
+            "mano_pose_repr": "pca",
+        }
+
         output = {
             "seq_id": seq_id,
             "dataset_name": "grab",
@@ -892,6 +928,9 @@ class GRABRawAdapter:
             "raw_frame_id": frame_ids.astype(np.int32),
             "obj_points_world": obj_points,
             "obj_normals_world": obj_normals,
+            "obj_repr": "rigid_canonical",
+            "obj_points_canonical": obj_cache["points"].astype(np.float32),
+            "obj_normals_canonical": obj_cache["normals"].astype(np.float32),
             "obj_point_id": obj_cache["point_id"],
             "obj_root_pose": obj_root_pose,
             "right_hand_points_world": right_data["points"],
@@ -915,4 +954,15 @@ class GRABRawAdapter:
             output["right_hand_root_pose"] = right_data["root_pose"]
         if "root_pose" in left_data:
             output["left_hand_root_pose"] = left_data["root_pose"]
+        # Per-hand MANO parameters (raw pose/orient/transl + subject v_template
+        # + configuration). Stage 2 will forward these to the Stage 3 npz so
+        # we can re-run MANO forward on the train side for cross-dataset
+        # reconstruction and hand PCA perturbation.
+        for hand_side, hand_data in (("right", right_data), ("left", left_data)):
+            if "mano" in hand_data:
+                for key, value in hand_data["mano"].items():
+                    output[f"{hand_side}_{key}"] = value
+        for key, value in mano_config.items():
+            output[f"right_{key}"] = value
+            output[f"left_{key}"] = value
         return output

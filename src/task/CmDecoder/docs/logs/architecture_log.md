@@ -3,7 +3,7 @@
 - scope: task:CmDecoder
 - last_updated: 2026-08-23
 - last_verified: 2026-08-23
-- related: [当前状态](status_log.md), [实验](experiment_log.md), [接手记忆](memory_log.md)
+- related: [当前状态](status_log.md), [实验](experiment_log.md), [接手记忆](repo_memory.md)
 
 ## 数据与坐标
 

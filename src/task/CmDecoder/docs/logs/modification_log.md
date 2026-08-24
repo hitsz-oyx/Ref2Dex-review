@@ -1,5 +1,22 @@
 # CmDecoder 修改记录
 
+## 2026-08-24 — 拆分 CmDecoder 仓库记忆与机器记忆
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 全局文档规范联动
+
+**文件**
+
+- `repo_memory.md` — 由旧 `memory_log.md` 和 `repo_notes_log.md` 提炼可迁移的 HRDexDB 入口、cache 版本和 checkpoint 绑定事实。
+- `machine_memory.md` — 保存当前服务器的 HRDexDB 绝对路径和本机资产计数，并由 Git 忽略。
+- `status_log.md`、`architecture_log.md` — 更新接手记忆链接。
+- `repo_notes_log.md` — 删除。
+
+**改动原因**
+
+遵循新的递归 memory 规范，使 CmDecoder 的公共数据合同使用仓库相对路径。
+
 ## 2026-08-24 — 修正 GRAB 重定向起始窗口并记录有效窗口诊断
 
 - branch: working tree

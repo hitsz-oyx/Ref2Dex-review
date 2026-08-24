@@ -1,0 +1,33 @@
+_base_: src/task/correspondence_ptv3_v2/configs/full_grab_50ep_hand_heatmap_stage3data.yaml
+
+name: correspondence_ptv3_v2_full_grab_geometry_5mm_exclusive_ddp2
+
+data:
+  train_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/processed/stage3/grab_initonly_4096_v21
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 4
+
+meta:
+  use_mano_reconstruction: true
+  apply_hand_perturb: true
+  exclusive_hand_object_perturb: true
+  hand_perturb_prob: 0.8
+  # Existing GRAB descriptor targets 9 mm at scale 1.0.
+  hand_geometry_noise_scale: 0.5555555556
+  hand_geometry_noise_required: true
+  apply_obj_perturb: true
+  obj_perturb_prob: 1.0
+  runtime_resample_object: true
+
+train:
+  distributed:
+    enable: true
+
+wandb:
+  enable: true
+  mode: online
+  init_timeout: 600
+  tags: [correspondence, ptv3, v2, full-grab, geometry-5mm, exclusive-perturb, ddp2]

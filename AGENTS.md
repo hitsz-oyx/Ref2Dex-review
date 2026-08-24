@@ -28,26 +28,28 @@
 
 ## 2. AI 维护的 6 类递归文档
 
-AI 在仓库中维护 6 类文档，统一使用**英文名 + `_log` 后缀**，全部存放在就近作用域的 `docs/logs/` 子目录中：
+AI 在仓库中维护 6 类语义文档，全部存放在就近作用域的 `docs/logs/` 子目录中。除 memory 外使用**英文名 + `_log` 后缀**；memory 拆成仓库记忆和机器记忆两个递归载体：
 
 | 文档 | 文件名 | 内容定位 |
 | --- | --- | --- |
 | **status**（当前状态） | `status_log.md` | 当前阶段、当前指导版本、最近可靠结论、进行中的任务、阻塞点和下一步；是可覆盖更新的状态快照。 |
-| **memory**（接手记忆） | `memory_log.md` | 环境、解释器、依赖、数据/缓存路径、命名约定、历史遗留、已知坑和兼容性注意事项；按带时间戳的事实条目追加。 |
+| **memory**（接手记忆） | `repo_memory.md` / `machine_memory.md` | 前者记录可随仓库迁移的约定、相对路径、历史遗留和兼容性事实并纳入 Git；后者记录本机解释器、GPU、绝对路径、挂载点、代理和机器特有坑，并由 Git 忽略。 |
 | **architecture**（完整架构事实源） | `architecture_log.md` | 当前有效的完整技术架构：Pipeline、数据流、字段、张量规格、坐标系、模型接口、loss、评估指标和可视化约定。 |
 | **experiment**（实验文档） | `experiment_log.md` | 实验假设、改动、定量结果、决策、下一步。 |
 | **decision**（AI 决策） | `decision_log.md` | 需求已明确情况下的非平凡自主选择。 |
 | **modification**（AI 修改记录） | `modification_log.md` | 每次 AI 实际修改的代码、配置、文档（包括对其他 doc 自身的修改）。 |
 
-6 类 doc 自身**不维护 changelog**。对 doc 自身的修改也统一写到 `modification_log.md` 中；`memory_log.md` 的历史条目是长期事实记忆，不替代修改日志。
+6 类 doc 自身**不维护 changelog**。对 doc 自身的修改也统一写到 `modification_log.md` 中；两种 memory 的历史条目是长期事实记忆，不替代修改日志。`repo_notes_log.md` 已废弃，禁止重新创建；其中仍有效的事实必须按机器相关性拆入两种 memory。
 
 ### 2.1 路径与作用域
 
-6 类 doc 均遵循"作用域原则"：Task 级按需维护，根级仅维护具有全仓库意义的内容；其中**根级 `experiment_log.md`、`status_log.md`、`memory_log.md` 可按需创建，不要求每个仓库初始化时建立**。
+6 类 doc 均遵循"作用域原则"：Task 级按需维护，根级仅维护具有全仓库意义的内容；其中**根级 `experiment_log.md`、`status_log.md`、`repo_memory.md`、`machine_memory.md` 可按需创建，不要求每个仓库初始化时建立**。
 
 ```text
 任务级: src/task/<Task>/docs/logs/<name>_log.md
+        src/task/<Task>/docs/logs/{repo_memory,machine_memory}.md
 根级:   docs/logs/<name>_log.md
+        docs/logs/{repo_memory,machine_memory}.md
 ```
 
 - 根级只放"跨 task 影响 / 全仓库级"的事实。
@@ -117,24 +119,33 @@ src/task/<Task>/docs/
   - 下一步:
   - 证据与相关文档:
   ```
-- **`memory_log.md`**：记录后续接手者需要知道、但不能直接从代码结构中可靠推出的长期事实，包括运行环境、解释器、依赖、数据/缓存根路径、命名约定、历史遗留、已知坑、兼容性和已验证/已废弃的路径。每条记录带日期，必要时带 `last_verified`、commit 或来源。它不是实验日志、决策日志或修改日志。
+- **`repo_memory.md`**：记录后续接手者需要知道、但不能直接从代码结构中可靠推出，且在不同机器上仍成立的长期事实，包括仓库相对数据/cache 入口、命名约定、历史遗留、已知坑、兼容性和已验证/已废弃的路径。能用仓库相对路径表达的内容不得改写为某台机器的绝对路径。每条记录带日期，必要时带 `last_verified`、commit 或来源。它纳入版本管理，不是实验日志、决策日志或修改日志。
 
   ```markdown
-  ## 运行环境  # 没有相关信息时可省略
-
-  - Python:
-  - 关键依赖:
-  - CUDA / GPU:
-  - 数据 / 缓存根路径:
-  - 必须使用的命令入口:
-
   ## YYYY-MM-DD — <事实摘要>
 
-  - category: environment / path / convention / legacy / pitfall
+  - category: path / convention / legacy / pitfall
   - status: active / stale / deprecated
   - last_verified: YYYY-MM-DD
   - fact:
   - source / anchor:
+  ```
+- **`machine_memory.md`**：记录只对当前机器成立的解释器绝对路径、依赖环境、CUDA/GPU、NAS/磁盘挂载点、仓库软链目标、代理设置和机器特有故障。该文件与 `repo_memory.md` 使用同一根级/Task 级递归作用域，但必须由 `.gitignore` 忽略，不得提交，也不得成为代码或配置的唯一事实源。没有机器特有事实时不创建空文件。
+
+  ```markdown
+  # <Task> 本机记忆
+
+  - scope: root / task:<Task>
+  - last_updated: YYYY-MM-DD
+  - last_verified: YYYY-MM-DD
+  - git: ignored
+
+  ## 运行环境或本机路径
+
+  - Python:
+  - CUDA / GPU:
+  - 本机数据 / cache 映射:
+  - 代理 / 服务限制:
   ```
 - **`architecture_log.md`**：当前架构的独立、完整事实源，不依赖其他架构总文档。章节顺序可由 Task 自定，但至少覆盖 Pipeline 和阶段输入输出、数据字段与可选性、关键张量的 shape/dtype/单位/坐标系/时间语义/mask、采样和坐标变换、模型与监督/loss、训练/验证/测试边界、评估指标与聚合方式、可视化入口与限制、必须保持的 scientific/data/runtime invariant。
 
@@ -186,12 +197,12 @@ src/task/<Task>/docs/
   ...
   ```
 
-> 信息归类边界：当前进行到哪一步放 `status_log.md`；环境、路径和历史遗留放 `memory_log.md`；Pipeline、schema、张量和指标放 `architecture_log.md`；科研证据放 `experiment_log.md`；自主选择理由放 `decision_log.md`；实际改动放 `modification_log.md`。同一事实只保留一个详细来源，其他文档只建立链接。
+> 信息归类边界：当前进行到哪一步放 `status_log.md`；跨机器成立的相对路径、约定和历史遗留放 `repo_memory.md`；仅本机成立的绝对路径、环境和挂载映射放 `machine_memory.md`；Pipeline、schema、张量和指标放 `architecture_log.md`；科研证据放 `experiment_log.md`；自主选择理由放 `decision_log.md`；实际改动放 `modification_log.md`。同一事实只保留一个详细来源，其他文档只建立链接。
 
 #### 2.2.1 时间戳与更新方式
 
 - `status_log.md` 的 `last_updated` 在状态变化时覆盖更新；不要求为每个微小代码编辑追加历史记录。
-- `memory_log.md` 的事实条目至少带日期，环境或路径尽量带 `last_verified`；过时条目标记为 `stale` 或 `deprecated`。
+- 两种 memory 的事实条目至少带日期，环境或路径尽量带 `last_verified`；过时条目标记为 `stale` 或 `deprecated`。
 - `architecture_log.md` 的 `last_verified` 在架构变化或重新核验后更新；历史变更由 `modification_log.md` 追踪。
 - 日期统一使用 `YYYY-MM-DD`；需要区分运行先后时使用 `YYYY-MM-DD HH:MM TZ`。
 
@@ -206,7 +217,7 @@ src/task/<Task>/research/
     └── ...
 ```
 
-6 类 log doc 与 `research/<实验名>/` 下的诊断脚本需要纳入版本管理，不 ignore。
+6 类语义文档中，`repo_memory.md` 和五类 `*_log.md` 以及 `research/<实验名>/` 下的诊断脚本需要纳入版本管理；`machine_memory.md` 是唯一例外，必须 ignore。
 
 实验产物统一放到仓库根目录 `output/` 下：
 
@@ -231,7 +242,8 @@ output/
 ```text
 docs/logs/architecture_log.md     # 仓库级完整架构事实源 / Pipeline / 数据流
 docs/logs/status_log.md           # 仓库级当前状态快照
-docs/logs/memory_log.md           # 仓库级环境 / 路径 / 约定 / 历史遗留
+docs/logs/repo_memory.md          # 仓库级可迁移约定 / 相对路径 / 历史遗留（纳入 Git）
+docs/logs/machine_memory.md       # 本机环境 / 绝对路径 / 挂载映射（Git 忽略，按需）
 docs/logs/experiment_log.md       # 跨 task / 全局科研实验摘要（按需）
 docs/logs/decision_log.md         # 跨 task / 全局 AI 自主决策
 docs/logs/modification_log.md     # 跨 task / 全局 AI 修改记录
@@ -242,7 +254,7 @@ docs/logs/modification_log.md     # 跨 task / 全局 AI 修改记录
 - `status_log.md`：当前研究阶段、进行中的工作、阻塞点和下一步；
 - `architecture_log.md`：整体研究目标、主要目录、共享数据和流程、主要 Task、各子任务文档索引及全局已确认的技术事实。
 
-仓库级 `memory_log.md` 只记录环境、路径、约定和历史遗留，不承担当前状态或架构总览。
+仓库级 `repo_memory.md` 只记录跨机器成立的路径约定和历史遗留，不承担当前状态或架构总览；若本机 `machine_memory.md` 存在，接手时还应读取其中的环境与挂载映射，但不得将其视为仓库公共事实。
 
 ### 3.2 Task 级入口
 
@@ -250,17 +262,19 @@ docs/logs/modification_log.md     # 跨 task / 全局 AI 修改记录
 
 ```text
 src/task/<Task>/docs/logs/status_log.md           # 任务级当前状态快照
-src/task/<Task>/docs/logs/memory_log.md           # 任务级环境 / 路径 / 约定 / 历史遗留
+src/task/<Task>/docs/logs/repo_memory.md          # 任务级可迁移约定 / 相对路径 / 历史遗留
+src/task/<Task>/docs/logs/machine_memory.md       # 任务级本机环境 / 绝对路径（Git 忽略，按需）
 src/task/<Task>/docs/logs/architecture_log.md     # 任务级 Pipeline / 架构
 src/task/<Task>/docs/logs/experiment_log.md       # 任务级实验文档
 src/task/<Task>/docs/logs/decision_log.md         # 任务级 AI 自主决策
 src/task/<Task>/docs/logs/modification_log.md     # 任务级 AI 修改记录
 ```
 
-阅读顺序上，**任务级 `status_log.md` 是 Task 当前入口**，`memory_log.md` 是 Task 接手记忆入口，`architecture_log.md` 是 Task 架构事实入口。三者分别覆盖：
+阅读顺序上，**任务级 `status_log.md` 是 Task 当前入口**，`repo_memory.md` 是 Task 公共接手记忆入口，`machine_memory.md` 是可选的本机接手记忆入口，`architecture_log.md` 是 Task 架构事实入口。它们分别覆盖：
 
 - `status_log.md`：当前指导版本、当前阶段、最近可靠结论、正在运行或等待的工作、阻塞点和下一步；
-- `memory_log.md`：任务特有的解释器、依赖、数据/缓存路径、命名约定、历史遗留和已知坑；
+- `repo_memory.md`：Task 特有、跨机器成立的相对数据/cache 入口、命名约定、历史遗留和已知坑；
+- `machine_memory.md`：Task 在当前机器上的解释器、依赖环境、绝对路径、GPU 和服务限制；
 - `architecture_log.md`：任务完整 Pipeline、数据字段、张量规格、模型/评估/可视化接口和不变量。
 
 任务级 `status_log.md` **不记录**：
@@ -268,7 +282,7 @@ src/task/<Task>/docs/logs/modification_log.md     # 任务级 AI 修改记录
 - 实验过程、定量结果、假设、对比、ablation → 属于 `experiment_log.md`；
 - 跨实验或跨实现的设计选择理由 → 属于 `decision_log.md`；
 - 每次具体改动了什么文件 / 哪一步做到哪 → 属于 `modification_log.md`；
-- 环境、路径、历史遗留和已知坑 → 属于 `memory_log.md`。
+- 可迁移的相对路径、历史遗留和已知坑 → 属于 `repo_memory.md`；本机环境和绝对路径 → 属于 `machine_memory.md`。
 
 任务级 `architecture_log.md` 是该 task 自己的完整 Pipeline / 架构 / 数据流事实源，不依赖 `docs/架构.md`。若存在同名或旧版辅助文档，必须避免把架构事实只写在那里。
 
@@ -286,7 +300,7 @@ src/task/<Task>/docs/
 其他专题文档
 ```
 
-并由该 Task 的 `status_log.md` 建立到 `architecture_log.md`、`memory_log.md`、`experiment_log.md`、`decision_log.md`、`modification_log.md` 和指导文档的索引。
+并由该 Task 的 `status_log.md` 建立到 `architecture_log.md`、`repo_memory.md`、`experiment_log.md`、`decision_log.md`、`modification_log.md` 和指导文档的索引。`machine_memory.md` 因被忽略而不要求建立可提交链接，读取规则由本规范统一规定。
 
 ---
 
@@ -299,13 +313,17 @@ docs/logs/status_log.md
         ↓
 docs/logs/architecture_log.md
         ↓
-docs/logs/memory_log.md
+docs/logs/repo_memory.md
+        ↓
+docs/logs/machine_memory.md（存在时）
         ↓
 src/task/<Task>/docs/logs/status_log.md
         ↓
 src/task/<Task>/docs/logs/architecture_log.md
         ↓
-src/task/<Task>/docs/logs/memory_log.md
+src/task/<Task>/docs/logs/repo_memory.md
+        ↓
+src/task/<Task>/docs/logs/machine_memory.md（存在时）
         ↓
 按任务类型判断是否需要主动读取其他 log（见 §4.1）
         ↓
@@ -328,9 +346,14 @@ src/task/<Task>/docs/logs/memory_log.md
   - 默认读取。
   - 用于快速获得当前阶段、进行中的工作、阻塞点和下一步；它不是历史事实源。
 
-- **`memory_log.md`**
+- **`repo_memory.md`**
   - 默认读取。
-  - 用于获取环境、路径、依赖、命名约定、历史遗留和已知坑。
+  - 用于获取跨机器成立的相对路径、命名约定、历史遗留和已知坑。
+
+- **`machine_memory.md`**
+  - 文件存在时默认读取；不存在时直接跳过。
+  - 用于获取当前机器的解释器、依赖环境、GPU、绝对路径、挂载映射、代理和机器特有坑。
+  - 内容不得写入提交，也不得反向固化为仓库公共配置。
 
 - **`architecture_log.md`**
   - 涉及代码结构、Pipeline、数据流、模型结构、模块接口、跨模块行为时必须读取。
@@ -357,7 +380,7 @@ src/task/<Task>/docs/logs/memory_log.md
 
 ### 4.2 历史 log 的读取粒度
 
-对于 append-only 的历史 log（`memory_log.md` / `experiment_log.md` / `decision_log.md` / `modification_log.md`）：
+对于 append-only 的历史文档（`repo_memory.md` / `machine_memory.md` / `experiment_log.md` / `decision_log.md` / `modification_log.md`）：
 
 - 默认先读取 `status_log.md` 顶部的当前状态，再读取历史日志顶部的索引或当前状态摘要；
 - 再通过关键词、实验编号、日期、模块名定位相关历史；
@@ -374,7 +397,8 @@ src/task/<Task>/docs/logs/memory_log.md
 - 第一次发生非平凡自主决策 → 创建 `decision_log.md`；
 - AI 第一次实际修改该 Task → 创建 `modification_log.md`；
 - Task 已形成稳定 Pipeline → 创建或补充完整的 `architecture_log.md`；
-- 出现值得后续复用的环境、路径、约定或历史遗留 → 创建或补充 `memory_log.md`；
+- 出现跨机器成立的相对路径、约定或历史遗留 → 创建或补充 `repo_memory.md`；
+- 出现当前机器特有的解释器、GPU、绝对路径、挂载、代理或服务问题 → 创建或补充被忽略的 `machine_memory.md`；
 - Task 或仓库出现需要接手的阶段、阻塞或下一步 → 创建或补充 `status_log.md`。
 
 禁止为了形式完整，在没有实际内容时批量创建大量空 log。
@@ -392,12 +416,16 @@ src/task/<Task>/docs/logs/memory_log.md
 仓库级当前阶段 / 阻塞 / 下一步
 -> docs/logs/status_log.md
 
-仓库级细枝末节 / 环境 / 路径 / 约定 / 历史遗留
--> docs/logs/memory_log.md
+仓库级可迁移相对路径 / 约定 / 历史遗留
+-> docs/logs/repo_memory.md
 
-Task 入口 / 状态 / 该 task 的环境差异
+仓库级本机环境 / 绝对路径 / 挂载 / 代理
+-> docs/logs/machine_memory.md（Git 忽略）
+
+Task 入口 / 状态 / 该 task 的记忆差异
 -> src/task/<Task>/docs/logs/status_log.md（状态）
--> src/task/<Task>/docs/logs/memory_log.md（环境和记忆）
+-> src/task/<Task>/docs/logs/repo_memory.md（可迁移记忆）
+-> src/task/<Task>/docs/logs/machine_memory.md（本机记忆，Git 忽略）
 
 Task 自身 Pipeline / 架构 / 数据流
 -> src/task/<Task>/docs/logs/architecture_log.md
@@ -681,7 +709,7 @@ AGENTS.md
 .agents/skills/**/SKILL.md
 src/task/<Task>/docs/约束.md
 src/task/<Task>/docs/指导/V*.md
-6 类 log doc（status / memory / architecture / experiment / decision / modification）
+受版本管理的 6 类文档（status / repo memory / architecture / experiment / decision / modification；不含被忽略的 machine memory）
 ```
 
 不需要为了一次提交把它们单独排除。AI 修改这些文件后，按 10.4 确认范围，然后照常 `git add` + `git commit`。

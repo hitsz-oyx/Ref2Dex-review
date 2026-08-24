@@ -73,6 +73,61 @@ class Config(TaskConfig):
         obj_perturb_prob: float = 1.0
         apply_obj_perturb: bool = True
         val_obj_perturb_prob: float = 1.0
+        # Evaluation-only override for the perturbed validation stream. Keep
+        # true for the historical object-only protocol; hand-only evaluation
+        # sets this false without changing clean validation semantics.
+        val_apply_obj_perturb: bool = True
+
+        # v2.1: hand-side MANO reconstruction on the GPU.  GRAB carries
+        # PCA24 pose coefficients; ARCTIC carries axis-angle45.  The
+        # dataset pads them for collation and the runner groups/slices by
+        # the recorded mano_* descriptor before smplx.MANO forward.
+        mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
+        use_mano_reconstruction: bool = True
+        apply_hand_perturb: bool = False
+        # When enabled, each sample is assigned to either the hand-noise path
+        # or the object-noise path with a stable per-frame gate.  This avoids
+        # presenting compounded hand+object errors during training.
+        exclusive_hand_object_perturb: bool = False
+        # Fix #5 (docs/指导.md): decouple PCA coefficients from axis-angle
+        # by giving each parameterisation its own (scale, clip) pair.
+        # The PCA path additionally supports per-dim std from the training
+        # set via ``hand_pca_train_std_per_dim`` (length 24, GRAB only);
+        # when absent we use the scalar hand_pca_std directly and ignore
+        # hand_pca_noise_scale. hand_pca_noise_clip always clips the standard
+        # normal sample before scaling, so its unit is effective std multiples.
+        hand_perturb_prob: float = 0.8
+        hand_pca_std: float = 0.5
+        hand_pca_noise_scale: float = 0.10
+        hand_pca_noise_clip: float = 3.0
+        hand_axis_angle_std_rad: float = 0.05
+        hand_axis_angle_clip_rad: float = 0.15
+        hand_pca_train_std_per_dim: tuple[float, ...] | None = None
+        # Dataset/descriptor-specific, geometry-calibrated noise profiles.
+        # Keys are normalized dataset IDs (grab/arctic/contactpose), values
+        # are JSON files emitted by tools/calibrate_mano_geometry_noise.py.
+        hand_geometry_calibration_paths: dict[str, str] = {}
+        hand_geometry_noise_scale: float = 1.0
+        hand_geometry_noise_required: bool = False
+        # Fix #6: number of FPS-sampled hand proxy face indices. The
+        # indices are computed once on the canonical MANO face centres
+        # and shared by the whole process; the runtime just does an
+        # ``index_select`` on the hand input.
+        hand_proxy_face_count: int = 256
+        # Optional fixed proxy indices into the stored 1538 hand points.
+        # This decouples runtime object resampling from MANO reconstruction
+        # and MANO model assets for clean-geometry datasets such as OakInk.
+        # When use_mano_reconstruction=False and runtime_resample_object=True,
+        # this path is required and validated fail-fast by the runner.
+        stored_hand_proxy_indices_path: str | None = None
+        runtime_resample_object: bool = True
+        runtime_near_pool_points: int = 1024
+        runtime_near_obj_points: int = 384
+        # Fix #7: block size for the 4096x256 cdist used to score every
+        # pool point against the hand proxy. 512 keeps the peak
+        # distance-matrix memory at B x 512 x 256 floats (≈8 MB at
+        # B=16).
+        runtime_cdist_chunk_size: int = 512
 
         loss_cross_edge_weight: float = 1.0
         # v2.2 hand-root tuning: keep the auxiliary branch as a weak prior so
@@ -89,9 +144,16 @@ class Config(TaskConfig):
         class_path = "src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2"
 
     class data(TaskConfig.data):
+        # Optional multi-domain input. The task loader creates one dataset per
+        # entry and applies an equal-domain sampler instead of frame-count
+        # weighting the concatenated directory.
+        domain_paths: list[dict[str, str]] = []
         group_val_by_sequence = True
         sequence_locality_shuffle = True
         blacklist_path = None
+        # Optional persistent file/frame-count index. Keep it outside the
+        # dataset tree so NAS data stays read-only.
+        cache_index_path = None
 
     class train(TaskConfig.train):
         amp = False

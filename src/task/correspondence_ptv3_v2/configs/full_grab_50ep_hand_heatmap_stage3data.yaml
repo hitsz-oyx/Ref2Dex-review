@@ -1,0 +1,64 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_full_grab_50ep_hand_heatmap_stage3data
+
+data:
+  train_path: /mnt/ugreen_nas/storage/oyx_storage/ref2dex_stage3/GRAB/initonly_4096_ds4_v21
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 4
+  group_val_by_sequence: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 4
+
+meta:
+  use_mano_reconstruction: true
+  apply_hand_perturb: true
+  # Geometry-calibrated PCA24 profiles target 9 mm median wrist-aligned
+  # MANO vertex RMS. hand_pca_std remains only as an explicit fallback for
+  # configs that do not enable required profile dispatch.
+  hand_pca_std: 0.5
+  # Fix #2 (docs/指导.md): calibration JSONs ship with the repo under
+  # ``src/task/correspondence_ptv3_v2/calibration/`` so training is
+  # reproducible from a fresh clone. Relative paths are resolved against
+  # the repo root by the runner.
+  hand_geometry_calibration_paths:
+    grab: src/task/correspondence_ptv3_v2/calibration/grab_pca24_target_9mm.json
+  hand_geometry_noise_scale: 1.0
+  hand_geometry_noise_required: true
+  mano_model_dir: dataset/arctic/data/body_models/mano
+  runtime_resample_object: true
+  hand_proxy_face_count: 256
+  runtime_near_pool_points: 1024
+  runtime_near_obj_points: 384
+
+train:
+  optimizer: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_ratio: 0.02
+  warmup_steps: 0
+  epochs: 50
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 100
+  diagnostic_every_steps: 100
+  eval_every_epochs: 1
+  save_every_epochs: 5
+  max_to_keep: 4
+  metric_for_best: val_clean/cross_edge_random_qfl
+  lower_is_better: true
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, v2, full-grab, 50ep, hand-heatmap, lambda005, recovery-metrics, stage3-data]

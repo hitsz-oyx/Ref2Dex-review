@@ -44,7 +44,7 @@ assets/
 !/third_party/PointTransformerV3/assets/**
 # 研究/训练产物：output/exp 为训练输出，output/research 为分析诊断产物，均不入库。
 outputs/*
-output/*
+/output/
 docs/修改指导.md
 docs/代码.py
 tmp/**
@@ -53,3 +53,20 @@ tmp/**
 wandb/*
 *.pt
 dataset/*/data
+# Hand-added symlinks to data/raw_data/... (see scripts/setup_grab_data.sh).
+# These point to large per-machine asset trees and must not be committed.
+dataset/GRAB/tools/object_meshes
+dataset/GRAB/tools/object_settings
+dataset/GRAB/tools/subject_meshes
+dataset/GRAB/tools/subject_settings
+# Local-only scratch roots that should never be committed.
+# data/processed_data/stage3 is a symlink farm; data/processed_data/stage4 holds
+# large per-machine processed samples.
+data/processed_data/stage3
+data/processed_data/stage4
+data/processed_data/legacy
+data/processed_data/stage2
+
+# Per-machine recursive memory contains host-specific absolute paths,
+# interpreters, GPU details, mounts and proxy settings. Never commit it.
+**/docs/logs/machine_memory.md

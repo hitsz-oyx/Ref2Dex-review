@@ -3,7 +3,7 @@
 - scope: task:Cm
 - last_updated: 2026-08-23
 - last_verified: 2026-08-23
-- related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](memory_log.md)、[V1.2.1 指导](../指导/V1.2.1.md)
+- related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[V1.2.1 指导](../指导/V1.2.1.md)
 
 ## 当前研究状态
 

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
 import multiprocessing as mp
+import os
+import copy
+import math
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.base import make_file_split_dataloaders
-from src.base.data import make_dataloader_kwargs
+from src.base.data import make_dataloader_kwargs, resolve_data_path
 from src.base.distributed import make_default_eval_sampler, shard_sampler_for_distributed
 from src.task.correspondence_ptv3_v2.sampling import (
     perturb_object_geometry,
@@ -17,6 +21,17 @@ from src.task.correspondence_ptv3_v2.sampling import (
     sample_random_supervision_edges,
     stable_frame_seed,
 )
+from src.task.correspondence_ptv3_v2.hand_noise_profiles import (
+    infer_stage3_dataset_id,
+)
+
+
+# Cross-dataset MANO pose width. GRAB stores PCA24 and ARCTIC stores
+# axis-angle45; the dataset pads everything to this length so PyTorch's
+# default collate can stack the per-frame mano_pose vectors into a
+# single (B, MANO_POSE_MAX_DIM) tensor. The runner slices back to the
+# active representation length per group before calling smplx.MANO.
+MANO_POSE_MAX_DIM = 45
 
 
 class CorrStaticDatasetV2(Dataset):
@@ -29,7 +44,6 @@ class CorrStaticDatasetV2(Dataset):
         "hand_points",
         "hand_normals",
         "hand_to_obj_min_dist",
-        "obj_candidate_mask_5cm",
         "coordinate_frame",
     }
 
@@ -47,12 +61,24 @@ class CorrStaticDatasetV2(Dataset):
         contact_radius: float = 0.02,
         base_seed: int = 42,
         apply_obj_perturb: bool = True,
+        apply_hand_perturb: bool = True,
+        exclusive_hand_object_perturb: bool = False,
+        hand_perturb_prob: float = 0.8,
         obj_rot_std_deg: float = 10.0,
         obj_trans_std: float = 0.01,
         obj_perturb_prob: float = 1.0,
+        runtime_resample_object: bool = True,
+        # Fix #8 (docs/指导.md): opt-in strict schema gate. When True the
+        # dataset refuses to load a Stage 3 root whose npz is below v2.1.0
+        # or missing any required MANO field. When False the legacy v2.0
+        # behaviour is preserved (hand_points are used as-is, no MANO
+        # forward) so old pipelines keep working.
+        use_mano_reconstruction: bool = False,
         blacklist_path: str | None = None,
         eval_sampling_epoch: int | None = None,
         coordinate_frame: str | None = None,
+        dataset_id: str | None = None,
+        cache_index_path: str | Path | None = None,
         **_: Any,
     ) -> None:
         super().__init__()
@@ -74,9 +100,16 @@ class CorrStaticDatasetV2(Dataset):
         self.contact_radius = float(contact_radius)
         self.base_seed = int(base_seed)
         self.apply_obj_perturb = bool(apply_obj_perturb)
+        self.apply_hand_perturb = bool(apply_hand_perturb)
+        self.exclusive_hand_object_perturb = bool(exclusive_hand_object_perturb)
+        self.hand_perturb_prob = float(hand_perturb_prob)
         self.obj_rot_std_deg = float(obj_rot_std_deg)
         self.obj_trans_std = float(obj_trans_std)
         self.obj_perturb_prob = float(obj_perturb_prob)
+        self.runtime_resample_object = bool(runtime_resample_object)
+        self.use_mano_reconstruction = bool(use_mano_reconstruction)
+        self.dataset_id_override = None if dataset_id in {None, ""} else str(dataset_id)
+        self.cache_index_path = None if cache_index_path in {None, ""} else Path(cache_index_path)
         self.eval_sampling_epoch = None if eval_sampling_epoch is None else int(eval_sampling_epoch)
         self._epoch = mp.Value("q", 0, lock=True)
         self._cached_path: Path | None = None
@@ -101,12 +134,19 @@ class CorrStaticDatasetV2(Dataset):
         # Per-NPZ coordinate_frame is the source of truth (not the root
         # meta.json, which is only written once at generation time). If the
         # caller specified an expected frame, every file must agree with it.
+        # MANO fields are required only when the runtime will actually apply
+        # hand perturbation.  ``schema_version`` is an identifier, not a
+        # capability gate: clean legacy Stage 3 geometry remains valid when
+        # the hand-noise path is disabled.
         per_file_frames: set[str] = set()
+        require_mano_fields = bool(use_mano_reconstruction and apply_hand_perturb)
         for path in self.file_paths:
             with np.load(path, allow_pickle=False) as data:
                 missing = self.REQUIRED_FIELDS.difference(data.files)
                 if missing:
                     raise KeyError(f"{path}: missing Stage 3 fields {sorted(missing)}")
+                if require_mano_fields:
+                    self._validate_mano_schema(path, data)
                 frame = _resolve_coordinate_frame_from_npz(
                     data,
                     fallback=self.root_coordinate_frame,
@@ -123,24 +163,70 @@ class CorrStaticDatasetV2(Dataset):
             raise ValueError(
                 f"Inconsistent Stage 3 coordinate_frame across {self.data_root}: {sorted(per_file_frames)}"
             )
-        actual_frame = next(iter(per_file_frames))
-        if coordinate_frame is not None and actual_frame != str(coordinate_frame):
+        self.coordinate_frame = next(iter(per_file_frames))
+        if coordinate_frame is not None and self.coordinate_frame != str(coordinate_frame):
             raise ValueError(
                 f"Stage 3 .npz at {self.data_root} was generated in "
-                f"coordinate_frame={actual_frame!r} but training expects "
+                f"coordinate_frame={self.coordinate_frame!r} but training expects "
                 f"{coordinate_frame!r}. Re-run Stage 3 with "
                 f"--coordinate-frame {coordinate_frame} on the same Stage 2 root."
             )
-        self.coordinate_frame = actual_frame
 
         self._samples: list[tuple[Path, int]] = []
         self.file_sample_ranges: list[tuple[int, int]] = []
-        for path in self.file_paths:
-            with np.load(path, allow_pickle=False) as data:
-                num_frames = int(data["raw_frame_id"].shape[0])
+        frame_counts = self._load_or_build_index(frame_paths=self.file_paths)
+        for path, num_frames in zip(self.file_paths, frame_counts):
             start = len(self._samples)
             self._samples.extend((path, frame_idx) for frame_idx in range(num_frames))
             self.file_sample_ranges.append((start, len(self._samples)))
+
+    def _load_or_build_index(self, *, frame_paths: list[Path]) -> list[int]:
+        """Reuse a validated JSON file/frame-count index across training runs.
+
+        The cache only accelerates dataset construction; sample arrays remain
+        loaded through the existing per-worker NPZ cache, so stale or missing
+        cache entries cannot change training data silently.
+        """
+        if self.cache_index_path is None:
+            return [self._count_frames(path) for path in frame_paths]
+        cache_path = self.cache_index_path
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+            payload = {"version": 1, "files": {}}
+        entries = payload.get("files", {})
+        counts: list[int] = []
+        changed = False
+        for path in frame_paths:
+            key = str(path.resolve())
+            stat = path.stat()
+            item = entries.get(key)
+            valid = (
+                item is not None
+                and int(item.get("size", -1)) == int(stat.st_size)
+                and float(item.get("mtime", -1)) == float(stat.st_mtime)
+            )
+            frames = int(item["frames"]) if valid else self._count_frames(path)
+            counts.append(frames)
+            if not valid:
+                entries[key] = {
+                    "size": int(stat.st_size),
+                    "mtime": float(stat.st_mtime),
+                    "frames": frames,
+                }
+                changed = True
+        if changed:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"version": 1, "files": entries}
+            tmp_path = cache_path.with_suffix(cache_path.suffix + f".tmp.{os.getpid()}")
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=True, separators=(",", ":")), encoding="utf-8")
+            tmp_path.replace(cache_path)
+        return counts
+
+    @staticmethod
+    def _count_frames(path: Path) -> int:
+        with np.load(path, allow_pickle=False) as data:
+            return int(data["raw_frame_id"].shape[0])
 
     @property
     def epoch(self) -> int:
@@ -170,11 +256,44 @@ class CorrStaticDatasetV2(Dataset):
         array = np.asarray(value)
         return str(array.item()) if array.size == 1 else default
 
+    # ------------------------------------------------------------------
+    # Fix #8 (docs/指导.md): strict schema validation when the train path
+    # intends to re-run MANO forward. The Stage 3 .npz must carry every
+    # required MANO field; partial data is a hard error, not a silent
+    # fallback to the legacy hand_points field.
+    # ------------------------------------------------------------------
+    _MANO_REQUIRED_FIELDS: tuple[str, ...] = (
+        "mano_global_orient",
+        "mano_transl",
+        "mano_pose",
+        "mano_betas",
+        "mano_v_template",
+        "mano_use_pca",
+        "mano_num_pca_comps",
+        "mano_flat_hand_mean",
+        "mano_pose_repr",
+    )
+
+    @classmethod
+    def _validate_mano_schema(
+        cls,
+        path: Path,
+        data: Any,
+    ) -> None:
+        missing = [f for f in cls._MANO_REQUIRED_FIELDS if f not in data.files]
+        if missing:
+            raise KeyError(
+                f"{path}: use_mano_reconstruction=True but the Stage 3 npz is missing "
+                f"required MANO fields {missing}. Re-run Stage 3 with the current "
+                "process/common/stage3_corr.py on the same Stage 2 root."
+            )
+
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         path, frame_idx = self._samples[index]
         data = self._load_file(path)
         seq_id = self._scalar_string(data, "seq_id", path.stem)
         side = self._scalar_string(data, "side", "")
+        dataset_id = self.dataset_id_override or infer_stage3_dataset_id(data)
         raw_frame_id = int(np.asarray(data["raw_frame_id"])[frame_idx])
         epoch = self.eval_sampling_epoch if self.eval_sampling_epoch is not None else self.epoch
 
@@ -185,15 +304,27 @@ class CorrStaticDatasetV2(Dataset):
             raw_frame_id=raw_frame_id,
             epoch=epoch,
         )
+        # Legacy v2.0 data carries a clean-hand 5 cm candidate mask. New v2.1+
+        # data deliberately omits it; use the full 4096 object pool as a
+        # placeholder here and let the runner replace the 512 selected object
+        # points with perturbed-hand proxy sampling.
+        candidate_mask_data = data.get("obj_candidate_mask_5cm")
+        has_legacy_candidate_mask = candidate_mask_data is not None
+        if has_legacy_candidate_mask:
+            candidate_mask = np.asarray(candidate_mask_data[frame_idx], dtype=bool)
+        else:
+            candidate_mask = np.ones((int(data["obj_points"].shape[1]),), dtype=bool)
         selected_idx, obj_valid = sample_object_indices(
-            data["obj_candidate_mask_5cm"][frame_idx],
+            candidate_mask,
             num_samples=self.num_obj_points,
             seed=sample_seed,
         )
         safe_idx = np.maximum(selected_idx, 0)
 
-        obj_points = np.asarray(data["obj_points"][frame_idx, safe_idx], dtype=np.float32).copy()
-        obj_normals = np.asarray(data["obj_normals"][frame_idx, safe_idx], dtype=np.float32).copy()
+        full_obj_points = np.asarray(data["obj_points"][frame_idx], dtype=np.float32).copy()
+        full_obj_normals = np.asarray(data["obj_normals"][frame_idx], dtype=np.float32).copy()
+        obj_points = np.asarray(full_obj_points[safe_idx], dtype=np.float32).copy()
+        obj_normals = np.asarray(full_obj_normals[safe_idx], dtype=np.float32).copy()
 
         obj_points[~obj_valid] = 0
         obj_normals[~obj_valid] = 0
@@ -209,17 +340,57 @@ class CorrStaticDatasetV2(Dataset):
             epoch=epoch,
             namespace="augmentation",
         )
+        hand_perturb_this = bool(self.apply_hand_perturb)
+        if self.exclusive_hand_object_perturb and hand_perturb_this:
+            gate_seed = stable_frame_seed(
+                base_seed=self.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=epoch,
+                namespace="exclusive-hand-object-perturbation",
+            )
+            gate_rng = np.random.default_rng(gate_seed)
+            hand_perturb_this = bool(gate_rng.random() <= self.hand_perturb_prob)
+        apply_obj_perturb_this = bool(self.apply_obj_perturb)
+        if self.exclusive_hand_object_perturb and hand_perturb_this:
+            apply_obj_perturb_this = False
         geometry = perturb_object_geometry(
             obj_points=obj_points,
             obj_normals=obj_normals,
             hand_points=hand_points,
             hand_normals=hand_normals,
             seed=aug_seed,
-            apply_obj_perturb=self.apply_obj_perturb,
+            apply_obj_perturb=apply_obj_perturb_this,
             obj_rot_std_deg=self.obj_rot_std_deg,
             obj_trans_std=self.obj_trans_std,
             obj_perturb_prob=self.obj_perturb_prob,
         )
+        # Runtime resampling mode: also perturb the full 4096 pool with
+        # the same SE(3) so the runner can pick 384 near + 128 global
+        # at prepare_batch time using the (possibly MANO/PCA perturbed)
+        # hand as the query. ``full_geometry`` carries the clean
+        # (``gt_*``) and the perturbed (``input_*``) versions of the
+        # entire object pool; the hand arrays here are unused because
+        # hand perturbation is performed by MANO forward in the runner.
+        full_geometry = None
+        # Keep the batch schema identical across datasets. Some regenerated
+        # v2.1 sources (notably ContactPose) still carry the legacy candidate
+        # mask while GRAB/ARCTIC may omit it. Runtime resampling must therefore
+        # depend only on the training config, not on that optional file field.
+        runtime_resample_this = self.runtime_resample_object
+        if runtime_resample_this:
+            full_geometry = perturb_object_geometry(
+                obj_points=full_obj_points,
+                obj_normals=full_obj_normals,
+                hand_points=hand_points,
+                hand_normals=hand_normals,
+                seed=aug_seed,
+                apply_obj_perturb=apply_obj_perturb_this,
+                obj_rot_std_deg=self.obj_rot_std_deg,
+                obj_trans_std=self.obj_trans_std,
+                obj_perturb_prob=self.obj_perturb_prob,
+            )
         # hand_to_obj_min_dist is fully frame-invariant AND independent of
         # the 512 obj sampling, so it is the clean absolute contact
         # target for the hand contact head.
@@ -259,7 +430,7 @@ class CorrStaticDatasetV2(Dataset):
             axis=0,
         )
 
-        return {
+        result: dict[str, torch.Tensor] = {
             "points": torch.from_numpy(input_points).float(),
             "normals": torch.from_numpy(input_normals).float(),
             "gt_points": torch.from_numpy(gt_points).float(),
@@ -273,6 +444,251 @@ class CorrStaticDatasetV2(Dataset):
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
         }
+        if full_geometry is not None:
+            result["full_input_obj_points"] = torch.from_numpy(
+                full_geometry.input_obj_points
+            ).float()
+            result["full_input_obj_normals"] = torch.from_numpy(
+                full_geometry.input_obj_normals
+            ).float()
+            result["full_gt_obj_points"] = torch.from_numpy(
+                full_geometry.gt_obj_points
+            ).float()
+            result["full_gt_obj_normals"] = torch.from_numpy(
+                full_geometry.gt_obj_normals
+            ).float()
+            result["runtime_resample_object"] = torch.tensor(True, dtype=torch.bool)
+            result["object_seed"] = torch.tensor(int(aug_seed & ((1 << 63) - 1)), dtype=torch.long)
+
+        # v2.1+: pass MANO parameters through so the runner can re-run
+        # MANO forward on the GPU and apply hand PCA perturbations.
+        # The runner groups samples by (side, use_pca, num_pca_comps,
+        # flat_hand_mean, v_template_sha) so a single batch can mix
+        # GRAB (PCA24) and ARCTIC (axis-angle45) without crashing.
+        if self.use_mano_reconstruction and "mano_pose" in data and "mano_global_orient" in data:
+            # Fix #1 (docs/指导.md): explicitly tell the runner this sample
+            # has MANO parameters, so it actually runs the reconstruction
+            # path instead of falling back to the legacy hand_points.
+            result["has_mano"] = torch.tensor(True, dtype=torch.bool)
+            # Fix #2: per-sample apply_hand_perturb flag so val_clean
+            # does not get the same noise injection as train.
+            result["apply_hand_perturb"] = torch.tensor(
+                hand_perturb_this, dtype=torch.bool
+            )
+            # Fix #4: a per-frame, per-epoch, per-side, per-namespace seed
+            # for the hand-PCA noise generator. The runner uses this so the
+            # noise is independent of batch composition / DataLoader order
+            # and stable across checkpoint resumes.
+            hand_perturb_seed = stable_frame_seed(
+                base_seed=self.base_seed,
+                seq_id=seq_id,
+                side=side,
+                raw_frame_id=raw_frame_id,
+                epoch=epoch,
+                namespace="hand-perturbation",
+            )
+            result["hand_perturb_seed"] = torch.tensor(
+                int(hand_perturb_seed & ((1 << 63) - 1)), dtype=torch.long
+            )
+            result["__mano_side__"] = side
+            result["mano_global_orient"] = torch.from_numpy(
+                np.asarray(data["mano_global_orient"][frame_idx], dtype=np.float32)
+            ).float()
+            result["mano_transl"] = torch.from_numpy(
+                np.asarray(data["mano_transl"][frame_idx], dtype=np.float32)
+            ).float()
+            # Cross-dataset batching: GRAB stores PCA24 while ARCTIC stores
+            # axis-angle45.  PyTorch's default collate cannot stack variable
+            # length vectors, so we pad to the MANO axis-angle width.  The
+            # runner slices back to the active representation length per
+            # sample/group before calling smplx.MANO.
+            mano_pose = np.asarray(data["mano_pose"][frame_idx], dtype=np.float32)
+            if mano_pose.ndim != 1:
+                raise ValueError(f"mano_pose frame must be 1D, got shape={mano_pose.shape}")
+            mano_pose_dim = int(mano_pose.shape[0])
+            if mano_pose_dim < MANO_POSE_MAX_DIM:
+                mano_pose_padded = np.zeros((MANO_POSE_MAX_DIM,), dtype=np.float32)
+                mano_pose_padded[:mano_pose_dim] = mano_pose
+                mano_pose = mano_pose_padded
+            result["mano_pose"] = torch.from_numpy(mano_pose).float()
+            result["mano_pose_dim"] = torch.tensor(mano_pose_dim, dtype=torch.long)
+            result["mano_betas"] = torch.from_numpy(
+                np.asarray(data["mano_betas"][frame_idx], dtype=np.float32)
+            ).float()
+            # mano_v_template is per-subject (shape (778, 3)); we ship
+            # the subject-specific template so the runner builds a
+            # subject-aware MANO layer on first sight.
+            v_template = data.get("mano_v_template")
+            if v_template is not None:
+                v_template_arr = np.asarray(v_template, dtype=np.float32)
+                result["mano_v_template"] = torch.from_numpy(v_template_arr).float()
+                # Fix #6: pre-compute the SHA1 digest on CPU so the
+                # runner does not have to copy a GPU tensor and run
+                # SHA1 per sample every batch.  The digest is what the
+                # runner groups on; the actual ``mano_v_template``
+                # tensor is still shipped so the layer can be built on
+                # first sight.  Stored as a fixed-width ASCII string so
+                # PyTorch's default collate stacks it into a list
+                # without per-sample dtype/shape issues.
+                import hashlib
+
+                sha1 = hashlib.sha1(
+                    np.ascontiguousarray(v_template_arr, dtype=np.float32).tobytes()
+                ).hexdigest()
+                result["mano_v_template_sha"] = sha1
+            # hand_root_pose_world (T, 4, 4) is needed to bring the
+            # MANO forward output from world back to the hand_root
+            # frame the rest of the pipeline expects.
+            if "hand_root_pose" in data:
+                result["hand_root_pose_world"] = torch.from_numpy(
+                    np.asarray(data["hand_root_pose"][frame_idx], dtype=np.float32)
+                ).float()
+            result["mano_use_pca"] = torch.tensor(
+                bool(np.asarray(data.get("mano_use_pca", True)).item()),
+                dtype=torch.bool,
+            )
+            result["mano_num_pca_comps"] = torch.tensor(
+                int(np.asarray(data.get("mano_num_pca_comps", mano_pose_dim)).item()),
+                dtype=torch.long,
+            )
+            result["mano_flat_hand_mean"] = torch.tensor(
+                bool(np.asarray(data.get("mano_flat_hand_mean", True)).item()),
+                dtype=torch.bool,
+            )
+        # Keep the domain tag present for clean mixed batches as well. It is
+        # used for per-domain validation/logging and does not require MANO.
+        result["__dataset_id__"] = dataset_id
+        return result
+
+
+class DomainConcatDataset(Dataset):
+    """Concatenate per-domain datasets while retaining domain boundaries."""
+
+    def __init__(self, datasets: list[CorrStaticDatasetV2], domain_ids: list[str]) -> None:
+        if not datasets or len(datasets) != len(domain_ids):
+            raise ValueError("DomainConcatDataset requires one id for every non-empty dataset.")
+        if len(set(domain_ids)) != len(domain_ids):
+            raise ValueError(f"Domain ids must be unique, got {domain_ids!r}.")
+        self.datasets = list(datasets)
+        self.domain_ids = [str(value) for value in domain_ids]
+        self.cumulative_sizes: list[int] = []
+        total = 0
+        for dataset in self.datasets:
+            if len(dataset) <= 0:
+                raise ValueError("Domain datasets must not be empty.")
+            total += len(dataset)
+            self.cumulative_sizes.append(total)
+
+    def __len__(self) -> int:
+        return self.cumulative_sizes[-1]
+
+    def __getitem__(self, index: int) -> dict[str, Any]:
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+        domain_idx = next(
+            idx for idx, end in enumerate(self.cumulative_sizes) if index < end
+        )
+        start = 0 if domain_idx == 0 else self.cumulative_sizes[domain_idx - 1]
+        return self.datasets[domain_idx][index - start]
+
+    def set_epoch(self, epoch: int) -> None:
+        for dataset in self.datasets:
+            dataset.set_epoch(epoch)
+
+
+class DomainBalancedSampler(Sampler[int]):
+    """Yield a fixed equal-domain stream for every local training batch.
+
+    The sampler creates one independent stream per domain and shards each
+    domain chunk across DDP ranks. Consequently every rank receives the same
+    domain quota and the all-reduce sees a 1/3 mixture as well.
+    """
+
+    def __init__(
+        self,
+        dataset: DomainConcatDataset,
+        *,
+        batch_size: int,
+        seed: int,
+        rank: int = 0,
+        world_size: int = 1,
+        drop_last: bool = True,
+    ) -> None:
+        if batch_size <= 0 or batch_size % len(dataset.datasets) != 0:
+            raise ValueError(
+                "Domain-balanced training requires batch_size divisible by the number "
+                f"of domains ({len(dataset.datasets)}), got {batch_size}."
+            )
+        if not 0 <= rank < world_size:
+            raise ValueError(f"rank must be in [0, {world_size}), got {rank}.")
+        self.dataset = dataset
+        self.batch_size = int(batch_size)
+        self.seed = int(seed)
+        self.rank = int(rank)
+        self.world_size = int(world_size)
+        self.drop_last = bool(drop_last)
+        self.domain_quota = self.batch_size // len(dataset.datasets)
+        # A domain is exposed for at least one full pass per epoch. Smaller
+        # domains cycle deterministically rather than changing the 1/3 ratio.
+        self.steps_per_epoch = max(
+            1,
+            max(
+                math.ceil(len(domain) / self.domain_quota)
+                for domain in dataset.datasets
+            ),
+        )
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __len__(self) -> int:
+        return self.steps_per_epoch * self.batch_size
+
+    @staticmethod
+    def _cycle_indices(length: int, count: int, rng: np.random.Generator) -> np.ndarray:
+        chunks: list[np.ndarray] = []
+        remaining = int(count)
+        while remaining > 0:
+            permutation = rng.permutation(length)
+            take = min(remaining, length)
+            chunks.append(permutation[:take])
+            remaining -= take
+        return np.concatenate(chunks, axis=0) if chunks else np.empty((0,), dtype=np.int64)
+
+    def __iter__(self):
+        offsets = [0]
+        for domain in self.dataset.datasets[:-1]:
+            offsets.append(offsets[-1] + len(domain))
+        streams: list[np.ndarray] = []
+        for domain_idx, domain in enumerate(self.dataset.datasets):
+            rng = np.random.default_rng(
+                stable_frame_seed(
+                    base_seed=self.seed,
+                    seq_id=f"domain-balanced-{domain_idx}",
+                    side="",
+                    raw_frame_id=0,
+                    epoch=self.epoch,
+                    namespace="sampler",
+                )
+            )
+            streams.append(
+                self._cycle_indices(
+                    len(domain),
+                    self.steps_per_epoch * self.domain_quota * self.world_size,
+                    rng,
+                )
+            )
+
+        for step in range(self.steps_per_epoch):
+            for domain_idx, stream in enumerate(streams):
+                global_start = step * self.domain_quota * self.world_size
+                local_start = global_start + self.rank * self.domain_quota
+                local_indices = stream[local_start : local_start + self.domain_quota]
+                offset = offsets[domain_idx]
+                yield from (int(value) + offset for value in local_indices)
 
 
 def _resolve_hand_to_obj_min_dist(
@@ -385,7 +801,19 @@ def make_dataloaders(
     meta_cfg: Any,
     distributed: Any | None = None,
 ) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    domain_specs = getattr(data_cfg, "domain_paths", None) or []
+    if domain_specs:
+        return _make_domain_balanced_dataloaders(
+            data_cfg,
+            seed,
+            meta_cfg=meta_cfg,
+            distributed=distributed,
+            domain_specs=domain_specs,
+        )
+
     expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
+    runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
+    use_mano_reconstruction = bool(getattr(meta_cfg, "use_mano_reconstruction", False))
     train_kwargs = {
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
@@ -400,22 +828,35 @@ def make_dataloaders(
         "contact_radius": float(meta_cfg.contact_radius),
         "base_seed": int(seed),
         "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "exclusive_hand_object_perturb": bool(
+            getattr(meta_cfg, "exclusive_hand_object_perturb", False)
+        ),
+        "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
         "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
         "obj_trans_std": float(meta_cfg.obj_trans_std),
         "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
+        "runtime_resample_object": runtime_resample_object,
+        "use_mano_reconstruction": use_mano_reconstruction,
         "blacklist_path": getattr(data_cfg, "blacklist_path", None),
         "coordinate_frame": expected_coordinate_frame,
+        "dataset_id": getattr(data_cfg, "dataset_id", None),
+        "cache_index_path": getattr(data_cfg, "cache_index_path", None),
     }
     val_clean_kwargs = {
         **train_kwargs,
         "apply_obj_perturb": False,
+        "apply_hand_perturb": False,
         "obj_perturb_prob": 0.0,
+        "runtime_resample_object": runtime_resample_object,
         "eval_sampling_epoch": 0,
     }
     val_perturbed_kwargs = {
         **train_kwargs,
-        "apply_obj_perturb": True,
+        "apply_obj_perturb": bool(getattr(meta_cfg, "val_apply_obj_perturb", True)),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
         "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
+        "runtime_resample_object": runtime_resample_object,
         "eval_sampling_epoch": 0,
     }
     train_loader, val_loader, test_loader, metadata = make_file_split_dataloaders(
@@ -483,3 +924,171 @@ def make_dataloaders(
     test_loaders = {"test/": test_loader} if test_loader is not None else {}
     metadata["test_loader_names"] = sorted(test_loaders)
     return train_loader, val_loader, test_loader, metadata, val_loaders, test_loaders
+
+
+def _make_domain_balanced_dataloaders(
+    data_cfg: Any,
+    seed: int,
+    *,
+    meta_cfg: Any,
+    distributed: Any | None,
+    domain_specs: list[Any],
+) -> tuple[DataLoader, DataLoader | None, dict[str, Any], dict[str, DataLoader]]:
+    """Build equal-domain train batches and independent per-domain validation."""
+    expected_coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root"))
+    runtime_resample_object = bool(getattr(meta_cfg, "runtime_resample_object", True))
+    use_mano_reconstruction = bool(getattr(meta_cfg, "use_mano_reconstruction", False))
+    train_kwargs = {
+        "num_obj_points": int(meta_cfg.num_obj_points),
+        "num_hand_points": int(meta_cfg.num_hand_points),
+        "num_supervision_edges": int(meta_cfg.num_supervision_edges),
+        "contact_supervision_quotas": tuple(getattr(meta_cfg, "contact_supervision_quotas", (16, 16, 16, 16))),
+        "contact_supervision_hard_negative_quota": int(
+            getattr(meta_cfg, "contact_supervision_hard_negative_quota", 16)
+        ),
+        "contact_supervision_hard_negative_distance_range": tuple(
+            getattr(meta_cfg, "contact_supervision_hard_negative_distance_range", (0.02, 0.03))
+        ),
+        "contact_radius": float(meta_cfg.contact_radius),
+        "base_seed": int(seed),
+        "apply_obj_perturb": bool(meta_cfg.apply_obj_perturb),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "exclusive_hand_object_perturb": bool(
+            getattr(meta_cfg, "exclusive_hand_object_perturb", False)
+        ),
+        "hand_perturb_prob": float(getattr(meta_cfg, "hand_perturb_prob", 1.0)),
+        "obj_rot_std_deg": float(meta_cfg.obj_rot_std_deg),
+        "obj_trans_std": float(meta_cfg.obj_trans_std),
+        "obj_perturb_prob": float(meta_cfg.obj_perturb_prob),
+        "runtime_resample_object": runtime_resample_object,
+        "use_mano_reconstruction": use_mano_reconstruction,
+        "coordinate_frame": expected_coordinate_frame,
+    }
+    val_clean_kwargs = {
+        **train_kwargs,
+        "apply_obj_perturb": False,
+        "apply_hand_perturb": False,
+        "obj_perturb_prob": 0.0,
+        "eval_sampling_epoch": 0,
+    }
+    val_perturbed_kwargs = {
+        **train_kwargs,
+        "apply_obj_perturb": bool(getattr(meta_cfg, "val_apply_obj_perturb", True)),
+        "apply_hand_perturb": bool(getattr(meta_cfg, "apply_hand_perturb", False)),
+        "obj_perturb_prob": float(getattr(meta_cfg, "val_obj_perturb_prob", 1.0)),
+        "eval_sampling_epoch": 0,
+    }
+
+    domain_ids: list[str] = []
+    train_datasets: list[CorrStaticDatasetV2] = []
+    val_loaders: dict[str, DataLoader] = {}
+    metadata_domains: list[dict[str, Any]] = []
+    for raw_spec in domain_specs:
+        if isinstance(raw_spec, dict):
+            domain_id = str(raw_spec.get("id", raw_spec.get("dataset_id", ""))).strip()
+            domain_path = raw_spec.get("path", raw_spec.get("train_path"))
+            domain_val_path = raw_spec.get("val_path")
+            domain_cache = raw_spec.get("cache_index_path")
+        else:
+            raise TypeError("data.domain_paths entries must be mappings with id and path.")
+        if not domain_id or domain_path in {None, ""}:
+            raise ValueError(f"Each data.domain_paths entry needs non-empty id/path, got {raw_spec!r}.")
+        if domain_id in domain_ids:
+            raise ValueError(f"Duplicate domain id {domain_id!r}.")
+
+        domain_cfg = copy.copy(data_cfg)
+        domain_cfg.train_path = str(resolve_data_path(domain_path, root=getattr(data_cfg, "root", None)))
+        domain_cfg.val_path = (
+            None
+            if domain_val_path in {None, ""}
+            else str(resolve_data_path(domain_val_path, root=getattr(data_cfg, "root", None)))
+        )
+        domain_cfg.test_path = None
+        domain_cfg.domain_paths = []
+        domain_cfg.cache_index_path = (
+            domain_cache
+            if domain_cache not in {None, ""}
+            else getattr(data_cfg, "cache_index_path", None)
+        )
+        domain_train_kwargs = {**train_kwargs, "dataset_id": domain_id}
+        domain_val_kwargs = {**val_clean_kwargs, "dataset_id": domain_id}
+        train_loader, val_loader, _, domain_metadata = make_file_split_dataloaders(
+            domain_cfg,
+            seed,
+            dataset_cls=CorrStaticDatasetV2,
+            file_pattern="**/*.npz",
+            train_dataset_kwargs=domain_train_kwargs,
+            val_dataset_kwargs=domain_val_kwargs,
+            split_group_fn=_sequence_group_key
+            if bool(getattr(data_cfg, "group_val_by_sequence", True))
+            else None,
+            distributed=distributed,
+        )
+        train_datasets.append(train_loader.dataset)
+        domain_ids.append(domain_id)
+        if val_loader is not None:
+            val_loader.dataset.set_epoch(0)
+            val_loaders[f"val_clean/{domain_id}/"] = val_loader
+            val_perturbed_dataset = CorrStaticDatasetV2(
+                val_loader.dataset.data_root,
+                file_list=val_loader.dataset.file_paths,
+                **{**val_perturbed_kwargs, "dataset_id": domain_id},
+            )
+            val_perturbed_dataset.set_epoch(0)
+            loader_seed = int(seed) + int(
+                getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0
+            )
+            val_loaders[f"val_perturbed/{domain_id}/"] = DataLoader(
+                val_perturbed_dataset,
+                batch_size=int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
+                shuffle=False,
+                sampler=make_default_eval_sampler(val_perturbed_dataset, distributed=distributed),
+                **make_dataloader_kwargs(data_cfg, loader_seed, drop_last=False),
+            )
+        metadata_domains.append(
+            {
+                "id": domain_id,
+                "path": str(domain_cfg.train_path),
+                "num_train_samples": len(train_loader.dataset),
+                "num_val_samples": 0 if val_loader is None else len(val_loader.dataset),
+                **{key: value for key, value in domain_metadata.items() if key.startswith("num_")},
+            }
+        )
+
+    combined_dataset = DomainConcatDataset(train_datasets, domain_ids)
+    rank = int(getattr(distributed, "rank", 0) if getattr(distributed, "enabled", False) else 0)
+    world_size = int(
+        getattr(distributed, "world_size", 1) if getattr(distributed, "enabled", False) else 1
+    )
+    sampler = DomainBalancedSampler(
+        combined_dataset,
+        batch_size=int(data_cfg.batch_size),
+        seed=int(seed),
+        rank=rank,
+        world_size=world_size,
+        drop_last=bool(data_cfg.drop_last),
+    )
+    loader_seed = int(seed) + rank
+    train_loader = DataLoader(
+        combined_dataset,
+        batch_size=int(data_cfg.batch_size),
+        shuffle=False,
+        sampler=sampler,
+        **make_dataloader_kwargs(data_cfg, loader_seed),
+    )
+    metadata = {
+        "train_path": "domain_paths",
+        "val_path": None,
+        "test_path": None,
+        "num_train_samples": len(combined_dataset),
+        "num_val_samples": sum(item["num_val_samples"] for item in metadata_domains),
+        "domain_sampling": "equal",
+        "domain_ids": domain_ids,
+        "domain_steps_per_epoch": sampler.steps_per_epoch,
+        "domains": metadata_domains,
+        "runtime_resample_object": runtime_resample_object,
+        "coordinate_frame": expected_coordinate_frame,
+        "val_loader_names": sorted(val_loaders),
+        "test_loader_names": [],
+    }
+    return train_loader, None, metadata, val_loaders

@@ -1,5 +1,22 @@
 # Cm AI 修改记录
 
+## 2026-08-24 — 拆分 Cm 仓库记忆与机器记忆
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 全局文档规范联动
+
+**文件**
+
+- `repo_memory.md` — 由旧 `memory_log.md` 和 `repo_notes_log.md` 提炼可迁移的 cache、校准、兼容性和运行入口事实。
+- `machine_memory.md` — 保存当前服务器的解释器、绝对路径和 W&B 服务异常，并由 Git 忽略。
+- `status_log.md`、`architecture_log.md`、`experiment_log.md` — 更新接手记忆链接。
+- `repo_notes_log.md` — 删除。
+
+**改动原因**
+
+遵循新的递归 memory 规范，避免 Cm 公共文档绑定单台服务器路径。
+
 ## 2026-08-24 — 完成 HRDexDB 全量 geometry cache 并修复坏 episode 预筛选
 
 - branch: working tree
