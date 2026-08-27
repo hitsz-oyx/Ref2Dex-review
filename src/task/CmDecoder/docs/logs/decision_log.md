@@ -1,5 +1,26 @@
 # CmDecoder AI 自主决策记录
 
+## 2026-08-27 — 新 Cm checkpoint 训练 decoder 时在线重算 Cm token
+
+- branch: working tree
+- anchor: run `cm_decoder_20260827_102629`
+
+**未指定点**
+
+用户要求直接使用指定 `Cm` checkpoint 训练解码器，但未指定是否重建已有 Cm token cache 以及训练规模。
+
+**实际选择**
+
+沿用完整 576 object-disjoint 3 Hz point-flow decoder 合同，训练 10 epochs；设置 `meta.use_cached_cm_tokens=false`，由指定 checkpoint 在线编码每个 batch 的 Cm token。
+
+**选择理由与影响**
+
+已有 token sidecar 与旧 Cm checkpoint 的 SHA256 绑定，直接复用会把旧表示混入新 checkpoint 的 decoder 训练；在线计算保持 checkpoint 与 token 语义一致，但显著增加训练时间（预计约 35 小时）。10 epochs 与此前 full point-flow 对照保持可比。
+
+**可逆性 / 是否需要用户确认**
+
+训练合同可逆；若用户只想快速 smoke test，可另开小 split 或减少 epochs，但当前运行不暂停。
+
 ## 2026-08-20 — 首版采用 token flatten + 当前 q 的轻量解码器
 
 - branch: working tree
@@ -227,3 +248,41 @@ flatten 不额外引入 slot pooling 假设，最直接检验冻结 Cm 是否携
 **可逆性 / 是否需要用户确认**
 
 四类 loss 权重与选模字段均可配置；纯点设置已由用户确认。
+
+## 2026-08-24 — 采用 GRAB 训练、ARCTIC 双模式 MANO 泛化评估
+
+- scope: task:CmDecoder 跨域验证
+- anchor: branch `oyx` / 2026-08-24
+
+**未指定点**
+
+用户确认 decoder 在 GRAB MANO 上训练、ARCTIC 轨迹上推理，但未指定单步评估与轨迹 rollout 的具体坐标处理方式。
+
+**实际选择**
+
+训练使用 GRAB object-v2 的随机 `stride=1..10` point-flow pair；ARCTIC 推理完全不读取 GRAB 帧，分别执行 teacher-forced 单步预测和短时 autoregressive rollout。rollout 在每一步把预测的当前 wrist-frame 点通过 ARCTIC 记录的 wrist pose 变换到下一帧坐标系；手法向暂使用对应 ARCTIC 当前帧真实法向，不引入法向预测网络。
+
+**选择理由与影响**
+
+teacher-forced EPE 能隔离跨域 decoder 的单步泛化，rollout 能暴露误差累积；使用记录 wrist pose 只消除坐标系切换歧义，不把该简化实验包装成完整机器人重定向。冻结的 Cm 取用户指定的 mixed C=64 `best.pt`，不是正在训练的 geometry-only C=64 版本。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；只新增独立 loader、配置和评估脚本，不改变已有 decoder、Cm 或数据 cache。
+
+## 2026-08-24 — GRAB decoder 使用 batch64 并按 step validation
+
+- scope: task:CmDecoder 训练资源
+- anchor: `mano_grab_point_config.py` / 2026-08-24
+
+**实际选择**
+
+GPU6 单卡 per-device/global batch 设为64，每2000 step执行一次 validation 并按 `val/hand_flow/epe_mm` 保存 best；训练预算仍为10 epoch。
+
+**选择理由与影响**
+
+初始 batch16 吞吐约60 samples/s，无法及时得到跨域评估 checkpoint；batch64 试运行显存约5.2GB且无OOM。只改变优化器每步看到的样本数和验证频率，不改变 GRAB/ARCTIC 数据、冻结 Cm、decoder 结构或 loss。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆，可从已有 checkpoint 调整 batch 或恢复原配置；属于训练资源选择，无需额外确认。

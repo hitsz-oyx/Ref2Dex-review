@@ -1,17 +1,17 @@
 # Cm 当前状态
 
 - scope: task:Cm
-- last_updated: 2026-08-24
-- last_verified: 2026-08-24
+- last_updated: 2026-08-27
+- last_verified: 2026-08-27
 - related: [架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[训练结果对比](../../results/object_v2_training_comparison.md)
 
 ## 当前状态
 
 - 当前阶段 / 指导: V1.2.1 object-only Cm；正在从受平均 MANO template 影响的旧 GRAB ObjectV2 切换到 subject-template 修复版数据。
-- 当前进行中: 新版 mixed C=256 在 GPU 2/3、C=64 在 GPU 1/6 续训，global batch 均为 144。GRAB object-only 的 C=32 geometry-only/no-time hard-gate ablation 已从头启动于 GPU 7（session 22800，单卡 batch 48，50 epoch，W&B offline），run 为 `outputs/cm/cm_object_v2_grab_gate_cm32_geometry_only_no_time_20260823_235356`。HRDexDB 全量 geometry cache 同时在 CPU 后台构建，日志 `output/research/hrdexdb_cache/build_all_v1.log`。Cm 独立数据工具已集中到 `src/task/Cm/tools/data/`，根级薄 wrapper 已删除。
-- 最近可靠结论: C=256 当前 best 为 step 118080 / epoch 32 / `12.066 mm`；C=64 当前 best 为 step 84870 / epoch 23 / `13.024 mm`。两版迁移后首步均正常，world size/global batch、optimizer 和 scheduler 恢复通过。修复版 DexYCB C=256 评测平均 `14.92 mm`、相对 zero-flow 改善 `68.27%`。
-- 阻塞 / 风险: 迁移使用最近完整 checkpoint，C=256 step 118080 后约 1 epoch、C=64 step 84870 后约 1.5 epoch 的未落盘进度被舍弃；2 GPU 吞吐首步约为 C=256 `200 samples/s`、C=64 `243 samples/s`，低于原 3 GPU。DexYCB 当前只覆盖 subject-10/right，不能外推到全部 subject/side。
-- 下一步: 保持新版 C=256/C=64 两条 run 继续；后续若扩展 DexYCB，沿用修复版 adapter 和独立 split，增加其他 subject 后再报告跨主体方差。
+- 当前进行中: 严格 C=64 additive 已跑满 50 epoch / 202300 steps并已退出；严格 C=32 additive 已从 epoch 27 / step `109242` checkpoint 恢复，迁移到 GPU 0/2，配置和 global batch 不变，当前进入 epoch 29；迁移后 epoch 28 validation mean stride EPE=`13.920 mm`。C=32 hard-gate objective-only 与 C=16 additive capacity match 在 GPU 2/3 运行至 epoch 12。Inspire-F1-only C=64 additive 全量 DenseToken 阶段已停止于 epoch 8 / step `19160`，最新 checkpoint 已用于 decoder-only continuation：DenseToken 冻结、GPU 1/3、当前 step `34500` / epoch 15 训练中，最近一次完整 validation 为 epoch 14 / step `33530`，输出 `outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451`；原始全量微调输出保留不变。所有当前 run 无 OOM/NaN。
+- 最近可靠结论: mixed C=256 在 epoch 45--48 的 val mean stride EPE 约 `11.81 mm`，mixed C=64 在 epoch 35--40 约 `12.53--12.64 mm`，均无继续下降趋势；停止时分别保留最近完整 epoch 48 与 epoch 40 checkpoint。修复版 DexYCB C=256 评测平均 `14.92 mm`、相对 zero-flow 改善 `68.27%`。
+- 阻塞 / 风险: 同 epoch 5，C=32 additive=`16.834 mm`，优于严格 C=32 hard-gate 的 `18.497 mm`；但 hard-gate 尚处 full-open warm-up，需观察 epoch 6--10 ramp。C=16 additive epoch 5=`18.215 mm`，较 C=32 additive差 `1.381 mm`，且 contribution usage 更集中（effective branch `8.88` vs `13.71`），尚未单-slot collapse。Inspire-F1 decoder-only continuation 最近 6 次 validation 的 mean stride EPE 在 `3.656--3.873 mm` 间波动，尚未形成严格收敛平台；GPU 3 与其他 run 共用导致吞吐约 `70 samples/s`（日志早期受竞争影响更低），需要继续观察后续 validation。
+- 下一步: 继续观察 C=32 hard-gate epoch 6--10 gate ramp；跟踪 C=16 additive 容量平台；检查 Inspire-F1 微调首个 validation 后的 source/stride 指标，并在必要时将该 run 迁移到空闲 GPU。
 - HRDexDB 微调入口: `configs/hrdexdb_finetune_cm64.yaml`；全量非视频原始数据已迁移到 `dataset/HRDexDB/v0_nonvideo` 并由根 `.gitignore` 排除。共享 geometry cache 允许保留，但 HRDexDB Cm 微调强制 `data.use_dense_cache=false`，DenseToken 输出不得预缓存，必须在线参与反向传播。已完成 loader/builder 框架修正：HRDexDB geometry 需要 4096 稳定物体池、5cm candidate mask，Cm 在线采样 512 点；验证/测试按 source×stride=1/5/10 分开。全量 cache 已导出并生成正式 object-disjoint manifest。
 - 证据与相关文档: [EXP-010](experiment_log.md#exp-010--dexycb-subject-10-修复版正式评估)、[EXP-009](experiment_log.md#exp-009--dexycb-subject-10-首次评估无效性诊断)、[EXP-008](experiment_log.md#exp-008--subject-template-修复版-mixed-c64-长训)、[EXP-007](experiment_log.md#exp-007--subject-template-修复版-mixed-正式长训)。
 
@@ -28,4 +28,4 @@ CUDA_VISIBLE_DEVICES=<gpu_ids> \
 
 当前正式 run 使用 `CUDA_VISIBLE_DEVICES=2,3`、`--set data.batch_size=72 --set data.val_batch_size=72 --set train.resume=<latest.pt>` 续训，输出目录仍为 `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_20260822_125835`。
 
-C=64 对照使用 `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820_cm64.yaml` 和相同 batch/resume overrides，运行于 GPU 1/6，输出目录为 `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_cm64_20260822_190435`。
+C=64 严格容量对照使用 `src/task/Cm/configs/object_v2_grab_gate_cm64_geometry_only_no_time.yaml`，在 GPU 1/2 以 DDP 启动，per-device batch 32、global batch 64，输出目录为 `outputs/cm/cm_object_v2_grab_gate_cm64_geometry_only_no_time_20260824_155338`。

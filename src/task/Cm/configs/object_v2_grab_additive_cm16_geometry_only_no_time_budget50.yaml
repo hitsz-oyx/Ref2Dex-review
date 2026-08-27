@@ -1,0 +1,13 @@
+_base_: src/task/Cm/configs/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml
+
+name: cm_object_v2_grab_additive_cm16_geometry_only_no_time_budget50
+
+meta:
+  # Strict additive capacity comparison: only Cm width changes from C=32.
+  cm_dim: 16
+
+train:
+  description: "GRAB object-only C=16 additive contribution strict budget match: global batch 64, 50 epochs, aggregate supervision, group sparsity."
+
+wandb:
+  tags: [cm, object-v2, grab-only, cm16, geometry-only-object, no-time, additive-contribution, group-sparsity, strict-budget50]

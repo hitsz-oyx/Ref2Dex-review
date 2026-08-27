@@ -64,6 +64,34 @@
 
 candidate mask 构建由逐帧全量距离张量改为半径邻域查询；单 episode CPU 探针由约 192.6 s 降至约 37.4 s。全量构建已按 4 workers、单线程 BLAS 启动。
 
+## 2026-08-24 — 启动 CmDecoder MANO 跨域泛化实验
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: 全局状态同步
+
+**文件**
+
+- `docs/logs/status_log.md` — 记录 CmDecoder GRAB-trained MANO decoder 正在运行。
+
+**改动原因**
+
+CmDecoder 新增一条会影响仓库当前研究状态的 GRAB→ARCTIC MANO 泛化实验，根级入口需与任务级状态保持一致。
+
+## 2026-08-24 — 同步全仓库当前训练状态
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: 全局状态文档
+
+**文件**
+
+- `docs/logs/status_log.md` — 将当前进行中任务改为 Cm GRAB C=32 与双卡 C=64，并记录 mixed 平台期停止状态。
+
+**改动原因**
+
+Cm 运行资源和当前研究下一步发生变化，需要让根级接手入口与任务级状态一致。
+
 ## 从 feature/hand-pca-perturbation 合并的历史记录
 
 以下条目保留 feature 分支的根级修改历史；路径和文件名按当时状态记录。

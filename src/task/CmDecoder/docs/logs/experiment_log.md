@@ -1,8 +1,117 @@
 # CmDecoder 实验记录
 
+- last_updated: 2026-08-25
+- last_verified: 2026-08-25
+- related: [当前状态](status_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
+
 ## 当前状态
 
-已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。当前仍未进行泛化结论实验。
+已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。2026-08-24 启动 GRAB-trained MANO decoder，拟在 ARCTIC MANO 上做跨域泛化验证。2026-08-27 已启动基于新版 Inspire F1 `Cm` checkpoint 的全量 object-disjoint 3 Hz point-flow decoder；训练仍在进行，尚无最终验证结论。
+
+## EXP-020 — Inspire F1 action-conditioned closed-loop rollout
+
+### 日期
+
+2026-08-27
+
+### 假设与边界
+
+在同一 Inspire F1 手型上，若 point-flow decoder 学到的状态反馈稳定，则将每一步预测手状态反馈到下一步，即使每一步的 Cm 仍由真实 Inspire `hand_flow` 提供，误差也不应持续发散。该协议隔离 decoder/FK 状态漂移，不是完全自主的 Cm policy rollout。
+
+### 配置与运行
+
+- checkpoint: `outputs/cmdecoder/cm_decoder_20260823_000423/checkpoints/best.pt`；
+- cache: 30 Hz `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_576_seed42.json`；
+- episode: `inspire_f1/apple/2`，自动选择最长连续有效动作链，`start_pair=165`；
+- horizon: 31 个连续 30 Hz pair；每步用 GT `hand_flow` 生成 Cm，预测 hand points/q/wrist 反馈到下一步；
+- 新入口: `src.task.CmDecoder.inspire_rollout`；Viser 播放端口 `8096`。
+
+### 结果
+
+- point EPE mean/final=`47.675/94.188 mm`（首步=`4.346 mm`）；
+- wrist translation EPE mean/final=`48.136/94.727 mm`，rotation error final=`16.869°`；
+- q MAE mean/final=`6.115/14.646°`；
+- predicted `<20 mm` point-contact ratio mean/final=`5.99%/9.69%`，GT=`1.69%/5.07%`。该比例是点云距离诊断，不等价于物理接触力学。
+
+误差和 wrist 漂移几乎单调累积；即使 Cm 每步都来自真实动作，当前 point-flow→FK 状态反馈也不能保持稳定闭环。
+
+### 结论状态
+
+`REFUTED`（当前 checkpoint、单 episode、action-conditioned closed-loop 稳定性）；不外推为所有 Inspire 数据或完全自主策略结论。
+
+### 产物
+
+- trajectory: `output/research/inspire_rollout_cmdecoder_apple2_30hz_32.npz`；
+- diagnostic figure: `output/research/inspire_rollout_cmdecoder_apple2_30hz_32.png`；
+- interactive viewer: `python -m src.task.CmDecoder.inspire_rollout --load-trajectory output/research/inspire_rollout_cmdecoder_apple2_30hz_32.npz --serve --port 8096`。
+
+## EXP-018 — 新版 Inspire F1 Cm → 全量 object-disjoint point-flow decoder
+
+### 日期
+
+2026-08-27
+
+### 假设与边界
+
+使用 `cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451/checkpoints/best.pt` 作为冻结 `Cm` 编码器，重新训练 Inspire F1 目标手的逐点 point-flow 解码器，检验新版 `Cm` 是否比旧 checkpoint 更适合作为动作表征。本实验仍是配对的 HRDexDB 单步监督，不等价于无配对跨手型通用性证明。
+
+### 配置与运行
+
+- decoder config: `src.task.CmDecoder.point_config:Config`；完整 576 object-disjoint 3 Hz manifest；10 epochs；
+- frozen Cm: `outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451/checkpoints/best.pt`；
+- token cache: 禁用 `meta.use_cached_cm_tokens`，在线计算 Cm，避免复用由旧 checkpoint 生成的 token sidecar；
+- device: 物理 GPU 1（启动时 free memory 21625 MiB，为 GPU 0–3 中最多）；
+- run: `outputs/cmdecoder/cm_decoder_20260827_102629`；W&B disabled。
+
+### 当前状态
+
+训练已正常进入 step 100；初始 train hand-flow EPE=`7.888 mm`，zero-flow=`9.295 mm`。当前吞吐约 0.875 s/step，10 epoch 预计约 35 小时；最终 best、held-out EPE 及相对 zero-flow 的改善率尚待训练完成。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）
+
+## EXP-017 — GRAB-trained MANO decoder → ARCTIC MANO 跨域泛化
+
+### 日期
+
+2026-08-24
+
+### 假设与边界
+
+如果问题主要来自 Inspire F1 目标手形态位于 Cm/decoder 训练分布之外，那么先把目标手固定为同样的 MANO 拓扑，并只改变 GRAB→ARCTIC 数据域，GRAB 训练出的 point-flow decoder 应能在 ARCTIC 上优于 zero-flow。该实验不包含机器人 q、URDF、wrist fitting 或形态变化。
+
+### 配置与数据
+
+- frozen Cm: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_cm64_20260822_190435/checkpoints/best.pt`（mixed C=64，epoch 38 / step 140220 的 best）；
+- decoder: `src/task/CmDecoder/point_model.py` 的逐手 point-flow slot decoder；DenseToken 与 Cm 全部冻结；
+- train: `src/task/CmDecoder/mano_grab_point_config.py`，GRAB-only object-v2 train split，随机 `stride=1..10`，10 epoch，per-device/global batch 64，every 2000 steps validation；
+- output: `outputs/cmdecoder/cmdecoder_grab_mano_pointflow_cm64_mixed_20260824_163217`；
+- launcher: `output/exp/cmdecoder_grab_mano_cm64.log`，GPU 6，W&B offline；
+- inference: `src/task/CmDecoder/arctic_mano_eval.py`，ARCTIC 当前/下一帧构造 source Cm，在 target MANO 当前几何上预测点流；同时输出 teacher-forced 单步和短时 autoregressive rollout。
+
+### 当前状态
+
+- loader 已通过：GRAB train/val/test=`1067/134/134` sequences，samples=`262513/33718/31567`；
+- model forward smoke 已通过，输出 `[B,1538,3]`；
+- ARCTIC evaluator 已用历史 point-flow checkpoint 完成 2-frame smoke，接口输出 NPZ/PNG 正常；
+- 正式 GRAB decoder 仍在训练，尚无正式 ARCTIC 结果。
+
+### 初步结果（单序列）
+
+- GRAB best checkpoint: `outputs/cmdecoder/cmdecoder_grab_mano_pointflow_cm64_mixed_20260824_163217/checkpoints/best.pt`，step 8000；GRAB val hand-flow EPE=`3.054 mm`，zero-flow=`11.183 mm`，改善=`72.7%`；
+- ARCTIC sequence: `s01/box_use_01/left`，32 consecutive active pairs；
+- teacher-forced: EPE=`2.717 mm`，zero-flow=`4.545 mm`，改善=`40.2%`；
+- autoregressive rollout: mean EPE=`113.957 mm`，final EPE=`193.094 mm`；
+- artifacts: `output/research/arctic_mano_cm64_best_s01_box_use_01_left.{npz,png}`。
+
+该结果支持“GRAB decoder 在 ARCTIC 上能做单步动作预测”，但不支持稳定长程 rollout；当前仍是单序列初步证据，不能外推为跨域泛化已解决。
+
+2026-08-24 使用训练继续推进后的 step 22000 best（GRAB val EPE=`2.820 mm`）按同一口径复评：ARCTIC teacher-forced EPE=`2.398 mm`、zero-flow=`4.545 mm`，改善=`47.2%`；rollout mean/final EPE=`32.134/79.872 mm`。较 step 8000 已明显改善，但 rollout 仍远高于 teacher-forced，不能视为闭环稳定。
+
+### 结论状态
+
+`INCONCLUSIVE`
 
 ## EXP-016 — GRAB 30Hz 右手无配对重定向 smoke test
 
@@ -1126,3 +1235,79 @@ INCONCLUSIVE（point-flow 的 full/high-motion val/test 已完成；q/wrist fitt
 - 完成10 epoch后按 `val/hand_flow/epe_mm` 选择 best checkpoint；
 - 如需正式结论，运行 point-flow → q/wrist fitting 的全量 full/high-motion val/test；
 - 与 EXP-015 的 `qt_cm` point EPE、wrist EPE 和 q MAE 对比。
+
+## EXP-018 — ARCTIC MANO decoder 状态扰动纠偏诊断
+
+### 日期
+
+2026-08-24
+
+### 假设
+
+如果 decoder 有效利用当前手—物空间关系，则在保持交互动作 `C_m` 不变、仅对当前目标手状态施加小幅平移时，预测 flow 应至少部分指向未扰动的真实下一帧。
+
+### 设置
+
+- decoder: `outputs/cmdecoder/cmdecoder_grab_mano_pointflow_cm64_mixed_20260824_163217/checkpoints/best.pt`（运行时约 step 20000 的 best，训练仍在继续）；
+- 数据: ARCTIC `s01/box_use_01/left`，32 个 active stride-1 pair；
+- 扰动: 5/10/20 mm，物体方向、远离物体方向和固定随机方向；
+- `cm_tokens`: 由未扰动样本计算后固定，隔离 target-side 状态反馈；DenseToken 的 `z_hand` 随扰动后的手点重新计算；
+- 指标: 扰动后下一点 EPE、预测 flow 与真实下一点方向的投影，以及预测 flow 对扰动的反向投影。
+
+### 结果
+
+| 扰动 | 5 mm EPE / 纠偏投影 | 10 mm EPE / 纠偏投影 | 20 mm EPE / 纠偏投影 |
+|---|---:|---:|---:|
+| 向物体 | 6.80 mm / 0.192 | 11.52 mm / 0.024 | 21.20 mm / -0.125 |
+| 远离物体 | 4.26 mm / 0.520 | 8.94 mm / 0.253 | 18.85 mm / 0.121 |
+| 随机方向 | 5.65 mm / 0.300 | 9.77 mm / 0.112 | 20.31 mm / 0.011 |
+| 无扰动 | 2.81 mm / 1.042 | 2.81 mm / 1.042 | 2.81 mm / 1.042 |
+
+`correction_projection>0` 表示预测 flow 至少部分指向未扰动真实下一帧；数值接近 0 或为负表示没有稳定纠偏。5 mm 以内存在弱反馈，10 mm 后迅速减弱，20 mm 基本失去纠偏能力。预测 flow 范数约稳定在 5 mm 左右，没有随扰动幅度增大而增加。
+
+### 结论状态
+
+**SUPPORTED（存在局部空间反馈） / REFUTED（大偏移下的稳定纠偏）**
+
+结果说明 DenseToken 的空间条件并非完全无效，但 decoder 主要学习 one-step motion reconstruction，而不是具有收缩性的闭环控制。需要注意本诊断固定了真实 `C_m`，并未重算预测手的法向或执行 MANO 投影；它是状态扰动探针，不是完整 autonomous rollout。
+
+### 证据
+
+- 诊断脚本: `src/task/CmDecoder/research/arctic_perturbation.py`
+- 结果: `output/research/arctic_mano_cm64_perturbation.json`
+
+## EXP-019 — geometry-only/no-time C=64 Cm 的 MANO decoder 对照
+
+### 日期
+
+2026-08-25
+
+### 假设
+
+之前的 decoder 使用 mixed C=64 Cm；该 Cm 的 object-flow head 接收显式 object context，并带有 time condition。若这些条件使动作 token 更依赖物体侧 shortcut 或 stride 信息，改用 geometry-only/no-time C=64 Cm 训练同一 decoder，可能改善目标手状态变化下的 rollout 稳定性。
+
+### 设置
+
+- Frozen Cm: `outputs/cm/cm_object_v2_grab_gate_cm64_geometry_only_no_time_20260824_155338/checkpoints/best.pt`；确认 `cm_dim=64`、`use_object_context=false`、`use_time_condition=false`，checkpoint step=`121380` / epoch=`30`；
+- decoder: `src/task/CmDecoder/point_model.py` 的 `CmPointFlowModel`；DenseToken 和 Cm 冻结；
+- train: 与 mixed C=64 对照完全相同，GRAB-only object-v2、随机 `stride=1..10`、10 epoch、batch 64、每 2000 steps 验证；
+- output: `outputs/cmdecoder/cmdecoder_grab_mano_pointflow_cm64_geometry_only_no_time_20260825_103711`；
+- launcher log: `output/exp/cmdecoder_grab_mano_cm64_geometry_only_no_time.log`，GPU 7。
+
+### 当前状态
+
+训练已超过 step 27000 / epoch 7，无 OOM/NaN。step 26000 是评估时可复现的当前 best，GRAB val hand-flow EPE=`3.477 mm`。该点之后训练仍在继续，因此以下结果是中途诊断，不代替10 epoch最终复评。
+
+### 中途 ARCTIC rollout（step 26000）
+
+- sequence: `s01/box_use_01/left`，与 EXP-017 相同的32个 consecutive active stride-1 pairs；
+- teacher-forced EPE=`2.954 mm`，zero-flow=`4.545 mm`；
+- autoregressive rollout mean/final EPE=`73.672/102.922 mm`；
+- rollout 第3/6/11/18步分别首次超过 `10/20/50/100 mm`，最大 EPE=`115.667 mm`；
+- artifact: `output/research/arctic_mano_cm64_geometry_only_no_time_step26000_s01_box_use_01_left.{npz,png}`。
+
+相同窗口下，历史 mixed C=64 step 22000 为 teacher-forced `2.398 mm`、rollout mean/final `32.134/79.872 mm`。checkpoint 训练步并不完全相同，不能作为最终严格消融，但当前 geometry-only/no-time 版本在单步误差和 rollout 上都更差，没有支持“移除 object context/time condition 可改善闭环稳定性”的假设。误差从首步 `5.45 mm` 近似持续增长，到第18步超过 `100 mm`，仍表现为缺乏偏离轨迹后的收缩纠偏。
+
+### 结论状态
+
+`INCONCLUSIVE（中途 checkpoint；当前证据不支持 rollout 改善）`

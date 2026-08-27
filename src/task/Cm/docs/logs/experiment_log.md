@@ -1,13 +1,13 @@
 # Cm 实验记录
 
 - scope: task:Cm
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
+- last_updated: 2026-08-26
+- last_verified: 2026-08-26
 - related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[V1.2.1 指导](../指导/V1.2.1.md)
 
 ## 当前研究状态
 
-V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成。2026-08-20 确认旧 GRAB cache 因 raw asset root 解析错误使用平均 MANO template；修复版 GRAB 已重建。2026-08-22 已用修复版 GRAB 和既有 ARCTIC 建立新版 mixed 链接 cache并重算元数据；当前 C=256 与仅改变 `cm_dim=64` 的两条新版 mixed 正式长训都已启动。旧 gate+cm64 warm-up 在 epoch 38 按用户要求停止。DexYCB subject-10/right 修复 cache 已重建，并用成熟 C=256 checkpoint 完成正式跨数据集评测。2026-08-23 新增 GRAB object-only、C=32、物体侧 geometry-only、无时间条件的 hard-gate 瓶颈实验并从头启动。
+V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成。2026-08-20 确认旧 GRAB cache 因 raw asset root 解析错误使用平均 MANO template；修复版 GRAB 已重建。2026-08-22 已用修复版 GRAB 和既有 ARCTIC 建立新版 mixed 链接 cache并重算元数据；新版 mixed C=256/C=64 续训已在验证平台期停止，最近完整 checkpoint 分别为 epoch 48/40。旧 gate+cm64 warm-up 在 epoch 38 按用户要求停止。DexYCB subject-10/right 修复 cache 已重建，并用成熟 C=256 checkpoint 完成正式跨数据集评测。2026-08-23 新增 GRAB object-only、C=32、物体侧 geometry-only、无时间条件的 hard-gate 瓶颈实验；2026-08-24 启动仅将 `cm_dim` 改回 64 的双卡容量对照。
 
 ## 历史证据索引
 
@@ -23,8 +23,279 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 - subject-template 修复版 mixed C=256 正式长训：`INCONCLUSIVE`（训练进行中）。
 - subject-template 修复版 mixed C=64 正式长训：`INCONCLUSIVE`（已启动，当前只有 step 100--200 启动证据）。
 - GRAB C=32 geometry-only/no-time hard-gate：`INCONCLUSIVE`（实现 gate 已通过，正式训练刚启动）。
+- GRAB C=64 geometry-only/no-time hard-gate：`INCONCLUSIVE`（双卡 global batch 64 的严格容量对照已启动，尚无 validation 结果）。
 - V1.1.1 downstream cache parity：`SUPPORTED`；feature 逐元素差异归因于 spconv 非确定性，不作为科学反证。
 - V1.1.2 全量 DenseToken bank：`INVALID_IMPLEMENTATION`/路线撤回，因资源成本过高而停止，不用于效果结论。
+
+## EXP-013 — GRAB C=64 candidate-level mixture objective pilot
+
+### 日期
+
+2026-08-24
+
+### 假设与边界
+
+在 object-only、geometry-only/no-time 的 C=64 瓶颈设置中，直接使用 candidate-level soft-min mixture objective，使每个 object point 依据 `log(pi_k) - candidate_loss_k / tau` 形成隐式 responsibility；若该目标有效，candidate responsibility 不应像旧 count/confidence gate 一样快速坍缩到单一 slot，同时 aggregate flow EPE 应保持可训练。首轮不叠加 hard gate、slot-count、confidence 或 active-overlap 正则，以隔离 mixture objective 的作用。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_mixture_cm64_geometry_only_no_time.yaml`；
+- data: `data/processed_data/cm_object_v2/grab`，GRAB object-only，固定 seed42 split，stride 1--10；
+- `cm_dim=64`、`num_cm_tokens=16`、`use_object_context=false`、`use_time_condition=false`；
+- `loss_flow_weight=0`、`loss_candidate_mixture_weight=1`、`candidate_mixture_temperature=0.05`，所有 gate/count/confidence/overlap 权重为 0；
+- 单卡 GPU 7，global batch=32，`max_steps=80920`（按当前 loader 约 8092 steps/epoch，约 10 epoch），从头训练。
+
+### 当前运行与首个 validation
+
+- 正式 output: `outputs/cm/cm_object_v2_grab_mixture_cm64_geometry_only_no_time_20260824_190444`；
+- 已完成 epoch 1 validation 并进入 epoch 2，无 OOM/NaN；训练 epoch 1 的 aggregate EPE=`51.33 mm`，zero-flow improvement=`-1.36%`；validation mean stride EPE=`51.50 mm`，stride 1/5/10=`10.74/49.88/93.89 mm`，暂时接近或略差于 zero-flow。
+- decoder usage 的 `effective_branch_count=15.44`、global top1=`0.0935`；candidate responsibility entropy（stride 1）=`2.479`，global top1=`0.0846`。相对于 16-slot 均匀分布（熵 `ln(16)=2.773`、top1 `0.0625`），已有轻微集中，但不是单 slot collapse；stride 5/10 responsibility entropy 分别为 `2.184/1.958`，需要后续 epoch 观察。
+- 与旧 C=64 hard-gate 对照的 epoch 1 validation（mean stride EPE=`31.36 mm`）相比，当前 mixture 首 epoch 性能明显更差；但 global batch、训练目标和 gate 状态不同，不能作最终容量结论。
+- 当前日志中的 `mixture_effective_branch_count=inf` 来自诊断熵公式错误，不影响训练目标；已修正 runner，当前已启动进程仍使用修正前代码，后续新 run 将得到正确值。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。首个完整 validation 后补充 candidate responsibility entropy/effective branch count、aggregate/per-stride EPE 与 zero-flow improvement，再决定是否恢复稀疏 gate 或加入轻量 balance 正则。
+
+## EXP-014 — GRAB C=64 additive slot contribution pilot
+
+### 日期
+
+2026-08-24
+
+### 假设与边界
+
+将每个 slot 从“完整 flow candidate”改为 3-D additive contribution，并直接监督 contribution 总和，能够避免 candidate soft-min 与 weighted-average 输出之间的目标错位；轻量 group sparsity 可以在不使用 hard gate 的情况下减少 effective slot 数。训练阶段保留 `K_max=16`，本实验不声称已经减少实际计算量。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`；
+- data: GRAB object-only、geometry-only/no-time，C=64、K_max=16、global batch=32；
+- `pred_flow=Σ_k contribution_k`，主 loss 为 aggregate scaled Smooth-L1；
+- candidate mixture、hard gate、count、confidence、overlap 均关闭；group sparsity weight=`1e-3`；
+- max_steps=`80920`，约 10 epoch；训练后根据 contribution usage 再决定是否结构化 pruning。
+
+### 当前运行
+
+candidate mixture pilot 已按用户要求停止。首条 additive run `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_20260824_211051` 因 group-sparsity 错误除以全 batch 有效点总数而按 `INVALID_IMPLEMENTATION` 停止。修正版通过 batch-size invariant 单元测试并在 `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_20260824_230244` 从头训练；epoch 1--9 val mean stride EPE 从 `44.26` 持续下降至 `19.76 mm`（仅 epoch 5 短暂反弹至 `24.29 mm`），zero-flow improvement 从 `7.0%` 增至 `56.0%`。epoch 9 stride 1/5/10 EPE=`5.93/18.81/34.54 mm`；stride-1 contribution effective branch count=`14.11`、top1=`0.106`，没有单-slot collapse，但轻量正则只减少约 2 个 effective slots。当前正在 epoch 10。
+
+### 结论状态
+
+首 run：`INVALID_IMPLEMENTATION`（group-sparsity 归一化错误）；短预算修正版：`INCONCLUSIVE`（已停止，global batch=32/10 epoch）；strict-budget 修正版：`INCONCLUSIVE`（运行中）。当前证据支持 additive aggregate 可训练且避免单-slot collapse，但严格比较需等待 global batch=64/50 epoch 版本。
+
+## EXP-015 — GRAB C=64 additive contribution strict-budget match
+
+### 日期
+
+2026-08-25
+
+### 假设与边界
+
+在保持 additive contribution 语义和正确 group-sparsity 归一化的前提下，将 global batch、epoch budget、总 optimizer steps 和 cosine schedule 对齐旧 C=64 hard-gate，能够区分 batch/schedule 混杂与模型结构本身的影响。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`；
+- C=64、K_max=16、GRAB object-only、geometry-only/no-time；
+- global batch=64（GPU 4/6，per-device batch=32）、50 epoch、`max_steps=202300`；
+- aggregate flow supervision、group sparsity=`1e-3`，candidate mixture/hard gate/count/confidence/overlap 关闭。
+
+### 当前运行
+
+- output: `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_budget50_20260825_093713`；
+- 已完成 epoch 8 validation，当前进入 epoch 9，无 OOM/NaN。epoch 8 mean stride EPE=`15.699 mm`，stride 1/5/10=`4.763/14.668/27.666 mm`；zero-flow improvement=`65.0%`。epoch 1--8 mean EPE 为 `20.032, 18.264, 17.398, 16.703, 16.550, 17.061, 15.990, 15.699 mm`。
+- epoch 8 effective branch count=`13.59`、global top-1 usage=`13.1%`，仍未出现单-slot collapse；相较 epoch 2 的 effective branch=`13.54`，当前主要是性能继续改善而非 slot 数量进一步坍缩。
+
+### 同 epoch 对比（当前可用验证）
+
+| Epoch | C=32 hard-gate | C=64 hard-gate | C=64 additive strict |
+| ---: | ---: | ---: | ---: |
+| 1 | 42.995 mm | 31.357 mm | 20.032 mm |
+| 2 | 42.960 mm | 19.006 mm | 18.264 mm |
+| 8 | — | 15.603 mm | 15.699 mm |
+
+该表只表示当前验证点；epoch 8 时 additive 与旧 C=64 hard-gate 已基本持平（差 `0.096 mm`），且 additive 保持约 13.6 个 effective branches，而 hard-gate 已约 1 个。C=64 additive 的优化目标不同，不能据此宣称最终优于 hard-gate。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。
+
+## EXP-020 — Inspire-F1 C=64 additive decoder-only continuation
+
+### 日期
+
+2026-08-27
+
+### 假设与边界
+
+在 EXP-019 的 Inspire-F1 C=64 additive checkpoint 上冻结已适配的 DenseToken，只继续训练 Cm decoder，以降低反向传播开销；不启用 DenseToken cache，保持现有数据采样、global batch 和 flow/loss 语义。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/hrdexdb_inspire_f1_decoder_only_resume.yaml`；
+- source checkpoint: EXP-019 `latest.pt`，epoch `8` / step `19160`；
+- `freeze_dense_encoder=true`、`save_dense_encoder_in_checkpoint=true`、`data.use_dense_cache=false`；
+- decoder-only optimizer：跳过源 DenseToken Adam 状态，仅注册可训练 decoder 参数；scheduler/global step 从 `19160` 接续；
+- 保持 global batch=`64`、C=`64` additive、geometry-only/no-time、Inspire-F1 446/67/63 split。
+
+### 当前运行
+
+- output: `outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451`；
+- 已确认只加载 Inspire-F1 source checkpoint，未重新加载 GRAB initializer；当前 step `19200`、epoch `9` 训练中；
+- 当前已推进至 step `34500` / epoch `15`，最近完整 validation 为 epoch `14` / step `33530`；decoder-only 在线 DenseToken no-grad 吞吐约 `70 samples/s`，无 OOM/NaN。
+- validation mean stride EPE：epoch 9/10/11/12/13/14 为 `3.707/3.873/3.753/3.814/3.756/3.656 mm`；当前最佳为 epoch 14 的 `3.656 mm`，相对全量 DenseToken 阶段 epoch 8 的 `4.205 mm` 改善约 `13.1%`。
+- epoch 14 stride 1/5/10 EPE=`1.503/3.615/5.852 mm`；zero-flow improvement=`+2.54%`。effective branch count 约 `12.53`，未见 slot collapse。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中；目前有改善但验证曲线仍有约 `0.06--0.07 mm` 量级波动，不能宣称已收敛）。
+
+## EXP-019 — Inspire-F1-only C=64 additive DenseToken fine-tune
+
+### 日期
+
+2026-08-26
+
+### 假设与边界
+
+在保持当前 C=64 additive、geometry-only、no-time 的 Cm 语义下，仅将适配数据切换为 HRDexDB Inspire-F1，并在微调阶段解冻 DenseToken。该实验不再使用默认的 GRAB/ARCTIC/HRDexDB 三源混合。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/hrdexdb_inspire_f1_finetune_cm64_additive.yaml`；
+- base checkpoint: `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_budget50_20260825_093713/checkpoints/best.pt`；
+- Inspire-F1-only manifest prefix `inspire_f1/`：train/val/test=`446/67/63` episodes；
+- C=64 additive、`use_object_context=false`、`use_time_condition=false`、`use_slot_gate=false`；
+- `freeze_dense_encoder=false`、`data.use_dense_cache=false`，DenseToken 在线参与反向传播；
+- global batch=64、50 epoch、fresh `max_steps=202300`、AdamW lr=`3e-4`、cosine、seed42；
+- flow scale 沿用 additive base checkpoint：`object_flow_target_scale=10.73039338039742`。
+
+### 当前运行
+
+- output: `outputs/cm/cm_hrdexdb_inspire_f1_finetune_cm64_additive_20260826_091150`；
+- loader smoke 已确认 446/67/63 episode split，checkpoint head 权重可加载；DenseToken 缺失的 frozen-stage 参数按设计在线初始化并解冻；
+- 正式 DDP 在 GPU 1/3 持续运行，已完成 epoch 8（step `19160`），无 OOM/NaN；当前训练吞吐约 `42.7 samples/s`，日志 ETA 约 `76` 小时。最近一次 validation 为 epoch 8：mean stride EPE=`4.205 mm`，stride 1/5/10=`1.436/4.112/7.067 mm`；按各 stride 相对误差等权计算的 zero-flow improvement=`-4.0%`，其中 stride 1=`-33.7%`、stride 5=`+7.2%`、stride 10=`+14.4%`。由于 stride 1 的 GT 流幅度仅约 `1.07 mm`，该相对指标不能直接解读为所有 stride 都差于 zero-flow；按三 stride 的 mean EPE，模型为 `4.205 mm`，zero-flow 对应均值约 `4.586 mm`。epoch 8 train EPE=`3.984 mm`，effective branch=`11.41`，top-1 usage=`0.191`。结果仍属早期且有波动，尚不能下最终结论。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。
+
+## EXP-016 — GRAB C=32 additive contribution strict-budget capacity match
+
+### 日期
+
+2026-08-25
+
+### 假设与边界
+
+将严格预算 C=64 additive 配置仅把 `cm_dim` 改为 32，检验降低 Cm 宽度后 additive aggregate supervision 是否仍能保持多 slot 并改善 C=32 hard-gate 的性能。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml`；
+- C=32、K_max=16、GRAB object-only、geometry-only/no-time；
+- global batch=64（GPU 0/7，per-device batch=32）、50 epoch、`max_steps=202300`；
+- 其余严格继承 C=64 additive：aggregate flow supervision、group sparsity=`1e-3`，candidate mixture/hard gate/count/confidence/overlap 关闭。
+
+### 当前运行
+
+- output: `outputs/cm/cm_object_v2_grab_additive_cm32_geometry_only_no_time_budget50_20260825_144851`；
+- 已完成 epoch 6 validation，当前进入 epoch 7，无 OOM/NaN。epoch 1--6 mean stride EPE=`24.719, 18.951, 17.445, 17.720, 16.834, 17.173 mm`；epoch 6 stride 1/5/10=`5.507/15.126/30.884 mm`、zero-flow improvement=`61.2%`。
+- epoch 6 effective branch count=`13.76`、global top-1 usage=`10.7%`，未出现单-slot collapse；因 GPU 0/7 与其他任务共用，吞吐低于 C=64 additive。
+
+### 同 epoch 初步对比
+
+| Epoch | C=32 hard-gate | C=32 additive | C=64 additive |
+| ---: | ---: | ---: | ---: |
+| 1 | 42.995 mm | 24.719 mm | 20.032 mm |
+| 2 | 42.960 mm | 18.951 mm | 18.264 mm |
+| 3 | 35.952 mm | 17.445 mm | 18.513 mm |
+| 4 | 30.581 mm | 17.720 mm | 16.703 mm |
+| 5 | 26.204 mm | 16.834 mm | 16.550 mm |
+| 6 | 25.096 mm | 17.173 mm | 17.061 mm |
+
+C=32 additive 已稳定显著优于同宽度 hard-gate，且 epoch 2--6 与 C=64 additive 基本接近；当前仍不足以判断后期是否会因 C=32 容量形成更高平台。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。
+
+## EXP-017 — GRAB C=32 hard-gate objective-only strict match
+
+### 日期
+
+2026-08-26
+
+### 假设与边界
+
+在与 C=32 additive strict 完全相同的数据、global batch、optimizer steps 和 cosine budget 下，仅恢复 legacy hard-gate 目标，隔离 additive contribution 相对 hard-gate 的效果。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64.yaml`；
+- C=32、K_max=16、GRAB object-only、geometry-only/no-time；
+- global batch=64（GPU 2/3，per-device batch=32）、50 epoch、`max_steps=202300`；
+- `use_additive_slot_contributions=false`、`use_slot_gate=true`、5+5 epoch gate warm-up、count/confidence=`1e-3/0.1`；其余继承 C=32 additive strict。
+
+### 当前运行
+
+- output: `outputs/cm/cm_object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64_20260826_004930`；
+- 已完成 epoch 5 validation，当前进入 epoch 6，无 OOM/NaN。epoch 1--5 mean stride EPE=`35.774, 24.188, 21.527, 20.855, 18.497 mm`；epoch 5 stride 1/5/10=`6.081/16.889/32.520 mm`、zero-flow improvement=`57.5%`。
+- epoch 5 validation 仍处于 full-open warm-up，hard active=`16`、effective branch=`15.28`，尚不能判断 gate 恢复后是否坍缩。与 C=16 additive 共用 GPU 2/3 后吞吐约 `103 samples/s`。
+
+### 当前 objective-only 对照
+
+| Epoch | C=32 hard-gate strict | C=32 additive strict |
+| ---: | ---: | ---: |
+| 1 | 35.774 mm | 24.719 mm |
+| 2 | 24.188 mm | 18.951 mm |
+| 3 | 21.527 mm | 17.445 mm |
+| 4 | 20.855 mm | 17.720 mm |
+| 5 | 18.497 mm | 16.834 mm |
+
+additive 在前五个 epoch 均更优；epoch 5 优势为 `1.663 mm`（约 9.0%）。hard-gate 的关键检验点是 epoch 6--10 gate ramp，当前尚未覆盖。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。
+
+## EXP-018 — GRAB C=16 additive contribution strict capacity match
+
+### 日期
+
+2026-08-26
+
+### 假设与边界
+
+在严格 additive 配置下仅将 `cm_dim` 从 32 降至 16，检验 additive 监督能否继续缓解低维 Cm 的性能退化并保持多 slot 使用。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/object_v2_grab_additive_cm16_geometry_only_no_time_budget50.yaml`；
+- 除 `cm_dim=16` 外，数据、输入、global batch=64、50 epoch、`max_steps=202300`、aggregate supervision 和 group sparsity=`1e-3` 均与 C=32 additive strict 一致；
+- GPU 2/3、DDP world size=2、per-device batch=32，与 C=32 hard-gate 并行共用显存/算力。
+
+### 当前运行
+
+- output: `outputs/cm/cm_object_v2_grab_additive_cm16_geometry_only_no_time_budget50_20260826_005305`；
+- 已完成 epoch 5 validation，当前进入 epoch 6，无 OOM/NaN。epoch 1--5 mean stride EPE=`40.738, 31.244, 20.872, 18.500, 18.215 mm`；epoch 5 stride 1/5/10=`5.578/16.342/32.724 mm`、zero-flow improvement=`59.5%`。
+- epoch 5 effective branch count=`8.88`、global top-1 usage=`27.7%`：相比 C=32 additive 同 epoch 的 `13.71/10.2%` 明显更集中，但没有单-slot collapse。两条 run 合计占 GPU 2/3 约 `3.3 GB/卡`，显存余量充足；当前吞吐约 `102 samples/s`。
+
+### 当前容量对照
+
+| Epoch | C=16 additive | C=32 additive | C=64 additive |
+| ---: | ---: | ---: | ---: |
+| 1 | 40.738 mm | 24.719 mm | 20.032 mm |
+| 2 | 31.244 mm | 18.951 mm | 18.264 mm |
+| 3 | 20.872 mm | 17.445 mm | 18.513 mm |
+| 4 | 18.500 mm | 17.720 mm | 16.703 mm |
+| 5 | 18.215 mm | 16.834 mm | 16.550 mm |
+
+C=16 前两轮收敛明显更慢，epoch 5 已追至距 C=32 `1.381 mm`、距 C=64 `1.665 mm`；是否形成更高平台仍需后续 epoch。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中）。
 
 ## EXP-011 — GRAB C=32 geometry-only/no-time hard-gate 瓶颈实验
 
@@ -57,11 +328,18 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 - GPU 7 单卡，per-device/global batch=48，50 epoch，计划总步数 269750；
 - output: `outputs/cm/cm_object_v2_grab_gate_cm32_geometry_only_no_time_20260823_235356`；
 - launcher log: `output/exp/cm_v121/cm_object_v2_grab_gate_cm32_geometry_only_no_time_offline_gpu7.log`；
-- 启动状态：模型、数据、optimizer 和 offline W&B 初始化完成；已稳定运行到至少 step 800，无 OOM/NaN。step 100--800 吞吐约 `130--149 samples/s`，data wait 约 `0.09%--0.13%`；warmup 按设计显示 threshold=0、force-all=1、hard active=16。
+- 已完成 epoch 15 validation，随后在 epoch 16 训练阶段停止，最后完整验证为 mean stride EPE=`21.388 mm`，stride 1/5/10=`6.533/20.078/37.555 mm`，zero-flow improvement=`52.16%`；epoch 14 的 mean EPE=`21.121 mm`，已进入约 21 mm 平台。训练过程无 OOM/NaN。
+- epoch 15 的 stride-1 effective branch count=`1.0002`、global top-1 usage=`99.99%`，确认 hard-gate 已坍缩为单 slot；该结果是中途停止证据，不代表完成 50 epoch。
 
 ### 结论状态
 
-`INCONCLUSIVE`
+`INCONCLUSIVE`（中途停止；容量与坍缩诊断证据已形成，未完成完整预算）
+
+### 与 C=64 hard-gate 的对齐观察
+
+- 同 epoch 15：C=64 mean stride EPE=`15.743 mm`，C=32=`21.388 mm`；C=64 低约 `5.65 mm`（约 26%）。
+- 同 optimizer step 约 `80920`：C=64 epoch 20 mean EPE=`14.187 mm`，仍优于 C=32 epoch 15 的 `21.388 mm`。
+- 两者在 warm-up 后都坍缩到约 1 个 effective slot，因此 C=64 的优势主要体现为容量带来的性能，不是 slot 使用更分散；严格预算 additive C=64 仍需等待 validation。
 
 当前只有实现与启动证据；必须等待固定 stride validation、zero-flow improvement、slot active count/fallback/effective branch 指标后再判断瓶颈假设。
 
@@ -746,3 +1024,29 @@ batch 24 mixed full pilot 的最终汇总为：`val/mean_stride_epe_mm=29.3987`�
 - `output/exp/cm_v121_throughput/mixed_bs64_3gpu_trainonly.log`
 - `outputs/cm/cm_v121_mixed_bs24_3gpu_full_20260819_131714/metrics.jsonl`
 - commit: `3e32de8`
+
+## EXP-012 — GRAB C=64 geometry-only/no-time hard-gate 容量对照
+
+### 日期
+
+2026-08-24
+
+### 假设与边界
+
+在 EXP-011 的 GRAB object-only、原始物体几何、无时间条件和 gate warm-up 设定下，将 `cm_dim` 从 32 改为 64，检验 C=32 的退化是否主要来自 Cm 容量不足。输入、GT、DenseToken 冻结、gate loss 与 5+5 epoch warm-up 保持不变，不包含场景点；但实际运行同时改变了 global batch 和 DDP 方式，因此不是纯粹的单变量容量 ablation。
+
+### 实现与运行
+
+- config: `src/task/Cm/configs/object_v2_grab_gate_cm64_geometry_only_no_time.yaml`，继承 C=32 配置，覆盖 `meta.cm_dim=64` 与双卡运行所需的 batch；
+- GPU: `CUDA_VISIBLE_DEVICES=1,2`，DDP world size=2；per-device batch=32，global batch=64，validation batch=32；
+- 训练: 从头开始，50 epoch，W&B offline，预计 `202300` optimizer steps；相对 C=32 的 global batch=48、单卡 269750 steps，C=64 使用 global batch=64、DDP 双卡 202300 steps；
+- output: `outputs/cm/cm_object_v2_grab_gate_cm64_geometry_only_no_time_20260824_155338`；
+- launcher log: `output/exp/cm_v121/cm_object_v2_grab_gate_cm64_geometry_only_no_time_offline_gpu12_bs32.log`；
+- 启动核验: 两个 rank 均完成初始化，`train_setup` 明确报告 `world_size=2/global_batch=64`，无 OOM/NaN；
+- 单卡 C=64 的旧尝试仅到约 600 step、没有完整 epoch/checkpoint，已停止，不纳入结果。
+
+### 结论状态
+
+`INCONCLUSIVE`
+
+当前结果显示 C=64 在同 epoch/同 optimizer-step 都优于 C=32，但由于 global batch、每 epoch step 数和 cosine 总步数均不同，该差异只能作为“容量+训练条件”的联合证据；不能称为完全公平的 C-only 结论。两者 warm-up 后均坍缩到约 1 个 effective slot。

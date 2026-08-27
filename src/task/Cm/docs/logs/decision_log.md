@@ -1,5 +1,113 @@
 # Cm AI 自主决策记录
 
+## 2026-08-27 — Inspire-F1 采用冻结 DenseToken 的 decoder-only continuation
+
+- scope: task:Cm / HRDexDB 微调
+- anchor: `src/task/Cm/configs/hrdexdb_inspire_f1_decoder_only_resume.yaml` / 2026-08-27
+
+**未指定点**
+
+用户确认停止全量微调，使用当前最新权重冻结 DenseToken 后继续训练 decoder，并确认不使用 cache；未单独指定是否继承源 optimizer 状态及 step/scheduler 计数。
+
+**实际选择**
+
+- 从 Inspire-F1 全量微调的 epoch 8 / step `19160` checkpoint 载入模型；不再加载 GRAB initializer。
+- `freeze_dense_encoder=true`，DenseToken 仍在线 no-grad 前向；`data.use_dense_cache=false`。
+- decoder-only optimizer 只包含 `requires_grad=true` 的 decoder 参数；跳过源 DenseToken Adam moments/scaler，scheduler 与 `global_step=19160` 接续。
+- continuation checkpoint 显式保留 DenseToken 权重，避免后续恢复时丢失已适配的 encoder。
+
+**选择理由与影响**
+
+这样保持了已完成的 Inspire-F1 DenseToken 适配，同时将后续更新集中到 Cm decoder，显著减少反向图与 optimizer 状态显存；继承 global step/scheduler 可避免重新开始 cosine 进度。在线 no-grad DenseToken 保留了现有随机几何采样下的输入语义，但吞吐仍受前向成本影响。
+
+**可逆性 / 是否需要用户确认**
+
+源全量微调 checkpoint 未覆盖，可随时恢复全量 DenseToken 训练；decoder-only continuation 作为独立输出目录运行。本选择基于用户已明确的“冻结 DenseToken、继续训练 decoder、不用 cache”要求，无额外确认。
+
+## 2026-08-26 — Inspire-F1 additive 微调解冻 DenseToken并重置预算
+
+- scope: task:Cm / HRDexDB 微调
+- anchor: working tree / 2026-08-26
+
+**未指定点**
+
+用户确认微调允许解冻 DenseToken，并选择后者预算；未指定 checkpoint 加载时是否继承源 run 的 optimizer/epoch 计数。
+
+**实际选择**
+
+使用当前 C=64 additive strict checkpoint 初始化模型权重，`freeze_dense_encoder=false`、`data.use_dense_cache=false`；global batch=64、50 epoch、202300 steps、lr=`3e-4`，optimizer/scheduler/step/epoch 全部从微调阶段重新开始。数据仅筛选 manifest 中 `inspire_f1/` 前缀的 446/67/63 split。
+
+**选择理由与影响**
+
+继承 GRAB checkpoint 的 optimizer 和 step 会把新数据训练错误地接到旧 cosine 进度，并且复用旧输出目录；独立初始化入口保留 checkpoint head 权重，同时提供可复现的全新微调预算。解冻 DenseToken 是用户明确允许的训练变量，故不再声称这是“仅换数据集”的严格实验。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；基础 checkpoint 不修改，冻结 DenseToken 的 additive 配置仍可独立复现。
+
+## 2026-08-26 — 新 C=32 hard-gate 隔离目标变量并与 C=16 additive 共用 GPU
+
+- scope: task:Cm 训练
+- anchor: working tree / 2026-08-26
+
+**未指定点**
+
+用户要求新 C=32 hard-gate 使用“现在相同配置”，并在显存允许时启动 C=16 additive；未指定 GPU 分配及是否允许两条新 run 共用算力。
+
+**实际选择**
+
+C=32 hard-gate 以 C=32 additive strict 为基准，只恢复 hard gate、5+5 warm-up 和原 count/confidence loss；C=16 additive 只改变 `cm_dim`。两条均使用 GPU 2/3、global batch=64 并行运行。
+
+**选择理由与影响**
+
+GPU 2/3 启动前空闲；第一条启动后每卡仅占约 1.8 GB，第二条加入后合计约 3.3 GB，显存余量充分。共用 GPU 避免占用其他用户或现有 Cm run 的卡，但使两条吞吐降至约 `102--104 samples/s`；训练数值预算不变。
+
+**可逆性 / 是否需要用户确认**
+
+两条 run 均为独立配置和输出，可单独停止或迁移；没有修改已有 checkpoint。
+
+## 2026-08-25 — C=32 additive 严格容量对照仅改变 Cm 宽度
+
+- scope: task:Cm 训练
+- anchor: working tree / 2026-08-25
+
+**未指定点**
+
+用户要求“C=32 additive，一样配置”，未逐项重复指定运行卡号。
+
+**实际选择**
+
+以当前 C=64 additive strict-budget YAML 为基准，仅覆盖 `meta.cm_dim=32`；保持 global batch=64、50 epoch、202300 steps、loss 和数据条件不变。由于 GPU 1/2 与 4/6 已有 Cm 训练，使用 GPU 0/7 的空闲显存容量启动 DDP。
+
+**选择理由与影响**
+
+这样可以直接检验 Cm 宽度对 additive 多 slot 训练的影响；GPU 0/7 与其他任务共用，吞吐会下降，但不改变 optimizer budget 或模型语义。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；新 run 独立输出，不影响 C=64 additive 和 hard-gate checkpoint。
+
+## 2026-08-24 — candidate mixture pilot 采用显式 soft-min 而非 aggregate flow
+
+- scope: task:Cm 训练目标
+- anchor: working tree / 2026-08-24
+
+**未指定点**
+
+用户确认采用 candidate-level mixture loss，但未要求保留旧 aggregate flow loss，也未指定 pilot 的预算覆盖方式。
+
+**实际选择**
+
+首轮将 `loss_flow_weight=0`，仅优化 per-slot candidate loss 的 soft-min mixture；关闭 hard gate、count、confidence 和 overlap loss，使用 `tau=0.05`。由于配置继承器保留了基础 epoch 调度，另以显式 `max_steps=16184` 固定约 10 epoch 的单卡 global batch=32 预算。
+
+**选择理由与影响**
+
+若同时保留旧 aggregate loss，candidate mixture 的 slot responsibility 梯度会与“候选平均后再比较 GT”的目标混合，无法判断新目标是否有效；关闭 gate/count 可以先验证 candidate 是否具有可分工性。该选择只改变本 pilot 的优化目标，不改变数据、GT、模型输入和评估指标。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；旧配置和 checkpoint 不受影响，用户已确认 C=64、GRAB 和该训练方向。
+
 ## 2026-08-23 — 数据工具实现归入 tools/data 并保留兼容模块
 
 - scope: task:Cm 工具入口
@@ -351,3 +459,71 @@ HRDexDB 内部不同机器人手型与 MANO 是否需要再做分层采样，以
 **可逆性 / 是否需要用户确认**
 
 数据源、概率和 `freeze_dense_encoder` 都由独立配置控制，可逆；全量 cache 尚未生成，因此当前只搭框架，不启动微调。
+
+## 2026-08-24 — mixed 平台期停止并改用双卡 C=64 容量对照
+
+- scope: task:Cm 运行资源与对照实验
+- anchor: branch `oyx` / 2026-08-24
+
+**未指定点**
+
+用户要求把 GRAB C=64 对照切换为双卡并适当增大 batch，但未指定卡号和具体增幅。
+
+**实际选择**
+
+停止已在 epoch 45--48（C=256）和 epoch 35--40（C=64）验证平台期的 mixed 续训，保留最近完整 epoch 48/40 checkpoint；新 C=64 使用 GPU 1/2 DDP，per-device batch 32、global batch 64。
+
+**选择理由与影响**
+
+两条 mixed 曲线近四个 epoch 的 mean stride EPE 已基本持平，继续占用资源不能增加当前对照信息。GPU 1/2 当时空闲，global batch 64 相比原单卡 C=32 的 48 只增加约三分之一，属于小幅增大；其余数据、模型输入、gate warm-up 和优化设置继承 C=32 配置。
+
+**可逆性 / 是否需要用户确认**
+
+可从保留 checkpoint 恢复 mixed，或调整 GPU/batch 重新启动；停止与资源调整均在用户本轮授权范围内，无需额外确认。
+## 2026-08-24 — 将 candidate mixture 改为 additive slot contributions
+
+- scope: task:Cm
+- anchor: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`
+
+**未指定点**
+
+- 用户确认不再用 candidate-level soft-min 作为当前主路线，希望保留所有有效 slot 的 additive contribution，并通过轻量复杂度正则学习 effective slot 数。
+- 未指定训练阶段是否立即做动态结构裁剪。
+
+**实际选择**
+
+- 保留 `K_max=16` 计算图，训练阶段不使用 hard gate；每个 slot 直接输出 3-D contribution，最终 `pred_flow=Σ_k contribution_k`。
+- 使用 aggregate Smooth-L1 作为主监督；关闭 candidate mixture、count、confidence 和 overlap loss。
+- 使用 group sparsity `loss_slot_group_sparsity_weight=1e-3`，按每个 slot 的 contribution vector norm 聚合；训练后再依据全局 contribution usage 做结构化 pruning。
+- 直接输出 contribution 而不是显式 `a_k·Δf_k`，从参数化上避免乘法尺度不可辨识。
+
+**选择理由与影响**
+
+- 训练目标与部署输出保持一致；不会再出现 candidate soft-min 监督而 weighted-average 评估的语义错位。
+- group sparsity 只学习 effective slot 数，暂不减少训练期计算；实际 K 的降低留到 checkpoint 后剪枝和短暂 fine-tune。
+
+**可逆性 / 是否需要用户确认**
+
+- 可逆：通过 config 恢复 legacy aggregate、hard-gate 或 candidate-mixture 路线；本次 additive 结构属于已由用户确认的研究方向，group sparsity 权重是轻量可调工程选择。
+
+## 2026-08-25 — 将 additive pilot 对齐 C=64 hard-gate 的完整预算
+
+- scope: task:Cm 训练对照
+- anchor: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`
+
+**未指定点**
+
+- 用户要求“按照相同预算再训练”，未单独指定 GPU；旧 hard-gate 使用 global batch=64、50 epoch、202300 steps。
+
+**实际选择**
+
+- 严格复用 global batch=64、50 epoch、202300 steps、AdamW/cosine 设置；使用空闲 GPU 4/6，per-device batch=32。
+- 保持 additive contribution、正确 group-sparsity 归一化和 `1e-3` 权重不变，只改变预算与 global batch。
+
+**选择理由与影响**
+
+- 这样同 epoch 的数据遍历次数、optimizer 更新密度和 LR schedule 可与旧 C=64 对照直接比较；短预算单卡版本保留为探索性结果，不再作为严格结论。
+
+**可逆性 / 是否需要用户确认**
+
+- 可逆；旧短预算 output 保留，strict-budget run 可独立停止或继续，不覆盖任何旧 checkpoint。

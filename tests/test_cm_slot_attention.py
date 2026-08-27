@@ -7,7 +7,38 @@ import torch.nn.functional as F
 from torch import nn
 
 from src.task.Cm.model import CmFlowHead, CmFlowModel
-from src.task.Cm.runner import CmActionRunner, internal_flow_smooth_l1, scaled_flow_smooth_l1
+from src.task.Cm.runner import (
+    CmActionRunner,
+    additive_slot_group_sparsity,
+    internal_flow_smooth_l1,
+    scaled_flow_smooth_l1,
+)
+
+
+def test_additive_slot_group_sparsity_is_batch_size_invariant() -> None:
+    contribution = torch.tensor(
+        [[
+            [[3.0, 4.0, 0.0], [0.0, 0.0, 2.0]],
+            [[0.0, 0.0, 0.0], [0.0, 6.0, 8.0]],
+            [[9.0, 9.0, 9.0], [9.0, 9.0, 9.0]],
+        ]]
+    )
+    valid = torch.tensor([[True, True, False]])
+    loss, strength = additive_slot_group_sparsity(
+        contribution,
+        valid,
+        target_scale=1.0,
+    )
+    torch.testing.assert_close(strength, torch.tensor([[2.5, 6.0]]))
+    torch.testing.assert_close(loss, torch.tensor(8.5))
+
+    repeated_loss, repeated_strength = additive_slot_group_sparsity(
+        contribution.repeat(4, 1, 1, 1),
+        valid.repeat(4, 1),
+        target_scale=1.0,
+    )
+    torch.testing.assert_close(repeated_strength, strength.repeat(4, 1))
+    torch.testing.assert_close(repeated_loss, loss)
 
 
 def test_cm_flow_head_uses_full_hand_motion_inputs_and_slot_bottleneck() -> None:

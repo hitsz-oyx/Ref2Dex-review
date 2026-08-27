@@ -44,7 +44,12 @@ def _resolve_manifest_episode(root: Path, relative: str) -> Path:
     raise FileNotFoundError(f"HRDexDB manifest entry has no geometry cache: {relative}")
 
 
-def _manifest_specs(root: Path, manifest: Path | None, split: str) -> list[tuple[str, Path]]:
+def _manifest_specs(
+    root: Path,
+    manifest: Path | None,
+    split: str,
+    source_prefix: str | None = None,
+) -> list[tuple[str, Path]]:
     if manifest is None:
         manifests = sorted(root.glob("episodes/*/geometry/manifest.json"))
         if not manifests:
@@ -52,7 +57,13 @@ def _manifest_specs(root: Path, manifest: Path | None, split: str) -> list[tuple
                 f"No HRDexDB geometry manifests under {root}; provide data.hrdexdb_manifest."
             )
         # A cache without a split descriptor is valid for a smoke run only.
-        return [(str(_load_json(path)["episode"]), path.parent.parent) for path in manifests]
+        result = [(str(_load_json(path)["episode"]), path.parent.parent) for path in manifests]
+        if source_prefix:
+            prefix = source_prefix.rstrip("/") + "/"
+            result = [item for item in result if item[0].startswith(prefix)]
+        if not result:
+            raise ValueError(f"No HRDexDB episodes match source_prefix={source_prefix!r} in split={split!r}")
+        return result
     payload = _load_json(manifest)
     cache_dirs = payload.get("cache_dirs")
     splits = payload.get("splits")
@@ -66,6 +77,11 @@ def _manifest_specs(root: Path, manifest: Path | None, split: str) -> list[tuple
         if episode not in cache_dirs:
             raise KeyError(f"HRDexDB split episode missing cache_dirs entry: {episode}")
         result.append((str(episode), _resolve_manifest_episode(root, str(cache_dirs[episode]))))
+    if source_prefix:
+        prefix = source_prefix.rstrip("/") + "/"
+        result = [item for item in result if item[0].startswith(prefix)]
+    if not result:
+        raise ValueError(f"No HRDexDB episodes match source_prefix={source_prefix!r} in split={split!r}")
     return result
 
 
@@ -331,6 +347,79 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed=Non
         getattr(data_cfg, "use_dense_cache", False)
     ):
         raise ValueError("Trainable DenseToken cannot consume cached z_obj/z_hand features")
+    hrdexdb_only = bool(getattr(data_cfg, "hrdexdb_only", False))
+    source_prefix = getattr(data_cfg, "hrdexdb_source_prefix", None)
+    if source_prefix is not None:
+        source_prefix = str(source_prefix).strip() or None
+    hroot = Path(str(getattr(data_cfg, "hrdexdb_root"))).resolve()
+    manifest = Path(str(getattr(data_cfg, "hrdexdb_manifest"))).resolve()
+    common = dict(num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
+                  base_seed=int(seed), min_stride=int(getattr(data_cfg, "min_stride", 1)),
+                  max_stride=int(getattr(data_cfg, "max_stride", 10)), active_only=bool(getattr(data_cfg, "active_only", True)),
+                  sampling_bank_size=int(getattr(data_cfg, "sampling_bank_size", 4)), fixed_eval_bank=int(getattr(data_cfg, "fixed_eval_bank", 0)))
+    hcommon = {key: common[key] for key in ("num_obj_points", "num_hand_points", "base_seed", "min_stride", "max_stride", "active_only")}
+    hcommon["num_obj_pool"] = int(getattr(meta_cfg, "num_obj_pool", 4096))
+
+    if hrdexdb_only:
+        htrain = HrdexdbGeometryDataset(
+            _manifest_specs(hroot, manifest, "train", source_prefix), **hcommon
+        )
+        train_kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
+        train_kwargs.update(
+            batch_size=int(data_cfg.batch_size),
+            shuffle=distributed is None,
+            sampler=None if distributed is None else make_default_train_sampler(
+                htrain, shuffle=True, seed=seed, distributed=distributed, drop_last=False
+            ),
+        )
+        train_loader = DataLoader(htrain, **train_kwargs)
+
+        def eval_loader(dataset):
+            kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
+            kwargs.update(
+                batch_size=int(getattr(data_cfg, "val_batch_size", data_cfg.batch_size)),
+                shuffle=False,
+                sampler=None if distributed is None else make_default_eval_sampler(dataset, distributed=distributed),
+            )
+            return DataLoader(dataset, **kwargs)
+
+        val_strides = tuple(int(value) for value in getattr(data_cfg, "val_strides", (1, 5, 10)))
+        test_strides = tuple(int(value) for value in getattr(data_cfg, "test_strides", val_strides))
+        val_loaders = {}
+        test_loaders = {}
+        for stride in val_strides:
+            dataset = HrdexdbGeometryDataset(
+                _manifest_specs(hroot, manifest, "val", source_prefix),
+                fixed_stride=stride,
+                **hcommon,
+            )
+            val_loaders[f"val/stride_{stride}/hrdexdb/"] = eval_loader(dataset)
+        for stride in test_strides:
+            dataset = HrdexdbGeometryDataset(
+                _manifest_specs(hroot, manifest, "test", source_prefix),
+                fixed_stride=stride,
+                **hcommon,
+            )
+            test_loaders[f"test/stride_{stride}/hrdexdb/"] = eval_loader(dataset)
+        metadata = {
+            "schema_name": "ref2dex_cm_hrdexdb_finetune_v1",
+            "coordinate_frame": "hand_root_t",
+            "num_obj_pool": int(getattr(meta_cfg, "num_obj_pool", 4096)),
+            "num_obj_points": int(meta_cfg.num_obj_points),
+            "num_hand_points": int(meta_cfg.num_hand_points),
+            "source_probabilities": {"hrdexdb": 1.0},
+            "hrdexdb_manifest": str(manifest),
+            "hrdexdb_source_prefix": source_prefix,
+            "dataset_split": {
+                "hrdexdb_train_episodes": len(_manifest_specs(hroot, manifest, "train", source_prefix)),
+                "hrdexdb_val_episodes": len(_manifest_specs(hroot, manifest, "val", source_prefix)),
+                "hrdexdb_test_episodes": len(_manifest_specs(hroot, manifest, "test", source_prefix)),
+            },
+            "val_strides": list(val_strides),
+            "test_strides": list(test_strides),
+        }
+        return train_loader, next(iter(val_loaders.values())), next(iter(test_loaders.values())), metadata, val_loaders, test_loaders
+
     base_root = Path(str(getattr(data_cfg, "base_root"))).resolve()
     base_split = Path(str(getattr(data_cfg, "base_split_json_path"))).resolve()
     # Build the base split once, then keep the two source buckets separate.
@@ -368,9 +457,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed=Non
     base_test_paths = group_paths(base_test)
     if set(base_train_paths) != {"grab", "arctic"}:
         raise ValueError(f"Expected GRAB and ARCTIC base buckets, got {sorted(base_train_paths)}")
-    hroot = Path(str(getattr(data_cfg, "hrdexdb_root"))).resolve()
-    manifest = Path(str(getattr(data_cfg, "hrdexdb_manifest"))).resolve()
-    htrain = HrdexdbGeometryDataset(_manifest_specs(hroot, manifest, "train"), **hcommon)
+    htrain = HrdexdbGeometryDataset(_manifest_specs(hroot, manifest, "train", source_prefix), **hcommon)
     probs = {"grab": 1.0 / 3.0, "arctic": 1.0 / 3.0, "hrdexdb": 1.0 / 3.0}
     custom_probs = getattr(data_cfg, "source_probabilities", None)
     if custom_probs is not None:

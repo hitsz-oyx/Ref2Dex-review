@@ -1,5 +1,73 @@
 # CmDecoder 修改记录
 
+## 2026-08-27 — 统一单帧与 rollout 可视化界面并补充图例
+
+- branch: working tree
+- post-commit: HEAD
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/viewer.py` — 将 rollout 轨迹接入原有 viewer 控件；固定显示模式下拉框、Pair/Rollout step、mesh/点云开关和 Play/Stop。未传 `--rollout-trajectory` 时 rollout 模式保持灰色禁用；传入轨迹后可在同一界面切换单帧与闭环模式，并自动从轨迹 episode 恢复单帧数据。增加蓝/绿/橙/灰/品红颜色及 mesh、点云、flow 语义图例，并补充两种启动方式说明；CLI 明确 pair 始终使用 checkpoint/cache 现场推理。
+- `src/task/CmDecoder/docs/logs/architecture_log.md` — 同步统一可视化模式、mesh/点云控件和颜色语义。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新统一 viewer 的当前状态。
+
+**改动原因**
+
+避免根据输入文件改变基础 UI，保留此前单帧 mesh 与采样点功能，同时让 rollout 成为显式、可检查的数据模式。
+
+**验证**
+
+- `graspenv` 下 `viewer.py` 与 `inspire_rollout.py` 编译通过。
+- 使用 `output/research/inspire_rollout_cmdecoder_apple2_30hz_32.npz` 启动统一 viewer，Viser 正常监听 `http://localhost:8096`。
+
+## 2026-08-27 — 将 rollout 播放入口并回单帧 viewer
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部可视化入口
+
+**文件**
+
+- `src/task/CmDecoder/viewer.py` — 保持原有 `--object/--scene` 单帧 viewer 命令不变；新增可选 `--rollout-trajectory`，使用同一个 Viser 入口播放已有 rollout NPZ。
+
+**改动原因**
+
+避免单帧和 rollout 需要记忆两个独立脚本；rollout 是显式模式，默认行为仍是原来的逐 pair teacher-forced viewer。
+
+## 2026-08-27 — 增加 Inspire action-conditioned rollout 评估与可视化
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验入口与可视化
+
+**文件**
+
+- `src/task/CmDecoder/inspire_rollout.py` — 新增 Inspire 同手型 action-conditioned closed-loop rollout；输出逐步 hand points、mesh、q、wrist、接触比例、NPZ 和诊断 PNG，并支持从 NPZ 启动 Viser 播放。
+- `src/task/CmDecoder/viewer.py` — 增加 30 Hz v4 manifest/cache override、物体世界法向读取、丢帧 pair 过滤和动作幅度字段，保证 rollout 与 teacher-forced viewer 使用一致的有效 pair。
+- `docs/logs/experiment_log.md` — 记录 EXP-020 的协议、定量结果和结论。
+- `docs/logs/status_log.md` — 同步 Inspire rollout 发散状态和复跑计划。
+
+**改动原因**
+
+用户要求增加类似 rollout 的可视化并立即运行 Inspire 自身结果。当前实现明确区分 GT action-conditioned closed-loop 与完全自主 Cm policy，避免把前者误称为 autonomous rollout。
+
+## 2026-08-27 — 记录新版 Cm 驱动 decoder 训练启动
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档
+
+**文件**
+
+- `docs/logs/experiment_log.md` — 新增 EXP-018 的运行假设、checkpoint、数据合同和初始指标。
+- `docs/logs/status_log.md` — 更新当前进行中的训练、GPU、输出目录和下一步。
+- `docs/logs/decision_log.md` — 记录禁用旧 token cache、在线重算 Cm 的决定及预计时长影响。
+
+**改动原因**
+
+按用户要求启动新版 `Cm` checkpoint 的 Inspire F1 point-flow decoder，并保留可复现实验合同与 checkpoint 绑定约束。
+
 ## 2026-08-24 — 拆分 CmDecoder 仓库记忆与机器记忆
 
 - branch: `oyx`
@@ -91,6 +159,144 @@
 **改动原因**
 
 保持 candidate mask 语义不变，同时降低 4096×1538 距离计算的 CPU 和峰值内存；单 episode 探针约从 192.6 s 降至 37.4 s。
+
+## 2026-08-25 — 评估 geometry-only/no-time decoder 的中途 rollout
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部
+
+**文件 / 产物**
+
+- `output/research/arctic_mano_cm64_geometry_only_no_time_step26000_s01_box_use_01_left.{npz,png}` — step 26000 decoder 在固定 ARCTIC 32步窗口上的 teacher-forced 与 autoregressive rollout 结果。
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 记录中途 checkpoint 的定量结果、适用边界和最终复评要求。
+
+**改动原因**
+
+在训练尚未结束时先检验 geometry-only/no-time Cm 是否已经改善 decoder 的闭环稳定性，同时使用不可变 step checkpoint 避免并行训练覆盖 `best.pt`。
+
+**验证**
+
+- checkpoint: step 26000 / epoch 7，GRAB val EPE=`3.477 mm`；
+- ARCTIC teacher-forced EPE=`2.954 mm`；rollout mean/final EPE=`73.672/102.922 mm`；
+- 评估正常完成，训练进程未中断。
+
+## 2026-08-24 — 增加 ARCTIC 状态扰动纠偏诊断
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/research/arctic_perturbation.py` — 固定未扰动 `cm_tokens`，对 ARCTIC 当前 MANO 点施加物体方向、远离物体方向和随机方向的 5/10/20 mm 平移，统计下一帧 EPE 与纠偏投影。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 记录 EXP-018 的设置、结果和结论，并补充 step 22000 best 的 teacher-forced/rollout 复评。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新 decoder 训练进度和扰动诊断状态。
+
+**改动原因**
+
+验证 DenseToken 间接提供的当前手—物空间条件是否能在状态偏离真实轨迹时产生纠偏流，而不是只在 teacher-forced 状态上取得较低单步误差。
+
+**验证**
+
+- `graspenv` GPU 诊断成功，结果写入 `output/research/arctic_mano_cm64_perturbation.json`。
+- 5 mm 偏移存在弱纠偏，10–20 mm 偏移下纠偏快速减弱；step 22000 best 的 ARCTIC teacher-forced EPE 为 `2.398 mm`；训练模型和数据未被修改。
+
+## 2026-08-25 — 启动 geometry-only/no-time C=64 Cm 的 MANO decoder 对照
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部 / 跨 task checkpoint 对照
+
+**文件 / 运行入口**
+
+- `output/exp/cmdecoder_grab_mano_cm64_geometry_only_no_time.log` — 新 decoder 训练日志。
+- `outputs/cmdecoder/cmdecoder_grab_mano_pointflow_cm64_geometry_only_no_time_20260825_103711/` — 新 run 输出。
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 记录当前 run 和对照假设。
+
+**改动原因**
+
+在保持 decoder、GRAB 数据、训练预算和评估口径不变的前提下，仅替换为 `use_object_context=false`、`use_time_condition=false` 的 C=64 Cm，检验 token 语义是否影响 rollout 稳定性。
+
+**验证**
+
+- Cm checkpoint 配置核验通过：C=64、geometry-only、no-time；
+- decoder 初始化与 step 100 训练通过，当前无 OOM/NaN。
+
+## 2026-08-25 — 更新 geometry-only/no-time decoder 对照进度
+
+- branch: 当前工作分支
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 更新新 run 至 step 2000 / epoch 1 及首个验证结果。
+
+**改动原因**
+
+记录对照训练的第一阶段证据，避免将早期验证误判为最终 Cm 结构结论。
+
+## 2026-08-24 — 增加 GRAB 训练、ARCTIC MANO 跨域评估入口
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部实验与配置
+
+**文件**
+
+- `src/task/CmDecoder/dataset_object_v2.py` — 按 combined object-v2 split 过滤 GRAB/ARCTIC sequence，提供 MANO point-flow decoder 的 train/val/test loader。
+- `src/task/CmDecoder/dataset.py` — 接入 `object_v2_filter` 数据入口，保留 HRDexDB legacy/cache loader 不变。
+- `src/task/CmDecoder/mano_grab_point_config.py` — 新增冻结 mixed C=64 Cm、GRAB-only 10 epoch point-flow decoder 配置。
+- `src/task/CmDecoder/arctic_mano_eval.py` — 新增 ARCTIC teacher-forced 单步与 autoregressive rollout 评估、NPZ/PNG 导出。
+- `src/task/CmDecoder/docs/logs/{status,experiment,decision,modification}_log.md` — 记录实验定义、当前运行和实现选择。
+
+**改动原因**
+
+用户要求排除 Inspire 形态因素：在 GRAB MANO 上训练 decoder，再用完全不读取 GRAB 帧的 ARCTIC MANO 轨迹测试跨域泛化。
+
+**验证 / 状态**
+
+- object-v2 loader：GRAB train/val/test=`1067/134/134` sequences，samples=`262513/33718/31567`；
+- decoder forward smoke 通过，输出 `[B,1538,3]`；
+- ARCTIC evaluator 使用历史 point-flow checkpoint 完成 2-frame smoke，生成 `output/research/arctic_mano_eval_smoke.{npz,png}`；
+- 正式 GRAB decoder 已在 GPU6 启动，运行产物不纳入版本管理。
+
+## 2026-08-24 — 调整 GRAB decoder 吞吐与 validation 频率
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部训练配置
+
+**文件**
+
+- `src/task/CmDecoder/mano_grab_point_config.py` — per-device/global batch 从16调为64，改为每2000 step validation；其余数据、模型和监督不变。
+
+**改动原因**
+
+首个 batch16 run 的稳定吞吐约60 samples/s，10 epoch预计耗时过长；GPU6显存余量充足，增大 batch 可更快获得首个 best checkpoint并执行ARCTIC评估。
+
+**验证**
+
+- 重启后 `train_setup` 报告 `per_device_batch=64/global_batch=64/total_steps=41020`，GPU6约占5.2GB，未发生OOM。
+- 现有 CmDecoder 回归测试：`12 passed`；新增 loader、forward 和 ARCTIC 2-frame evaluator smoke 均通过。
+
+## 2026-08-24 — 运行 C=64 GRAB decoder 的 ARCTIC 双模式评估
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部实验产物与日志
+
+**文件 / 产物**
+
+- `output/research/arctic_mano_cm64_best_s01_box_use_01_left.npz`、`.png` — 使用 GRAB decoder best checkpoint 的 ARCTIC teacher-forced/rollout 结果。
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 记录初步定量结果与 rollout 发散。
+
+**验证**
+
+- teacher-forced 单步 EPE `2.717 mm`，zero-flow `4.545 mm`；
+- 32 帧 rollout 平均/末帧 EPE `113.957/193.094 mm`；
+- 训练进程继续运行，未因本次评估中断。
 
 ## 2026-08-23 — 扩展 HRDexDB 多手型 layered cache builder
 

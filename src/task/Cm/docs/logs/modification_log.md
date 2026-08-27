@@ -1,5 +1,315 @@
 # Cm AI 修改记录
 
+## 2026-08-27 — 同步 decoder-only continuation 的 epoch 14 验证状态
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 实验记录
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md` — 更新 Inspire-F1 decoder-only 至 step `34500`，补充 epoch 9--14 validation 对比及收敛判断。
+
+**改动原因**
+
+响应训练状态检查；当前验证最优为 epoch 14，但曲线仍有波动，实验状态保持 `INCONCLUSIVE`。
+
+## 2026-08-27 — 切换 Inspire-F1 续训为冻结 DenseToken 的 decoder-only
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / HRDexDB 微调
+
+**文件**
+
+- `src/task/Cm/config.py` — 增加 checkpoint 是否保留 DenseToken 及 decoder-only resume 配置字段。
+- `src/task/Cm/model.py` — 冻结阶段 continuation checkpoint 保留已适配的 DenseToken 权重。
+- `src/task/Cm/runner.py` — decoder-only resume 仅注册可训练 decoder 参数，跳过源 DenseToken optimizer/scaler 状态并接续 scheduler/global step。
+- `src/task/Cm/configs/hrdexdb_inspire_f1_decoder_only_resume.yaml` — 新增从 Inspire-F1 epoch 8 / step 19160 冻结 DenseToken 续训入口。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md` — 同步运行状态、实验边界和决策。
+
+**改动原因**
+
+用户要求停止全量 DenseToken 微调，使用当前最新权重冻结 DenseToken，继续训练 decoder；保持在线 DenseToken（不使用 cache）及原有数据、loss、global batch 和 step 语义。
+
+**验证 / 运行**
+
+- 初次启动发现继承配置中的 GRAB `init_checkpoint` 会覆盖 Inspire-F1 source，已在实际训练前停止错误进程并将该字段置空；随后重新启动并确认日志只加载 Inspire-F1 source。
+- `py_compile`、`git diff --check` 通过；当前 run 无 OOM/NaN。
+
+## 2026-08-26 — 新增 Inspire-F1-only additive 微调入口并启动训练
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / HRDexDB 数据入口
+
+**文件**
+
+- `src/task/Cm/config.py` — 增加 HRDexDB-only/source-prefix 和 fresh `init_checkpoint` 配置字段。
+- `src/task/Cm/runner.py` — 增加从初始化 checkpoint 加载模型权重、重置 fine-tune optimizer/step/epoch 的入口。
+- `src/task/Cm/dataset_hrdexdb.py` — 支持按 manifest episode prefix 过滤，并提供 Inspire-F1-only loader（446/67/63）。
+- `src/task/Cm/configs/hrdexdb_inspire_f1_finetune_cm64_additive.yaml` — 新增 C=64 additive、DenseToken 解冻、Inspire-F1-only、strict fresh budget 配置。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md` — 同步微调假设、验证和运行状态。
+
+**改动原因**
+
+用户选择 Inspire-F1 专门微调，并确认采用 global batch=64、50 epoch、202300 steps 的预算，同时允许解冻 DenseToken。
+
+**验证 / 运行**
+
+- `py_compile`、`git diff --check` 通过；
+- model checkpoint load smoke：head 权重无 missing/unexpected，DenseToken frozen-stage 缺失键按设计忽略；
+- loader smoke：train/val/test=`446/67/63` episodes；
+
+## 2026-08-26 — 更新 Inspire-F1 微调运行状态
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md` — 记录正式 run 已推进至 epoch 7 / step `16765` 及 epoch 6 validation 指标。
+
+**改动原因**
+
+响应训练状态检查，保持实验文档与实际产物同步。
+
+## 2026-08-26 — 同步各 GPU 训练状态
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md` — 补充五组 DDP 任务的 GPU 占用、进度及 Inspire-F1 epoch 7 validation。
+
+**改动原因**
+
+响应 GPU 级训练状态检查，避免将不同实验的进度混在一起。
+
+## 2026-08-26 — 将 C=32 additive 从 GPU 0/7 迁移到 GPU 0/2
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 运行资源调整
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md` — 记录 C=32 additive 的 DDP 资源迁移和恢复点。
+
+**改动原因**
+
+GPU 4/6 的 C=64 additive 已完成并退出；按用户要求保持原配置、global batch 和两卡 DDP，仅将 C=32 additive 的第二个 rank 从 GPU 7 改到空闲显存较多的 GPU 2。迁移从 `latest.pt`（epoch 27 / step 109242）恢复，随后已完成 epoch 28 validation 并进入 epoch 29；GPU 1/3 上的其他实验未停止。
+
+## 2026-08-27 — 解释 Inspire-F1 zero-flow 指标并同步 epoch 8
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md` — 更新 Inspire-F1 至 epoch 8，并记录 stride 分解后的 zero-flow 指标解释。
+
+**改动原因**
+
+最新验证中 stride 1 的流幅度仅约 `1.07 mm`，其相对 zero-flow 退化会显著拉低等 stride 相对指标；stride 5/10 已优于 zero-flow，不能将总负值解释为模型在所有 stride 上均失败。
+- 正式 run 在 GPU 1/3 启动，step 100--200 无 OOM/NaN。
+
+## 2026-08-26 — 更新严格 C=32 hard-gate 与 C=16 additive 至 epoch 5
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 补充两条新 run 的 epoch 1--5 validation、objective/capacity 对照和 slot 使用诊断。
+- `src/task/Cm/docs/logs/status_log.md` — 更新四条严格预算 run 的当前进度、风险和下一步。
+
+**改动原因**
+
+用户询问当前训练状态；同步首批能够比较 hard-gate ramp 前表现和 C=16 容量影响的正式验证证据。
+
+## 2026-08-26 — 启动 C=32 hard-gate 严格对照与 C=16 additive
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 正式实验
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64.yaml` — 新增与 C=32 additive 对齐 global batch/steps 的 hard-gate objective-only 配置。
+- `src/task/Cm/configs/object_v2_grab_additive_cm16_geometry_only_no_time_budget50.yaml` — 新增只将 Cm 宽度降为 16 的 additive 容量配置。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md` — 记录实验边界、GPU 共用选择和启动状态。
+
+**改动原因**
+
+用户要求消除旧 C=32 hard-gate 与 additive 的训练预算混杂，并在显存允许时增加 C=16 additive 容量对照。
+
+**验证 / 运行**
+
+- 两份 output resolved config 已核验：均为 global batch=64、50 epoch、202300 steps、AdamW/cosine、seed42；目标与维度覆盖符合预期。
+- C=32 hard-gate 至少 step 1000、C=16 additive 至少 step 200，无 OOM/NaN；GPU 2/3 每卡合计约 3.3 GB。
+
+## 2026-08-25 — 记录 C=32 与 C=64 hard-gate 对齐结果
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 补充 C=32 epoch 15 验证结果、单 slot 坍缩证据，以及与 C=64 的同 epoch/同 optimizer-step 对齐比较。
+- `src/task/Cm/docs/logs/status_log.md` — 更新 C=32 中途停止状态和当前严格预算 additive 进度。
+
+**改动原因**
+
+用户要求比较此前 C=32 与 C=64 版本；将可复现的日志证据同步到任务文档。
+
+## 2026-08-25 — 澄清 C=32/C=64 hard-gate 配置差异
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 明确 C=32 与旧 C=64 共享模型/数据语义，但实际 global batch、DDP、每 epoch step 数和 cosine 总步数不同，不能称为纯 C-only ablation。
+
+**改动原因**
+
+用户询问两版是否为同一训练配置；根据原始 YAML 和 resolved config 核对后同步准确边界。
+
+## 2026-08-25 — 记录 strict additive 前两轮 validation
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 补充 C=64 additive strict 的 epoch 1/2 指标和同 epoch 对比表。
+- `src/task/Cm/docs/logs/status_log.md` — 更新严格预算 additive 已完成 epoch 2 validation 的状态。
+
+**改动原因**
+
+用户要求按相同 epoch 对比当前训练；同步实际 validation 证据并标注 additive 与 hard-gate 目标不同。
+
+## 2026-08-25 — 更新 strict additive 至 epoch 8
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 补充 strict additive epoch 8 validation 与 C=64 hard-gate 同 epoch 对照。
+- `src/task/Cm/docs/logs/status_log.md` — 更新三条训练的最新进度和风险判断。
+
+**改动原因**
+
+用户询问当前训练状态；同步最新可复现 validation 和 slot collapse 诊断。
+
+## 2026-08-25 — 新增并启动 C=32 additive 严格预算对照
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 正式实验
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml` — 新增仅覆盖 `cm_dim=32` 的严格 additive 对照配置。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md` — 记录实验假设、GPU 选择和启动状态。
+
+**改动原因**
+
+用户要求在与 C=64 additive 相同配置下启动 C=32 additive，检验降低 Cm 宽度后是否仍能避免坍缩并改善 hard-gate C=32。
+
+**验证 / 运行**
+
+- 启动命令使用 GPU 0/7、DDP world size=2；resolved setup 确认 global batch=64、total_steps=202300；step 100--300 无 OOM/NaN。
+
+## 2026-08-25 — 更新 C=32 additive 至 epoch 6
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 补充 C=32 additive epoch 1--6 validation、slot 使用和同 epoch对照。
+- `src/task/Cm/docs/logs/status_log.md` — 更新 C=32/C=64 additive 进度与 C=64 hard-gate 完成状态。
+
+**改动原因**
+
+用户询问当前训练表现；同步最新验证曲线和容量对照证据。
+
+## 2026-08-25 — 启动 additive strict-budget 对照
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 正式实验
+
+**文件**
+
+- `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml` — 新增 global batch=64、50 epoch、202300 steps 的严格预算配置。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md` — 记录预算对齐选择和新 run 状态。
+
+**改动原因**
+
+用户要求消除 batch size、epoch 和 scheduler budget 混杂，重新训练 additive C=64。
+
+**验证 / 运行**
+
+- GPU 4/6、world size=2，启动日志确认 global batch=64、total_steps=202300；已稳定运行至至少 step 700。
+
+## 2026-08-25 — 更新修正版 additive pilot 的 epoch 9 证据
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 正式实验
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md` — 更新到 epoch 10 运行状态及同 epoch 对照。
+- `src/task/Cm/docs/logs/experiment_log.md` — 记录 epoch 1--9 EPE、zero-flow improvement 和 contribution usage 趋势。
+
+**改动原因**
+
+修正版已形成连续九个 validation 结果，需要区分 aggregate 性能改善与 effective-slot 压缩力度。
+
+## 2026-08-24 — 增加 candidate-level mixture flow pilot
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部 / 正式实验
+
+**文件**
+
+- `src/task/Cm/config.py` — 增加 `loss_candidate_mixture_weight` 与 `candidate_mixture_temperature`，默认关闭以保持旧 checkpoint 目标兼容。
+- `src/task/Cm/model.py` — 暴露未 hard-mask 的 per-object-point routing weights，供 candidate mixture responsibility 计算。
+- `src/task/Cm/runner.py` — 增加 `-tau logsumexp(log(pi)-candidate_loss/tau)` 的 candidate-level Smooth-L1 mixture loss 和 responsibility 诊断指标。
+- `src/task/Cm/configs/object_v2_grab_mixture_cm64_geometry_only_no_time.yaml` — 新增 C=64、GRAB object-only、geometry-only/no-time、无 gate/count、tau=0.05、10 epoch 等效 pilot 配置。
+
+**改动原因**
+
+用户确认检验 candidate-level mixture objective 是否能让不同 slot 根据 object point 的 candidate loss 形成责任分工；首轮不引入 hard gate、count loss 或额外 balance loss。
+
+**验证 / 运行**
+
+- `py_compile` 与 `git diff --check` 通过。
+- 首次启动的自动解析日志显示 `total_steps=80920`，核对 object-v2 loader 后确认这正是约 10 epoch；随后一次显式 `max_steps=16184` 试运行被停止，未完成首 epoch，不纳入实验结论。
+- 正式 pilot 将在 GPU 7 重新启动，显式 `max_steps=80920`；前一条错误预算 output `outputs/cm/cm_object_v2_grab_mixture_cm64_geometry_only_no_time_20260824_185257` 仅保留为无效启动证据。
+- 正式 pilot 已在 GPU 7 以 `outputs/cm/cm_object_v2_grab_mixture_cm64_geometry_only_no_time_20260824_190444` 启动并运行至至少 step 1700；当前无 OOM/NaN，尚无 validation 结论。
+- mixture pilot 完成 epoch 1 validation 后，更新状态/实验日志记录首轮指标；修正 `runner.py` 中 responsibility effective-branch diagnostic 的熵公式（仅影响日志，不影响当前已加载进程的训练 loss）。
+- 按用户确认新增 additive contribution pilot：`model.py` 增加每-slot 3-D contribution 求和路径，`runner.py` 增加 aggregate supervision 下的 group sparsity 和 contribution usage 诊断，`config.py` 增加 additive/group-sparsity 字段，新增 `object_v2_grab_additive_cm64_geometry_only_no_time.yaml`；candidate mixture 进程已停止，新 pilot 已在 GPU 7 启动并运行至至少 step 800。
+- additive pilot 继续运行至至少 step 3500；补充状态/实验记录，当前只观察到高噪声 step-level EPE 和瞬时 contribution usage 波动，未提前形成性能结论。
+- 修正 additive group-sparsity：由错误的 batch 总有效点归一化改为逐样本有效点均值后沿 slot 求和、再取 batch 均值；新增 batch-size invariant 单元测试。首 run 已停止并标记 `INVALID_IMPLEMENTATION`，准备从头启动修正版。
+- 修正版 additive run 已在 GPU 7 从头启动，output 为 `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_20260824_230244`，运行至至少 step 800，无 OOM/NaN。
+
 ## 2026-08-24 — 拆分 Cm 仓库记忆与机器记忆
 
 - branch: `oyx`
@@ -928,3 +1238,25 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **改动原因**
 
 完成用户要求的其余数据下载；后续需将 human/MANO 与三类机器人手型统一转换为 Cm 的 1538/512 geometry schema。
+
+## 2026-08-24 — 停止 mixed 平台期并启动双卡 C=64 geometry-only/no-time 对照
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: task 内部实验与配置
+
+**文件 / 产物**
+
+- `src/task/Cm/configs/object_v2_grab_gate_cm64_geometry_only_no_time.yaml` — 增加双卡对照的 per-device/validation batch=32，保持 C=32 基础配置的其余实验条件不变。
+- `outputs/cm/cm_object_v2_grab_gate_cm64_geometry_only_no_time_20260824_155338/` — 双卡 C=64 新 run（运行产物，不纳入版本管理）。
+- `output/exp/cm_v121/cm_object_v2_grab_gate_cm64_geometry_only_no_time_offline_gpu12_bs32.log` — DDP launcher 日志（运行产物，不纳入版本管理）。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md`、`decision_log.md`、`modification_log.md` — 同步停止原因、新对照和当前状态。
+
+**改动原因**
+
+用户要求 C=64 对照改用双卡并适当增大 batch；两条新版 mixed 训练已在验证平台期，继续运行的边际信息有限。
+
+**执行与验证**
+
+- mixed C=256/C=64 进程树已发送 SIGTERM 并退出，最近完整 checkpoint 分别为 epoch 48/40，未删除任何 checkpoint。
+- 新 run 使用 GPU 1/2、world size=2，启动日志报告 `per_device_batch=32`、`global_batch=64`、`total_steps=202300`，两个 rank 初始化完成。

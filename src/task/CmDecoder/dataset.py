@@ -476,6 +476,9 @@ class RandomHorizonGeometryDataset(Dataset):
 
 
 def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: Any = None):
+    if getattr(data_cfg, "object_v2_filter", None):
+        from src.task.CmDecoder.dataset_object_v2 import make_dataloaders as make_object_v2_dataloaders
+        return make_object_v2_dataloaders(data_cfg, seed, meta_cfg=meta_cfg, distributed=distributed)
     manifest_path = getattr(data_cfg, "cache_manifest", None)
     if manifest_path:
         required_hand_flow_frame = getattr(meta_cfg, "required_hand_flow_frame", None)

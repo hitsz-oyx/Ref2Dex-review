@@ -117,6 +117,21 @@ pred_obj_flow_scaled [B, N_o, 3]  # 沿 K 加权求和
 pred_obj_flow        [B, N_o, 3]  # 除以 object_flow_target_scale，恢复米制
 ```
 
+当 `use_additive_slot_contributions=true` 时，decoder 保留相同的 edge feature 和
+3-D flow head，但不再把输出解释为完整候选，也不使用 `dynamic_logits` 的 slot
+softmax 聚合：
+
+```text
+slot_contribution_flow_scaled [B, N_o, K, 3]
+pred_obj_flow_scaled = sum_k slot_contribution_flow_scaled[:, :, k, :]
+```
+
+此模式必须直接监督 aggregate `pred_obj_flow`，并关闭 candidate-mixture 与 hard
+gate/count 目标。可选 group sparsity 先在每个样本内部对有效物点求
+`mean_p ||contribution[p,k]||₂`，再沿 slot 求和并对 batch 求平均；因此其尺度不随
+batch size 或 padding 点数变化。它学习的是 effective slot 数，训练期仍计算
+`K_max` 个 slot，实际减少结构需要训练后 pruning。
+
 无效 object 点的最终预测强制为零。`C=256` 时历史 context edge 输入维度为 518、feature 维度为 128；`C=64` 时分别为 134、32。
 
 当 `use_object_context=false` 时，`z_obj` 和 `object_context_encoder` 完全不进入 object-flow decoder。物体侧只保留原始几何与 Cm-relative 几何：
@@ -131,7 +146,7 @@ pred_obj_flow        [B, N_o, 3]  # 除以 object_flow_target_scale，恢复米�
 
 ### 5. Loss / 诊断张量
 
-Runner 对有效 object 点计算 scaled vector Smooth-L1 flow loss；slot 辅助项包括 L0 风格 count loss、max-probability confidence loss，以及可选 active-overlap loss。`decoder_slot_usage` 为 `[B,K]`，用于统计 `effective_branch_count`、top-1 usage 和 slot 熵；这些诊断量默认不自动成为监督目标。
+Runner 对有效 object 点计算 scaled vector Smooth-L1 flow loss；legacy slot 辅助项包括 L0 风格 count loss、max-probability confidence loss，以及可选 active-overlap loss。additive 模式改用 contribution vector norm 的轻量 group sparsity，并报告 per-slot strength、effective branch count 与 top-1 usage。`decoder_slot_usage` 为 `[B,K]`，用于统计 legacy routing 或 additive contribution usage；这些诊断量默认不自动成为监督目标。
 
 ## 数据与评估合同
 

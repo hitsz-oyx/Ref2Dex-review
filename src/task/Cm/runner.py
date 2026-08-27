@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn.functional as F
 
-from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig
+from src.base import BaseRunner, MetricStat, RunnerOutput, TaskConfig, resolve_optimizer, unwrap_model
 from src.task.Cm.dataset import make_dataloaders
 
 
@@ -62,7 +62,145 @@ def internal_flow_smooth_l1(
     )
 
 
+def candidate_mixture_smooth_l1(
+    candidate_flow_m: torch.Tensor,
+    gt_flow_m: torch.Tensor,
+    valid_mask: torch.Tensor,
+    routing_weights: torch.Tensor,
+    *,
+    beta_m: float,
+    target_scale: float,
+    temperature: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Soft-minimize per-slot candidate flow losses.
+
+    ``candidate_flow_m`` is ``[B, N, K, 3]`` and ``routing_weights`` is
+    ``[B, N, K]``.  The returned responsibility tensor is detached only by
+    callers that use it for diagnostics; the loss itself keeps gradients
+    through both candidate flows and routing probabilities.
+    """
+    if temperature <= 0.0:
+        raise ValueError("candidate_mixture_temperature must be positive.")
+    if candidate_flow_m.ndim != 4 or routing_weights.ndim != 3:
+        raise ValueError("Candidate mixture expects [B,N,K,3] flows and [B,N,K] routing weights.")
+    if candidate_flow_m.shape[:-1] != routing_weights.shape:
+        raise ValueError("Candidate flow and routing weight shapes are inconsistent.")
+    scale = float(target_scale)
+    if scale <= 0.0:
+        raise ValueError("object_flow_target_scale must be positive.")
+    valid_count = valid_mask.sum()
+    residual_norm_internal = torch.linalg.vector_norm(
+        (candidate_flow_m - gt_flow_m.unsqueeze(2)) * scale,
+        dim=-1,
+    )
+    candidate_loss = F.smooth_l1_loss(
+        residual_norm_internal,
+        torch.zeros_like(residual_norm_internal),
+        beta=float(beta_m) * scale,
+        reduction="none",
+    )
+    log_pi = routing_weights.clamp_min(1e-8).log()
+    responsibility_logits = log_pi - candidate_loss / float(temperature)
+    mixture_loss_map = -float(temperature) * torch.logsumexp(responsibility_logits, dim=-1)
+    mixture_loss = (mixture_loss_map * valid_mask.float()).sum() / valid_count.float()
+    responsibilities = torch.softmax(responsibility_logits, dim=-1)
+    return mixture_loss, responsibilities
+
+
+def additive_slot_group_sparsity(
+    contribution_flow_m: torch.Tensor,
+    valid_mask: torch.Tensor,
+    *,
+    target_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return batch-invariant group sparsity and per-sample slot strengths.
+
+    Each sample first averages the 3-D contribution norm over its own valid
+    object points.  Summing those strengths over slots and then averaging the
+    batch prevents the regularizer from shrinking when batch size increases.
+    """
+    if contribution_flow_m.ndim != 4 or contribution_flow_m.shape[-1] != 3:
+        raise ValueError("Additive contributions must have shape [B,N,K,3].")
+    if contribution_flow_m.shape[:2] != valid_mask.shape:
+        raise ValueError("Contribution flow and valid-mask shapes are inconsistent.")
+    scale = float(target_scale)
+    if scale <= 0.0:
+        raise ValueError("object_flow_target_scale must be positive.")
+    contribution_norm_internal = torch.linalg.vector_norm(
+        contribution_flow_m * scale,
+        dim=-1,
+    )
+    valid_per_sample = valid_mask.sum(dim=1, keepdim=True).clamp_min(1).float()
+    per_slot_strength = (
+        contribution_norm_internal * valid_mask.unsqueeze(-1).float()
+    ).sum(dim=1) / valid_per_sample
+    group_sparsity_loss = per_slot_strength.sum(dim=-1).mean()
+    return group_sparsity_loss, per_slot_strength
+
+
 class CmActionRunner(BaseRunner):
+    def __init__(self, cfg: Any, mode: str = "train", checkpoint: str | Path | None = None,
+                 device: str | None = None, build_data: bool = True) -> None:
+        # ``train.resume`` is for continuing the same run.  Fine-tuning from a
+        # completed base checkpoint needs a fresh output directory and fresh
+        # optimizer/scheduler counters, so it uses the Cm-specific
+        # ``train.init_checkpoint`` field instead.
+        init_checkpoint = getattr(cfg.train, "init_checkpoint", None)
+        super().__init__(cfg, mode=mode, checkpoint=checkpoint, device=device, build_data=build_data)
+        if mode == "train" and build_data and init_checkpoint:
+            self.load(init_checkpoint, load_optimizer=False, map_location=self.device)
+            self.global_step = 0
+            self.start_epoch = 0
+            self.best_metric = None
+            self.early_stopping_metric = None
+            self.epochs_without_improvement = 0
+            self.evals_without_improvement = 0
+            if self.is_primary:
+                self._log_line(
+                    f"Initialized fine-tuning weights from {init_checkpoint}; "
+                    "reset optimizer, scheduler, epoch and step counters."
+                )
+
+    def _build_optimizer(self) -> torch.optim.Optimizer:
+        """Build a decoder-only optimizer for the explicit freeze-resume phase.
+
+        Historical Cm runs retain BaseRunner's parameter registration.  The
+        decoder-only phase opts in explicitly so old checkpoints/configs keep
+        their original optimizer contract.
+        """
+        optimizer_cls = resolve_optimizer(self.cfg.train.optimizer)
+        if bool(getattr(self.cfg.train, "decoder_only_resume", False)):
+            parameters = [parameter for parameter in self.model.parameters() if parameter.requires_grad]
+        else:
+            parameters = self.model.parameters()
+        return optimizer_cls(parameters, lr=self.cfg.train.lr, weight_decay=self.cfg.train.weight_decay)
+
+    def _load_checkpoint_payload(self, checkpoint: Dict[str, Any], load_optimizer: bool) -> None:
+        """Resume decoder weights/state while dropping stale DenseToken moments."""
+        if not bool(getattr(self.cfg.train, "decoder_only_resume", False)):
+            return super()._load_checkpoint_payload(checkpoint, load_optimizer=load_optimizer)
+        self._require_model_ready()
+        unwrap_model(self.model).load_state_dict(checkpoint["model"])
+        # Deliberately skip optimizer/scaler state: the optimizer now contains
+        # only trainable decoder parameters.  Keep the global step and epoch.
+        self.global_step = int(checkpoint.get("step", 0))
+        self.start_epoch = int(checkpoint.get("epoch", 0))
+        if load_optimizer and self.scheduler is not None and checkpoint.get("scheduler") is not None:
+            self.scheduler.load_state_dict(checkpoint["scheduler"])
+            last_lr = getattr(self.scheduler, "_last_lr", None)
+            if isinstance(last_lr, (list, tuple)) and len(last_lr) == len(self.optimizer.param_groups):
+                for group, lr in zip(self.optimizer.param_groups, last_lr):
+                    group["lr"] = float(lr)
+            if self.is_primary:
+                self._log_line(
+                    "Decoder-only resume: skipped source optimizer/DenseToken moments; "
+                    f"restored scheduler/global_step at {self.global_step}."
+                )
+        state = checkpoint.get("runner_state")
+        self.best_metric = checkpoint.get("best_metric")
+        self.load_state_dict(state or {})
+        self._early_stopping_triggered = False
+
     def _gate_warmup_state(self, epoch: int) -> Tuple[bool, float, float, float]:
         """Return force-all, threshold, count weight, and ramp progress."""
         base_threshold = float(self.cfg.meta.slot_threshold)
@@ -455,6 +593,36 @@ class CmActionRunner(BaseRunner):
             beta_m=float(self.cfg.meta.flow_smooth_l1_beta),
             target_scale=float(self.cfg.meta.object_flow_target_scale),
         )
+        candidate_mixture_weight = float(
+            getattr(self.cfg.meta, "loss_candidate_mixture_weight", 0.0)
+        )
+        additive_slot_mode = bool(
+            getattr(self.cfg.meta, "use_additive_slot_contributions", False)
+        )
+        if additive_slot_mode:
+            slot_group_sparsity_loss, per_slot_strength = additive_slot_group_sparsity(
+                prediction["slot_contribution_flow"],
+                valid,
+                target_scale=float(self.cfg.meta.object_flow_target_scale),
+            )
+        else:
+            per_slot_strength = prediction["cm_tokens"].new_zeros(
+                prediction["cm_tokens"].shape[:2]
+            )
+            slot_group_sparsity_loss = flow_smooth_l1.new_zeros(())
+        if candidate_mixture_weight != 0.0:
+            mixture_loss, mixture_responsibilities = candidate_mixture_smooth_l1(
+                prediction["dynamic_candidate_flow"],
+                gt_flow,
+                valid,
+                prediction["decoder_routing_weights"],
+                beta_m=float(self.cfg.meta.flow_smooth_l1_beta),
+                target_scale=float(self.cfg.meta.object_flow_target_scale),
+                temperature=float(self.cfg.meta.candidate_mixture_temperature),
+            )
+        else:
+            mixture_loss = flow_smooth_l1.new_zeros(())
+            mixture_responsibilities = prediction["decoder_slot_usage"].unsqueeze(1)
         # EPE is invariant to an orthogonal change of xyz axes, unlike
         # component-wise MSE/MAE.  It is the sole flow-quality metric.
         residual_norm_map = torch.linalg.norm(pred_flow - gt_flow, dim=-1)
@@ -525,7 +693,7 @@ class CmActionRunner(BaseRunner):
             # 用 bool mask 沿最后一维挑掉对角线 → [B, S*(S-1)]，再求平均 → 标量
             # ∈ [-1, 1]：当前只作为 metric 监控 slot 是否塌缩（同向 → 接近 1 / 反向 → 接近 -1），
             # 并没有被加到 total_loss 里（total_loss 现在只有 flow_smooth_l1 一项）
-        decoder_slot_usage = prediction["decoder_slot_usage"]
+        decoder_slot_usage = prediction["slot_contribution_usage"]
         # decoder_slot_usage: [B, S]  每个样本里每个 slot 被 decoder 实际使用到的程度（例如被分配到的 token 数 / 总数）
         mean_decoder_slot_usage = decoder_slot_usage.mean(dim=0)
         # 沿 batch 维求平均：得到每个 slot 在整个 batch 上的平均使用率 → [S]
@@ -555,6 +723,10 @@ class CmActionRunner(BaseRunner):
         ))
         total_loss = (
             float(self.cfg.meta.loss_flow_weight) * flow_smooth_l1
+            + candidate_mixture_weight * mixture_loss
+            + float(getattr(
+                self.cfg.meta, "loss_slot_group_sparsity_weight", 0.0
+            )) * slot_group_sparsity_loss
             + slot_count_weight * slot_count_loss
             + float(self.cfg.meta.loss_slot_confidence_weight) * confidence_loss
             + float(self.cfg.meta.loss_active_overlap_weight) * active_overlap_loss
@@ -566,6 +738,8 @@ class CmActionRunner(BaseRunner):
         metrics: Dict[str, Union[torch.Tensor, MetricStat]] = {
             "loss": total_loss,
             "flow/loss_scaled": flow_smooth_l1,
+            "flow/mixture_loss_scaled": mixture_loss,
+            "slot/group_sparsity_loss": slot_group_sparsity_loss,
             "flow/epe_mm": MetricStat(float((residual_sum * 1000.0).detach()), float(valid_count.detach())),
             "flow/gt_norm_mm": MetricStat(float((gt_norm_sum * 1000.0).detach()), float(valid_count.detach())),
             "flow/pred_norm_mm": MetricStat(float((pred_norm_sum * 1000.0).detach()), float(valid_count.detach())),
@@ -585,6 +759,37 @@ class CmActionRunner(BaseRunner):
                 self, "_runtime_gate_warmup_progress", 1.0,
             ))),
         }
+        if candidate_mixture_weight != 0.0:
+            valid_for_resp = valid.unsqueeze(-1).float()
+            resp_usage = (mixture_responsibilities * valid_for_resp).sum(dim=1)
+            resp_usage = resp_usage / valid_for_resp.sum(dim=1).clamp_min(1.0)
+            resp_entropy = -(
+                mixture_responsibilities.clamp_min(1e-8)
+                * mixture_responsibilities.clamp_min(1e-8).log()
+            ).sum(dim=-1)
+            resp_entropy_global = -(
+                resp_usage.clamp_min(1e-8) * resp_usage.clamp_min(1e-8).log()
+            ).sum(dim=-1)
+            resp_effective_count = resp_entropy_global.exp().mean()
+            metrics.update({
+                "slot/mixture_responsibility_entropy": (
+                    (resp_entropy * valid.float()).sum() / valid_count.float()
+                ),
+                "slot/mixture_effective_branch_count": resp_effective_count,
+                "slot/mixture_global_top1_usage": resp_usage.mean(dim=0).max(),
+                "slot/mixture_per_sample_top1_usage": resp_usage.max(dim=-1).values.mean(),
+            })
+        if additive_slot_mode:
+            usage_entropy = -(
+                decoder_slot_usage.clamp_min(1e-8)
+                * decoder_slot_usage.clamp_min(1e-8).log()
+            ).sum(dim=-1)
+            metrics.update({
+                "slot/contribution_effective_branch_count": usage_entropy.exp().mean(),
+                "slot/contribution_global_top1_usage": decoder_slot_usage.mean(dim=0).max(),
+                "slot/contribution_per_sample_top1_usage": decoder_slot_usage.max(dim=-1).values.mean(),
+                "slot/contribution_strength_mean": per_slot_strength.mean(),
+            })
         metrics.update(source_metrics)
         if float(self.cfg.meta.loss_active_overlap_weight) != 0.0:
             metrics["slot/active_overlap"] = active_overlap_loss

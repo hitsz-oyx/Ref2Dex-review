@@ -152,6 +152,7 @@ class CmFlowHead(nn.Module):
         use_slot_gate: bool = True,
         use_object_context: bool = True,
         use_time_condition: bool = False,
+        use_additive_slot_contributions: bool = False,
     ) -> None:
         super().__init__()
         self.dense_token_dim = int(dense_token_dim)
@@ -173,6 +174,7 @@ class CmFlowHead(nn.Module):
         self.use_slot_gate = bool(use_slot_gate)
         self.use_object_context = bool(use_object_context)
         self.use_time_condition = bool(use_time_condition)
+        self.use_additive_slot_contributions = bool(use_additive_slot_contributions)
         if min(self.geometry_input_scale, self.hand_flow_input_scale, self.object_flow_target_scale) <= 0.0:
             raise ValueError("Cm input and target scales must be positive.")
         # Frozen current interaction state, local geometry, endpoint motion,
@@ -331,7 +333,27 @@ class CmFlowHead(nn.Module):
         edge_features = self.edge_backbone(edge_input)
         dynamic_logits = self.edge_logit_head(edge_features).squeeze(-1)
         dynamic_flow_scaled = self.edge_flow_head(edge_features)
-        if self.use_slot_gate:
+        if self.use_additive_slot_contributions:
+            # Each slot predicts an additive 3-D flow contribution.  The
+            # softmax candidate mixture is intentionally bypassed: π is not
+            # both a selector and an averaging coefficient in this mode.
+            slot_contribution_flow_scaled = dynamic_flow_scaled
+            pred_obj_flow_scaled = slot_contribution_flow_scaled.sum(dim=2)
+            contribution_norm = torch.linalg.vector_norm(
+                slot_contribution_flow_scaled, dim=-1
+            )
+            contribution_norm_sum = contribution_norm.sum(dim=2, keepdim=True)
+            uniform_usage = torch.full_like(
+                contribution_norm,
+                1.0 / float(self.num_dynamic_slots),
+            )
+            contribution_usage = torch.where(
+                contribution_norm_sum > 1e-8,
+                contribution_norm / contribution_norm_sum.clamp_min(1e-8),
+                uniform_usage,
+            )
+            edge_weight = contribution_usage
+        elif self.use_slot_gate:
             soft_routing_logits = dynamic_logits + torch.log(slot_nonzero_prob[:, None, :].clamp_min(1e-6))
             soft_weight = torch.softmax(soft_routing_logits, dim=2)
             hard_routing_logits = dynamic_logits.masked_fill(~hard_slot_mask[:, None, :], -1e4)
@@ -339,7 +361,10 @@ class CmFlowHead(nn.Module):
             edge_weight = soft_weight + (hard_weight - soft_weight).detach()
         else:
             edge_weight = torch.softmax(dynamic_logits, dim=2)
-        pred_obj_flow_scaled = (edge_weight.unsqueeze(-1) * dynamic_flow_scaled).sum(dim=2)
+        if not self.use_additive_slot_contributions:
+            pred_obj_flow_scaled = (edge_weight.unsqueeze(-1) * dynamic_flow_scaled).sum(dim=2)
+            slot_contribution_flow_scaled = edge_weight.unsqueeze(-1) * dynamic_flow_scaled
+            contribution_usage = edge_weight
         # The only public output remains metres.  The runner multiplies it by
         # ``object_flow_target_scale`` inside the loss, preserving gradients.
         pred_obj_flow = pred_obj_flow_scaled / self.object_flow_target_scale
@@ -366,7 +391,14 @@ class CmFlowHead(nn.Module):
             "slot_gate_threshold": cm_tokens.new_tensor(self.runtime_slot_threshold),
             "slot_gate_force_all": cm_tokens.new_tensor(float(self.runtime_force_all_slots)),
             "decoder_slot_usage": decoder_slot_usage,
+            # Per-object-point routing probabilities are needed by the
+            # candidate-level mixture objective.  Unlike the aggregate
+            # decoder_slot_usage diagnostic, this retains the [B, N_o, K]
+            # responsibility prior for each candidate flow.
+            "decoder_routing_weights": edge_weight,
             "dynamic_candidate_flow": dynamic_flow_scaled / self.object_flow_target_scale,
+            "slot_contribution_flow": slot_contribution_flow_scaled / self.object_flow_target_scale,
+            "slot_contribution_usage": contribution_usage,
         }
 
 
@@ -414,6 +446,9 @@ class CmFlowModel(nn.Module):
                 )
                 legacy_scale = None
         self.freeze_dense_encoder = bool(getattr(meta, "freeze_dense_encoder", True))
+        self.save_dense_encoder_in_checkpoint = bool(
+            getattr(meta, "save_dense_encoder_in_checkpoint", False)
+        )
         self.dense_encoder = FrozenDenseTokenEncoder(
             meta.dense_checkpoint,
             freeze=self.freeze_dense_encoder,
@@ -431,6 +466,9 @@ class CmFlowModel(nn.Module):
             use_slot_gate=bool(getattr(meta, "use_slot_gate", True)),
             use_object_context=bool(getattr(meta, "use_object_context", True)),
             use_time_condition=bool(getattr(meta, "use_time_condition", False)),
+            use_additive_slot_contributions=bool(
+                getattr(meta, "use_additive_slot_contributions", False)
+            ),
         )
 
     @property
@@ -492,7 +530,7 @@ class CmFlowModel(nn.Module):
 
     def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
         state = super().state_dict(*args, **kwargs)
-        if self.freeze_dense_encoder:
+        if self.freeze_dense_encoder and not self.save_dense_encoder_in_checkpoint:
             return {key: value for key, value in state.items() if not key.startswith(self._DENSE_PREFIX)}
         return state
 

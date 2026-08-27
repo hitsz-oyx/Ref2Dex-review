@@ -1,0 +1,21 @@
+_base_: src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time.yaml
+
+name: cm_object_v2_grab_gate_cm64_geometry_only_no_time
+
+meta:
+  # Strict capacity-only comparison against the C=32 geometry-only/no-time run.
+  # All data semantics, gate, warm-up, loss and optimizer settings come from
+  # the C=32 base; only the Cm token width changes. Runtime batch is overridden
+  # below for the requested two-GPU comparison.
+  cm_dim: 64
+
+data:
+  # Two-GPU comparison run: per-device 32 -> global batch 64.
+  batch_size: 32
+  val_batch_size: 32
+
+train:
+  description: "Fresh GRAB object-only Cm: C=64, raw object geometry only, no time condition, Hard-Concrete gate loss with 5+5 epoch warm-up."
+
+wandb:
+  tags: [cm, object-v2, grab-only, cm64, geometry-only-object, no-time, hard-gate, gate-warmup, fresh, frozen-densetoken]

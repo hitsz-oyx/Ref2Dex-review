@@ -1,0 +1,23 @@
+_base_: src/task/Cm/configs/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml
+
+name: cm_object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64
+
+meta:
+  # Strict objective-only comparison against C=32 additive: keep the same
+  # data, global batch and optimizer budget, and restore the legacy hard gate.
+  use_additive_slot_contributions: false
+  use_slot_gate: true
+  gate_warmup_enabled: true
+  gate_warmup_full_epochs: 5
+  gate_warmup_ramp_epochs: 5
+  loss_slot_group_sparsity_weight: 0.0
+  loss_slot_count_weight: 1.0e-3
+  loss_slot_confidence_weight: 0.1
+  loss_active_overlap_weight: 0.0
+  loss_candidate_mixture_weight: 0.0
+
+train:
+  description: "GRAB object-only C=32 hard-gate objective-only match: global batch 64, 50 epochs, 202300 steps, 5+5 gate warm-up."
+
+wandb:
+  tags: [cm, object-v2, grab-only, cm32, geometry-only-object, no-time, hard-gate, gate-warmup, strict-budget50, global-batch64]

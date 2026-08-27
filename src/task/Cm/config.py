@@ -39,6 +39,17 @@ class Config(TaskConfig):
         hand_flow_input_scale: float = 1.0
         object_flow_target_scale: float = 1.0
         loss_flow_weight: float = 1.0
+        # Optional candidate-level mixture objective.  When non-zero, the
+        # runner applies a soft-min over per-slot candidate flow losses using
+        # ``candidate_mixture_temperature``.  This is kept opt-in so legacy
+        # aggregate-flow checkpoints retain their exact objective.
+        loss_candidate_mixture_weight: float = 0.0
+        candidate_mixture_temperature: float = 0.05
+        # Additive slot-flow ablation: each slot emits a 3-D contribution and
+        # the public flow is their sum.  A small group penalty encourages an
+        # effective slot count below ``num_cm_tokens`` without hard gating.
+        use_additive_slot_contributions: bool = False
+        loss_slot_group_sparsity_weight: float = 0.0
         loss_slot_count_weight: float = 1.0e-3
         loss_slot_confidence_weight: float = 0.1
         loss_active_overlap_weight: float = 0.0
@@ -62,6 +73,9 @@ class Config(TaskConfig):
         # Hard-Concrete's analytic nonzero probability is about 0.83 at a
         # zero log-alpha, so 0.85 makes the fallback path meaningful at init.
         slot_threshold: float = 0.85
+        # Decoder-only resume may freeze an already adapted DenseToken while
+        # retaining its weights in subsequent Cm checkpoints.
+        save_dense_encoder_in_checkpoint: bool = False
 
     class model(TaskConfig.model):
         class_path = "src.task.Cm.model.CmFlowModel"
@@ -96,11 +110,21 @@ class Config(TaskConfig):
         # of running the online PTv3 in the training loop.  Toggling false at
         # any time restores the online path for cache-parity validation.
         use_dense_cache: bool = False
+        # HRDexDB fine-tune can select one embodiment prefix and omit the
+        # GRAB/ARCTIC mixture when a dedicated adaptation run is requested.
+        hrdexdb_only: bool = False
+        hrdexdb_source_prefix: str | None = None
 
     class train(TaskConfig.train):
         amp = False
         metric_for_best = "val/mean_stride_epe_mm"
         lower_is_better = True
+        # Initialize model weights from a completed base run while starting a
+        # fresh optimizer/scheduler/step budget for fine-tuning.
+        init_checkpoint: str | None = None
+        # When resuming after freezing DenseToken, rebuild a decoder-only
+        # optimizer and keep scheduler/global-step progress from the source.
+        decoder_only_resume: bool = False
 
     class wandb(TaskConfig.wandb):
         project = "ref2dex"

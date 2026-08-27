@@ -153,7 +153,7 @@ loss = SmoothL1(pred_hand_points, target_hand_points; beta=0.01 m)
 
 ## 可视化
 
-`python -m src.task.CmDecoder.viewer --object <name> --scene <id>` 默认加载历史全量 object-disjoint 3 Hz `qt_cm` checkpoint；`--decoder-checkpoint` 可覆盖。viewer 从 checkpoint 自带 manifest 读取对应 cache pair，并提供当前手、GT 手、预测手三个独立 checkbox。腕部感知 baseline 直接显示预测相对 SE(3) 与 `pred_q_next`；逐点 checkpoint 会先预测 hand flow，再调用上述联合 wrist+q fitting。GT 使用数据中的真实相对腕变换，预测手使用预测/优化的相对腕变换；当前 arm FK 只定义当前坐标系，未来 arm FK 不参与。历史6维 baseline 兼容加载时预测腕变换为单位变换。
+`python -m src.task.CmDecoder.viewer --object <name> --scene <id>` 默认加载历史全量 object-disjoint 3 Hz `qt_cm` checkpoint；`--decoder-checkpoint` 可覆盖。viewer 从 checkpoint 自带 manifest 读取对应 cache pair，并提供统一的可视化模式、Pair/Rollout step、当前/GT/预测 mesh、手/物体采样点和 GT flow 控件。`--rollout-trajectory <file.npz>` 只额外启用 `Closed-loop rollout` 模式，不替换基础 UI；未显式传入轨迹时该模式显示为灰色禁用。界面图例固定约定：蓝色当前手（rollout 中为起始预测）、绿色 GT、橙色预测、灰色物体点、浅灰手点、品红 GT flow 箭头；mesh 为半透明表面。腕部感知 baseline 直接显示预测相对 SE(3) 与 `pred_q_next`；逐点 checkpoint 会先预测 hand flow，再调用上述联合 wrist+q fitting。GT 使用数据中的真实相对腕变换，预测手使用预测/优化的相对腕变换；当前 arm FK 只定义当前坐标系，未来 arm FK 不参与。历史6维 baseline 兼容加载时预测腕变换为单位变换。
 
 ## Cache binding 与向量化点变换（2026-08-23）
 
@@ -198,3 +198,16 @@ point-flow→固定对应点 q fitting 得到 q 和相对 wrist SE(3)，再更�
 输出 NPZ/PNG 仅用于无配对 sanity check，不构成 GRAB→Inspire F1 的真实 q 监督。
 `--start-frame` 用于选择同一序列内的起始缓存帧；评估必须确认所选窗口的
 `obj_valid_mask` 非空，禁止把 candidate 为空时的 padding 物体点当作有效输入。
+
+## GRAB→ARCTIC MANO 跨域简化评估
+
+`mano_grab_point_config.py` 使用 combined object-v2 split 中过滤出的 GRAB
+sequence 训练 `CmPointFlowModel`。输入仍为当前手点、法向、物体点和冻结 Cm
+tokens，监督为 GRAB 当前 wrist frame 下的下一帧 MANO `hand_flow`；q/URDF 不参与。
+
+`arctic_mano_eval.py` 在 ARCTIC 上完全不读取 GRAB 帧。每个 ARCTIC 当前帧的真实
+`hand_flow` 只用于生成 source action token，decoder 的 target geometry 使用当前
+ARCTIC MANO 点。teacher-forced 模式用真实当前点；rollout 模式把预测的下一点从当前
+wrist frame 变换到下一帧 ARCTIC wrist frame，再继续预测。rollout 使用记录的 ARCTIC
+wrist pose 处理坐标系变化，并暂时复用对应帧真实法向，因此这是 MANO 点流跨域探针，
+不是完整的机器人重定向或无 GT 自主动作生成。
