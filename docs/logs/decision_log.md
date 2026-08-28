@@ -74,6 +74,27 @@ registry 的发现、list 和 describe 保持纯 manifest 操作；只有 `check
 
 可逆；未来增加 runtime adapter 时需要逐个确认配置、checkpoint、资源和副作用边界。
 
+## 2026-08-28 — Cm pilot 采用外部 inference adapter
+
+- scope: root / `components/ref2dex/cm`
+- anchor: branch `feature/modular-component-runtime` / working tree
+
+**未指定点**
+
+用户只指定首个真实 pilot 使用 Cm，并要求其他执行边界暂不改变；没有要求移动 `src/task/Cm` 或把训练接入通用 pipeline。
+
+**实际选择**
+
+增加独立的 `ref2dex.cm.inference.v1` manifest 和 `CmInferenceComponent`，包装现有 `CmFlowModel`，以 Artifact 映射到单步 inference batch；checkpoint 只能通过显式 `from_checkpoint` 加载。原 `ref2dex.cm.v1` runner manifest 保持不变，pilot manifest 单独声明 normals、valid mask 和可选时间间隔，输出保留 `representation` 与米制 `object_flow`。
+
+**选择理由与影响**
+
+这样能先验证真实 Cm 张量接口和 Artifact 传递，同时不触碰 CmActionRunner 的训练、dataloader、DDP、wandb 或 checkpoint 保存语义。adapter 只做形状/类型 fail-fast，科研指标仍由原 Runner 负责。
+
+**可逆性 / 是否需要用户确认**
+
+可逆；删除 wrapper 或恢复 manifest entrypoint 即可回到只读索引。若要接入真实 checkpoint 运行，仍需单独确认资源路径和执行权限。
+
 ## 2026-08-22 — DexYCB 聚合姿态统一使用 reference-camera frame
 
 - scope: 跨 task 共享数据处理

@@ -473,5 +473,10 @@ q → link_tf [B,L,4,4]
 Cm 和 CmDecoder 的只读 manifest，entrypoint 只有在显式 `--resolve-entrypoints` 时才导入。
 现有 `BaseRunner` 可作为未来的 runtime adapter。`ExecutionContext` 统一承载 run_id、seed、
 device、output_dir 和 provenance 入口，但本阶段仍不执行真实组件。
+Cm pilot 的 `components/ref2dex/cm/adapter.py` 是第一个真实 Task wrapper，对应独立的
+`components/ref2dex/cm/inference/component.yaml`；它接收
+`object_points/object_normals/hand_points/hand_normals/hand_flow/obj_valid_mask` 和可选
+`delta_time_s`，输出 `cm_tokens` 对应的 `representation` 及米制 `object_flow`。它只接受
+显式注入的模型或 `from_checkpoint(...)` 路径，不创建 dataloader、不训练、不自动选择 checkpoint。
 该层的公共不变量是：组件能力不能替代科学语义，正式实验仍需锁定组件版本、代码
 commit、配置和 Artifact hash。

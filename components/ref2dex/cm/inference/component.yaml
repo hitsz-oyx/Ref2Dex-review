@@ -1,0 +1,69 @@
+api_version: component/v1
+id: ref2dex.cm.inference.v1
+version: 0.1.0
+entrypoint: components.ref2dex.cm.adapter:CmInferenceComponent
+capabilities:
+  - predict
+status: experimental
+inputs:
+  object_points:
+    type: point_cloud
+    shape: "[B,512,3]"
+    dtype: float32
+    unit: meter
+  object_normals:
+    type: normal_field
+    shape: "[B,512,3]"
+    dtype: float32
+    constraints:
+      coordinate_frame: hand_root_t
+  hand_points:
+    type: point_cloud
+    shape: "[B,1538,3]"
+    dtype: float32
+    unit: meter
+  hand_normals:
+    type: normal_field
+    shape: "[B,1538,3]"
+    dtype: float32
+    constraints:
+      coordinate_frame: hand_root_t
+  hand_flow:
+    type: point_flow
+    shape: "[B,1538,3]"
+    dtype: float32
+    unit: meter
+    constraints:
+      coordinate_frame: hand_root_t
+      temporal_semantics: t_to_t_plus_stride
+  obj_valid_mask:
+    type: validity_mask
+    shape: "[B,512]"
+    dtype: bool
+  delta_time_s:
+    type: time_delta
+    shape: "[B]"
+    dtype: float32
+    unit: second
+    optional: true
+outputs:
+  representation:
+    type: latent
+    shape: "[B,16,256]"
+    dtype: float32
+    constraints:
+      coordinate_frame: hand_root_t
+  object_flow:
+    type: point_flow
+    shape: "[B,512,3]"
+    dtype: float32
+    unit: meter
+    constraints:
+      coordinate_frame: hand_root_t
+      temporal_semantics: t_to_t_plus_stride
+tags:
+  - representation
+  - temporal
+  - point_flow
+  - inference
+  - ref2dex

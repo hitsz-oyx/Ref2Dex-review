@@ -35,6 +35,9 @@ def test_ref2dex_tasks_are_read_only_registry_entries() -> None:
     decoder = registry.get("ref2dex.cmdecoder.pointflow.inspire_f1")
     assert decoder.inputs["representation"].shape == "[B,16,256]"
     assert decoder.outputs["hand_flow"].constraints["coordinate_frame"] == "current_wrist"
+    pilot = registry.get("ref2dex.cm.inference.v1")
+    assert pilot.status == "experimental"
+    assert "predict" in pilot.capabilities
 
 
 def test_manifest_rejects_missing_identity(tmp_path: Path) -> None:
@@ -142,3 +145,46 @@ def test_example_component_executes_without_task_specific_runtime() -> None:
     cls = resolve_entrypoint("components.examples.scale:ScaleComponent")
     result = cls().execute({"value": Artifact(type="scalar", value=3.0)}, ExecutionContext(config={"factor": 2}))
     assert result["value"].value == 6.0
+
+
+def test_cm_inference_adapter_maps_artifacts_to_model_outputs() -> None:
+    import torch
+
+    from components.ref2dex.cm.adapter import CmInferenceComponent
+    from src.base.context import ExecutionContext
+
+    class FakeCm(torch.nn.Module):
+        def forward(self, batch):
+            assert set(batch) == {
+                "object_points", "object_normals", "hand_points", "hand_normals",
+                "hand_flow", "obj_valid_mask",
+            }
+            size = batch["object_points"].shape[0]
+            device = batch["object_points"].device
+            return {
+                "cm_tokens": torch.zeros(size, 16, 256, device=device),
+                "pred_obj_flow": torch.zeros(size, 512, 3, device=device),
+            }
+
+    adapter = CmInferenceComponent(FakeCm())
+    inputs = {
+        "object_points": Artifact("point_cloud", torch.zeros(2, 512, 3)),
+        "object_normals": Artifact("normal_field", torch.zeros(2, 512, 3)),
+        "hand_points": Artifact("point_cloud", torch.zeros(2, 1538, 3)),
+        "hand_normals": Artifact("normal_field", torch.zeros(2, 1538, 3)),
+        "hand_flow": Artifact("point_flow", torch.zeros(2, 1538, 3)),
+        "obj_valid_mask": Artifact("validity_mask", torch.ones(2, 512, dtype=torch.bool)),
+    }
+    outputs = adapter.execute(inputs, ExecutionContext())
+    assert outputs["representation"].value.shape == (2, 16, 256)
+    assert outputs["object_flow"].metadata["unit"] == "meter"
+
+
+def test_cm_inference_adapter_rejects_incomplete_batch() -> None:
+    import torch
+
+    from components.ref2dex.cm.adapter import CmInferenceComponent
+    from src.base.context import ExecutionContext
+
+    with pytest.raises(ValueError, match="missing required inputs"):
+        CmInferenceComponent(torch.nn.Identity()).execute({}, ExecutionContext())

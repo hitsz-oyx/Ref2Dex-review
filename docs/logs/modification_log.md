@@ -30,6 +30,29 @@
 - 全量 pytest：`294 passed, 3 skipped`。
 - `researchctl check --resolve-entrypoints` 与 `run --dry-run` smoke 通过。
 
+## 2026-08-28 — 增加 Cm inference adapter pilot
+
+- branch: `feature/modular-component-runtime`
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 全局组件框架 / task adapter
+
+**文件**
+
+- `components/ref2dex/cm/adapter.py` — 将现有 `CmFlowModel` 包装为单步 `Component`，执行显式输入校验并输出 representation/object flow Artifact；提供显式 `from_checkpoint` 构造入口。
+- `components/ref2dex/cm/inference/component.yaml` — 新增独立 Cm inference pilot manifest，补齐 normals、valid mask、delta time 输入合同；原 `components/ref2dex/cm/component.yaml` runner manifest 保持不变。
+- `tests/test_component_registry.py` — 增加 Cm adapter 的 fake-model 映射和缺失输入测试。
+- `components/README.md`、`docs/logs/{architecture,status,decision,modification}_log.md` — 记录 Cm pilot 边界和当前证据。
+
+**改动原因**
+
+用户确认第一个真实 pilot 使用 Cm，其他执行边界保持不变。因此只包装 inference，不移动或改写 `src/task/Cm` 的训练实现。
+
+**验证**
+
+- Cm adapter 定向测试：`13 passed`。
+- 全量 pytest：`296 passed, 3 skipped`。
+- Cm manifest 显式 entrypoint 解析和 `researchctl describe` 通过。
+
 ## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run
 
 - branch: `oyx` working tree
