@@ -467,9 +467,11 @@ q → link_tf [B,L,4,4]
 合同检查，不在发现阶段导入或执行 entrypoint。
 
 第一版原型位于 `components/` 和 `tools/researchctl.py`，支持列出组件、校验 manifest
-及 pipeline 端口连接、打印 pipeline 图和 dry-run 拓扑顺序。当前 Ref2Dex Task 尚未
-迁移执行逻辑，但 `components/ref2dex/` 已提供 correspondence、Cm 和 CmDecoder 的
-只读 manifest；现有 `BaseRunner` 可作为未来的 runtime adapter。`ExecutionContext` 统一承载
-run_id、seed、device、output_dir 和 provenance 入口，但本阶段仍不执行真实组件。
+及 pipeline 端口连接、显式解析 entrypoint、打印 pipeline 图和 dry-run 拓扑顺序。示例
+组件实现了最小的 `Component.execute` 闭环，用于验证 Artifact 在 pipeline 中的传递；
+当前 Ref2Dex Task 尚未迁移执行逻辑，但 `components/ref2dex/` 已提供 correspondence、
+Cm 和 CmDecoder 的只读 manifest，entrypoint 只有在显式 `--resolve-entrypoints` 时才导入。
+现有 `BaseRunner` 可作为未来的 runtime adapter。`ExecutionContext` 统一承载 run_id、seed、
+device、output_dir 和 provenance 入口，但本阶段仍不执行真实组件。
 该层的公共不变量是：组件能力不能替代科学语义，正式实验仍需锁定组件版本、代码
 commit、配置和 Artifact hash。

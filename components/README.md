@@ -16,6 +16,8 @@
 ```bash
 python tools/researchctl.py list components
 python tools/researchctl.py check components/examples/identity/component.yaml components
+python tools/researchctl.py check components/examples/example_pipeline.yaml components --resolve-entrypoints
+python tools/researchctl.py run components/examples/example_pipeline.yaml components --dry-run
 ```
 
 `decoder`、`encoder`、`MANO` 等词只能作为 tags 或领域约束，不是框架的固定
@@ -28,3 +30,5 @@ python tools/researchctl.py check components/examples/identity/component.yaml co
 - `ref2dex.cmdecoder.pointflow.inspire_f1`
 
 这些 manifest 只建立 registry 索引和接口说明，不会改变原有 Task 的训练入口。
+普通 `list`、`describe` 和不带 `--resolve-entrypoints` 的发现流程不会导入实现模块；显式入口校验只
+验证 Python 对象可解析，`run --dry-run` 只检查合同和拓扑，不加载 checkpoint 或启动训练。

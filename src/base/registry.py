@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Mapping, Tuple
 
 import yaml
 
-from .component import ComponentSpec, compatible_ports, load_manifest
+from .component import ComponentSpec, compatible_ports, load_manifest, resolve_entrypoint
 from .pipeline import PipelineSpec
 
 
@@ -35,6 +35,14 @@ class ComponentRegistry:
             return self._specs[component_id]
         except KeyError as exc:
             raise RegistryError(f"Unknown component id: {component_id}") from exc
+
+    def resolve_entrypoint(self, component_id: str):
+        """显式解析组件入口；普通 discover/list 不导入组件代码。"""
+        spec = self.get(component_id)
+        try:
+            return resolve_entrypoint(spec.entrypoint)
+        except ValueError as exc:
+            raise RegistryError(str(exc)) from exc
 
     def list(self, *, status: str | None = None, capability: str | None = None,
              tag: str | None = None) -> List[ComponentSpec]:

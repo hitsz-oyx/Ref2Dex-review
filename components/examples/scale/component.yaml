@@ -1,7 +1,7 @@
 api_version: component/v1
 id: example.scale
 version: 0.1.0
-entrypoint: examples.scale:ScaleComponent
+entrypoint: components.examples.scale:ScaleComponent
 capabilities:
   - execute
 status: experimental

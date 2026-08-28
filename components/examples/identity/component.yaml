@@ -1,7 +1,7 @@
 api_version: component/v1
 id: example.identity
 version: 0.1.0
-entrypoint: examples.identity:IdentityComponent
+entrypoint: components.examples.identity:IdentityComponent
 capabilities:
   - execute
 status: experimental

@@ -53,7 +53,7 @@ from .base_runner import (
     move_to_device,
     resolve_runner_class,
 )
-from .component import ComponentSpec, ManifestError, PortSpec, compatible_ports, load_manifest
+from .component import Component, ComponentSpec, ManifestError, PortSpec, compatible_ports, load_manifest, resolve_entrypoint
 from .registry import ComponentRegistry, RegistryError
 from .artifact import Artifact, ArtifactRef
 from .context import ExecutionContext
@@ -104,10 +104,12 @@ __all__ = [
     "move_to_device",
     "resolve_runner_class",
     "ComponentSpec",
+    "Component",
     "ManifestError",
     "PortSpec",
     "compatible_ports",
     "load_manifest",
+    "resolve_entrypoint",
     "ComponentRegistry",
     "RegistryError",
     "Artifact",

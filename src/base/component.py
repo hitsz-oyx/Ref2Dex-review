@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 from abc import ABC, abstractmethod
@@ -19,6 +20,23 @@ from .context import ExecutionContext
 
 class ManifestError(ValueError):
     """组件 manifest 不符合通用协议。"""
+
+
+def resolve_entrypoint(reference: str) -> Any:
+    """解析 ``module:attribute`` 或 ``module.attribute``，不实例化对象。"""
+    if not isinstance(reference, str) or not reference.strip():
+        raise ManifestError("entrypoint must be a non-empty string.")
+    if ":" in reference:
+        module_name, attribute = reference.rsplit(":", 1)
+    else:
+        module_name, _, attribute = reference.rpartition(".")
+    if not module_name or not attribute:
+        raise ManifestError(f"Invalid entrypoint reference: {reference!r}")
+    try:
+        module = importlib.import_module(module_name)
+        return getattr(module, attribute)
+    except (ImportError, AttributeError) as exc:
+        raise ManifestError(f"Cannot resolve entrypoint {reference!r}: {exc}") from exc
 
 
 class Component(ABC):

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.base.artifact import Artifact
-from src.base.component import ManifestError, compatible_ports, load_manifest
+from src.base.component import ManifestError, compatible_ports, load_manifest, resolve_entrypoint
 from src.base.contract import Contract
 from src.base.pipeline import PipelineError, PipelineSpec
 from src.base.registry import ComponentRegistry, RegistryError
@@ -128,3 +128,17 @@ def test_pipeline_topological_order_and_cycle_detection() -> None:
     })
     with pytest.raises(PipelineError, match="cycle"):
         cyclic.topological_order()
+
+
+def test_entrypoint_resolution_is_explicit() -> None:
+    assert resolve_entrypoint("components.examples.identity:IdentityComponent").__name__ == "IdentityComponent"
+    with pytest.raises(ManifestError, match="Cannot resolve"):
+        resolve_entrypoint("src.base.artifact:Missing")
+
+
+def test_example_component_executes_without_task_specific_runtime() -> None:
+    from src.base.context import ExecutionContext
+
+    cls = resolve_entrypoint("components.examples.scale:ScaleComponent")
+    result = cls().execute({"value": Artifact(type="scalar", value=3.0)}, ExecutionContext(config={"factor": 2}))
+    assert result["value"].value == 6.0

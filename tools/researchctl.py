@@ -37,6 +37,7 @@ def main() -> int:
     check_parser = sub.add_parser("check", help="校验 manifest 或 pipeline")
     check_parser.add_argument("path", help="component.yaml 或 pipeline.yaml")
     check_parser.add_argument("roots", nargs="+", help="组件目录或 component.yaml")
+    check_parser.add_argument("--resolve-entrypoints", action="store_true", help="显式导入并检查 manifest 入口")
 
     describe_parser = sub.add_parser("describe", help="显示组件的输入输出合同")
     describe_parser.add_argument("component_id")
@@ -64,9 +65,16 @@ def main() -> int:
             if path.name == "component.yaml":
                 from src.base.component import load_manifest
                 spec = load_manifest(path)
+                if args.resolve_entrypoints:
+                    from src.base.component import resolve_entrypoint
+                    resolve_entrypoint(spec.entrypoint)
                 print(f"OK component {spec.id} ({spec.version})")
                 return 0
             issues = _registry(args.roots).check_pipeline(path)
+            if args.resolve_entrypoints:
+                registry = _registry(args.roots)
+                for node in PipelineSpec.from_yaml(path).nodes:
+                    registry.resolve_entrypoint(node.component)
             if issues:
                 for issue in issues:
                     print(f"ERROR {issue}", file=sys.stderr)

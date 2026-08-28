@@ -1,8 +1,34 @@
 # 全局 AI 修改记录
 
 - scope: root
-- last_updated: 2026-08-24
+- last_updated: 2026-08-28
 - related: [架构记录](architecture_log.md)、[仓库记忆](repo_memory.md)、[决策记录](decision_log.md)
+
+## 2026-08-28 — 增加显式 entrypoint 解析、示例执行组件与 pipeline dry-run
+
+- branch: `feature/modular-component-runtime`
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 全局 / 通用运行时
+
+**文件**
+
+- `src/base/component.py`、`src/base/registry.py`、`src/base/__init__.py` — 增加 `Component` 最小执行接口和显式 entrypoint 解析；registry 仍保持发现阶段不导入。
+- `components/examples/{identity,scale}.py` — 增加不依赖具体 Task 的 Artifact 传递示例。
+- `components/examples/{identity,scale}/component.yaml` — 将示例 manifest 入口指向可解析实现。
+- `tools/researchctl.py` — 增加 `check --resolve-entrypoints` 和 `run --dry-run`。
+- `tests/test_component_registry.py` — 覆盖入口解析、示例执行和 pipeline dry-run 所需合同。
+- `docs/logs/{architecture,status,decision,modification}_log.md` — 同步运行时边界、证据和决策。
+
+**改动原因**
+
+把“可发现”与“可执行”明确分层：先用纯 manifest 建索引，再由显式命令验证入口；在尚未迁移真实
+训练任务前，用 toy component 验证 Artifact、Context 和拓扑合同，降低热插拔改造的风险。
+
+**验证**
+
+- 定向组件测试：`11 passed`。
+- 全量 pytest：`294 passed, 3 skipped`。
+- `researchctl check --resolve-entrypoints` 与 `run --dry-run` smoke 通过。
 
 ## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run
 

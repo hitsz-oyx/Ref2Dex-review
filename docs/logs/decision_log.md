@@ -50,6 +50,30 @@ active 状态；不导入 entrypoint，不自动执行训练。
 完全可逆；删除 manifest 不影响原有代码。后续从只读索引升级为可执行 adapter 前，需要重新确认每个
 Task 的输入输出和 checkpoint 语义。
 
+## 2026-08-28 — 将入口解析限制为显式校验并提供安全 dry-run
+
+- scope: root / 通用运行时
+- anchor: branch `feature/modular-component-runtime` / working tree
+
+**未指定点**
+
+用户要求继续推进热插拔，但没有授权自动启动现有训练或实例化真实 Task 的副作用运行时。
+
+**实际选择**
+
+registry 的发现、list 和 describe 保持纯 manifest 操作；只有 `check --resolve-entrypoints` 或
+未来明确的执行器才导入 entrypoint。`researchctl run` 当前只接受 `--dry-run`，执行拓扑和合同
+检查后返回，不加载 checkpoint、不创建 dataloader。
+
+**选择理由与影响**
+
+这样可以尽早发现入口拼写错误，同时避免“列出组件”触发 CUDA、数据路径或模型权重加载；示例
+组件提供可测试的最小 execute 闭环，真实 Task 仍保留原入口。
+
+**可逆性 / 是否需要用户确认**
+
+可逆；未来增加 runtime adapter 时需要逐个确认配置、checkpoint、资源和副作用边界。
+
 ## 2026-08-22 — DexYCB 聚合姿态统一使用 reference-camera frame
 
 - scope: 跨 task 共享数据处理
