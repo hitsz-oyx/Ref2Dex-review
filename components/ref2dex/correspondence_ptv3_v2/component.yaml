@@ -1,0 +1,38 @@
+api_version: component/v1
+id: ref2dex.correspondence.ptv3_v2
+version: 2.1.0
+entrypoint: src.task.correspondence_ptv3_v2.runner:CorrespondencePTV3V2Runner
+capabilities:
+  - fit
+  - predict
+  - evaluate
+status: active
+inputs:
+  object_points:
+    type: point_cloud
+    shape: "[B,512,3]"
+    dtype: float32
+    unit: meter
+  hand_points:
+    type: point_cloud
+    shape: "[B,1538,3]"
+    dtype: float32
+    unit: meter
+outputs:
+  object_tokens:
+    type: latent
+    shape: "[B,512,96]"
+    dtype: float32
+  hand_tokens:
+    type: latent
+    shape: "[B,1538,96]"
+    dtype: float32
+  hand_contact_prior:
+    type: contact_prior
+    shape: "[B,1538]"
+    dtype: float32
+tags:
+  - representation
+  - correspondence
+  - point_cloud
+  - ref2dex

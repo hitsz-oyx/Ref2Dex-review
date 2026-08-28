@@ -1,0 +1,42 @@
+api_version: component/v1
+id: ref2dex.cm.v1
+version: 1.2.0
+entrypoint: src.task.Cm.runner:CmActionRunner
+capabilities:
+  - fit
+  - predict
+  - evaluate
+status: active
+inputs:
+  object_points:
+    type: point_cloud
+    shape: "[B,512,3]"
+    dtype: float32
+    unit: meter
+  hand_points:
+    type: point_cloud
+    shape: "[B,1538,3]"
+    dtype: float32
+    unit: meter
+  hand_flow:
+    type: point_flow
+    shape: "[B,1538,3]"
+    dtype: float32
+    unit: meter
+    constraints:
+      temporal_semantics: t_to_t_plus_stride
+outputs:
+  representation:
+    type: latent
+    shape: "[B,16,256]"
+    dtype: float32
+  object_flow:
+    type: point_flow
+    shape: "[B,512,3]"
+    dtype: float32
+    unit: meter
+tags:
+  - representation
+  - temporal
+  - point_flow
+  - ref2dex

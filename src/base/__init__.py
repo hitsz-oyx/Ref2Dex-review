@@ -53,6 +53,12 @@ from .base_runner import (
     move_to_device,
     resolve_runner_class,
 )
+from .component import ComponentSpec, ManifestError, PortSpec, compatible_ports, load_manifest
+from .registry import ComponentRegistry, RegistryError
+from .artifact import Artifact, ArtifactRef
+from .context import ExecutionContext
+from .pipeline import PipelineEdge, PipelineError, PipelineNode, PipelineSpec
+from .contract import Contract
 
 __all__ = [
     "BaseConfig",
@@ -97,4 +103,19 @@ __all__ = [
     "build_runner_from_checkpoint",
     "move_to_device",
     "resolve_runner_class",
+    "ComponentSpec",
+    "ManifestError",
+    "PortSpec",
+    "compatible_ports",
+    "load_manifest",
+    "ComponentRegistry",
+    "RegistryError",
+    "Artifact",
+    "ArtifactRef",
+    "ExecutionContext",
+    "PipelineEdge",
+    "PipelineError",
+    "PipelineNode",
+    "PipelineSpec",
+    "Contract",
 ]

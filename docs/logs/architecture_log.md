@@ -1,8 +1,8 @@
 # Ref2Dex 架构记录
 
 - scope: root
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
+- last_updated: 2026-08-28
+- last_verified: 2026-08-28
 - related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
 
 ## 1. 研究目标与总体架构
@@ -457,3 +457,19 @@ q → link_tf [B,L,4,4]
 - 缺失 subject-specific MANO template、非连续帧、错误坐标声明、错误 cache 版本或不一致 calibration 必须直接报错，不能静默回退。
 
 各阶段的完整实现事实分别见 [`correspondence_ptv3_v2/docs/架构.md`](../../src/task/correspondence_ptv3_v2/docs/架构.md)、[`Cm/docs/logs/architecture_log.md`](../../src/task/Cm/docs/logs/architecture_log.md) 和 [`CmDecoder/docs/logs/architecture_log.md`](../../src/task/CmDecoder/docs/logs/architecture_log.md)。
+
+## 9. 通用可组合运行时（Component Prototype）
+
+`src/base/component.py`、`artifact.py`、`contract.py`、`context.py` 和 `pipeline.py`
+提供与具体研究 Task 无关的最小组件协议。核心执行抽象是 `Component`；`Artifact`、
+`Contract`、`Pipeline` 和 `Experiment` 是围绕它的支撑概念。组件通过 `component.yaml`
+声明身份、版本、入口、capabilities、端口合同和生命周期状态，registry 只做发现和
+合同检查，不在发现阶段导入或执行 entrypoint。
+
+第一版原型位于 `components/` 和 `tools/researchctl.py`，支持列出组件、校验 manifest
+及 pipeline 端口连接、打印 pipeline 图和 dry-run 拓扑顺序。当前 Ref2Dex Task 尚未
+迁移执行逻辑，但 `components/ref2dex/` 已提供 correspondence、Cm 和 CmDecoder 的
+只读 manifest；现有 `BaseRunner` 可作为未来的 runtime adapter。`ExecutionContext` 统一承载
+run_id、seed、device、output_dir 和 provenance 入口，但本阶段仍不执行真实组件。
+该层的公共不变量是：组件能力不能替代科学语义，正式实验仍需锁定组件版本、代码
+commit、配置和 Artifact hash。

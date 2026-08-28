@@ -1,0 +1,18 @@
+api_version: component/v1
+id: example.identity
+version: 0.1.0
+entrypoint: examples.identity:IdentityComponent
+capabilities:
+  - execute
+status: experimental
+inputs:
+  value:
+    type: scalar
+    dtype: float32
+outputs:
+  value:
+    type: scalar
+    dtype: float32
+tags:
+  - example
+  - transform

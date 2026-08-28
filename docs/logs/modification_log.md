@@ -4,6 +4,80 @@
 - last_updated: 2026-08-24
 - related: [架构记录](architecture_log.md)、[仓库记忆](repo_memory.md)、[决策记录](decision_log.md)
 
+## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run
+
+- branch: `oyx` working tree
+- post-commit: 未提交
+- scope: 全局 / 通用运行时
+
+**文件**
+
+- `src/base/artifact.py` — 增加任务无关的 Artifact/ArtifactRef provenance 描述。
+- `src/base/contract.py` — 增加 Artifact 合同校验。
+- `src/base/context.py` — 增加不依赖 PyTorch 的 ExecutionContext。
+- `src/base/component.py` — 增加 Component 抽象接口。
+- `src/base/pipeline.py` — 增加 PipelineSpec、节点/边解析和拓扑/环检测。
+- `src/base/registry.py`、`tools/researchctl.py` — 接入 PipelineSpec，增加 `describe` 和 `run --dry-run`。
+- `tests/test_component_registry.py` — 补充 Artifact 合同、拓扑排序和环检测测试。
+- `docs/logs/{architecture,status,modification}_log.md` — 同步通用运行时事实和当前状态。
+
+**改动原因**
+
+按用户确认的通用热插拔路线，将第一版 registry 升级为可被未来 runtime adapter 使用的核心协议；仍不导入或执行真实 Task，避免改变既有训练语义。
+
+**验证**
+
+- `researchctl list/describe/check/graph/run --dry-run` smoke 通过。
+- 全量 pytest：`291 passed, 3 skipped`。
+
+## 2026-08-28 — 增加通用 Component registry 原型
+
+- branch: `oyx` working tree
+- post-commit: 未提交
+- scope: 全局 / 通用运行时
+
+**文件**
+
+- `src/base/component.py`、`src/base/registry.py` — 增加任务无关的 manifest、端口合同和组件发现/检查接口。
+- `src/base/__init__.py` — 导出通用组件协议。
+- `tools/researchctl.py` — 提供 `list`、`check`、`graph` 命令。
+- `components/` — 增加两个领域无关 toy manifest 和示例 pipeline。
+- `tests/test_component_registry.py` — 覆盖发现、重复 ID、manifest 错误和端口不兼容。
+- `AGENTS.md` — 补充 Component/Artifact/Contract/Pipeline 规范，明确 decoder 等术语不是框架一级抽象。
+- `docs/项目总览.md`、`docs/logs/{architecture,status,decision,modification}_log.md` — 同步通用运行时入口、当前状态、决策和改动记录。
+
+**改动原因**
+
+根据用户确认，将热插拔设计落实为不依赖 Ref2Dex 领域的最小原型；不迁移现有 Task，不改变既有训练和实验语义。
+
+**验证**
+
+- `python tools/researchctl.py list components`
+- `python tools/researchctl.py check components/examples/example_pipeline.yaml components`
+- 全量 pytest：`289 passed, 3 skipped`。
+
+## 2026-08-28 — 以只读 manifest 接入三条 Ref2Dex 主线
+
+- branch: `oyx` working tree
+- post-commit: 未提交
+- scope: 全局 / 通用运行时索引
+
+**文件**
+
+- `components/ref2dex/{correspondence_ptv3_v2,cm,cmdecoder_pointflow}/component.yaml` — 为现有主线声明通用 component ID、版本、capabilities、端口合同和 tags。
+- `components/README.md` — 补充当前只读接入清单。
+- `tests/test_component_registry.py` — 增加三条主线 manifest 的发现和 CmDecoder frame 合同检查。
+- `docs/logs/{architecture,status,decision,modification}_log.md` — 同步只读接入边界和状态。
+
+**改动原因**
+
+验证通用 registry 可以描述真实 Ref2Dex 组件，同时保持原 Task 代码、配置、训练入口和 checkpoint 不变。
+
+**验证**
+
+- `researchctl list/describe` 可发现并展示三条 active 主线。
+- 全量 pytest：`291 passed, 3 skipped`。
+
 ## 2026-08-24 — 合并 hand PCA 分支并拆分仓库/机器记忆
 
 - branch: `oyx`

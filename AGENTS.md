@@ -231,6 +231,36 @@ output/
 
 ---
 
+## 2.4 通用 Component / Artifact / Contract / Pipeline 规范
+
+本仓库的 `src/base/` 同时承担通用科研运行时职责。它不能把
+`encoder`、`decoder`、`dataset`、MANO 或某一个 Task 当作框架一级抽象。
+通用扩展统一采用以下概念：
+
+- **Component**：有版本、入口和输入输出合同的可执行组件；数据适配器、模型、
+  求解器、评估器和导出器都可以是 Component。
+- **Artifact**：组件产生或消费的数据、模型、指标和报告等持久化产物。
+- **Contract**：端口的 type/shape/dtype/schema 及可扩展的 unit、坐标系和时间语义。
+- **Pipeline**：通过端口连接多个 Component 的组合图。
+- **Experiment**：锁定 pipeline、组件版本、代码提交、配置和输入 Artifact hash
+  的一次运行实例。
+
+新增组件应在 `components/` 或其现有 Task 目录下提供 `component.yaml`，至少声明：
+
+```text
+api_version / id / version / entrypoint / capabilities / inputs / outputs / status
+```
+
+`capabilities` 使用 `execute`、`fit`、`predict`、`solve`、`evaluate`、`export`、
+`visualize` 等通用能力；`decoder`、`encoder`、数据集名称和具体科研术语只能作为
+`tags` 或 contract 约束。组件默认是 `experimental`，不能因为被发现就自动成为
+正式 pipeline 的 active 节点。
+
+组件发现和合同检查优先使用 `python tools/researchctl.py`。索引、能力列表和
+pipeline 图应由 manifest 自动生成，不要在多个总览文档中手工复制同一份组件清单。
+现有 `BaseRunner`、Task 目录和旧入口可以通过 manifest 逐步适配，不要求一次性搬迁。
+停用组件使用 `deprecated` 状态，不能删除旧实验所需的代码、checkpoint 或 manifest。
+
 ## 3. 递归项目文档
 
 本仓库采用由总到分的递归文档结构。AI 维护的 6 类 doc 既是规范对象也是阅读入口；本节说明如何用它们按"由总到分"理解项目。
