@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
+import torch
+from torch.utils.data import Dataset
+from torch.utils.data._utils.collate import default_collate
 
-from src.task.Cm.dataset_hrdexdb import HrdexdbGeometryDataset
-from src.task.Cm.runner import CmActionRunner
+from src.task.Cm.dataset.hrdexdb import BalancedCmMixture, HrdexdbGeometryDataset
+from src.task.Cm.src.runner import CmActionRunner
 
 
 def _write_geometry(root, *, frames: int = 8, pool: int = 4096) -> tuple[str, object]:
@@ -44,6 +47,36 @@ def test_hrdexdb_uses_candidate_pool_and_padding_mask(tmp_path) -> None:
     assert sample["selected_obj_idx"].shape == (512,)
 
 
+def test_balanced_mixture_removes_source_only_strings_before_collation() -> None:
+    class OneRow(Dataset):
+        def __init__(self, sample):
+            self.sample = sample
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            return dict(self.sample)
+
+    grab = OneRow({"value": torch.tensor(1), "dataset_id": "grab"})
+    inspire = OneRow({
+        "value": torch.tensor(2),
+        "dataset_id": "inspire_f1",
+        "episode_id": "inspire_f1/object/0",
+        "embodiment_id": "inspire_f1",
+    })
+    mixture = BalancedCmMixture(
+        {"grab": grab, "inspire_f1": inspire},
+        {"grab": 0.5, "inspire_f1": 0.5},
+        seed=42,
+    )
+    rows = [mixture[index] for index in range(64)]
+    assert {row["dataset_id"] for row in rows} == {"grab", "inspire_f1"}
+    assert all("episode_id" not in row and "embodiment_id" not in row for row in rows)
+    collated = default_collate(rows)
+    assert collated["value"].shape == (64,)
+
+
 def test_cm_stride_summary_supports_source_qualified_panels() -> None:
     metrics = {
         "val/stride_1/grab/flow/epe_mm": 1.0,
@@ -52,8 +85,16 @@ def test_cm_stride_summary_supports_source_qualified_panels() -> None:
         "val/stride_1/hrdexdb/flow/epe_mm": 2.0,
         "val/stride_5/hrdexdb/flow/epe_mm": 6.0,
         "val/stride_10/hrdexdb/flow/epe_mm": 11.0,
+        "val/stride_1/grab/hand_flow/epe_mm": 3.0,
+        "val/stride_5/grab/hand_flow/epe_mm": 7.0,
+        "val/stride_10/grab/hand_flow/epe_mm": 12.0,
+        "val/stride_1/hrdexdb/hand_flow/epe_mm": 4.0,
+        "val/stride_5/hrdexdb/hand_flow/epe_mm": 8.0,
+        "val/stride_10/hrdexdb/hand_flow/epe_mm": 13.0,
     }
     summary = CmActionRunner._summarize_stride_metrics(metrics, split="val")
     assert summary["val/mean_stride_epe_mm"] == (1 + 5 + 10 + 2 + 6 + 11) / 6
     assert summary["val/grab/mean_stride_epe_mm"] == (1 + 5 + 10) / 3
     assert summary["val/hrdexdb/mean_stride_epe_mm"] == (2 + 6 + 11) / 3
+    assert summary["val/mean_stride_hand_epe_mm"] == (3 + 7 + 12 + 4 + 8 + 13) / 6
+    assert summary["val/grab/mean_stride_hand_epe_mm"] == (3 + 7 + 12) / 3

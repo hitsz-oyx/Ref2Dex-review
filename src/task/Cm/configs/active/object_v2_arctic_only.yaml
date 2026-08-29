@@ -1,4 +1,4 @@
-_base_: src.task.Cm.config:Config
+_base_: src.task.Cm.src.config:Config
 
 name: cm_object_v2_arctic_only
 

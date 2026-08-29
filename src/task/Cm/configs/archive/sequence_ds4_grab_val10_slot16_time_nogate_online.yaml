@@ -1,4 +1,4 @@
-_base_: src.task.Cm.config:Config
+_base_: src.task.Cm.src.config:Config
 
 name: cm_sequence_ds4_grab_val10_slot16_time_nogate_online
 

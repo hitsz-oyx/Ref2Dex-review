@@ -32,7 +32,7 @@ from typing import Any, Callable
 import numpy as np
 import torch
 
-from src.task.Cm.cache_schema import (
+from src.task.Cm.dataset.cache_schema import (
     SCHEMA_NAME,
     SceneSequenceCache,
     dense_cache_fingerprint,
@@ -43,7 +43,7 @@ from src.task.Cm.cache_schema import (
     update_meta,
     validate_scene_root,
 )
-from src.task.Cm.dataset_scene import (
+from src.task.Cm.dataset.scene import (
     _normal_world_to_hand,
     _world_to_hand,
     gather_frame_scene_inputs,
@@ -314,7 +314,7 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
-    from src.task.Cm.dense_token import FrozenDenseTokenEncoder
+    from src.task.Cm.src.dense_token import FrozenDenseTokenEncoder
 
     checkpoint = Path(args.dense_checkpoint).resolve()
     encoder = FrozenDenseTokenEncoder(checkpoint).to(torch.device(args.device))

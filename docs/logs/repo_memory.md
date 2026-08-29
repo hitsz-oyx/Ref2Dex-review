@@ -37,7 +37,7 @@
 - status: active
 - last_verified: 2026-08-23
 - fact: `cmdecoder_layered_v4` geometry layer 需要同时保存 legacy decoder 的 512 点字段和 Cm 使用的 `obj_points_pool_world [T,4096,3]`、`obj_normals_pool_world`、`obj_candidate_mask_5cm [T,4096]`。缺少 candidate mask 的旧 512 点 smoke cache 不能直接用于 Cm 训练；DenseToken feature 禁止写入该层。
-- source / anchor: `src/task/CmDecoder/build_cache.py`、`src/task/Cm/dataset_hrdexdb.py`、Cm V1.2 candidate contract。
+- source / anchor: `src/task/CmDecoder/build_cache.py`、`src/task/Cm/dataset/hrdexdb.py`、Cm V1.2 candidate contract。
 
 ## 2026-08-23 — CmDecoder 多手型 cache builder
 

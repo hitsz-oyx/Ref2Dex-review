@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, make_default_train_sampler
-from src.task.Cm.dataset_object_v2 import _MmapSequenceDataset
+from src.task.Cm.dataset.object_v2 import _MmapSequenceDataset
 
 
 def _split_sequences(root: Path, split_json: Path, dataset_filter: str) -> dict[str, list[Path]]:

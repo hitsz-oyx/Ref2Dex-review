@@ -58,4 +58,4 @@
 - status: active
 - last_verified: 2026-08-23
 - fact: 允许使用只含 world geometry、wrist pose、时间和帧映射的共享 geometry cache；`data.use_dense_cache` 必须为 false。DenseToken 输出缓存会切断解冻 DenseToken 的反向梯度，不能用于 HRDexDB Cm fine-tune。
-- source / anchor: `src/task/Cm/dataset_hrdexdb.py`、`src/task/Cm/model.py`、方案 A 配置。
+- source / anchor: `src/task/Cm/dataset/hrdexdb.py`、`src/task/Cm/src/model.py`、方案 A 配置。

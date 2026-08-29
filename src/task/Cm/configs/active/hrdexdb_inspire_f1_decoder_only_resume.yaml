@@ -1,4 +1,4 @@
-_base_: src/task/Cm/configs/hrdexdb_inspire_f1_finetune_cm64_additive.yaml
+_base_: src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yaml
 
 name: cm_hrdexdb_inspire_f1_decoder_only_resume
 

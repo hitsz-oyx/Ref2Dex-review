@@ -40,8 +40,8 @@ python -m src.task.Cm.tools.data.compute_flow_scale \
 
 ```bash
 conda activate graspenv
-PYTHONPATH=. python -m src.task.Cm.train \
-  --config src/task/Cm/configs/sequence_hard_gate_train_val_test_short.yaml
+PYTHONPATH=. python -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/archive/sequence_hard_gate_train_val_test_short.yaml
 ```
 
 启动时会检查 schema、hand-root 坐标系、object/hand 点数和 calibration metadata。
@@ -58,7 +58,7 @@ stride 1/5/10 EPE。最佳模型由 `val/mean_stride_epe_mm` 决定。overfit �
 评估或测试：
 
 ```bash
-PYTHONPATH=. python -m src.task.Cm.eval \
+PYTHONPATH=. python -m src.task.Cm.src.eval \
   --checkpoint outputs/train/<run>/checkpoints/best.pt \
   --split val \
   --device cuda

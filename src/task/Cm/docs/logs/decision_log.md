@@ -1,9 +1,33 @@
 # Cm AI 自主决策记录
 
+## 2026-08-28 — 混合手流重建采用独立几何 decoder 与 source 等权校准
+
+- scope: task:Cm / GRAB + Inspire-F1 混合训练
+- anchor: `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` / 2026-08-28
+
+**未指定点**
+
+用户已确认从 Inspire-F1 decoder-only `latest.pt` 初始化、手流 decoder 采用 object 类似的逐 slot 加和结构、独立 train-only RMS、`lambda_hand=1`、冻结 DenseToken、GRAB/Inspire 等概率、global batch 96 和 50 epoch；未另行指定新阶段学习率及是否继承旧 optimizer/scheduler 计数。
+
+**实际选择**
+
+- 仅载入 `latest.pt` 模型权重，optimizer/scheduler/epoch/step 全部重置；沿用当前阶段 lr=`3e-4`。
+- 手 decoder 只接收原始手点/法线、Cm、相对 anchor 几何和 anchor 法线；不直接拼接 `z_hand`、contact 或 GT hand flow。
+- 对 GRAB train 与 Inspire-F1 train 先各自按 stride 1--10 等权统计，再对 source 等权，得到 hand RMS=`0.06986298856554198 m`、scale=`14.313730639533834`。
+- checkpoint 选择继续使用 object `val/mean_stride_epe_mm`；手流 EPE/relative EPE/zero-flow improvement 作为独立诊断。
+
+**选择理由与影响**
+
+fresh optimizer 避免把新 decoder 参数接入旧 Adam moments 和已推进的 cosine schedule；保持 lr 不变使新增变量集中在数据混合和手流辅助监督。source 等权 scale 与训练抽样分布一致，避免样本量更大的 source 主导归一化。保留 object checkpoint 标准可与已有 Cm 曲线连续比较。
+
+**可逆性 / 是否需要用户确认**
+
+源 checkpoint 与既有输出均不修改；手 decoder、loss 权重、scale 和 source mix 都是独立配置项，可关闭或替换。上述关键科研口径均已由用户确认。
+
 ## 2026-08-27 — Inspire-F1 采用冻结 DenseToken 的 decoder-only continuation
 
 - scope: task:Cm / HRDexDB 微调
-- anchor: `src/task/Cm/configs/hrdexdb_inspire_f1_decoder_only_resume.yaml` / 2026-08-27
+- anchor: `src/task/Cm/configs/active/hrdexdb_inspire_f1_decoder_only_resume.yaml` / 2026-08-27
 
 **未指定点**
 
@@ -23,6 +47,29 @@
 **可逆性 / 是否需要用户确认**
 
 源全量微调 checkpoint 未覆盖，可随时恢复全量 DenseToken 训练；decoder-only continuation 作为独立输出目录运行。本选择基于用户已明确的“冻结 DenseToken、继续训练 decoder、不用 cache”要求，无额外确认。
+
+## 2026-08-28 — 采用 slot-wise t-SNE 检查 GRAB/Inspire-F1 表征分布
+
+- scope: task:Cm / latent visualization
+- anchor: `src/task/Cm/research/tsne_slots.py` / 2026-08-28
+
+**未指定点**
+
+用户指定使用 decoder-only 续训 `latest.pt`、GRAB 与 Inspire-F1 两边 test、固定 stride=5、逐 slot 绘图，但未指定每边样本上限及 t-SNE 的稳定参数。
+
+**实际选择**
+
+- 使用当前 `latest.pt`，每边从 test transition 中确定性等量抽取 512 条；GRAB 按 object-v2 test sequence，Inspire 按 HRDexDB manifest 的 `inspire_f1` test episode。
+- 对每个 `cm_tokens[:, slot, :]` 独立运行 t-SNE，16 个 slot 汇总为 4×4 图；保存高维 token、二维坐标和参数元数据。
+- t-SNE 使用 `init=pca`、`learning_rate=auto`、`perplexity=30`、`n_iter=1000`、固定 seed；同时记录原始 C=64 空间的 slot silhouette，避免只依据二维图形下结论。
+
+**选择理由与影响**
+
+逐 slot 保留用户要求的局部表征视角，并避免把无固定语义的 slot flatten 后引入排列伪差异。等量抽样防止 GRAB 样本规模主导图形；512/边在当前显存和推理吞吐下可在分钟级完成。t-SNE 与 silhouette 仅用于域分布诊断，不改变训练或 checkpoint 选择。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；脚本支持通过 `--max-samples`、`--perplexity`、`--n-iter` 和路径参数重跑，不修改任何训练数据或 checkpoint。
 
 ## 2026-08-26 — Inspire-F1 additive 微调解冻 DenseToken并重置预算
 
@@ -442,7 +489,7 @@ Cm 各数据 root 的每 epoch step 数不同，直接使用固定 step 阈值�
 ## 2026-08-23 — Cm 采用全量 HRDexDB 的 C=64 方案 A 微调框架
 
 - scope: task:Cm
-- anchor: `src/task/Cm/configs/hrdexdb_finetune_cm64.yaml`
+- anchor: `src/task/Cm/configs/active/hrdexdb_finetune_cm64.yaml`
 
 **未指定点**
 
@@ -483,7 +530,7 @@ HRDexDB 内部不同机器人手型与 MANO 是否需要再做分层采样，以
 ## 2026-08-24 — 将 candidate mixture 改为 additive slot contributions
 
 - scope: task:Cm
-- anchor: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`
+- anchor: `src/task/Cm/configs/active/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`
 
 **未指定点**
 
@@ -509,7 +556,7 @@ HRDexDB 内部不同机器人手型与 MANO 是否需要再做分层采样，以
 ## 2026-08-25 — 将 additive pilot 对齐 C=64 hard-gate 的完整预算
 
 - scope: task:Cm 训练对照
-- anchor: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`
+- anchor: `src/task/Cm/configs/active/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`
 
 **未指定点**
 

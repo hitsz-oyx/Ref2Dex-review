@@ -1,4 +1,4 @@
-_base_: src/task/Cm/configs/sequence_full_grab_16slot.yaml
+_base_: src/task/Cm/configs/archive/sequence_full_grab_16slot.yaml
 
 name: cm_full_grab_16slot_resume20e
 

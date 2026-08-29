@@ -1,8 +1,29 @@
 # 全局 AI 修改记录
 
 - scope: root
-- last_updated: 2026-08-28
+- last_updated: 2026-08-29
 - related: [架构记录](architecture_log.md)、[仓库记忆](repo_memory.md)、[决策记录](decision_log.md)
+
+## 2026-08-29 — 完成 Cm 破坏性目录迁移并移除旧入口
+
+- branch: `feature/modular-component-runtime`
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 跨 task / Cm 运行时
+- change_level: L3（破坏性结构迁移）
+- approval: 用户已明确确认完全搬迁，并授权纳入当前未提交修改
+
+**文件**
+
+- `src/task/Cm/` — 直接承载唯一真实实现、配置和文档迁移。
+- `src/task/CmDecoder/`、`src/task/InteractionDynamics/`、`components/ref2dex/cm/`、`process/GRAB/`、`tests/`、`tools/`、`docs/logs/` — 同步新入口、实验改动和文档事实。
+
+**改动原因**
+
+用户确认不再维护旧壳，并授权将当前未提交的 Cm/CmDecoder 实验改动作为本次迁移的一部分一起提交。历史运行需固定到迁移前 commit 复现。
+
+**验证**
+
+- 41 个 `active/archive` YAML 均可由 `load_config` 解析，新模块入口可导入；结构回归测试确认旧顶层入口不存在；全量 pytest `300 passed, 3 skipped`。
 
 ## 2026-08-28 — 增加显式 entrypoint 解析、示例执行组件与 pipeline dry-run
 
@@ -274,6 +295,29 @@
 **改动原因**
 
 candidate mask 构建由逐帧全量距离张量改为半径邻域查询；单 episode CPU 探针由约 192.6 s 降至约 37.4 s。全量构建已按 4 workers、单线程 BLAS 启动。
+
+## 2026-08-29 — 完成 Cm 破坏性目录迁移并移除旧入口
+
+- branch: `feature/modular-component-runtime`
+- post-commit: 待提交
+- scope: 跨 task / Cm 运行时
+- change_level: L3（破坏性结构迁移）
+- approval: 用户已明确确认完全搬迁，并授权纳入当前未提交修改
+
+**文件**
+
+- `src/task/Cm/` — 直接承载唯一真实实现、配置和文档迁移。
+- `src/task/CmDecoder/`、`src/task/InteractionDynamics/`、`components/ref2dex/cm/`、`process/GRAB/`、`tests/`、`tools/`、`docs/logs/` — 同步新入口、实验改动和文档事实。
+- `src/task/Cm/configs/{active,archive}/` — 迁入全部配置并删除顶层 YAML 软链接。
+- `docs/logs/{status,architecture,modification}_log.md` — 同步全局入口和事实。
+
+**改动原因**
+
+用户确认不再维护旧壳，并授权将当前未提交的 Cm/CmDecoder 实验改动作为本次迁移的一部分一起提交。历史运行需固定到迁移前 commit 复现。
+
+**验证**
+
+- 41 个 `active/archive` YAML 均可由 `load_config` 解析，新模块入口可导入；结构回归测试确认旧顶层入口不存在。
 
 ## 2026-08-24 — 启动 CmDecoder MANO 跨域泛化实验
 

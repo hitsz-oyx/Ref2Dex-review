@@ -1,8 +1,8 @@
 # Ref2Dex 架构记录
 
 - scope: root
-- last_updated: 2026-08-28
-- last_verified: 2026-08-28
+- last_updated: 2026-08-29
+- last_verified: 2026-08-29
 - related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
 
 ## 1. 研究目标与总体架构
@@ -441,7 +441,7 @@ q → link_tf [B,L,4,4]
 可视化入口：
 
 - `src/task/correspondence_ptv3_v2/visualize.py`：接触/对应关系；
-- `src/task/Cm/visualize.py` 与 evaluator：object flow、Cm slot、anchor；
+- `src/task/Cm/visualization/visualize.py` 与 evaluator：object flow、Cm slot、anchor；
 - `src/task/CmDecoder/viewer.py`：当前手、GT 手和预测手；
 - `src/task/CmDecoder/grab_retarget.py`：导出 GRAB → Inspire F1 轨迹和 PNG。
 
@@ -492,7 +492,7 @@ commit、配置和 Artifact hash。
 该 Skill 的 [Component 模板](../../.agents/skills/modular-component-runtime/references/component-template.md)
 规定：Component 按逻辑职责划分，不要求一组件一文件；单一实现优先保留为普通模块，只有需要独立发现、版本、资源、生命周期或跨任务复用时才提供 manifest。
 
-Cm 的结构迁移入口见 [`src/task/Cm/docs/README.md`](../../src/task/Cm/docs/README.md)。当前先通过兼容转发层提供 `Cm/src`、`Cm/dataset` 和 `Cm/visualization`，待用户未提交的核心实验改动完成后再移动实现文件。
+Cm 的结构迁移入口见 [`src/task/Cm/docs/README.md`](../../src/task/Cm/docs/README.md)。Cm 已完成破坏性迁移，`src/task/Cm/src`、`dataset` 和 `visualization` 直接承载唯一真实实现，配置只从 `configs/active` 或 `configs/archive` 加载；旧顶层入口不再维护。需要复现迁移前运行时，应固定到迁移前的 commit。
 
 根 `AGENTS.md` 只保留 Ref2Dex 的路径、日志、科学不变量和 Skill 路由；通用 Skill 不假设
 任何特定仓库目录，复制后由目标仓库的 `AGENTS.md` 提供本地日志和路径约定。

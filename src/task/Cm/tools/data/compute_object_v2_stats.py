@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.task.Cm.dataset_object_v2 import CmObjectV2Dataset, write_statistics
+from src.task.Cm.dataset.object_v2 import CmObjectV2Dataset, write_statistics
 
 
 def main() -> None:

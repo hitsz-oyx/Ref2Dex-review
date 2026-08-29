@@ -33,7 +33,7 @@ class FrozenDenseTokenEncoder(nn.Module):
         # The backbone source is repository-local, so relocate only a missing
         # path rather than requiring users to recreate the dense checkpoint.
         if not Path(str(meta.ptv3_repo_path)).is_dir():
-            local_ptv3 = Path(__file__).resolve().parents[3] / "third_party" / "PointTransformerV3"
+            local_ptv3 = Path(__file__).resolve().parents[4] / "third_party" / "PointTransformerV3"
             if not local_ptv3.is_dir():
                 raise FileNotFoundError(
                     f"PointTransformerV3 is missing at checkpoint path {meta.ptv3_repo_path!r} "

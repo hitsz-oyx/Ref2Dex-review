@@ -1,7 +1,4 @@
-"""数据工厂兼容入口。
-
-真实 dispatch 仍由旧 runner 维护；后续迁移时将把 schema 路由集中到这里。
-"""
+"""Cm 数据集工厂的统一导入面。"""
 
 from src.task.Cm.dataset import make_dataloaders
 

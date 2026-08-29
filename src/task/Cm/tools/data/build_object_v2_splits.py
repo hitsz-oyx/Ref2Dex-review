@@ -8,7 +8,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from src.task.Cm.dataset_object_v2 import _sequence_dirs
+from src.task.Cm.dataset.object_v2 import _sequence_dirs
 
 
 def main() -> None:

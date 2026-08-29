@@ -1,7 +1,6 @@
 """Cm 数据集规范入口。
 
-Stage4 实现已迁入 ``stage4.py``；本包继续提供旧的
-``src.task.Cm.dataset`` 导入路径。
+Stage4 实现位于 ``stage4.py``；本包提供 Cm 数据集的公共导入面。
 """
 
 from .stage4 import (

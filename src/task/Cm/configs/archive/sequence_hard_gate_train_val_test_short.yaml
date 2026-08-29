@@ -1,4 +1,4 @@
-_base_: src.task.Cm.config:Config
+_base_: src.task.Cm.src.config:Config
 
 name: cm_hard_gate_train_val_test_short
 

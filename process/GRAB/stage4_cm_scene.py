@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from src.task.Cm.cache_schema import (
+from src.task.Cm.dataset.cache_schema import (
     ENV_SOURCE_ENVIRONMENT,
     ENV_SOURCE_OBJECT,
     SCHEMA_NAME,

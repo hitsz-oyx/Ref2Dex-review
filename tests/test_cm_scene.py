@@ -29,16 +29,16 @@ from process.GRAB.stage4_cm_scene import (
 from process.GRAB.build_cm_split import _read_source_scene_assignment
 from src.task.Cm.tools.data.build_dense_cache import build_dense_cache
 from src.task.Cm.tools.data.build_sampling_bank import build_all_banks
-from src.task.Cm.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
+from src.task.Cm.dataset.cache_schema import INVALID_INDEX, SCHEMA_NAME, SCHEMA_VERSION, load_mmap
 from src.task.Cm.tools.data.compute_flow_scale import (
     calibrate_flow_scale,
     calibrate_flow_scale_scene,
     scene_train_sequence_dirs,
 )
 from src.task.Cm.dataset import Stage4CmDataset
-from src.task.Cm.dataset_scene import Stage4CmSceneDataset
-from src.task.Cm.model import CmFlowHead
-from src.task.Cm.runner import scaled_flow_smooth_l1
+from src.task.Cm.dataset.scene import Stage4CmSceneDataset
+from src.task.Cm.src.model import CmFlowHead
+from src.task.Cm.src.runner import scaled_flow_smooth_l1
 
 
 FRAMES = 16
@@ -457,7 +457,7 @@ def test_sampling_bank_determinism_and_diversity() -> None:
 
 def test_v11_variable_scene_pool_and_uint32_indices() -> None:
     """Different asset counts per sequence must coexist in one root."""
-    from src.task.Cm.cache_schema import SceneSequenceCache, validate_scene_root
+    from src.task.Cm.dataset.cache_schema import SceneSequenceCache, validate_scene_root
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -542,7 +542,7 @@ class _StubDenseEncoder(torch.nn.Module):
 
 def test_dense_cache_parity_and_fingerprint_guard() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        from src.task.Cm.cache_schema import validate_scene_root
+        from src.task.Cm.dataset.cache_schema import validate_scene_root
 
         root = Path(tmp)
         geometry = _geometry_with_env(100, 412)

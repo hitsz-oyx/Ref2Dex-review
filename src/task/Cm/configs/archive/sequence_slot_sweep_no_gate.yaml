@@ -1,4 +1,4 @@
-_base_: src.task.Cm.config:Config
+_base_: src.task.Cm.src.config:Config
 
 # Slot-count ablation.  Each run sets only ``meta.num_cm_tokens`` and its
 # output path at launch; all slots participate in point-flow routing.

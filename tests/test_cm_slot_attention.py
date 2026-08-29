@@ -6,8 +6,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from src.task.Cm.model import CmFlowHead, CmFlowModel
-from src.task.Cm.runner import (
+from src.task.Cm.src.model import CmFlowHead, CmFlowModel
+from src.task.Cm.src.runner import (
     CmActionRunner,
     additive_slot_group_sparsity,
     internal_flow_smooth_l1,
@@ -287,6 +287,50 @@ def test_geometry_only_object_decoder_ignores_dense_object_context() -> None:
     torch.testing.assert_close(first["decoder_slot_usage"], second["decoder_slot_usage"])
 
 
+def test_hand_flow_decoder_uses_only_cm_and_base_hand_geometry() -> None:
+    torch.manual_seed(29)
+    head = CmFlowHead(
+        dense_token_dim=4,
+        cm_dim=8,
+        num_cm_tokens=3,
+        num_slot_iters=1,
+        use_slot_gate=False,
+        use_object_context=False,
+        use_additive_slot_contributions=True,
+        use_hand_flow_decoder=True,
+        hand_flow_target_scale=20.0,
+    )
+    head.eval()
+    inputs = dict(
+        z_hand=torch.randn(2, 5, 4),
+        dense_hand_contact=torch.rand(2, 5),
+        obj_points=torch.randn(2, 4, 3),
+        obj_normals=F.normalize(torch.randn(2, 4, 3), dim=-1),
+        hand_points=torch.randn(2, 5, 3),
+        hand_normals=F.normalize(torch.randn(2, 5, 3), dim=-1),
+        hand_flow=torch.randn(2, 5, 3),
+        obj_valid_mask=torch.ones(2, 4, dtype=torch.bool),
+    )
+    first = head(z_obj=torch.randn(2, 4, 4), **inputs)
+    assert head.hand_edge_backbone is not None
+    assert head.hand_edge_backbone[0].in_features == head.cm_dim + 12
+    assert first["pred_hand_flow"].shape == (2, 5, 3)
+    assert first["hand_slot_contribution_flow"].shape == (2, 5, 3, 3)
+    torch.testing.assert_close(
+        first["pred_hand_flow"],
+        first["hand_slot_contribution_flow"].sum(dim=2),
+    )
+    torch.testing.assert_close(first["pred_hand_flow"], torch.zeros_like(first["pred_hand_flow"]))
+
+    # z_obj is not exposed to either geometry-only decoder.  Perturbing it
+    # therefore cannot alter the decoded hand flow when Cm/hand geometry stay fixed.
+    with torch.no_grad():
+        nn.init.normal_(head.hand_edge_flow_head.weight, std=0.1)
+    first = head(z_obj=torch.randn(2, 4, 4), **inputs)
+    second = head(z_obj=torch.randn(2, 4, 4) * 1000.0, **inputs)
+    torch.testing.assert_close(first["pred_hand_flow"], second["pred_hand_flow"])
+
+
 def test_dense_token_input_stays_in_metres_and_internal_loss_scales_gradient() -> None:
     class CapturingDense(nn.Module):
         def __init__(self) -> None:
@@ -361,17 +405,25 @@ def test_epoch_ratios_and_test_stride_wandb_selection() -> None:
         "train_epoch/flow/epe_mm": 4.0,
         "train_epoch/flow/gt_norm_mm": 8.0,
         "train_epoch/flow/pred_norm_mm": 6.0,
+        "train_epoch/hand_flow/epe_mm": 3.0,
+        "train_epoch/hand_flow/gt_norm_mm": 6.0,
+        "train_epoch/hand_flow/pred_norm_mm": 9.0,
     })
     assert epoch["epoch/flow/relative_epe"] == 0.5
     assert epoch["epoch/flow/norm_ratio"] == 0.75
     assert epoch["epoch/flow/zero_flow_improvement"] == 0.5
+    assert epoch["epoch/hand_flow/relative_epe"] == 0.5
+    assert epoch["epoch/hand_flow/norm_ratio"] == 1.5
+    assert epoch["epoch/hand_flow/zero_flow_improvement"] == 0.5
     selected = runner.select_eval_metrics({
         "val/stride_1/flow/epe_mm": 1.0,
+        "val/stride_1/grab/hand_flow/epe_mm": 2.0,
         "test/stride_10/flow/epe_mm": 10.0,
         "test/stride_2/flow/epe_mm": 2.0,
         "test/mean_stride_epe_mm": 4.0,
     })
     assert "val/stride_1/flow/epe_mm" in selected
+    assert "val/stride_1/grab/hand_flow/epe_mm" in selected
     assert "test/stride_10/flow/epe_mm" in selected
     assert "test/stride_2/flow/epe_mm" not in selected
 

@@ -1,4 +1,4 @@
-_base_: src.task.Cm.config:Config
+_base_: src.task.Cm.src.config:Config
 
 name: cm_eval_dexycb_subject10_c256_fixed_20260822
 

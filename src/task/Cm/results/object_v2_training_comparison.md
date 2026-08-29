@@ -144,7 +144,7 @@ Mixed run 在 best epoch 37 的分数据集结果如下。这里是相同 mixed 
 
 | 类型 | 绝对路径 |
 | --- | --- |
-| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/object_v2_grab_arctic.yaml` |
+| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/active/object_v2_grab_arctic.yaml` |
 | cache root | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2` |
 | split | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2/splits_seed42/splits.json` |
 | run 目录 | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_object_v2_grab_arctic_20260819_165241` |
@@ -158,7 +158,7 @@ Mixed run 在 best epoch 37 的分数据集结果如下。这里是相同 mixed 
 
 | 类型 | 绝对路径 |
 | --- | --- |
-| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/object_v2_grab_gate_cm64.yaml` |
+| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/active/object_v2_grab_gate_cm64.yaml` |
 | cache root | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2/grab` |
 | split | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2/grab/splits_seed42/splits.json` |
 | run 目录 | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_object_v2_grab_gate_cm64_20260819_234926` |
@@ -173,7 +173,7 @@ Mixed run 在 best epoch 37 的分数据集结果如下。这里是相同 mixed 
 
 | 类型 | 绝对路径 |
 | --- | --- |
-| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/object_v2_grab_gate_cm64_warmup.yaml` |
+| 配置 | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/active/object_v2_grab_gate_cm64_warmup.yaml` |
 | cache root | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2/grab` |
 | split | `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_object_v2/grab/splits_seed42/splits.json` |
 | run 目录 | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_object_v2_grab_gate_cm64_warmup_20260820_111406` |
@@ -187,11 +187,11 @@ Mixed run 在 best epoch 37 的分数据集结果如下。这里是相同 mixed 
 
 | Run | 配置 | run / metrics / checkpoint |
 | --- | --- | --- |
-| 原始缩放 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/sequence_full_grab_16slot_20e_fresh.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822/checkpoints/best.pt` |
-| 原始缩放 gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/sequence_full_grab_16slot_gate_20e_fresh.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939/checkpoints/best.pt` |
-| 校准缩放 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/sequence_full_grab_16slot_calibrated_scale_clip5_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346/checkpoints/best.pt` |
-| 单手筛选 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752/checkpoints/best.pt` |
-| 单手筛选 gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936/checkpoints/best.pt` |
+| 原始缩放 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/archive/sequence_full_grab_16slot_20e_fresh.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_20e_fresh_20260805_203822/checkpoints/best.pt` |
+| 原始缩放 gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/archive/sequence_full_grab_16slot_gate_20e_fresh.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_gate_20e_fresh_20260805_234939/checkpoints/best.pt` |
+| 校准缩放 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/archive/sequence_full_grab_16slot_calibrated_scale_clip5_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_20e_20260806_220346/checkpoints/best.pt` |
+| 单手筛选 no-gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/archive/sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e_20260807_005752/checkpoints/best.pt` |
+| 单手筛选 gate | `/home2/wyy/oyx_ws/Ref2Dex/src/task/Cm/configs/archive/sequence_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e.yaml` | `/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936/metrics.jsonl`<br>`/home2/wyy/oyx_ws/Ref2Dex/outputs/cm/cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_gate_regularized_20e_20260807_142936/checkpoints/best.pt` |
 
 | 公共输入 | 绝对路径 |
 | --- | --- |

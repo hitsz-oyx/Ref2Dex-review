@@ -1,5 +1,33 @@
 # CmDecoder 修改记录
 
+## 2026-08-27 — 同步新版 Inspire decoder 的 epoch 1 状态
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 更新新版 Inspire F1 point-flow decoder 至约 step `23800`，补充 epoch 1 validation 与当前收敛判断。
+
+**改动原因**
+
+响应训练状态检查；当前新版 decoder 已明显优于 zero-flow，但仅有一个 validation 点，继续训练后再判断是否达到旧 decoder 的最终水平。
+
+## 2026-08-28 — 同步新版 Inspire decoder 的 epoch 5 验证状态
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 更新新版 Inspire F1 point-flow decoder 至约 step `80000`，补充 epoch 1--5 validation 曲线和当前最佳 checkpoint。
+
+**改动原因**
+
+响应训练状态检查；新版 decoder validation EPE 持续下降至 `5.201 mm`，仍在训练中，暂不判定收敛。
+
 ## 2026-08-27 — 统一单帧与 rollout 可视化界面并补充图例
 
 - branch: working tree

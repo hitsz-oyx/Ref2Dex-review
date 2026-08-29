@@ -1,7 +1,7 @@
 # CmDecoder 实验记录
 
-- last_updated: 2026-08-25
-- last_verified: 2026-08-25
+- last_updated: 2026-08-28
+- last_verified: 2026-08-28
 - related: [当前状态](status_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
 
 ## 当前状态
@@ -65,11 +65,11 @@
 
 ### 当前状态
 
-训练已正常进入 step 100；初始 train hand-flow EPE=`7.888 mm`，zero-flow=`9.295 mm`。当前吞吐约 0.875 s/step，10 epoch 预计约 35 小时；最终 best、held-out EPE 及相对 zero-flow 的改善率尚待训练完成。
+训练已推进至约 step `80000` / epoch `6`，epoch 1--5 validation 均已完成。validation hand-flow EPE 依次为 `6.753/6.329/6.222/5.698/5.201 mm`，zero-flow=`12.118 mm`；epoch 5 相对 zero-flow 改善约 `57.1%`，当前最佳 checkpoint 为 step `71555` / epoch `5`。当前训练 step 的 EPE 约在 `4--8 mm` 间波动，在线 Cm 计算吞吐约 `18--24 samples/s`（GPU 竞争时会暂时下降），10 epoch 总预算约 `143110` steps；验证曲线仍在下降，尚不能判定收敛或与旧 decoder 最终结果作严格比较。
 
 ### 结论状态
 
-`INCONCLUSIVE`（运行中）
+`INCONCLUSIVE`（运行中；epoch 1--5 持续改善，但尚未形成收敛平台）
 
 ## EXP-017 — GRAB-trained MANO decoder → ARCTIC MANO 跨域泛化
 

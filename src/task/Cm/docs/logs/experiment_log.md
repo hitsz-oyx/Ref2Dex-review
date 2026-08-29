@@ -1,8 +1,8 @@
 # Cm 实验记录
 
 - scope: task:Cm
-- last_updated: 2026-08-26
-- last_verified: 2026-08-26
+- last_updated: 2026-08-28
+- last_verified: 2026-08-28
 - related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[V1.2.1 指导](../指导/V1.2.1.md)
 
 ## 当前研究状态
@@ -12,6 +12,39 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 ## 历史证据索引
 
 历史实验原文保留在 [`../../research/log.md`](../../research/log.md)，其中包含 V1.2 smoke、Scene Cache V1/V1.1、DenseToken parity 和 V1.1.2 两层 cache 路线的假设、结果及后续决策。本文档作为规范入口，维护当前状态和正式 EXP 记录。
+
+## EXP-021 — GRAB/Inspire-F1 等权混合的手流重建辅助训练
+
+### 日期
+
+2026-08-28
+
+### 假设与边界
+
+在 Inspire-F1 已适配且冻结的 DenseToken/Cm 权重上，同时使用 GRAB 与 Inspire-F1 等权训练，并要求同一组 Cm 以独立几何 decoder 重建手流，检验手动作场监督能否促使跨数据源 Cm 学到更一致的动作表征。手 decoder 不直接读取 `z_hand`、contact 或 GT hand flow；本实验仍以 object flow 为主模型选择指标，不能仅凭手流 loss 下降宣称 Cm 跨域对齐。
+
+### 实现与配置
+
+- config: `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml`；
+- initializer: Inspire-F1 decoder-only `latest.pt`，epoch `30` / step `71850`，fresh optimizer/scheduler；
+- GRAB/Inspire-F1 source 概率=`0.5/0.5`，train stride 从 `1..10` 均匀采样，val/test 固定 `1/5/10`；
+- C=64、K=16 additive，DenseToken 冻结且 checkpoint 保留其已适配权重；
+- global batch=`96`（GPU 0/1/2，per-device `32`），50 epoch，lr=`3e-4`；
+- object/hand scaled Smooth-L1 权重均为 `1`；hand train-only RMS=`0.06986298856554198 m`、scale=`14.313730639533834`；
+- checkpoint 仍按 object `val/mean_stride_epe_mm` 选择，另报 source×stride 的 hand EPE 与 zero-flow 对照。
+
+### 启动前验证
+
+- 两源 loader=`411801` virtual rows，概率精确为 `0.5/0.5`，val/test 各 6 个 source×stride loader；
+- 源 checkpoint strict 加载时仅缺预期的新 hand decoder 参数；DenseToken 全部冻结；
+- 真实混合 batch 32 单卡前向/反向通过，峰值 allocated/reserved=`1709/2300 MiB`；
+- Cm slot/HRDexDB/ObjectV2/flow-scale 相关测试共 `21 passed`。
+
+### 结论状态
+
+正式 output: `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324`。已完成 epoch 21 validation、当前进入 epoch 22（step `94380`），训练吞吐约 `320--335 samples/s`；当前 best object/hand mean-stride EPE 分别为 `8.4257/2.8225 mm`（epoch 21），相对 epoch 1 的 `10.0118/6.0332 mm` 分别下降 `15.8%/53.2%`。epoch 21 的 GRAB object/hand=`13.2589/4.3258 mm`，Inspire-F1 object/hand=`3.5925/1.3193 mm`；三卡各约占 `2676 MiB`，无 OOM/NaN。按实际每 epoch 约 43--44 分钟，预计剩余约 21 小时。
+
+`INCONCLUSIVE`（实现与启动 gate 已通过，等待首个完整 source×stride validation）。
 
 ### 当前结论
 
@@ -39,7 +72,7 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_mixture_cm64_geometry_only_no_time.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_mixture_cm64_geometry_only_no_time.yaml`；
 - data: `data/processed_data/cm_object_v2/grab`，GRAB object-only，固定 seed42 split，stride 1--10；
 - `cm_dim=64`、`num_cm_tokens=16`、`use_object_context=false`、`use_time_condition=false`；
 - `loss_flow_weight=0`、`loss_candidate_mixture_weight=1`、`candidate_mixture_temperature=0.05`，所有 gate/count/confidence/overlap 权重为 0；
@@ -69,7 +102,7 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_additive_cm64_geometry_only_no_time.yaml`；
 - data: GRAB object-only、geometry-only/no-time，C=64、K_max=16、global batch=32；
 - `pred_flow=Σ_k contribution_k`，主 loss 为 aggregate scaled Smooth-L1；
 - candidate mixture、hard gate、count、confidence、overlap 均关闭；group sparsity weight=`1e-3`；
@@ -95,7 +128,7 @@ candidate mixture pilot 已按用户要求停止。首条 additive run `outputs/
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_additive_cm64_geometry_only_no_time_budget50.yaml`；
 - C=64、K_max=16、GRAB object-only、geometry-only/no-time；
 - global batch=64（GPU 4/6，per-device batch=32）、50 epoch、`max_steps=202300`；
 - aggregate flow supervision、group sparsity=`1e-3`，candidate mixture/hard gate/count/confidence/overlap 关闭。
@@ -132,7 +165,7 @@ candidate mixture pilot 已按用户要求停止。首条 additive run `outputs/
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/hrdexdb_inspire_f1_decoder_only_resume.yaml`；
+- config: `src/task/Cm/configs/active/hrdexdb_inspire_f1_decoder_only_resume.yaml`；
 - source checkpoint: EXP-019 `latest.pt`，epoch `8` / step `19160`；
 - `freeze_dense_encoder=true`、`save_dense_encoder_in_checkpoint=true`、`data.use_dense_cache=false`；
 - decoder-only optimizer：跳过源 DenseToken Adam 状态，仅注册可训练 decoder 参数；scheduler/global step 从 `19160` 接续；
@@ -162,7 +195,7 @@ candidate mixture pilot 已按用户要求停止。首条 additive run `outputs/
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/hrdexdb_inspire_f1_finetune_cm64_additive.yaml`；
+- config: `src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yaml`；
 - base checkpoint: `outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_budget50_20260825_093713/checkpoints/best.pt`；
 - Inspire-F1-only manifest prefix `inspire_f1/`：train/val/test=`446/67/63` episodes；
 - C=64 additive、`use_object_context=false`、`use_time_condition=false`、`use_slot_gate=false`；
@@ -192,7 +225,7 @@ candidate mixture pilot 已按用户要求停止。首条 additive run `outputs/
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_additive_cm32_geometry_only_no_time_budget50.yaml`；
 - C=32、K_max=16、GRAB object-only、geometry-only/no-time；
 - global batch=64（GPU 0/7，per-device batch=32）、50 epoch、`max_steps=202300`；
 - 其余严格继承 C=64 additive：aggregate flow supervision、group sparsity=`1e-3`，candidate mixture/hard gate/count/confidence/overlap 关闭。
@@ -232,7 +265,7 @@ C=32 additive 已稳定显著优于同宽度 hard-gate，且 epoch 2--6 与 C=64
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_gate_cm32_geometry_only_no_time_budget50_bs64.yaml`；
 - C=32、K_max=16、GRAB object-only、geometry-only/no-time；
 - global batch=64（GPU 2/3，per-device batch=32）、50 epoch、`max_steps=202300`；
 - `use_additive_slot_contributions=false`、`use_slot_gate=true`、5+5 epoch gate warm-up、count/confidence=`1e-3/0.1`；其余继承 C=32 additive strict。
@@ -271,7 +304,7 @@ additive 在前五个 epoch 均更优；epoch 5 优势为 `1.663 mm`（约 9.0%�
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_additive_cm16_geometry_only_no_time_budget50.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_additive_cm16_geometry_only_no_time_budget50.yaml`；
 - 除 `cm_dim=16` 外，数据、输入、global batch=64、50 epoch、`max_steps=202300`、aggregate supervision 和 group sparsity=`1e-3` 均与 C=32 additive strict 一致；
 - GPU 2/3、DDP world size=2、per-device batch=32，与 C=32 hard-gate 并行共用显存/算力。
 
@@ -309,7 +342,7 @@ C=16 前两轮收敛明显更慢，epoch 5 已追至距 C=32 `1.381 mm`、距 C=
 
 ### 实现与配置
 
-- config: `src/task/Cm/configs/object_v2_grab_gate_cm32_geometry_only_no_time.yaml`；
+- config: `src/task/Cm/configs/active/object_v2_grab_gate_cm32_geometry_only_no_time.yaml`；
 - data: `data/processed_data/cm_object_v2/grab`，固定 seed42 split，stride 1--10；
 - `cm_dim=32`、`num_cm_tokens=16`；
 - `use_object_context=false`：object edge 输入为 raw point/normal、Cm token、object-to-anchor 和 anchor normal，不使用 `z_obj`；
@@ -364,7 +397,7 @@ C=16 前两轮收敛明显更慢，epoch 5 已追至距 C=32 `1.381 mm`、距 C=
 ### 评测配置
 
 - checkpoint: `outputs/cm/cm_object_v2_grab_arctic_subject_template_20260820_20260822_125835/checkpoints/step_000036900_epoch_000010.pt`；C=256、no-gate + time condition，in-domain best=`13.604 mm`；
-- config: `src/task/Cm/configs/eval_dexycb_subject10_c256_fixed_20260822.yaml`；
+- config: `src/task/Cm/configs/active/eval_dexycb_subject10_c256_fixed_20260822.yaml`；
 - stride: 1/5/10；batch 32；沿用 checkpoint 的 `object_flow_target_scale=13.645122770626802`；
 - C=64 当前仍在早期训练，未纳入主结论。
 
@@ -449,7 +482,7 @@ resolved config 静态比较确认只有三处差异：实验名、`meta.cm_dim:
 
 ### 训练配置
 
-- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820_cm64.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic_subject_template_20260820_cm64.yaml`
 - data: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`
 - GPU: `CUDA_VISIBLE_DEVICES=1,6,7`
 - world size: 3
@@ -498,7 +531,7 @@ step 100--200 无 cache/calibration/schema 报错，无 OOM/NaN；grad norm 约 
 
 ### 训练配置
 
-- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic_subject_template_20260820.yaml`
 - data: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820`
 - GPU: `CUDA_VISIBLE_DEVICES=2,3,4`
 - world size: 3
@@ -544,7 +577,7 @@ step 100--1000 已完成：无 cache/calibration/schema 报错，无 OOM/NaN；1
 - 旧 mixed root: `data/processed_data/cm_object_v2`
 - 修复版 GRAB: `data/processed_data/cm_object_v2_subject_template_20260820/grab`
 - 复用 ARCTIC: `data/processed_data/cm_object_v2/arctic`
-- 旧 config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- 旧 config: `src/task/Cm/configs/active/object_v2_grab_arctic.yaml`
 
 ### 本次修改
 
@@ -588,7 +621,7 @@ step 100--1000 已完成：无 cache/calibration/schema 报错，无 OOM/NaN；1
 - split: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/splits_seed42/splits.json`
 - statistics: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/object_v2_statistics.json`
 - calibration: `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/metadata.json`
-- config: `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic_subject_template_20260820.yaml`
 
 ## EXP-005 — GRAB gate+cm64 全 slot warm-up
 
@@ -607,7 +640,7 @@ step 100--1000 已完成：无 cache/calibration/schema 报错，无 OOM/NaN；1
 ### Baseline
 
 - commit: `453806a`
-- config: `src/task/Cm/configs/object_v2_grab_gate_cm64.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_gate_cm64.yaml`
 - checkpoint: 原候选迁移训练的 step 16188 checkpoint 仅作诊断对照，不续训
 
 ### 本次修改
@@ -632,8 +665,8 @@ Verdict: PASS
 ```bash
 CUDA_VISIBLE_DEVICES=0,1 \
   torchrun --standalone --nproc_per_node=2 \
-  -m src.task.Cm.train \
-  --config src/task/Cm/configs/object_v2_grab_gate_cm64_warmup.yaml \
+  -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/active/object_v2_grab_gate_cm64_warmup.yaml \
   --distributed
 ```
 
@@ -693,7 +726,7 @@ INCONCLUSIVE
 ### Baseline
 
 - commit: `ccb76ca`
-- config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic.yaml`
 - checkpoint: 无；本次只做短训验证
 
 ### 本次修改
@@ -718,8 +751,8 @@ Verdict: PASS
 ### 实验命令
 
 ```bash
-python -m src.task.Cm.train \
-  --config src/task/Cm/configs/object_v2_grab_arctic.yaml \
+python -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/active/object_v2_grab_arctic.yaml \
   --set train.max_steps=300 \
   --set train.seed=42
 ```
@@ -765,7 +798,7 @@ INCONCLUSIVE
 ### 证据
 
 - commit: `HEAD`
-- config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic.yaml`
 - train log: `output/exp/cm_v121/`
 - metrics: `outputs/cm/cm_v121_mixed_seed*/metrics.jsonl`
 
@@ -786,7 +819,7 @@ INCONCLUSIVE
 ### Baseline
 
 - commit: `cb7ae88`
-- config: `src/task/Cm/configs/object_v2_grab_only.yaml` / `src/task/Cm/configs/object_v2_arctic_only.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_only.yaml` / `src/task/Cm/configs/active/object_v2_arctic_only.yaml`
 - checkpoint: 无；只做短训对照
 
 ### 本次修改
@@ -809,8 +842,8 @@ Verdict: PASS
 ### 实验命令
 
 ```bash
-python -m src.task.Cm.train \
-  --config src/task/Cm/configs/object_v2_grab_only.yaml \
+python -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/active/object_v2_grab_only.yaml \
   --set train.max_steps=300 \
   --set train.seed=42
 ```
@@ -871,7 +904,7 @@ INCONCLUSIVE
 ### Baseline
 
 - code: 当前 V1.2 implementation（commit `48e3b16`）
-- config: `configs/object_v2_grab_arctic.yaml`
+- config: `configs/active/object_v2_grab_arctic.yaml`
 - checkpoint: 无；本 EXP 只做数据与 cache gate
 
 ### 本次修改
@@ -944,7 +977,7 @@ Verdict: PASS（cache/E1 gate）；正式训练 calibration gate 尚未完成。
 ### Baseline
 
 - commit: `3e32de8`
-- config: `src/task/Cm/configs/object_v2_grab_arctic.yaml`
+- config: `src/task/Cm/configs/active/object_v2_grab_arctic.yaml`
 - checkpoint: 无；本 EXP 为训练吞吐与正式入口选择，不比较模型效果
 
 ### 本次修改
@@ -972,8 +1005,8 @@ Verdict: PASS
 CUDA_VISIBLE_DEVICES=0,1,5 \
   /home2/wyy/miniconda3/envs/graspenv/bin/torchrun \
   --standalone --nproc_per_node=3 \
-  -m src.task.Cm.train \
-  --config src/task/Cm/configs/object_v2_grab_arctic.yaml \
+  -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/active/object_v2_grab_arctic.yaml \
   --distributed
 ```
 
@@ -1037,7 +1070,7 @@ batch 24 mixed full pilot 的最终汇总为：`val/mean_stride_epe_mm=29.3987`�
 
 ### 实现与运行
 
-- config: `src/task/Cm/configs/object_v2_grab_gate_cm64_geometry_only_no_time.yaml`，继承 C=32 配置，覆盖 `meta.cm_dim=64` 与双卡运行所需的 batch；
+- config: `src/task/Cm/configs/active/object_v2_grab_gate_cm64_geometry_only_no_time.yaml`，继承 C=32 配置，覆盖 `meta.cm_dim=64` 与双卡运行所需的 batch；
 - GPU: `CUDA_VISIBLE_DEVICES=1,2`，DDP world size=2；per-device batch=32，global batch=64，validation batch=32；
 - 训练: 从头开始，50 epoch，W&B offline，预计 `202300` optimizer steps；相对 C=32 的 global batch=48、单卡 269750 steps，C=64 使用 global batch=64、DDP 双卡 202300 steps；
 - output: `outputs/cm/cm_object_v2_grab_gate_cm64_geometry_only_no_time_20260824_155338`；

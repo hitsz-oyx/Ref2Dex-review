@@ -1,0 +1,50 @@
+_base_: src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yaml
+
+name: cm_grab_inspire_f1_hand_flow_cm64_additive
+
+meta:
+  # Keep the adapted DenseToken from the Inspire-F1 latest checkpoint fixed.
+  freeze_dense_encoder: true
+  save_dense_encoder_in_checkpoint: true
+  # Decode the hand action field independently from Cm plus raw hand geometry.
+  use_hand_flow_decoder: true
+  hand_flow_target_rms_m: 0.06986298856554198
+  hand_flow_target_scale: 14.313730639533834
+  loss_hand_flow_weight: 1.0
+  allow_missing_hand_decoder_init: true
+
+data:
+  finetune_mode: hrdexdb
+  hrdexdb_only: false
+  hrdexdb_source_prefix: inspire_f1
+  hrdexdb_bucket_name: inspire_f1
+  root: data/processed_data/cm_object_v2_subject_template_20260820/grab
+  train_path: data/processed_data/cm_object_v2_subject_template_20260820/grab
+  base_root: data/processed_data/cm_object_v2_subject_template_20260820/grab
+  base_split_json_path: data/processed_data/cm_object_v2_subject_template_20260820/grab/splits_seed42/splits.json
+  base_source_names: [grab]
+  # Clear the inherited three-source mapping.  The loader's audited default
+  # assigns equal probability to the active buckets: grab=0.5, inspire_f1=0.5.
+  source_probabilities: null
+  use_dense_cache: false
+  batch_size: 32
+  val_batch_size: 32
+  min_stride: 1
+  max_stride: 10
+  val_strides: [1, 5, 10]
+  test_strides: [1, 5, 10]
+
+train:
+  # Fresh mixed phase: only model weights are loaded; optimizer/scheduler and
+  # epoch/step counters restart from zero.
+  epochs: 50
+  max_steps: null
+  lr: 3.0e-4
+  init_checkpoint: outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451/checkpoints/latest.pt
+  resume: null
+  decoder_only_resume: false
+  description: "GRAB/Inspire-F1 equal-probability C=64 additive training with frozen DenseToken and independent geometry-only hand-flow reconstruction."
+
+wandb:
+  mode: offline
+  tags: [cm, grab, inspire-f1, balanced-two-source, frozen-densetoken, cm64, additive-contribution, geometry-only-hand-decoder, hand-flow-loss, fresh-50e]

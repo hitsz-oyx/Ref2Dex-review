@@ -8,7 +8,7 @@ from typing import Any
 import torch
 from torch import nn
 
-from src.task.Cm.dense_token import FrozenDenseTokenEncoder
+from src.task.Cm.src.dense_token import FrozenDenseTokenEncoder
 from src.task.Actiontoken.model import DynamicActionEncoder, FlowActionEncoder
 from src.task.InteractionDynamics.uni3d import Uni3DWorldEncoder, gather_points
 from src.task.Posetoken.model import StaticPoseEncoder

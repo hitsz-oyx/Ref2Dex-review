@@ -8,7 +8,7 @@ import numpy as np
 
 from process.common.object_cache_v2 import SCHEMA_NAME, convert_root
 from src.task.Cm.tools.data.build_object_sampling_bank import build_bank
-from src.task.Cm.dataset_object_v2 import CmObjectV2Dataset, dataset_statistics, make_dataloaders
+from src.task.Cm.dataset.object_v2 import CmObjectV2Dataset, dataset_statistics, make_dataloaders
 
 
 def _write_stage4(root: Path, dataset_name: str, subject: str, sequence: str) -> None:

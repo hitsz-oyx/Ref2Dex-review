@@ -17,7 +17,7 @@ import torch
 from src.base.base_config import task_config_from_dict
 from src.base.checkpoint import load_checkpoint
 from src.base.utils import import_from_path
-from src.task.Cm.dataset_object_v2 import _MmapSequenceDataset
+from src.task.Cm.dataset.object_v2 import _MmapSequenceDataset
 from src.task.CmDecoder.q_optimizer import DifferentiableInspireHand, optimize_q_from_hand_points
 
 

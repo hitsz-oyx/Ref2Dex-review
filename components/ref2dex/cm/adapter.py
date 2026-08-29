@@ -58,7 +58,7 @@ class CmInferenceComponent(Component):
         else:
             cfg = load_config(config)
 
-        from src.task.Cm.model import CmFlowModel
+        from src.task.Cm.src.model import CmFlowModel
 
         model = CmFlowModel(cfg)
         model.load_state_dict(payload["model"], strict=True)

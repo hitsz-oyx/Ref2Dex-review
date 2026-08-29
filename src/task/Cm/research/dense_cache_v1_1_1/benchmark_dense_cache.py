@@ -16,8 +16,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.base import task_config_from_dict
-from src.task.Cm.dataset_scene import Stage4CmSceneDataset
-from src.task.Cm.model import CmFlowModel
+from src.task.Cm.dataset.scene import Stage4CmSceneDataset
+from src.task.Cm.src.model import CmFlowModel
 
 
 def _move_batch(batch: dict[str, Any], device: torch.device) -> dict[str, Any]:
