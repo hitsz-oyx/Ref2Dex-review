@@ -51,6 +51,34 @@
 
 - Cm adapter 定向测试：`13 passed`。
 - 全量 pytest：`296 passed, 3 skipped`。
+
+## 2026-08-29 — 将通用维护流程拆为可复制 Skill 并收缩 AGENTS
+
+- branch: `feature/modular-component-runtime`
+- change_level: L3
+- approval: user-approved
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 全局 / 仓库治理
+
+**文件**
+
+- `.agents/skills/research-change-control/SKILL.md` — 新增任务无关的修改分级、审批和修改记录一致性 Skill。
+- `.agents/skills/research-change-control/references/change-levels.md` — 记录通用 L0–L3 影响等级。
+- `.agents/skills/research-change-control/references/audit-contract.md` — 说明审计脚本的能力边界。
+- `.agents/skills/research-change-control/scripts/audit_diff.py` — 提供 staged diff 与修改记录的一致性审计。
+- `.agents/skills/research-experiment-workflow/SKILL.md` — 新增通用实验、产物和长任务工作流 Skill。
+- `.agents/skills/modular-component-runtime/SKILL.md` — 新增任务无关的组件组合和接口兼容 Skill。
+- `AGENTS.md` — 收缩为 Ref2Dex 本地路径、日志、科学边界、Skill 路由和 Git 安全规则。
+- `docs/logs/{architecture,status,modification}_log.md` — 同步 Skill 分层和当前状态。
+
+**改动原因**
+
+用户希望维护流程可复制到其他任务，同时避免根 AGENTS 承载所有通用规范。Skill 内容不写死 Ref2Dex 路径；项目特殊事实继续由 AGENTS 提供。
+
+**验证**
+
+- 三个 Skill 均通过 `skill-creator` 的 `quick_validate.py`。
+- `git diff --check` 通过。
 - Cm manifest 显式 entrypoint 解析和 `researchctl describe` 通过。
 
 ## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run

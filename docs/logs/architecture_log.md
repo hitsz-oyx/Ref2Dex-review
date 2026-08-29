@@ -480,3 +480,14 @@ Cm pilot 的 `components/ref2dex/cm/adapter.py` 是第一个真实 Task wrapper�
 显式注入的模型或 `from_checkpoint(...)` 路径，不创建 dataloader、不训练、不自动选择 checkpoint。
 该层的公共不变量是：组件能力不能替代科学语义，正式实验仍需锁定组件版本、代码
 commit、配置和 Artifact hash。
+
+## 10. 通用维护 Skill 与项目本地规则
+
+仓库内 `.agents/skills/` 保存可复制到其他任务的通用工作流：
+
+- `research-change-control`：修改等级、审批边界、最小 diff、修改记录和文档—diff 一致性审计；
+- `research-experiment-workflow`：实验前置条件、产物隔离、证据记录和长任务等待；
+- `modular-component-runtime`：任务无关的 Component/Artifact/Contract/Pipeline 组合规则。
+
+根 `AGENTS.md` 只保留 Ref2Dex 的路径、日志、科学不变量和 Skill 路由；通用 Skill 不假设
+任何特定仓库目录，复制后由目标仓库的 `AGENTS.md` 提供本地日志和路径约定。

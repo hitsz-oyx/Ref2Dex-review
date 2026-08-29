@@ -8,7 +8,7 @@
 ## 当前状态
 
 - 当前阶段 / 指导: 已以 `oyx` 为主完成 `feature/hand-pca-perturbation` 的内容整合、递归 repo/machine memory 重构和全量回归验证。
-- 当前进行中: Cm 保留 GRAB C=32 geometry-only/no-time 与双卡 GRAB C=64 容量对照；CmDecoder Inspire F1 全量 object-disjoint 3 Hz point-flow decoder 仍在训练。通用 Component/Artifact/Contract/ExecutionContext/PipelineSpec 原型已加入 `src/base`，当前三条主线已有只读 manifest，并新增独立的 Cm inference pilot manifest/adapter，尚未接入真实 checkpoint 执行流程。
+- 当前进行中: Cm 保留 GRAB C=32 geometry-only/no-time 与双卡 GRAB C=64 容量对照；CmDecoder Inspire F1 全量 object-disjoint 3 Hz point-flow decoder 仍在训练。通用 Component/Artifact/Contract/ExecutionContext/PipelineSpec 原型已加入 `src/base`，当前三条主线已有只读 manifest，并新增独立的 Cm inference pilot manifest/adapter，仓库内通用 change-control、experiment-workflow 和 component-runtime Skill 已建立，尚未接入真实 checkpoint 执行流程。
 - 最近可靠结论: feature 分支的 HOCap subject_1 Stage 3 已生成 28 个文件、23,896 个 frame samples并通过 loader 核验；Cm mixed 两条 run 已分别保留 epoch 48/40 的最近完整 checkpoint，详细指标见 Cm 状态与实验日志。
 - 阻塞 / 风险: ARCTIC 全量 Stage 2/3 的最终产物状态仍需独立核验；HOCap 仅是外部测试集。合并代码已通过全量测试，但尚未在真实全量外部数据上重新导出。
 - 下一步: 等待 CmDecoder GRAB→ARCTIC MANO 泛化结果，同时等待 Cm C=32/C=64 完成可比的中长程 validation，再决定是否恢复 correspondence 训练。
