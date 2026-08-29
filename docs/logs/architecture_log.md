@@ -489,5 +489,10 @@ commit、配置和 Artifact hash。
 - `research-experiment-workflow`：实验前置条件、产物隔离、证据记录和长任务等待；
 - `modular-component-runtime`：任务无关的 Component/Artifact/Contract/Pipeline 组合规则。
 
+该 Skill 的 [Component 模板](../../.agents/skills/modular-component-runtime/references/component-template.md)
+规定：Component 按逻辑职责划分，不要求一组件一文件；单一实现优先保留为普通模块，只有需要独立发现、版本、资源、生命周期或跨任务复用时才提供 manifest。
+
+Cm 的结构迁移入口见 [`src/task/Cm/docs/README.md`](../../src/task/Cm/docs/README.md)。当前先通过兼容转发层提供 `Cm/src`、`Cm/dataset` 和 `Cm/visualization`，待用户未提交的核心实验改动完成后再移动实现文件。
+
 根 `AGENTS.md` 只保留 Ref2Dex 的路径、日志、科学不变量和 Skill 路由；通用 Skill 不假设
 任何特定仓库目录，复制后由目标仓库的 `AGENTS.md` 提供本地日志和路径约定。

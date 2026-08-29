@@ -1,0 +1,16 @@
+_base_: sequence_full_grab_16slot.yaml
+
+name: cm_full_grab_16slot_20e_fresh
+
+train:
+  # 显式用 epoch 数限制训练长度（20 个 epoch）。
+  # base yaml 的 max_steps=80000 会在大约 5 个 epoch 处截断训练，
+  # 所以这里显式置空，让 epochs 成为唯一的停止条件。
+  max_steps: null
+  epochs: 20
+  description: "Fresh full GRAB (1068 train seqs): 16 slots, no gate, physical time conditioning, 20 epochs (epoch-limited, no step cap), two-GPU DDP."
+
+wandb:
+  enable: true
+  mode: online
+  tags: [cm, full-grab, slot-16, no-gate, time-conditioned, ddp-2, fresh, 20e]

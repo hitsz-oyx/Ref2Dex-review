@@ -1,18 +1,1 @@
-_base_: src/task/Cm/configs/hrdexdb_inspire_f1_finetune_cm64_additive.yaml
-
-name: cm_hrdexdb_inspire_f1_decoder_only_resume
-
-meta:
-  # Keep the adapted DenseToken from the source latest.pt fixed, while saving
-  # it into subsequent checkpoints for faithful future restoration.
-  freeze_dense_encoder: true
-  save_dense_encoder_in_checkpoint: true
-
-train:
-  # Keep the source run immutable: because this path is not under a
-  # ``checkpoints`` directory, BaseRunner creates a fresh continuation output.
-  resume: outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_source/latest.pt
-  # Override the base fine-tune initializer; this phase must not reload GRAB.
-  init_checkpoint: null
-  decoder_only_resume: true
-  description: "Inspire-F1 C=64 additive decoder-only continuation: freeze adapted DenseToken, online no-grad forward, preserve scheduler/global step."
+active/hrdexdb_inspire_f1_decoder_only_resume.yaml

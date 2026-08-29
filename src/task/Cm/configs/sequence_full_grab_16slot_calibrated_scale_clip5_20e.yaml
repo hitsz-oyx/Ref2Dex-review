@@ -1,12 +1,1 @@
-_base_: sequence_full_grab_16slot_calibrated_scale_20e.yaml
-
-name: cm_full_grab_16slot_calibrated_scale_clip5_20e
-
-train:
-  grad_clip_norm: 5.0
-  description: "Fresh full GRAB (1068 train seqs): 16 slots, no gate, train-distribution geometry/hand-flow/object-flow scales, grad clip 5, physical time conditioning, 20 epochs, two-GPU DDP."
-
-wandb:
-  enable: true
-  mode: online
-  tags: [cm, full-grab, slot-16, no-gate, calibrated-scale, geometry-15, grad-clip-5, time-conditioned, ddp-2, fresh, 20e]
+archive/sequence_full_grab_16slot_calibrated_scale_clip5_20e.yaml

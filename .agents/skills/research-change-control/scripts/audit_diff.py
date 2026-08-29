@@ -43,6 +43,13 @@ def _listed_paths(entry: str) -> set[str]:
     return paths
 
 
+def _path_is_listed(path: str, listed: set[str]) -> bool:
+    """支持用带尾斜杠的目录前缀归组记录中的多个文件。"""
+    return path in listed or any(
+        value.endswith("/") and path.startswith(value) for value in listed
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--log", required=True, help="项目 modification log 路径")
@@ -67,7 +74,7 @@ def main() -> int:
     if not re.search(r"\*\*(?:Validation|验证)\*\*", entry, flags=re.IGNORECASE):
         missing.append("验证段")
     listed = _listed_paths(entry)
-    unlisted = sorted(path for path in changed if path not in listed)
+    unlisted = sorted(path for path in changed if not _path_is_listed(path, listed))
     if missing:
         print("错误：modification log 缺少：" + ", ".join(missing), file=sys.stderr)
     if unlisted:

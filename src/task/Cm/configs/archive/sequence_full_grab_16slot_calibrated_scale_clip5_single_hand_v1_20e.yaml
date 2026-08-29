@@ -1,0 +1,12 @@
+_base_: sequence_full_grab_16slot_calibrated_scale_clip5_20e.yaml
+
+name: cm_full_grab_16slot_calibrated_scale_clip5_single_hand_v1_20e
+
+data:
+  dominant_hand_manifest: data/processed_data/stage4/dominant_hand_full_v1/dominant_hand.jsonl
+
+train:
+  description: "Same configuration as the clip-5 calibrated-scale baseline, using the conservative single-hand-dominant v1 pseudo-label manifest; ambiguous and cooperative bilateral pairs are excluded."
+
+wandb:
+  tags: [cm, full-grab, slot-16, no-gate, calibrated-scale, geometry-15, grad-clip-5, time-conditioned, ddp-2, single-hand-dominant-v1, filtered]

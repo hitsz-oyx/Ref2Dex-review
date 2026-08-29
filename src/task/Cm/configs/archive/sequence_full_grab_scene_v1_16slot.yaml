@@ -1,0 +1,76 @@
+_base_: src.task.Cm.config:Config
+
+name: cm_full_grab_scene_v1_16slot
+
+meta:
+  # Scene Cache V1 keeps the model contract identical: 512 scene points +
+  # 1538 hand points enter the frozen dense encoder, and the loss is the
+  # same scaled Smooth-L1.  Only the semantics of the 512 points change
+  # (local scene = object + environment, treated identically).
+  num_obj_points: 512
+  num_hand_points: 1538
+  num_cm_tokens: 16
+  use_slot_gate: false
+  use_time_condition: true
+  loss_flow_weight: 1.0
+  loss_slot_count_weight: 0.0
+  loss_slot_confidence_weight: 0.0
+  loss_active_overlap_weight: 0.0
+  # Recompute with `python -m src.task.Cm.tools.data.compute_flow_scale --train-path
+  # data/processed_data/cm_scene_v1/...` after building the scene cache;
+  # the object-only calibration no longer matches the scene distribution.
+  flow_target_rms_m: null
+  geometry_input_scale: 100.0
+  hand_flow_input_scale: 100.0
+  object_flow_target_scale: 100.0
+  require_flow_calibration: false
+
+data:
+  # Legacy V1 config; V1.1 runs use sequence_full_grab_scene_v1_1_16slot.yaml.
+  root: data/processed_data/cm_scene_v1
+  split_json_path: data/processed_data/cm_scene_v1/splits/full_grab_v1/split.json
+  train_path: ""
+  val_path: null
+  val_split: 0.0
+  active_only: true
+  min_stride: 1
+  max_stride: 10
+  val_strides: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  group_val_by_sequence: true
+  batch_size: 8
+  val_batch_size: 8
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  prefetch_factor: 4
+  # Scene cache V1
+  use_mmap: true
+  use_sampling_bank: true
+  sampling_bank_size: 4
+  fixed_eval_bank: 0
+  # Requires build_dense_cache to have run with the configured checkpoint.
+  use_dense_cache: true
+
+train:
+  device: cuda
+  optimizer: adamw
+  lr: 1.5e-4
+  weight_decay: 1.0e-4
+  scheduler: cosine
+  warmup_steps: 0
+  epochs: 100
+  max_steps: 80000
+  amp: false
+  grad_clip_norm: 1.0
+  log_every_steps: 100
+  eval_every_epochs: 5
+  save_every_steps: 5000
+  save_every_epochs: 5
+  metric_for_best: val/mean_stride_epe_mm
+  lower_is_better: true
+  distributed:
+    find_unused_parameters: true
+
+wandb:
+  enable: false
+  tags: [cm, scene-v1, full-grab, slot-16, no-gate, time-conditioned, dense-cache]

@@ -1,0 +1,59 @@
+_base_: src.task.Cm.config:Config
+
+name: cm_sequence_ds4_grab_val10_slot16_time_nogate_online
+
+meta:
+  dense_checkpoint: /home/wbcd/workspace/oyx_ws/Ref2Dex/src/task/Cm/densetoken_ckpt/best.pt
+  geometry_input_scale: 100.0
+  hand_flow_input_scale: 100.0
+  object_flow_target_scale: 100.0
+  num_cm_tokens: 16
+  use_slot_gate: false
+  use_time_condition: true
+  loss_slot_count_weight: 0.0
+  loss_slot_confidence_weight: 0.0
+  loss_active_overlap_weight: 0.0
+
+data:
+  train_path: data/processed_data/stage4/data/GRAB/ds4_full
+  val_path: null
+  test_path: null
+  val_split: 0.1
+  active_only: true
+  min_stride: 1
+  max_stride: 10
+  val_stride: 1
+  val_strides: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  group_val_by_sequence: true
+  batch_size: 128
+  val_batch_size: 64
+  num_workers: 2
+  pin_memory: true
+  persistent_workers: false
+  prefetch_factor: 2
+
+train:
+  output_dir: outputs/train/cm_sequence_ds4_grab_val10_slot16_time_nogate_online
+  device: cuda
+  lr: 3.0e-4
+  amp: false
+  epochs: 20
+  max_steps: 24000
+  log_every_steps: 50
+  eval_every_epochs: 1
+  save_every_steps: 3000
+  save_every_epochs: 1
+  metric_for_best: val/mean_stride_epe_mm
+  lower_is_better: true
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+    broadcast_buffers: false
+    find_unused_parameters: false
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [cm, grab, ds4, train-val, slot16, time-condition, no-gate, gb256, online]

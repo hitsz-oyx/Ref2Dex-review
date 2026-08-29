@@ -1,0 +1,52 @@
+_base_: src/task/Cm/configs/hrdexdb_finetune_cm64.yaml
+
+name: cm_hrdexdb_inspire_f1_finetune_cm64_additive
+
+meta:
+  cm_dim: 64
+  # Preserve the current C=64 additive GRAB semantics while adapting the
+  # DenseToken and Cm head to Inspire-F1 geometry.
+  use_additive_slot_contributions: true
+  use_slot_gate: false
+  gate_warmup_enabled: false
+  use_object_context: false
+  use_time_condition: false
+  freeze_dense_encoder: false
+  loss_flow_weight: 1.0
+  loss_candidate_mixture_weight: 0.0
+  loss_slot_group_sparsity_weight: 1.0e-3
+  loss_slot_count_weight: 0.0
+  loss_slot_confidence_weight: 0.0
+  loss_active_overlap_weight: 0.0
+  # Keep the scale used by the source C=64 additive checkpoint.
+  require_flow_calibration: false
+  flow_target_rms_m: 0.09319322829550944
+  object_flow_target_scale: 10.73039338039742
+
+data:
+  finetune_mode: hrdexdb
+  hrdexdb_only: true
+  hrdexdb_source_prefix: inspire_f1
+  use_dense_cache: false
+  hrdexdb_root: data/processed_data/cm_decoder/hrdexdb_all_v1/v4
+  hrdexdb_manifest: data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json
+  batch_size: 32
+  val_batch_size: 32
+  min_stride: 1
+  max_stride: 10
+  val_strides: [1, 5, 10]
+  test_strides: [1, 5, 10]
+
+train:
+  # Fresh 202300-step fine-tune phase; do not resume the source run's
+  # optimizer/epoch counters.
+  epochs: 50
+  max_steps: 202300
+  lr: 3.0e-4
+  init_checkpoint: outputs/cm/cm_object_v2_grab_additive_cm64_geometry_only_no_time_budget50_20260825_093713/checkpoints/best.pt
+  resume: null
+  description: "Inspire-F1-only C=64 additive fine-tune: DenseToken unfrozen, geometry-only/no-time, global batch 64, 50 epochs, 202300 fresh steps."
+
+wandb:
+  mode: offline
+  tags: [cm, hrdexdb, inspire-f1-only, finetune, cm64, additive-contribution, geometry-only-object, no-time, trainable-densetoken, fresh-budget50]

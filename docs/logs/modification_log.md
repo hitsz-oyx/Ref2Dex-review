@@ -109,6 +109,38 @@
 - `python3 -m py_compile .agents/skills/research-change-control/scripts/audit_diff.py`：通过。
 - `git diff --check`：通过。
 
+## 2026-08-29 — 建立 Cm 目录迁移层与 Component 模板
+
+- change_level: L3
+- approval: user-approved
+- branch: `feature/modular-component-runtime`
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 全局 Skill + task:Cm 结构治理
+
+**文件**
+
+- `.agents/skills/modular-component-runtime/SKILL.md` — 增加单实现不强制抽象、逻辑组件可共文件和兼容迁移规则。
+- `.agents/skills/modular-component-runtime/references/component-template.md` — 增加统一 Component manifest、Python 接口和版本兼容模板。
+- `.agents/skills/research-change-control/scripts/audit_diff.py` — 支持用目录前缀归组审计路径。
+- `docs/logs/architecture_log.md`、`docs/logs/status_log.md` — 记录 Cm 结构迁移入口和当前状态。
+- `src/task/Cm/src/` — 建立模型、runner、配置、训练、评估和提取的规范入口，暂时转发旧实现。
+- `src/task/Cm/dataset/` — 建立数据集规范包，迁入 Stage4 实现并提供 ObjectV2、Scene、HRDexDB 和工厂入口。
+- `src/task/Cm/visualization/` — 建立可视化与 viewer server 规范入口。
+- `src/task/Cm/configs/` — 将受版本管理配置按生命周期归入 `active/` 与 `archive/`；旧顶层路径保留兼容软链接。
+- `src/task/Cm/docs/README.md`、`src/task/Cm/configs/{README.md,active/README.md,archive/README.md}` — 增加目录职责与文档入口说明。
+- `tests/test_cm_structure.py` — 验证新旧 import、配置路径和生命周期目录。
+
+**改动原因**
+
+按用户确认的结构整理 Cm，同时避免覆盖当前未提交的核心实验改动。采用兼容迁移层，使旧配置、旧 import 和现有 checkpoint 入口继续工作；本次不引入 Hydra，不改变训练或推理语义。
+
+**验证**
+
+- 新旧配置加载及 `src.task.Cm.src`、`src.task.Cm.dataset`、`src.task.Cm.visualization` 兼容 import 通过。
+- Cm 定向测试：`37 passed`。
+- 新迁移模块 `py_compile` 通过。
+- `git diff --check` 及 staged modification log 审计将在提交前执行。
+
 ## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run
 
 - branch: `oyx` working tree

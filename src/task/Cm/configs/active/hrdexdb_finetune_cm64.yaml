@@ -1,0 +1,42 @@
+_base_: src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820_cm64.yaml
+
+name: cm_hrdexdb_finetune_cm64
+
+meta:
+  cm_dim: 64
+  # Recompute mixed-train flow calibration after the full HRDexDB cache is
+  # materialized; this scaffold deliberately does not claim base-only stats.
+  require_flow_calibration: false
+  # Scheme A: initialize from the completed/base GRAB+ARCTIC checkpoint and
+  # only then unfreeze DenseToken for joint HRDexDB fine-tuning.
+  freeze_dense_encoder: false
+
+data:
+  finetune_mode: hrdexdb
+  # Geometry cache is allowed, but DenseToken outputs are always computed
+  # online so its parameters receive gradients during fine-tuning.
+  use_dense_cache: false
+  # The base root keeps the existing sequence-disjoint GRAB/ARCTIC split.
+  base_root: data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820
+  base_split_json_path: data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/splits_seed42/splits.json
+  # Final entry points after the all-embodiment geometry layer is built.  The
+  # current partial smoke cache is intentionally not used for training.
+  hrdexdb_root: data/processed_data/cm_decoder/hrdexdb_all_v1/v4
+  hrdexdb_manifest: data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json
+  source_probabilities:
+    grab: 0.3333333333333333
+    arctic: 0.3333333333333333
+    hrdexdb: 0.3333333333333333
+  # Random horizon is retained for training; validation/test report 1/5/10.
+  min_stride: 1
+  max_stride: 10
+  val_strides: [1, 5, 10]
+  test_strides: [1, 5, 10]
+
+train:
+  # Supply the finished C=64 GRAB/ARCTIC checkpoint at launch, e.g.
+  # --set train.resume=outputs/cm/<base-run>/checkpoints/best.pt
+  resume: null
+
+wandb:
+  tags: [cm, hrdexdb, finetune, cm64, trainable-densetoken, random-stride, balanced-sources]

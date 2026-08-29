@@ -9,12 +9,16 @@ metadata:
 
 新增或修改可复用组件、manifest、Artifact 合同、Pipeline 组合、适配器或 registry 行为时使用本 Skill。
 
+需要新建外部可发现组件时，先阅读 [component-template.md](references/component-template.md)。
+
 ## 抽象边界
 
 - `Component` 是可执行扩展点；数据适配器、模型、求解器、评估器和导出器都可以实现它。
 - `Artifact` 表示值或持久化引用；`Contract` 描述类型、shape、dtype、schema、单位、坐标系和时间语义。
 - 用 capabilities 和 tags 做发现。不要把 encoder、decoder、robot 或 dataset 等领域词汇做成框架一级分类。
 - registry 的发现必须无副作用；只有显式的验证或执行命令才导入、实例化 entrypoint。
+- Component 按逻辑职责划分，不要求一组件一文件；多个紧密相关实现可以共存于一个模块。
+- 只有需要独立发现、版本、资源、生命周期或跨任务复用时，才把内部实现提升为外部 Component。
 
 ## 兼容性
 

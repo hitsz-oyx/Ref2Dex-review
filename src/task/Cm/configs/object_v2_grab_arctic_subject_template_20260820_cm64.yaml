@@ -1,9 +1,1 @@
-_base_: src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml
-
-name: cm_object_v2_grab_arctic_subject_template_20260820_cm64
-
-meta:
-  cm_dim: 64
-
-wandb:
-  tags: [cm, object-v2, grab-arctic, subject-template-fixed, cm64, frozen-densetoken]
+active/object_v2_grab_arctic_subject_template_20260820_cm64.yaml
