@@ -1,42 +1,31 @@
 ---
 name: research-experiment-workflow
-description: Run and document reproducible research experiments, evaluations, data processing, and long-running jobs without mixing status, evidence, or generated artifacts.
+description: 运行并记录可复现的科研实验、评估、数据处理和长时任务，分离状态、证据与生成产物。
 metadata:
-  short-description: Keep experiments reproducible and traceable
+  short-description: 让实验可复现且可追溯
 ---
 
-# Research experiment workflow
+# 科研实验工作流
 
-Use this skill for training, evaluation, benchmark, data processing, visualization, model
-download, compilation, simulation, or any task expected to run for more than a short command.
+训练、评估、benchmark、数据处理、可视化、模型下载、编译、仿真，或预计超过短命令的任务，都使用本 Skill。
 
-## Before running
+## 运行前
 
-- Read the project's current status, architecture, memory, and relevant experiment/decision
-  records. Follow the project's local paths and schema; do not replace them with machine-local
-  assumptions.
-- State the hypothesis, variables, data split, checkpoint initialization, metric, budget, and
-  stopping condition. If any of these change scientific meaning, ask the user first.
-- Keep formal experiment evidence separate from current status and implementation history.
+- 阅读项目当前状态、架构、记忆，以及相关 experiment/decision 记录。遵循项目路径和 schema，不用机器私有假设替代它们。
+- 明确假设、变量、数据划分、checkpoint 初始值、指标、预算和停止条件。如果其中任何一项改变科研语义，先请用户确认。
+- 将正式实验证据与当前状态、实现历史分开记录。
 
-## During and after running
+## 运行中与运行后
 
-- Use a new, explicit output directory for a new experiment. Never overwrite a baseline or
-  silently select a latest checkpoint.
-- Keep caches, checkpoints, raw data, and large generated results out of version control.
-- Record the exact command, configuration snapshot, code revision, input/cache identifiers,
-  and quantitative result. Mark conclusions as supported, refuted, inconclusive, or invalid
-  implementation when appropriate.
-- A smoke test proves wiring only; it is not a scientific result.
+- 新实验使用明确的新输出目录；不要覆盖基线，也不要静默选择“最新 checkpoint”。
+- 缓存、checkpoint、原始数据和大型生成结果不纳入版本控制。
+- 记录确切命令、配置快照、代码版本、输入/缓存标识和定量结果。结论标记为 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 或 `INVALID_IMPLEMENTATION`。
+- smoke test 只能证明 wiring 正常，不能作为科研结果。
 
-## Waiting
+## 长时任务等待规则
 
-Start long jobs once and let the execution tool wait for minutes rather than repeatedly polling
-from the model. Check earlier only when intermediate output changes the next decision. Use the
-project's documented waiting mechanism and stop safely on errors, resource conflicts, or an
-unapproved scope change.
+完整规则见 [long-running-tasks.md](references/long-running-tasks.md)。核心要求是：让执行工具等待，不要让模型每几秒重新推理一次来查询状态。
 
-For empty status polling with `functions.wait` or `write_stdin`, use a wait of at least 180
-seconds (prefer 300 seconds when no intermediate output is needed). An outer wait must exceed
-the longest nested wait by at least 30 seconds. Send non-empty interactive input immediately;
-the long-wait rule is only for status polling.
+- 启动长任务后按分钟级等待；只有中间输出会改变下一步决策时才提前检查。
+- 出现错误、资源冲突或未批准的范围变化时安全停止。
+- 空的状态查询与实际交互输入必须区分：前者长等待，后者立即发送。

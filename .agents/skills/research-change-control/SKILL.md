@@ -1,52 +1,39 @@
 ---
 name: research-change-control
-description: Govern changes in research or software repositories with transparent risk levels, minimal diffs, user approval gates, and document-to-diff consistency checks.
+description: 在科研或软件仓库中进行代码、配置、数据处理和文档修改时，使用透明的影响等级、最小差异、审批闸门和文档与差异一致性检查。
 metadata:
-  short-description: Keep research changes small and auditable
+  short-description: 让科研修改保持简洁且可审计
 ---
 
-# Research change control
+# 科研修改控制
 
-Use this skill whenever you modify repository code, configuration, data-processing logic,
-experiments, or project documentation.
+当你要修改仓库代码、配置、数据处理逻辑、实验流程或项目文档时使用本 Skill。
 
-## Core behavior
+## 核心行为
 
-- Confirm the requested outcome and preserve the user's existing changes.
-- Prefer the smallest semantic diff. Do not refactor unrelated code, reformat whole files,
-  or create a new component for a one-off helper.
-- Declare a change level in the project's modification record. The level is an AI judgment
-  for the user to review; do not pretend that a script can determine scientific impact.
-- Stop before implementation when the change affects scientific meaning, public contracts,
-  shared infrastructure, destructive state, or a long-running external job. Describe the
-  alternatives and ask the user.
-- Keep implementation, validation, and documentation in the same handoff. Do not claim an
-  experiment result from a smoke test or an implementation error.
+- 先确认目标，保留用户已有的未提交改动。
+- 优先采用最小语义差异：不要顺手重构无关代码、整文件格式化，也不要为一次性小辅助函数新建 Component。
+- 在项目的 modification log 中声明影响等级。这是供用户复核的 AI 判断，不能假装脚本能够推断科研影响。
+- 如果改动会影响科研语义、公共合同、共享基础设施、破坏性状态或长时外部任务，在实现前说明方案并请用户确认。
+- 在同一次交接中同时给出实现、验证和文档；不能把 smoke test 或实现错误冒充科研结论。
 
-## Levels and approval
+## 等级与审批
 
-Read [change-levels.md](references/change-levels.md) when assigning a level. As a default:
+分级时阅读 [change-levels.md](references/change-levels.md)。默认规则如下：
 
-- L0: configuration, documentation, tests, or diagnostics with unchanged semantics; may be
-  completed automatically.
-- L1: local implementation that preserves the public data/metric/checkpoint contract; may be
-  completed automatically with focused validation.
-- L2: changes to data fields, coordinate systems, GT, splits, caches, metrics, checkpoint
-  interpretation, or public component contracts; ask before editing.
-- L3: changes to shared framework behavior, repository governance, dependencies, migration,
-  destructive actions, or long-running jobs; ask before editing and present an implementation
-  plan.
+- **L0**：语义不变的配置、文档、测试或诊断，可自动完成。
+- **L1**：保持公共数据/指标/checkpoint 合同的任务内实现，可自动完成并做定向验证。
+- **L2**：修改数据字段、坐标系、GT、数据划分、缓存、指标、checkpoint 解释或公共 Component 合同；编辑前请用户确认。
+- **L3**：修改共享框架行为、仓库治理、依赖、迁移、破坏性操作或长时任务；编辑前请用户确认，并先给出范围、风险、回滚和验证计划。
 
-If uncertain, choose the higher level. Record `approval: auto`, `pending`, or
-`user-approved` according to the actual conversation. Do not infer approval from silence.
+拿不准时选择更高等级。按真实对话记录 `approval: auto`、`pending` 或 `user-approved`，不要把用户沉默当作批准。
 
-## Modification record
+## 修改记录
 
-Use the nearest project-defined modification log. If the project has no format, use a concise
-entry containing:
+使用离改动最近的 modification log。项目没有既定格式时，使用以下简洁条目：
 
 ```markdown
-## YYYY-MM-DD — <summary>
+## YYYY-MM-DD — <摘要>
 
 - change_level: L0 / L1 / L2 / L3
 - approval: auto / pending / user-approved
@@ -54,33 +41,28 @@ entry containing:
 - post-commit:
 - scope:
 
-**Files**
-- `path/to/file` — what changed
+**文件**
+- `path/to/file` — 做了什么
 
-**Reason**
+**原因**
 ...
 
-**Validation**
+**验证**
 ...
 ```
 
-Run the project's consistency audit, or the bundled helper, before handoff:
+交接前运行项目审计，或运行随附脚本：
 
 ```bash
 python .agents/skills/research-change-control/scripts/audit_diff.py \
   --log <project-modification-log> --staged
 ```
 
-The helper checks only objective consistency between the latest log entry and staged paths;
-it does not grade the declared level or replace user review. Read
-[audit-contract.md](references/audit-contract.md) for its limits.
+脚本只检查最新记录是否客观列出了所选 Git 差异中的文件，并包含等级、审批、范围、原因和验证段；它不会评判等级是否正确。能力边界见 [audit-contract.md](references/audit-contract.md)。
 
-## Validation and handoff
+## 验证与交接
 
-- Run the narrowest meaningful tests first, then broader tests when shared code or contracts
-  changed.
-- Record the exact validation command and result in the modification entry.
-- Inspect `git status`, `git diff`, and staged diff before committing. Stage explicit paths;
-  never include unrelated user changes.
-- Keep generated data, caches, checkpoints, and outputs out of commits unless explicitly
-  requested.
+- 先运行最窄且有意义的测试；共享代码或合同变更再扩大验证范围。
+- 在修改记录中写出确切的验证命令和结果。
+- 提交前检查 `git status`、`git diff` 和 staged diff。显式 stage 目标路径，绝不带入无关的用户改动。
+- 除非用户明确要求，不提交生成数据、缓存、checkpoint 和输出。

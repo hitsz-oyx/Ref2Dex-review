@@ -81,6 +81,34 @@
 - `git diff --check` 通过。
 - Cm manifest 显式 entrypoint 解析和 `researchctl describe` 通过。
 
+## 2026-08-29 — 中文化通用 Skill 并恢复完整长时任务规则
+
+- change_level: L0
+- approval: user-approved
+- branch: `feature/modular-component-runtime`
+- post-commit: 本提交（以 `git log` 为准）
+- scope: 全局 / 可复制 Skill 文档
+
+**文件**
+
+- `.agents/skills/research-change-control/SKILL.md` — 将修改分级、审批闸门和交接流程改为中文。
+- `.agents/skills/research-change-control/references/change-levels.md` — 将 L0–L3 影响等级参考改为中文。
+- `.agents/skills/research-change-control/references/audit-contract.md` — 将审计脚本能力边界说明改为中文。
+- `.agents/skills/research-change-control/scripts/audit_diff.py` — 将脚本帮助信息、错误信息和 docstring 改为中文，行为不变。
+- `.agents/skills/research-experiment-workflow/SKILL.md` — 将实验工作流改为中文，并链接长时任务参考。
+- `.agents/skills/research-experiment-workflow/references/long-running-tasks.md` — 完整恢复旧版长时任务等待、polling、嵌套工具和交互输入规则。
+- `.agents/skills/modular-component-runtime/SKILL.md` — 将通用组件运行时边界与安全规则改为中文。
+
+**改动原因**
+
+统一可复制维护入口的语言，同时保留原 AGENTS.md 中关于长时任务的详细操作约束；本次不改变组件、实验或脚本的运行语义。
+
+**验证**
+
+- `quick_validate.py`：三个 Skill 通过。
+- `python3 -m py_compile .agents/skills/research-change-control/scripts/audit_diff.py`：通过。
+- `git diff --check`：通过。
+
 ## 2026-08-28 — 扩展通用组件协议与 pipeline dry-run
 
 - branch: `oyx` working tree

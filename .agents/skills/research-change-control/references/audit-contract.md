@@ -1,11 +1,7 @@
-# Audit contract
+# 审计合同
 
-The bundled audit helper is deliberately narrow. It can verify that the latest modification
-record names the files in a selected Git diff and contains a level, approval, scope, reason,
-and validation section. It can also report missing or untracked paths when asked.
+随附的审计脚本刻意保持窄范围。它可以检查：最新 modification log 是否列出了选定 Git 差异中的文件，并包含等级、审批、分支、范围、原因和验证段；在需要时也能报告缺失或未跟踪路径。
 
-It cannot determine whether an AI chose the correct level, whether a scientific conclusion is
-valid, or whether a user actually intended an approval. Those remain human-review decisions.
+它不能判断 AI 是否选择了正确等级、科研结论是否有效，或用户是否确实同意了某项修改。这些仍由人复核。
 
-Use staged mode for handoff so unrelated unstaged work is ignored. Use worktree mode only when
-the entire working-tree diff is intentionally in scope.
+交接时使用 staged 模式，使无关的未暂存工作不会影响审计。只有在整个工作树差异都明确属于当前任务时，才使用 worktree 模式。

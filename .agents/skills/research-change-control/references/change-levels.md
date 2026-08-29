@@ -1,28 +1,19 @@
-# Change level reference
+# 修改影响等级参考
 
-Levels describe impact, not line count. A three-line coordinate-frame change can be L2; a
-large generated diagnostic may still be L0 if it is not committed.
+等级描述的是影响范围，而不是行数。三行坐标系修改也可能是 L2；不提交的大型诊断产物仍可能是 L0。
 
-## L0 — routine
+## L0 — 常规修改
 
-Configuration-only experiment variants, documentation, tests, formatting, and diagnostics
-that preserve semantics. Use a new experiment config instead of mutating a baseline. No user
-approval is required, but the change and validation are recorded.
+语义不变的实验配置变体、文档、测试、格式化和诊断。无需用户审批，但要记录修改和验证。实验配置应新建变体，不要直接改写基线。
 
-## L1 — task-local implementation
+## L1 — 任务内实现
 
-Task-local code changes that preserve input/output schema, GT meaning, coordinate system,
-split, metric, and checkpoint interpretation. Add focused tests and keep the existing entry
-point compatible.
+任务内代码修改，保持输入/输出 schema、GT 含义、坐标系、数据划分、指标和 checkpoint 解释不变。增加定向测试，并保持原入口兼容。
 
-## L2 — scientific or public-contract change
+## L2 — 科研语义或公共合同
 
-Changing data fields, sampling, GT, coordinate frames, units, train/val/test boundaries,
-metrics, cache schema, checkpoint compatibility, or a public component manifest. Explain the
-old and proposed semantics and wait for user approval before editing.
+修改数据字段、采样、GT、坐标系、单位、训练/验证/测试边界、指标、缓存 schema、checkpoint 兼容性或公共 Component manifest。说明旧语义与拟议语义，等待用户批准后再编辑。
 
-## L3 — shared governance or infrastructure
+## L3 — 共享治理或基础设施
 
-Changing shared base runtime behavior, repository governance, dependencies, data migration,
-destructive operations, external services, or long-running jobs. Present scope, risks,
-rollback, and validation before implementation.
+修改共享 base runtime、仓库治理、依赖、数据迁移、破坏性操作、外部服务或长时任务。实现前给出范围、风险、回滚和验证计划。
