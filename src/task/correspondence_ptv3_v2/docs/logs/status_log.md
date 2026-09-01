@@ -1,8 +1,22 @@
 # correspondence_ptv3_v2 当前状态
 
+## 当前操作 — V1.2.12：撤出 Task-local Component/data/registry（2026-09-01）
+
+- 已删除 `src/task/correspondence_ptv3_v2/components/`、`data/`、`registry/` 以及根级 `components/ref2dex/correspondence_ptv3_v2` 兼容入口。
+- 配置不再声明 Component 清单；数据和 cache 继续直接使用根级 `data/`、`dataset/` 与 `third_party/`，校准 JSON 仍属于 Task 的研究配置输入。
+- 真实数据、cache、checkpoint、output 和既有评估产物未移动、删除或改写。
+- 计划：[`docs/plan/V1.md`](../plan/V1.md)（final）；历史 Component 校准记录保留，不作为当前入口。
+
+## 历史操作 — V1.2.1：组件声明已校准（2026-08-31）
+
+- 历史记录：Task 级 component 曾作为只读任务入口，组件版本从 `2.1.0` 校准为 `2.1.1`；该入口已在 V1.2.12 撤出。
+- manifest 现在与 live `StaticHOCPTv3V2.forward()` 的预测端口一致：random cross-edge、contact-aux cross-edge，以及可选 dense hand-contact head。
+- 本次只修改声明清单、Task 选择和合同测试；训练代码、数据、GT、坐标系和 checkpoint 未改变。
+- 证据：`researchctl check-task-config`、manifest entrypoint check 和定向测试均通过。
+
 - scope: task:correspondence_ptv3_v2
-- last_updated: 2026-08-24
-- last_verified: 2026-08-24
+- last_updated: 2026-09-01
+- last_verified: 2026-09-01
 - related: [架构](architecture_log.md) / [仓库记忆](repo_memory.md) / [实验](experiment_log.md) / [修改](modification_log.md) / [当前指导](../指导/V1.md)
 
 ## 当前状态

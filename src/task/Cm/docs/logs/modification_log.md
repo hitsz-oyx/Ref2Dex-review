@@ -1,5 +1,376 @@
 # Cm AI 修改记录
 
+## 2026-09-01 — 修正 t-SNE 的 Inspire-F1 数据 stride 统计并重跑当前 best
+
+- change_level: L1（Task 内离线诊断脚本与产物）
+- approval: auto（用户已明确 Inspire-F1 数据 stride=2，要求统计 2..20）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: working tree
+- post-commit: 未提交；训练进程未停止
+- scope: task 内部 / latent visualization
+
+**文件 / 产物**
+
+- `src/task/Cm/research/tsne_slots/run.py` — 增加 source-specific stride 集合；GRAB 使用 1..10，Inspire-F1 使用偶数 2..20；自然采样、逐 stride 采样、标题和 metadata 同步；固定辅助图改为 GRAB=5 / Inspire-F1=10 的 source-specific control。
+- `output/research/cm_tsne_current_best_stride_grab1_10_inspire2_20_20260901/` — 用当前 best 生成正式 t-SNE 图、数组和运行清单。
+- `src/task/Cm/docs/logs/status_log.md`、`experiment_log.md` — 记录当前诊断状态与 EXP-025。
+
+**验证**
+
+- graspenv Python 编译通过；smoke 确认 `object_pose_t`、GRAB 1..10、Inspire-F1 偶数 2..20；正式运行完成（1040 条 pooled 样本，silhouette=`0.0916688`）。
+
+## 2026-08-31 — V1.2.11 将外部资产入口下沉到 Cm Task
+
+- change_level: L3（Task 资产路径治理与运行中兼容迁移）
+- approval: user-approved（用户要求将根 `assets/` 下放到具体 Task 并加入 `.gitignore`）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.11`（沿用 `V1.2` plan）
+- category: `governance`、`path`、`operation`
+- post-commit: 未提交；大型 checkpoint、数据、cache 和运行进程未移动或停止
+- scope: `src/task/Cm/assets/`、Cm 配置、根资产忽略规则
+
+**文件**
+
+- `src/task/Cm/assets/README.md` — 改为 Cm Task 专属资产说明。
+- `src/task/Cm/assets/checkpoints/densetoken` — 新增 Task-local 软链接，指向旧 `src/task/Cm/densetoken_ckpt`。
+- `assets` — 改为指向 `src/task/Cm/assets` 的根级兼容软链接，不作为新资产入口。
+- `src/task/Cm/src/config.py` — DenseToken 默认路径改为 Task-local canonical 入口。
+- `src/task/Cm/tools/data/build_dense_cache.py` — 更新 DenseToken cache 构建示例为 Task-local 资产入口。
+- `.gitignore` — 忽略根兼容软链接和所有 Task-local 外部资产，仅允许各 Task 的资产 README 可见。
+- `AGENTS.md`、`docs/目录规范.md`、`docs/项目总览.md`、`docs/版本线与AI行为分类.md`、`src/task/Cm/docs/README.md`、`src/task/Cm/docs/plan/V1.2.md` — 同步资产职责和路径规则。
+- `src/task/Cm/docs/logs/status_log.md`、`src/task/Cm/docs/logs/architecture_log.md`、`src/task/Cm/docs/logs/repo_memory.md` — 更新当前路径事实和状态。
+
+**原因**
+
+根级 `assets/` 只有 Cm 使用的 DenseToken 入口。将资产归属下沉到 Task 后，配置、资产和研究边界一致；迁移期间保留双层软链接，避免当前运行和旧命令失效。
+
+**验证**
+
+- `readlink -f src/task/Cm/assets/checkpoints/densetoken/best.pt` 与旧入口均解析到同一 checkpoint。
+- Cm 配置导入、相关 loader 回归和全量 pytest：`311 passed, 3 skipped, 22 warnings`。
+- `git diff --check` 通过；未移动大型 checkpoint，当前 Cm 训练进程仍在运行。
+
+## 2026-08-31 — V1.2.10 取消 Cm 路径索引
+
+- change_level: L2（Task 数据入口与目录治理）
+- approval: user-approved（用户明确决定不再增加路径索引）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.10`（沿用 `V1.2` plan）
+- category: `governance`、`data`、`documentation`
+- post-commit: 未提交；外部数据、cache、资产和 checkpoint 未移动或删除
+- scope: `src/task/Cm/registry/`、`src/task/Cm/data/`、Cm 路径说明
+
+**变更**
+
+- 删除 Cm Task 内的数据路径 registry 和便捷软链接，不新增替代 manifest。
+- Cm 配置继续直接声明外部 data/cache/asset 路径；实体数据位置保持不变。
+
+**验证**
+
+- `src/task/Cm/registry/` 与 `src/task/Cm/data/` 均已移除；外部数据目录未改动。
+- Cm 配置导入、相关 loader 回归和全量 pytest（`311 passed, 3 skipped, 22 warnings`）通过。
+- `git diff --check` 通过。
+
+## 2026-08-31 — V1.2.9 撤销隔离试验线
+
+- change_level: L3（破坏性目录回退、仓库治理）
+- approval: user-approved（用户明确要求停止该试验线并直接删除）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.9`（沿用 `V1.2` plan）
+- category: `governance`、`code`、`documentation`
+- post-commit: 未提交；数据、cache、checkpoint、output、outputs 和训练代码未删除
+- scope: `src/task/CmComponent/`、Cm Task 清单入口、AGENTS.md、通用 Skill
+
+**变更**
+
+- 删除 Cm 隔离试验目录及其 Task 内清单/适配器，移除 Cm 配置中的清单选择字段。
+- 删除专用维护 Skill，并从保留的通用 Skill 与 AGENTS.md 中移除该试验线的规则。
+- 保留 Cm 的研究脚本、模型/Runner、训练配置及历史运行产物；外部数据入口不移动。
+
+**验证**
+
+- `rg -n -i 'component|artifact|组件' AGENTS.md .agents/skills` 无匹配。
+- Cm 配置加载、旧 Runner 导入、相关 loader 回归和全量 pytest（`311 passed, 3 skipped, 22 warnings`）通过；`git diff --check` 通过。
+
+## 2026-08-31 — 用 object_pose_t checkpoint 完成 Cm t-SNE 正式诊断
+
+- change_level: L1（任务内离线诊断，新增坐标合同适配）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / latent visualization
+
+**文件 / 产物**
+
+- `src/task/Cm/research/tsne_slots/run.py` — 从 checkpoint config 自动解析 object-pose cache、坐标系和新 candidate/activity mask，并将 `coordinate_frame` 传给两边 dataset；保留旧坐标兼容。
+- `output/research/cm_tsne_object_pose_20260831/` — 生成 object_pose_t 对应的完整 pooled/slot/natural/fixed/matched t-SNE 产物及 run manifest。
+
+**原因**
+
+按用户要求使用 `cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/checkpoints/best.pt`，避免复用旧 `hand_root_t` cache。
+
+**验证**
+
+- object_pose_t smoke 成功；正式运行两边各 520 条、共 1040 条，pooled silhouette=`0.1202`。
+- `metadata.json` 确认 `coordinate_frame=object_pose_t`、checkpoint epoch32/step136480；未修改训练进程。
+
+## 2026-08-30 — V1.2.1 Cm 数据入口治理
+
+- change_level: L3（Task 治理、目录和数据路径注册）
+- approval: user-approved（用户授权按 Agent 方案执行）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.1`（plan: `V1.2`, final）
+- category: `governance`、`architecture`、`data`、`documentation`
+- post-commit: 未提交；当前运行中的 Cm 训练未停止
+- scope: `src/task/Cm/` 注册表、数据软链接、配置版本字段和 Task 交接文档
+
+**文件与变更**
+
+- `src/task/Cm/registry/data_paths.json`、`external_paths.json.example`、`src/task/Cm/data/` — 记录 cache、数据集和 DenseToken 资产的仓库相对路径，并标明 producer 脚本/来源与 consumer 配置；外部绝对路径只允许写入被忽略覆盖文件。
+- `src/task/Cm/src/config.py`、`configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` — 为运行写入 `V1.2`、`V1.2.1` 和操作类别。
+- `src/task/Cm/docs/README.md`、`src/task/Cm/docs/plan/V1.2.md`、`src/task/Cm/docs/plan/V1.2.1.md` 及本 Task 的状态/决策/记忆/修改日志 — 固化版本线和交接规则，并将旧 V1.2.1 plan 标为历史兼容；未自动修改用户指导或架构事实。
+
+**原因**
+
+使 Cm 的脚本、配置参数和数据入口可按 Task 查找并可在运行 manifest 中复现，同时保持旧路径软链接兼容，不影响历史产物和正在运行的训练。
+
+**验证**
+
+- Cm 配置加载、旧 Runner 导入、相关 loader 回归和全量 pytest（`311 passed, 3 skipped, 22 warnings`）通过；`git diff --check` 通过。
+- 相关定向 pytest（`7 passed`）、全量 pytest（`308 passed, 3 skipped`）、`py_compile`、`git diff --check` 通过；未移动或覆盖 cache、output、outputs、checkpoint。
+
+## 2026-08-30 — Cm 研究目录与 DenseToken 资产兼容迁移
+
+- change_level: L3（仓库治理与共享资产路径迁移；未移动大型文件）
+- approval: user-approved
+- skills_used: `research-change-control`、`research-experiment-workflow`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm 研究目录、研究产物路径、共享 DenseToken checkpoint 入口
+
+**文件**
+
+- `src/task/Cm/research/tsne_slots/run.py`、`src/task/Cm/research/tsne_slots/__init__.py`、`src/task/Cm/research/tsne_slots/__main__.py` — 将原散脚本迁入独立实验包；默认输出改为实验目录下按 run_id 隔离的 `output/`。
+- `src/task/Cm/research/dense_cache_v1_1_1/benchmark_dense_cache.py`、`src/task/Cm/research/hand_flow_decoder/calibrate_hand_flow_scale.py` — 两个已有实验入口补齐同样的默认 `output/<run_id>/`、配置/元数据快照和 `run_manifest.json`。
+- `src/task/Cm/research/tsne_slots.py`、`src/task/Cm/research/log.md` — 保留旧入口到新 `run.py` 的软链接，并标记旧研究日志为历史兼容。
+- `src/task/Cm/research/README.md`、`src/task/Cm/research/tsne_slots/README.md`、`src/task/Cm/research/tsne_slots/experiment.yaml`、`src/task/Cm/research/dense_cache_v1_1_1/README.md`、`src/task/Cm/research/dense_cache_v1_1_1/experiment.yaml`、`src/task/Cm/research/hand_flow_decoder/README.md`、`src/task/Cm/research/hand_flow_decoder/experiment.yaml` — 固定实验目录格式和职责。
+- `src/task/Cm/src/config.py` — Cm DenseToken 默认路径切换到 `assets/checkpoints/densetoken/`。
+- `assets/checkpoints/densetoken` — 新增指向旧 `src/task/Cm/densetoken_ckpt` 的过渡软链接；实际 2.1G checkpoint 未移动。
+- `AGENTS.md`、`.gitignore`、`docs/目录规范.md`、`docs/AI交接清单.md`、`docs/项目总览.md`、`outputs/README.md`、`assets/README.md`、`src/task/Cm/docs/README.md`、`src/task/Cm/results/README.md` — 统一输出、数据、资产、实验和 manifest 规则。
+- `docs/logs/architecture_log.md`、`docs/logs/decision_log.md`、`docs/logs/repo_memory.md`、`docs/logs/status_log.md`、`docs/logs/modification_log.md`、`src/task/Cm/docs/logs/architecture_log.md`、`src/task/Cm/docs/logs/status_log.md`、`src/task/Cm/docs/logs/modification_log.md` — 同步治理决策、路径事实和交接记录。
+
+**原因**
+
+用户确认先使用软链接迁移。研究输出需要与实验脚本邻近且可重复定位；正式训练输出、cache 和外部模型仍分别保持在根 `outputs/`、`data/processed_data/` 和 `assets/`。当前存在未提交改动和运行中的多卡训练，因此不移动或删除大型产物。
+
+**验证**
+
+- `python -m src.task.Cm.research.tsne_slots --help` 与旧软链接入口通过；
+- 新旧 DenseToken 路径均能解析到同一 checkpoint；
+- `git diff --check` 通过；
+- 当前训练进程未停止，数据、cache、输出和 checkpoint 未删除或覆盖。
+
+## 2026-08-30 — 收口 Cm loader 坐标合同与运行计划
+
+- change_level: L3（共享 loader 行为）+ L2（坐标系合同）
+- approval: user-approved（用户明确要求直接修改）
+- skills_used: `research-change-control`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: task:Cm object-v2、Stage4、Scene、HRDexDB loader 及 V1.2.1 执行计划
+
+**文件**
+
+- `src/task/Cm/docs/plan/V1.2.1.md` — 定稿本轮范围、保持不变的不变量、验证和回滚方式。
+- `src/task/Cm/dataset/object_v2.py` — 对所有选定序列统一解析 `object_pose_t/hand_root_t`，禁止混合根，并按显式合同取 pose。
+- `src/task/Cm/dataset/stage4.py` — 在文件 split 级别确认坐标合同，显式选择 object pose 或 hand root。
+- `src/task/Cm/dataset/scene.py` — 在 scene sequence/split 级别确认坐标合同，并将合同传入在线点变换。
+- `src/task/Cm/dataset/hrdexdb.py` — 在 episode 集合级别确认坐标合同，并为 geometry mmap 增加有界 LRU。
+- `src/task/Cm/docs/logs/architecture_log.md` — 记录 loader fail-fast 规则与本轮边界。
+
+**原因**
+
+V1.2.1 需要旧 hand-root cache 可复现，同时禁止新旧 object-pose cache 在同一个 loader 中静默混合。统一在初始化阶段检查，避免训练后才发现 metadata 只代表第一条序列。
+
+**验证**
+
+- Cm 数据集定向回归与新增框架合同测试通过；全量 pytest `307 passed, 3 skipped`。
+- 未触碰 cache、checkpoint、outputs 或现有训练进程。
+
+## 2026-08-30 — 增加自然 stride hand-flow 幅度渐变图
+
+- change_level: L0（离线诊断图）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / EXP-023 后分析
+
+**文件 / 产物**
+
+- `src/task/Cm/research/tsne_slots.py` — 在自然 stride pooled t-SNE 上增加 hand-flow RMS 渐变着色，并将自然样本幅度写入 NPZ。
+- `output/research/cm_tsne_inspire_f1_latest_stride1_10/all_stride_natural_hand_magnitude_tsne.png` — 生成与 dataset 图共用二维坐标的幅度图。
+
+**原因**
+
+按用户要求保持自然 stride dataset 图不变，增加同坐标 hand-motion magnitude 视图。
+
+**验证**
+
+复用正式版自然 stride embedding，补齐 1024 个样本的 hand-flow RMS 并成功生成新图；原 `all_stride_natural_tsne.png` 未覆盖。
+
+## 2026-08-30 — 增加自然 stride 分布 pooled t-SNE 图
+
+- change_level: L0（离线诊断图）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / EXP-023 后分析
+
+**文件 / 产物**
+
+- `src/task/Cm/research/tsne_slots.py` — 增加不按 stride 等量约束、保留 loader 自然 stride 1--10 分布的 pooled-Cm dataset-only t-SNE；自然样本同步写入 `tsne.npz`。
+- `output/research/cm_tsne_inspire_f1_latest_stride1_10/all_stride_natural_tsne.png` — 生成自然 stride 分布图。
+
+**原因**
+
+响应用户要求把所有 stride 放在一张图中观察 GRAB/Inspire dataset 重合情况。
+
+**验证**
+
+正式命令成功完成；自然采样两边各 512 条，stride 计数已写入 `tsne.npz`，dataset silhouette=`0.1137`。
+
+## 2026-08-30 — 单帧 mesh 随机手点与 object-pose 坐标合同
+
+- change_level: L2（数据 cache、GT 对应和坐标系语义变化）
+- approval: user-approved（用户已确认 1538 点随机表面采样、Inspire stride=2、完整 object pose 坐标系）
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: task:Cm 单帧 Dataset、GRAB/HRDexDB geometry cache builder、配置与回归测试
+
+**文件**
+
+- `src/task/Cm/dataset/surface_sampling.py` — 新增面积加权 mesh 表面采样及 face/barycentric 重用工具。
+- `process/GRAB/raw.py`、`process/GRAB/stage4_cm.py`、`process/GRAB/stage4_cm_scene.py` — 保存 GRAB 手 mesh 顶点/面和 object pose，供 cache 重建与在线重采样。
+- `src/task/CmDecoder/build_cache.py` — HRDexDB cache 保存 MANO/机器人手 mesh、面拓扑和 object pose。
+- `process/common/object_cache_v2.py` — 转换 cache 时透传新增 mesh/object-pose 字段。
+- `src/task/Cm/dataset/{stage4,object_v2,scene,hrdexdb,cache_schema}.py` — 每个 transition 重采样 1538 手点；当前/未来端共享采样规格；优先使用当前 object pose 的完整 SE(3) frame，旧 cache 无 pose 时回退 hand-root。
+- `src/task/Cm/configs/active/{hrdexdb_finetune_cm64,hrdexdb_inspire_f1_finetune_cm64_additive,grab_inspire_f1_hand_flow_cm64_additive}.yaml` — object-pose 坐标合同；Inspire 评估 stride 统一为 2。
+- `tests/test_cm_surface_sampling.py` — 覆盖随机采样变化、flow 对应和 object-pose 平移。
+
+**原因**
+
+保留 1538 点输入规模，同时消除固定手点位置对模型的绑定；同一 transition 复用 face/barycentric 规格以保持逐点 hand flow GT。object pose 使用当前帧作为坐标基准，未来端不重新中心化，避免抹掉物体运动。
+
+**验证**
+
+- `tests/test_cm_surface_sampling.py`：1 passed。
+- 相关 Cm 回归：44 passed，3 warnings。
+- `graspenv` 下所有改动模块 `py_compile` 通过。
+- cache 重建已启动到新目录：GRAB `data/processed_data/cm_object_v2_mesh_object_pose_20260830`、HRDexDB Inspire-F1 `data/processed_data/cm_decoder/hrdexdb_inspire_f1_mesh_object_pose_20260830`；现有 output/cache 未被覆盖。GRAB 已由顺序任务切换为 subject 并行任务，HRDexDB 使用 8 workers。
+
+## 2026-08-30 — 生成 fixed-stride hand-flow bin-matched t-SNE 图
+
+- change_level: L0（离线诊断图）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / EXP-023 后分析
+
+**文件 / 产物**
+
+- `src/task/Cm/research/tsne_slots.py` — 增加固定 stride=5 下按 2 mm hand-RMS bins 等量匹配的图形输出。
+- `output/research/cm_tsne_inspire_f1_latest_stride1_10/matched_hand_bins_stride5_tsne.png` — 生成 172 条/source 的 matched t-SNE 图。
+
+**原因**
+
+将后处理得到的 172 条/source 控制结果直接可视化，检查 motion magnitude 匹配后 dataset 分布是否仍分离。
+
+**验证**
+
+正式命令重新运行成功，日志显示 `matched-bin samples_per_source=172`；原有 pooled/fixed/slot 输出同步刷新。
+
+## 2026-08-30 — 补充固定 stride 的 motion-magnitude 控制诊断
+
+- change_level: L0（只读定量诊断）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / EXP-023 后分析
+
+**文件**
+
+- `src/task/Cm/docs/logs/experiment_log.md` — 记录 stride=5 magnitude 分布、magnitude-only AUC 和 2 mm bin matched pooled-Cm domain AUC。
+
+**原因**
+
+回答相同 stride 下 domain separation 是否由运动尺度差异造成。
+
+**验证**
+
+从 EXP-023 `tsne.npz` 只读计算；2 mm hand-RMS bin matching 后为 172 条/source，hand magnitude AUC=`0.481`，pooled-Cm AUC=`0.995`。
+
+## 2026-08-30 — 完成 pooled-Cm t-SNE 正式诊断
+
+- change_level: L0（离线实验产物与状态记录）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / latent visualization
+
+**文件 / 产物**
+
+- `src/task/Cm/docs/logs/{status,experiment}_log.md` — 记录 EXP-023 的正式命令、样本量、silhouette 和 matched 子集限制。
+- `output/research/cm_tsne_inspire_f1_latest_stride1_10/` — 生成 pooled、逐 slot、fixed stride=5、matched magnitude 图及 NPZ/metadata。
+
+**原因**
+
+响应用户要求运行正式版 t-SNE 诊断。
+
+**验证**
+
+两 source 各 520 条、stride 1--10 各 52 条，正式命令成功完成；pooled silhouette=`0.0959`，matched `[4,6] mm` 为 16 条/source。输出未纳入 Git。
+
+## 2026-08-30 — 扩展统一 stride/幅度 t-SNE 诊断
+
+- change_level: L1（任务内离线诊断）
+- approval: auto
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部 / latent visualization
+
+**文件**
+
+- `src/task/Cm/research/tsne_slots.py` — 合并 stride 1--10 的 pooled-Cm 单次 t-SNE，增加 dataset/stride/hand-flow/object-flow 共坐标着色、固定 stride=5、matched hand-flow、逐 slot t-SNE 及 NPZ/metadata 输出；兼容迁移前 Cm checkpoint 的旧 import path。
+- `src/task/Cm/docs/logs/decision_log.md` — 记录样本预算和 matched magnitude 的可复现选择。
+
+**原因**
+
+按用户要求区分 embodiment 分离与 motion magnitude 分布差异，保持训练与 checkpoint 不变。
+
+**验证**
+
+- `python -m py_compile src/task/Cm/research/tsne_slots.py` 通过。
+- GPU3 smoke（两 source、stride 1--10、每 source 20 条、t-SNE 250 iter）成功生成 pooled、slot、fixed-stride 图和 NPZ；该 smoke 仅验证 wiring，不作为科研结论。
+
+## 2026-08-29 — 按用户要求停止混合 Cm 三卡训练
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部长时实验；change_level: L3；approval: user-approved
+
+**文件**
+
+- `src/task/Cm/docs/logs/status_log.md` — 将混合 Cm 标记为已停止，并记录恢复锚点。
+- `src/task/Cm/docs/logs/experiment_log.md` — 记录停止条件与 epoch 29 最终完整验证证据。
+
+**改动原因**
+
+用户要求先停止 GPU0/1/2 上的 Cm，再将资源用于 CmDecoder。向 torchrun 主进程发送中断并确认相关 worker 已退出；最近完整 checkpoint 保留为 epoch 29 / step `124410`，未完成的 epoch 30 未覆盖它。
+
 ## 2026-08-29 — 完成 Cm 实现迁移并移除兼容壳
 
 - branch: `feature/modular-component-runtime`
@@ -1375,3 +1746,124 @@ V1.2 联合根目录可被 Runner 的 `_sequence_dirs()` 识别，但 E1 统计�
 **验证**
 
 - 41 个配置文件解析通过，新模块导入通过；完整测试将在提交前运行。
+## 2026-08-30 — 取消 5cm 物体候选过滤并重启 GRAB/Inspire-F1 cache
+
+- branch: `feature/modular-component-runtime`
+- scope: Task 内部数据处理与 cache schema 兼容字段
+- change_level: L2（用户已确认）
+- approval: 用户确认物体改为表面随机采样 512 点并同意继续导出
+
+**文件**
+
+- `process/GRAB/stage4_cm_scene.py` — ragged 索引改为覆盖全部 manipulated-object surface pool，不再执行手-物体 5cm 查询；保留旧文件名以兼容 loader。
+- `src/task/CmDecoder/build_cache.py` — `obj_candidate_mask_5cm.npy` 改为全真 object-pool 兼容 bitmap，不再计算邻域距离。
+- `src/task/Cm/dataset/hrdexdb.py`、`src/task/Cm/src/config.py` — 更新过滤语义和错误提示。
+- `src/task/Cm/configs/active/{grab_inspire_f1_hand_flow_cm64_additive,hrdexdb_inspire_f1_finetune_cm64_additive}.yaml` — 指向新的 surface512 cache 根目录。
+
+**验证 / 状态**
+
+- `tests/test_cm_scene.py tests/test_cmdecoder_build_cache.py tests/test_cm_hrdexdb.py`：21 passed；随后完整回归 `301 passed, 3 skipped`。
+- 旧 cache 导出进程已安全停止；新导出写入 `cm_object_v2_surface512_object_pose_20260830` 与 `hrdexdb_inspire_f1_surface512_object_pose_20260830`，不覆盖旧目录。
+
+## 2026-08-30 — 停止 CmDecoder 并启动 GRAB/Inspire-F1 Cm 混合训练
+
+- change_level: L3（停止既有长时训练并启动新的多卡正式训练）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm / Task:CmDecoder 运行状态、训练配置与实验产物
+
+**文件**
+
+- `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` — 清除继承来的旧 `data.split_json_path`，显式使用新 GRAB `base_split_json_path`；混合训练配置保持 GRAB/Inspire-F1 各 0.5。
+- `src/task/Cm/docs/logs/status_log.md` — 记录旧训练停止、新训练命令、数据契约与启动验证。
+- `src/task/Cm/docs/logs/modification_log.md` — 记录本次运行的审批、范围、原因与验证。
+
+**原因**
+
+用户要求停止当前 GPU 0/1/2 上的 CmDecoder 训练，改训已经完成单帧 cache 重建的 GRAB + Inspire-F1 版本；显式清除旧 split 字段以避免继承配置造成复现歧义。
+
+**验证**
+
+- 旧进程检查：`ps ... | rg 'src.task.CmDecoder.train'` 无残留；rollout/viewer 等非训练进程保留。
+- 新训练命令：`CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.Cm.src.train --config src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml --distributed`。
+- 启动日志报告 `world_size=3`、`global_batch=96`、`total_steps=457200`，并成功加载初始 checkpoint；三个 rank 仍在运行，输出目录已生成 `config.json`、`metadata.json`、`run_manifest.json` 和 `train.log`。
+- run manifest 锁定 object-pose_t、4096 object pool/512 runtime points/1538 hand points、GRAB 1004 train sequences 与 Inspire-F1 455 train episodes。
+
+## 2026-08-30 — 为混合 Cm 准备 Inspire-F1 帧级 5cm mask
+
+- change_level: L2（新增数据过滤 sidecar，不改变当前运行）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm 数据入口与 HRDexDB geometry sidecar
+
+**文件**
+
+- `src/task/CmDecoder/recompute_candidate_mask.py` — 逐帧重算工具。
+- `src/task/Cm/docs/logs/status_log.md`、`src/task/CmDecoder/docs/logs/status_log.md` — 记录 sidecar 产物和切换边界。
+
+**原因**
+
+用户要求恢复“没有 5cm candidate 的帧不参与训练”，但保留完整 object surface pool 和在线 512 点随机采样。为避免影响当前训练，mask 先以独立 sidecar 形式落盘。
+
+**验证**
+
+- 576/576 episode 全部成功，362,027 帧均有 `[T,4096] bool` mask；train/val/test 有效 transition 比例为 `56.015%/58.529%/59.248%`。
+- 当前 GPU0/1/2 混合 Cm 训练进程仍正常运行；未读取或覆盖 sidecar。
+
+## 2026-08-30 — 启用 5cm 帧过滤并重启 Cm 混合训练
+
+- change_level: L3（改变训练样本行空间并重启多卡长时任务）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm 数据 loader、训练配置与运行资源
+
+**文件**
+
+- `src/task/Cm/dataset/object_v2.py` — 支持按 `candidate_active_5cm.npy` 过滤 GRAB current frame，同时仍从完整 object surface pool 采样。
+- `src/task/Cm/dataset/hrdexdb.py` — 支持配置 `candidate_mask_name`，Inspire-F1 切换到重算 sidecar mask。
+- `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` — 配置 GRAB/Inspire-F1 的 5cm mask 入口。
+- `src/task/Cm/docs/logs/status_log.md`、`src/task/Cm/docs/logs/modification_log.md` — 记录切换和新运行状态。
+
+**原因**
+
+用户确认恢复旧版“没有 5cm candidate 的帧不参与训练”规则，以减少取消 5cm 过滤后不必要的训练样本，同时保留新的物体表面随机采样设计。
+
+**验证**
+
+- `pytest -q tests/test_cm_hrdexdb.py tests/test_cm_object_v2.py`：`5 passed`。
+- loader smoke：train `409,435` 行、batch=32 时单进程 12,795 batches；混合 source bucket 仍为 GRAB/Inspire-F1 等概率，样本 shape 保持 `[512,3]` object / `[1538,3]` hand。
+- 旧全真 run 已停止；新 run `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401` 启动日志报告 `total_steps=213250`、world size=3，并成功加载初始 checkpoint。
+- 训练进程检查：三个 Cm rank 仍运行，GPU0/1/2 无 `CmDecoder.train` 残留。
+
+## 2026-08-31 — Cm 续训采用 Inspire-F1 偶数 stride 集合
+
+- change_level: L3（改变训练采样/验证指标空间并续训三卡长任务）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm HRDexDB stride sampling and evaluation
+
+**文件**
+
+- `src/task/Cm/dataset/hrdexdb.py` — 增加可配置 `stride_values`；mixed branch 正确传入 Inspire-F1 训练 stride 集合，并独立生成 HRDexDB val/test stride loaders。
+- `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` — 配置 Inspire-F1 train/val/test 为 `[2,4,6,8,10,12,14,16,18,20]`。
+- `src/task/Cm/docs/logs/status_log.md`、本日志 — 记录 stride 语义、续训命令与验证。
+
+**原因**
+
+用户澄清 stride=2 不是固定训练间隔，要求 Inspire-F1 在保留逐帧 geometry cache 的前提下，于训练时从偶数 stride `2..20` 采样，并在验证/测试分 stride 报告；本次从当前 Cm `latest.pt` 续训。
+
+**验证**
+
+- loader smoke：Inspire-F1 `stride_values=(2,4,6,8,10,12,14,16,18,20)`、`max_stride=20`，100 次抽样覆盖全部十个 stride；GRAB 入口保持 `1..10`。
+- 验证 loader keys 包含 Inspire-F1 的 stride `2,4,6,8,10,12,14,16,18,20`；相关 pytest `5 passed`。
+- 续训命令使用 `train.resume=outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/checkpoints/latest.pt`，已推进至 step `153800`，无 OOM/NaN/NCCL 错误。
+
+补充：首次启动时发现 inherited `train.init_checkpoint` 会把 resume 后状态重置为 step 0，已立即停止；最终有效启动显式设置 `train.init_checkpoint=`，只恢复当前 Cm `latest.pt`。有效进程从 step `153540` 继续，未重新使用旧 Inspire init checkpoint。

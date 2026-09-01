@@ -5,6 +5,14 @@
 - last_verified: 2026-08-24
 - related: [当前状态](status_log.md)、[架构](architecture_log.md)、[实验](experiment_log.md)
 
+## V1.2.12 — 数据入口回到根空间
+
+- category: governance / operation
+- status: active
+- last_verified: 2026-09-01
+- fact: correspondence_ptv3_v2 不再维护 Task-local `components/`、`data/` 或 `registry/`。训练/评估配置直接引用根级 `data/processed_data/`、`dataset/`、`third_party/`；Task 内校准 JSON 仍作为研究配置输入保留。
+- source / anchor: `config.py`、`docs/plan/V1.md`、根 `.gitignore`。
+
 本文只记录可随仓库迁移的长期事实。NAS 根、软链目标、解释器和 GPU 等写入同目录下被 Git 忽略的 `machine_memory.md`。
 
 ## 2026-08-24 — 数据路径使用仓库相对入口

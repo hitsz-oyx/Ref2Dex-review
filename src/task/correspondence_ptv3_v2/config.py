@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parents[3]
 class Config(TaskConfig):
     name = "correspondence_ptv3_v2"
     runner_class = "src.task.correspondence_ptv3_v2.runner.CorrespondencePTV3V2Runner"
+    version_line = "V1.2"
+    guide_version = "V1"
+    plan_version = "V1"
+    operation_version = "V1.2.12"
+    operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):
         num_obj_points: int = 512

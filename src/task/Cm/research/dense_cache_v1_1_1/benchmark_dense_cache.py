@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.base import task_config_from_dict
+from src.base.run_manifest import build_run_manifest, write_run_manifest
 from src.task.Cm.dataset.scene import Stage4CmSceneDataset
 from src.task.Cm.src.model import CmFlowModel
 
@@ -51,6 +53,13 @@ def _epe_mm(pred: torch.Tensor, target: torch.Tensor, valid: torch.Tensor) -> fl
 
 def _update_accumulator(acc: dict[str, list[float]], key: str, value: float) -> None:
     acc.setdefault(key, []).append(float(value))
+
+
+def _output_file(args: argparse.Namespace) -> Path:
+    if args.output:
+        return Path(args.output)
+    run_id = datetime.now().strftime("dense_cache_%Y%m%d_%H%M%S")
+    return Path(__file__).resolve().parent / "output" / run_id / "metrics.json"
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -150,10 +159,48 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "output_flow_oc_over_oo": result["metrics"]["output_flow_oc_rms"]["mean"]
         / max(result["metrics"]["output_flow_oo_rms"]["mean"], 1e-12),
     }
-    if args.output:
-        output = Path(args.output)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    output = _output_file(args).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    config_snapshot = {
+        "root": str(Path(args.root).resolve()),
+        "checkpoint": str(Path(args.checkpoint).resolve()),
+        "samples": int(args.samples),
+        "batch_size": int(args.batch_size),
+        "stride": int(args.stride),
+        "bank": int(args.bank),
+        "device": str(args.device),
+    }
+    (output.parent / "config.json").write_text(
+        json.dumps(config_snapshot, indent=2) + "\n", encoding="utf-8"
+    )
+    (output.parent / "metadata.json").write_text(
+        json.dumps(
+            {"schema_name": "cm_dense_cache_benchmark", "dataset_split": "diagnostic"},
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    result["output"] = str(output)
+    output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    manifest = build_run_manifest(
+        task="Cm",
+        run_name=output.parent.name,
+        output_dir=output.parent,
+        mode="benchmark",
+        config=config_snapshot,
+        metadata={
+            "schema_name": "cm_dense_cache_benchmark",
+            "dataset_split": "diagnostic",
+            "root": str(Path(args.root).resolve()),
+        },
+        config_source=Path(__file__).with_name("experiment.yaml"),
+        initial_checkpoint=args.checkpoint,
+        config_snapshot=output.parent / "config.json",
+        metadata_snapshot=output.parent / "metadata.json",
+        repo_root=Path(__file__).resolve().parents[5],
+    )
+    write_run_manifest(output.parent / "run_manifest.json", manifest)
     return result
 
 
@@ -166,7 +213,11 @@ def main() -> None:
     parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--bank", type=int, default=0)
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--output", default=None)
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="metrics JSON path; defaults to this experiment's output/<run_id>/metrics.json",
+    )
     args = parser.parse_args()
     result = run(args)
     print(json.dumps(result, indent=2))

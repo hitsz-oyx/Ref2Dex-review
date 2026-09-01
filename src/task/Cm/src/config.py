@@ -14,9 +14,18 @@ ROOT = Path(__file__).resolve().parents[4]
 class Config(TaskConfig):
     name = "cm_action"
     runner_class = "src.task.Cm.src.runner.CmActionRunner"
+    version_line = "V1.2"
+    guide_version = "V1.2"
+    plan_version = "V1.2"
+    operation_version = "V1.2.11"
+    operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):
-        dense_checkpoint: str = str(ROOT / "src" / "task" / "Cm" / "densetoken_ckpt" / "best.pt")
+        # Canonical Cm-owned asset path.  The large checkpoint remains in the
+        # historical ``densetoken_ckpt`` directory behind a task-local symlink.
+        dense_checkpoint: str = str(
+            ROOT / "src" / "task" / "Cm" / "assets" / "checkpoints" / "densetoken" / "best.pt"
+        )
         # DenseToken is frozen for the GRAB/ARCTIC base stage and explicitly
         # unfrozen by the HRDexDB fine-tuning config.
         freeze_dense_encoder: bool = True
@@ -94,16 +103,16 @@ class Config(TaskConfig):
 
     class data(TaskConfig.data):
         group_val_by_sequence: bool = True
-        # Stage 4 preserves non-contact motion; the initial frozen-dense-token
-        # training path selects only pairs that have at least one valid object
-        # candidate.  Set false only for explicit no-contact diagnostics.
+        # Kept for compatibility with older caches.  New caches expose the
+        # complete manipulated-object surface pool, so every transition has
+        # valid object points and this flag does not filter by hand distance.
         active_only: bool = True
         # Optional offline pseudo-label manifest.  When set, each manifest
         # row fixes (hand side, current frame, stride); the Stage 4 cache stays
         # immutable and the default unfiltered dataset path is unchanged.
         dominant_hand_manifest: str | None = None
-        # Current 5cm contact is the only training-sample filter.  Do not
-        # remove static object targets: they teach no-effect interactions.
+        # New cache sampling is uniform over the object surface; do not remove
+        # static object targets because they teach no-effect interactions.
         min_stride: int = 1
         max_stride: int = 10
         val_strides = tuple(range(1, 11))

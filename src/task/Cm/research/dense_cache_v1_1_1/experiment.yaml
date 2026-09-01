@@ -1,0 +1,11 @@
+schema: ref2dex.experiment.v1
+id: dense_cache_v1_1_1
+task: Cm
+kind: benchmark
+status: maintained
+entrypoint: benchmark_dense_cache.py
+output_root: output/<run_id>
+guide_version: V1.2.1
+plan_version: null
+public_contract_changes: false
+plan_required_before_next_run: true

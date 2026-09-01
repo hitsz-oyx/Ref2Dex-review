@@ -37,14 +37,26 @@ dataset/*/*.pth
 dataset/*/*.zip
 dataset/*/*.tar
 dataset/*/*.tar.gz
-assets/
+# Root-level assets is retired; a local compatibility symlink may remain while
+# old commands are still in use, but no root asset is a repository input.
+/assets
+/assets/
+
+# Task-owned runtime assets are machine-local and must not be committed. Keep
+# an optional README visible so each Task can document its asset contract.
+/src/task/*/assets/
+!/src/task/*/assets/
+src/task/*/assets/*
+!src/task/*/assets/README.md
 !/third_party/PointTransformerV3/
 !/third_party/PointTransformerV3/**
 !/third_party/PointTransformerV3/assets/
 !/third_party/PointTransformerV3/assets/**
-# 研究/训练产物：output/exp 为训练输出，output/research 为分析诊断产物，均不入库。
+# 研究/训练产物：根 outputs/ 和各 Task research/*/output/ 均不入库。
+# 根 output/ 只保留历史兼容产物，不再新增文件。
 outputs/*
 /output/
+src/task/*/research/**/output/
 docs/修改指导.md
 docs/代码.py
 tmp/**

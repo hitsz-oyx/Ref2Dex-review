@@ -3,9 +3,12 @@
 
 示例::
 
-    python tools/researchctl.py list components
-    python tools/researchctl.py check components/example_pipeline.yaml components
-    python tools/researchctl.py graph components/example_pipeline.yaml
+    python3 tools/researchctl.py list <manifest-root>
+    python3 tools/researchctl.py check <pipeline.yaml> <manifest-root>
+    python3 tools/researchctl.py graph <pipeline.yaml>
+    python3 tools/researchctl.py check-task-config <task-config>
+
+仓库不再提供默认 manifest 根；需要检查外部原型时必须显式传入路径。
 """
 from __future__ import annotations
 
@@ -18,6 +21,8 @@ if __package__ in {None, ""}:
 
 from src.base.registry import ComponentRegistry, RegistryError
 from src.base.pipeline import PipelineSpec
+from src.base.base_config import config_to_dict, load_config
+from src.base.registry import check_task_config
 
 
 def _registry(roots: list[str]) -> ComponentRegistry:
@@ -29,27 +34,43 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     list_parser = sub.add_parser("list", help="列出已发现组件")
-    list_parser.add_argument("roots", nargs="+", help="组件目录或 component.yaml")
+    list_parser.add_argument("roots", nargs="*", help="显式组件目录或 component.yaml；省略时为空")
     list_parser.add_argument("--status")
     list_parser.add_argument("--capability")
     list_parser.add_argument("--tag")
 
     check_parser = sub.add_parser("check", help="校验 manifest 或 pipeline")
     check_parser.add_argument("path", help="component.yaml 或 pipeline.yaml")
-    check_parser.add_argument("roots", nargs="+", help="组件目录或 component.yaml")
+    check_parser.add_argument("roots", nargs="*", help="显式组件目录或 component.yaml")
     check_parser.add_argument("--resolve-entrypoints", action="store_true", help="显式导入并检查 manifest 入口")
 
     describe_parser = sub.add_parser("describe", help="显示组件的输入输出合同")
     describe_parser.add_argument("component_id")
-    describe_parser.add_argument("roots", nargs="+", help="组件目录或 component.yaml")
+    describe_parser.add_argument("roots", nargs="*", help="显式组件目录或 component.yaml")
 
     graph_parser = sub.add_parser("graph", help="打印 pipeline 的组件连接")
     graph_parser.add_argument("pipeline")
 
     run_parser = sub.add_parser("run", help="准备运行 pipeline（当前只支持 dry-run）")
     run_parser.add_argument("pipeline")
-    run_parser.add_argument("roots", nargs="+", help="组件目录或 component.yaml")
+    run_parser.add_argument("roots", nargs="*", help="显式组件目录或 component.yaml")
     run_parser.add_argument("--dry-run", action="store_true", help="只校验并打印拓扑顺序")
+
+    task_config_parser = sub.add_parser(
+        "check-task-config",
+        help="校验 Task 配置选择、components.json 和 manifest 是否一致",
+    )
+    task_config_parser.add_argument("config", help="Task YAML 或 Python 配置")
+    task_config_parser.add_argument(
+        "task_root",
+        nargs="?",
+        help="Task 根目录；默认根据 component_registry 或配置路径推断",
+    )
+    task_config_parser.add_argument(
+        "--registry",
+        default=None,
+        help="显式指定 Task components.json（覆盖配置中的 component_registry）",
+    )
 
     args = parser.parse_args()
     try:
@@ -58,7 +79,7 @@ def main() -> int:
             for spec in registry.list(status=args.status, capability=args.capability, tag=args.tag):
                 caps = ",".join(spec.capabilities) or "-"
                 tags = ",".join(spec.tags) or "-"
-                print(f"{spec.id}\t{spec.version}\t{spec.status}\t{caps}\t{tags}")
+                print(f"{spec.id}\t{spec.version}\t{spec.status}\t{spec.entrypoint_kind}\t{caps}\t{tags}")
             return 0
         if args.command == "check":
             path = Path(args.path)
@@ -66,8 +87,8 @@ def main() -> int:
                 from src.base.component import load_manifest
                 spec = load_manifest(path)
                 if args.resolve_entrypoints:
-                    from src.base.component import resolve_entrypoint
-                    resolve_entrypoint(spec.entrypoint)
+                    registry = ComponentRegistry([spec])
+                    registry.resolve_entrypoint(spec.id)
                 print(f"OK component {spec.id} ({spec.version})")
                 return 0
             issues = _registry(args.roots).check_pipeline(path)
@@ -83,15 +104,17 @@ def main() -> int:
             return 0
         if args.command == "describe":
             spec = _registry(args.roots).get(args.component_id)
-            print(f"{spec.id} ({spec.version}) [{spec.status}]")
+            print(f"{spec.id} ({spec.version}) [{spec.status}; {spec.entrypoint_kind}]")
             print(f"entrypoint: {spec.entrypoint}")
             print(f"capabilities: {', '.join(spec.capabilities) or '-'}")
             print("inputs:")
             for name, port in spec.inputs.items():
-                print(f"  {name}: type={port.type} shape={port.shape or '-'} dtype={port.dtype or '-'} unit={port.unit or '-'}")
+                constraints = ",".join(f"{key}={value}" for key, value in sorted(port.constraints.items())) or "-"
+                print(f"  {name}: type={port.type} shape={port.shape or '-'} dtype={port.dtype or '-'} unit={port.unit or '-'} constraints={constraints}")
             print("outputs:")
             for name, port in spec.outputs.items():
-                print(f"  {name}: type={port.type} shape={port.shape or '-'} dtype={port.dtype or '-'} unit={port.unit or '-'}")
+                constraints = ",".join(f"{key}={value}" for key, value in sorted(port.constraints.items())) or "-"
+                print(f"  {name}: type={port.type} shape={port.shape or '-'} dtype={port.dtype or '-'} unit={port.unit or '-'} constraints={constraints}")
             return 0
         if args.command == "graph":
             import yaml
@@ -113,6 +136,32 @@ def main() -> int:
                 return 1
             print(f"DRY-RUN {pipeline.id} ({pipeline.version})")
             print("order: " + " -> ".join(pipeline.topological_order()))
+            return 0
+        if args.command == "check-task-config":
+            cfg = config_to_dict(load_config(args.config))
+            repo_root = Path.cwd().resolve()
+            selected = cfg.get("components", ())
+            configured_registry = cfg.get("component_registry")
+            registry_value = args.registry or configured_registry
+            if not isinstance(registry_value, str) or not registry_value.strip():
+                if not selected:
+                    print(f"OK task-config {args.config} registry=none components=0")
+                    return 0
+                if args.task_root:
+                    registry_value = str(Path(args.task_root) / "components" / "components.json")
+                else:
+                    raise RegistryError(
+                        "Task config must declare component_registry or pass task_root/--registry."
+                    )
+            registry_path = Path(registry_value)
+            if not registry_path.is_absolute():
+                registry_path = repo_root / registry_path
+            issues = check_task_config(cfg, registry_path=registry_path, repo_root=repo_root)
+            if issues:
+                for issue in issues:
+                    print(f"ERROR {issue}", file=sys.stderr)
+                return 1
+            print(f"OK task-config {args.config} registry={registry_path} components={len(selected)}")
             return 0
     except (OSError, ValueError, RegistryError) as exc:
         print(f"ERROR {exc}", file=sys.stderr)

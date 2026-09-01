@@ -214,11 +214,15 @@ class OverfitModeTests(unittest.TestCase):
             self.assertTrue(cfg.meta.child_hook_saw_base)
 
             saved = json.loads((Path(tmpdir) / "config.json").read_text(encoding="utf-8"))
+            run_manifest = json.loads((Path(tmpdir) / "run_manifest.json").read_text(encoding="utf-8"))
             self.assertTrue(saved["data"]["shuffle"])
             self.assertFalse(saved["data"]["drop_last"])
             self.assertAlmostEqual(saved["train"]["weight_decay"], 1e-5)
             self.assertIsNone(saved["train"]["scheduler"])
             self.assertTrue(saved["meta"]["child_hook_saw_base"])
+            self.assertEqual(run_manifest["manifest_schema"], "ref2dex.run.v1")
+            self.assertEqual(run_manifest["mode"], "train")
+            self.assertEqual(run_manifest["output_dir"], str(Path(tmpdir).resolve()))
             self.assertIn("train_setup", (Path(tmpdir) / "train.log").read_text(encoding="utf-8"))
 
     def test_correspondence_overfit_hook_respects_explicit_overrides(self) -> None:

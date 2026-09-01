@@ -1,13 +1,84 @@
 # Cm 实验记录
 
 - scope: task:Cm
-- last_updated: 2026-08-28
-- last_verified: 2026-08-28
+- last_updated: 2026-08-29
+- last_verified: 2026-08-29
 - related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[V1.2.1 指导](../指导/V1.2.1.md)
+
+## EXP-025 — 当前 best 的 source-specific stride t-SNE
+
+### 日期
+
+2026-09-01
+
+### 假设与边界
+
+当前训练中 Inspire-F1 的数据基础 stride 为 2；若直接按 1..10 统计会把数据 stride 与训练跨度混淆。使用统一 t-SNE 坐标，GRAB 统计 stride 1..10，Inspire-F1 统计偶数 stride 2..20，并按 dataset、stride、hand-flow RMS 和 object-flow RMS 着色。t-SNE 仅作探索性诊断。
+
+### 输入、命令与产物
+
+- checkpoint：`outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260831_192222/checkpoints/best.pt`（epoch 10 / step 42630，`coordinate_frame=object_pose_t`）；
+- test cache：checkpoint config 自动解析的 GRAB object-pose cache 与 Inspire-F1 v4 cache；
+- 正式命令：`CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.Cm.research.tsne_slots.run --checkpoint outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260831_192222/checkpoints/best.pt --output-root output/research/cm_tsne_current_best_stride_grab1_10_inspire2_20_20260901 --device cuda --max-samples 512 --n-iter 1000 --batch-size 32`；
+- 产物：`output/research/cm_tsne_current_best_stride_grab1_10_inspire2_20_20260901/` 下 pooled、slot、natural stride、hand-flow 渐变、source-specific fixed control、matched 图及 `tsne.npz`、`metadata.json`、`run_manifest.json`。
+
+### 结果与结论
+
+- GRAB/Inspire-F1 各 520 条；逐 stride 均为 52 条，范围分别为 `1..10` 与 `{2,4,...,20}`；metadata 已记录 source-specific stride 集合；
+- pooled 原空间 dataset silhouette=`0.0916688`；2 mm hand-RMS bins matched 为 267 条/source，连续 `[4,6] mm` matched 为 20 条/source；
+- 正式运行及 object-pose_t、cache 和 stride 标签 smoke 均成功。结论状态：`SUPPORTED`（诊断实现与产物有效，不将 t-SNE silhouette 解释为训练收敛指标）。
+
+## EXP-024 — object_pose_t Cm checkpoint 的 GRAB/Inspire-F1 t-SNE
+
+### 日期
+
+2026-08-31
+
+### 假设与边界
+
+使用新的 `object_pose_t` 坐标合同 checkpoint，在匹配的 object-pose cache 上重跑 GRAB/Inspire-F1 test 的 stride 1--10 pooled-Cm t-SNE。该结果不能与此前 `hand_root_t` 图直接做数值比较；t-SNE 仍只用于表征分布诊断。
+
+### 输入、命令与产物
+
+- checkpoint：`outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/checkpoints/best.pt`（epoch 32 / step 136480，`coordinate_frame=object_pose_t`）；
+- cache：`data/processed_data/cm_object_v2_surface512_object_pose_20260830` 与 `data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4`；脚本从 checkpoint config 自动解析这些路径、坐标系和 candidate/activity mask；
+- 每 source 每 stride 52 条，共 520/source、1040 条；
+- 产物：`output/research/cm_tsne_object_pose_20260831/` 下 pooled、slot、natural stride、hand-flow 渐变、fixed stride=5、matched 图及 `tsne.npz`、`metadata.json`、`run_manifest.json`。
+
+### 结果与结论
+
+- `object_pose_t` smoke 与正式运行均成功；pooled 原空间 dataset silhouette=`0.1202`；fixed-stride hand-flow bins matched 为 189 条/source，连续 `[4,6] mm` matched 为 20 条/source；
+- 新坐标下自然 stride dataset 图仍显示 GRAB/Inspire 主体区域差异及局部重合。由于坐标合同、cache、checkpoint 均变化，不能把 `0.1202` 与旧 `hand_root_t` 的 `0.1137` 解释为表征变好或变坏；结论状态 `SUPPORTED`（运行和分布诊断完成），不代表坐标变更的因果效果。
 
 ## 当前研究状态
 
 V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 sampling bank 和 E1 统计已经完成。2026-08-20 确认旧 GRAB cache 因 raw asset root 解析错误使用平均 MANO template；修复版 GRAB 已重建。2026-08-22 已用修复版 GRAB 和既有 ARCTIC 建立新版 mixed 链接 cache并重算元数据；新版 mixed C=256/C=64 续训已在验证平台期停止，最近完整 checkpoint 分别为 epoch 48/40。旧 gate+cm64 warm-up 在 epoch 38 按用户要求停止。DexYCB subject-10/right 修复 cache 已重建，并用成熟 C=256 checkpoint 完成正式跨数据集评测。2026-08-23 新增 GRAB object-only、C=32、物体侧 geometry-only、无时间条件的 hard-gate 瓶颈实验；2026-08-24 启动仅将 `cm_dim` 改回 64 的双卡容量对照。
+
+## EXP-023 — GRAB/Inspire-F1 pooled-Cm t-SNE 与 stride/幅度对照
+
+### 日期
+
+2026-08-30
+
+### 假设与边界
+
+在同一 Cm checkpoint 上合并 GRAB 与 Inspire-F1 test transition，stride 1--10 等量抽样；将 16 个 slot mean-pool 后统一 fit 一次 t-SNE，并通过 dataset、stride、hand-flow RMS 与 object-flow RMS 的同坐标着色，检查 domain 分离是否主要由 motion magnitude 造成。固定 stride=5 和 hand-flow RMS 4--6 mm 的 matched 子集作为辅助对照。t-SNE 仅作探索性可视化，不作为训练收敛或 checkpoint 选择指标。
+
+### 输入、命令与产物
+
+- checkpoint：`outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451/checkpoints/latest.pt`；
+- 数据：GRAB test 与 HRDexDB Inspire-F1 test；每 source 每 stride 52 条，共 520/source、1040 条；
+- 命令：`CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.Cm.research.tsne_slots --checkpoint outputs/cm/cm_hrdexdb_inspire_f1_decoder_only_resume_20260827_011451/checkpoints/latest.pt --output-root output/research/cm_tsne_inspire_f1_latest_stride1_10 --device cuda --max-samples 512 --n-iter 1000 --batch-size 32`；
+- 产物：`output/research/cm_tsne_inspire_f1_latest_stride1_10/{pooled_tsne_panels.png,slot_tsne.png,fixed_stride5_tsne_panels.png,matched_hand_magnitude_tsne.png,matched_hand_bins_stride5_tsne.png,tsne.npz,metadata.json}`。
+
+### 结果与结论
+
+- pooled 原空间 dataset silhouette=`0.0959`，逐 slot silhouette 均值=`0.0917`；t-SNE dataset panel 视觉上仍能看到 GRAB/Inspire 的明显区域差异，而 stride panel 各颜色充分混合；
+- hand/object flow 着色显示高幅度点主要集中在少数区域，但不能仅凭此图断言 domain 分离完全由幅度解释；
+- matched `[4,6] mm` 子集仅剩 16 条/source，样本过少，结论为 `INCONCLUSIVE`，后续应扩大匹配区间或按分位数匹配后再判断；
+- 补充固定 stride=5 定量核对：GRAB/Inspire hand-flow RMS 均值=`54.42/7.28 mm`、中位数=`34.28/4.83 mm`，motion magnitude 确为强 confounder；仅用 hand RMS 的 5-fold AUC=`0.891`。进一步按 2 mm hand-RMS bins 等量匹配后保留 172 条/source，两边 hand RMS 均值=`11.50/11.40 mm`，magnitude-only AUC=`0.481`，但 pooled-Cm domain AUC 仍为 `0.995`、silhouette=`0.101`；object magnitude AUC=`0.553`。因此尺度差异贡献明显，但不足以解释 Cm 的 domain separation。该补充为 sample-level CV，尚未做 episode-grouped CV，结论保持 `INCONCLUSIVE` 到 `SUPPORTED` 之间，不能作最终因果归因；
+- 额外保留 loader 的自然 stride 分布（两边各 512 条，不按 stride 等量约束）并单独 fit pooled t-SNE，输出 `all_stride_natural_tsne.png`；stride 计数为 GRAB=`[48,62,44,42,61,50,52,56,42,55]`、Inspire=`[44,55,61,64,45,44,54,44,43,58]`，原空间 silhouette=`0.1137`。图上两域存在明显主体区域，但在中间带有部分重合；
+- 本次运行和旧 checkpoint import-path 兼容修复均成功，未修改模型、数据或训练进程。
 
 ## 历史证据索引
 
@@ -42,7 +113,7 @@ V1.2 object-only GRAB + ARCTIC 的 full-data Stage4、object-v2 cache、B=4 samp
 
 ### 结论状态
 
-正式 output: `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324`。已完成 epoch 21 validation、当前进入 epoch 22（step `94380`），训练吞吐约 `320--335 samples/s`；当前 best object/hand mean-stride EPE 分别为 `8.4257/2.8225 mm`（epoch 21），相对 epoch 1 的 `10.0118/6.0332 mm` 分别下降 `15.8%/53.2%`。epoch 21 的 GRAB object/hand=`13.2589/4.3258 mm`，Inspire-F1 object/hand=`3.5925/1.3193 mm`；三卡各约占 `2676 MiB`，无 OOM/NaN。按实际每 epoch 约 43--44 分钟，预计剩余约 21 小时。
+正式 output: `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324`。用户于 2026-08-29 要求停止三卡训练，torchrun 已终止；最近完整 checkpoint 为 epoch 29 / step `124410`，未完成的 epoch 30 不计入正式结果。epoch 29 validation object/hand mean-stride EPE=`8.2792/2.5630 mm`；运行至停止前无 OOM/NaN。CmDecoder 在 GPU1 并行启动后，Cm step time 曾从约 `300--313 ms` 增至约 `650 ms`，global throughput从约 `306--335` 降至约 `146--148 samples/s`；该资源竞争诊断不改变 epoch 29 的验证指标。
 
 `INCONCLUSIVE`（实现与启动 gate 已通过，等待首个完整 source×stride validation）。
 

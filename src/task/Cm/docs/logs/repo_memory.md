@@ -1,9 +1,17 @@
 # Cm 仓库记忆
 
 - scope: task:Cm
-- last_updated: 2026-08-24
-- last_verified: 2026-08-24
+- last_updated: 2026-08-31
+- last_verified: 2026-08-31
 - related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[实验记录](experiment_log.md)
+
+## V1.2.11 — Cm Task-local 资产入口
+
+- category: governance / operation
+- status: active
+- last_verified: 2026-08-31
+- fact: Cm 使用的外部预训练模型、body model 和机器人资产统一放在被忽略的 `src/task/Cm/assets/`；根 `assets` 仅是兼容软链接。当前 `src/task/Cm/assets/checkpoints/densetoken` 指向历史 `src/task/Cm/densetoken_ckpt`，真实大型文件未移动。
+- source / anchor: `src/task/Cm/src/config.py`、`.gitignore`、`src/task/Cm/docs/logs/architecture_log.md`。
 
 本文记录可随仓库迁移的 Cm 长期事实。本机解释器、GPU、绝对数据路径和服务异常写入同目录下被 Git 忽略的 `machine_memory.md`。
 

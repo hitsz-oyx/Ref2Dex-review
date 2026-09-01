@@ -55,6 +55,12 @@ def main() -> int:
     parser.add_argument("--log", required=True, help="项目 modification log 路径")
     parser.add_argument("--staged", action="store_true", help="只审计已暂存路径")
     parser.add_argument("--worktree", action="store_true", help="审计未暂存工作树路径")
+    parser.add_argument(
+        "--scope-prefix",
+        action="append",
+        default=[],
+        help="只审计指定路径前缀；可重复传入，适合 dirty worktree 中的局部任务",
+    )
     args = parser.parse_args()
     if args.staged and args.worktree:
         parser.error("--staged 和 --worktree 只能选择一个")
@@ -67,6 +73,12 @@ def main() -> int:
     changed = set(_git_paths(*diff_args))
     if args.worktree:
         changed |= set(_git_paths())
+    if args.scope_prefix:
+        prefixes = tuple(value.rstrip("/") + "/" for value in args.scope_prefix)
+        changed = {
+            path for path in changed
+            if any(path == prefix[:-1] or path.startswith(prefix) for prefix in prefixes)
+        }
     changed.discard(log_path.as_posix())
     entry = _latest_entry(log_path.read_text(encoding="utf-8"))
     required = ("change_level", "approval", "branch", "scope")

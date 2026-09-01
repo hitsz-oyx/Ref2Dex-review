@@ -19,8 +19,20 @@ metadata:
 
 - 新实验使用明确的新输出目录；不要覆盖基线，也不要静默选择“最新 checkpoint”。
 - 缓存、checkpoint、原始数据和大型生成结果不纳入版本控制。
-- 记录确切命令、配置快照、代码版本、输入/缓存标识和定量结果。结论标记为 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 或 `INVALID_IMPLEMENTATION`。
+- 记录确切命令、配置快照、代码版本、输入/缓存标识和定量结果。运行清单至少包含 Task、版本、配置、数据、seed、checkpoint 和输出入口。结论标记为 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 或 `INVALID_IMPLEMENTATION`。
 - smoke test 只能证明 wiring 正常，不能作为科研结果。
+
+## 默认产物位置与 Run Manifest
+
+- 训练或评估运行使用新的 `outputs/<Task>/<run_id>/`（遵循仓库 Runner）；只读诊断使用
+  `output/research/<experiment_id>/`。除非用户明确指定，不覆盖已有运行。
+- 每次正式训练、评估、benchmark 或数据处理运行都生成一个小型
+  `run_manifest.json`，记录 Task、指导/plan 版本、Git 提交、配置快照、输入数据或
+  cache manifest 及其文件基本信息、schema、坐标系、seed、初始 checkpoint 和输出入口。
+- 数据 cache 的 manifest、训练运行的 run manifest 和实验日志职责不同：前者描述输入数据，
+  中者锁定一次运行，后者记录科研假设与证据；不要用其中一个冒充另外两个。
+- manifest、config 和 metadata 可以提交到外部实验存档，但大型 cache、checkpoint 和生成结果
+  仍按仓库规则忽略，不纳入 Git。
 
 ## 长时任务等待规则
 

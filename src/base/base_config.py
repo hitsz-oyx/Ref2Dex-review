@@ -47,6 +47,18 @@ class TaskConfig(BaseConfig):
     """任务配置模板。具体任务应继承此类并显式覆盖字段。"""
 
     name = "task"
+    # Version-line provenance is explicit so every task run can be tied to a
+    # plan and a fine-grained operation without overloading the experiment name.
+    version_line = ""
+    guide_version = ""
+    plan_version = ""
+    operation_version = ""
+    operation_category = []
+    component_registry = ""
+    # Task configs override this with entries from their local
+    # ``components/components.json``.  The run manifest never guesses from a
+    # Python class name.
+    components = []
 
     class meta(BaseConfig):
         pass
@@ -194,12 +206,20 @@ def load_config(config: str | Path | dict[str, Any] | TaskConfig | type[Any], ov
     Returns:
         解析后的 TaskConfig 对象
     """
+    config_source: str | None = None
+    if isinstance(config, (str, Path)):
+        candidate = Path(str(config)).expanduser()
+        if candidate.is_file():
+            config_source = str(candidate.resolve())
     raw = config_to_dict(config)
     if overrides:
         raw = copy.deepcopy(raw)
         for override in overrides:
             apply_override(raw, override)
-    return task_config_from_dict(raw)
+    result = task_config_from_dict(raw)
+    if config_source is not None:
+        setattr(result, "_config_source", config_source)
+    return result
 
 
 def save_config(cfg: TaskConfig, path: str | Path) -> None:

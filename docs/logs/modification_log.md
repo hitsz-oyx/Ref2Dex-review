@@ -1,8 +1,627 @@
 # 全局 AI 修改记录
 
+## 2026-09-01 — V1.2.14 重组 AGENTS 规范分层
+
+- change_level: L3（仓库治理文档结构调整）
+- approval: user-approved（用户明确要求将通用规则与仓库特有约定分离）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.14`（根级治理细分操作；不涉及 Task plan）
+- category: `governance`、`documentation`
+- post-commit: 本次提交；代码、配置、数据、cache、checkpoint、output 和运行进程未修改
+- scope: `AGENTS.md` 章节组织及根治理日志
+
+**文件**
+
+- `AGENTS.md` — 第 5 节改为通用交接/版本规范（`5.1`、`5.2`）；原路径、运行和目录路由内容移至文档末尾第 8 节（`8.1`）。
+- `docs/logs/status_log.md`、`docs/logs/repo_memory.md`、`docs/logs/decision_log.md`、`docs/logs/modification_log.md` — 记录 V1.2.14 的结构调整和保护边界。
+
+**原因**
+
+用户指出第 5 节混合了通用 AI 行为规则与 Ref2Dex 特有约定。分层后，通用交接和版本规则可以独立复用，仓库路径规则集中在最后，阅读边界更清晰。
+
+**验证**
+
+- `AGENTS.md` 章节扫描确认第 5 节仅含通用交接/版本规则，第 8 节承载仓库特有路径与运行约定。
+- `git diff --check` 通过；未运行训练或修改生成产物。
+
+## 2026-09-01 — V1.2.13 删除根 Component 目录
+
+- change_level: L3（破坏性根目录治理）
+- approval: user-approved（用户明确要求删除根里的 Component）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.13`（根级治理细分操作；不涉及 Task plan）
+- category: `governance`、`operation`、`documentation`
+- post-commit: 未提交；未 stage；数据、cache、checkpoint、output 和运行进程未修改
+- scope: 根 `components/`、其默认发现入口、当前目录/架构说明和相关协议测试
+
+**文件**
+
+- `components/` — 删除 README、identity/scale 示例、pipeline 示例、此前已撤出的 Ref2Dex 兼容入口及未跟踪缓存，最终目录本身不存在。
+- `tools/researchctl.py` — 移除默认 `components` root；通用校验必须显式传入 manifest 路径。
+- `tests/test_component_registry.py`、`tests/test_framework_contracts.py` — 不再加载仓库示例；使用临时 manifest 校验基础协议，并断言根目录保持缺失。
+- `AGENTS.md`、`docs/目录规范.md`、`docs/logs/` — 删除当前规则中的公共组件入口，并在根状态、架构、决策、记忆和修改日志记录 V1.2.13 边界。
+
+**原因**
+
+用户要求在已撤出各 Task 组件入口之后继续删除根组件目录。根示例已无当前消费者，删除可消除虚假的默认发现入口；保留 `src/base/` 兼容代码避免把本次目录治理扩大为未经确认的共享基础设施删除。
+
+**验证**
+
+- 根 `components/` 物理目录不存在，活动规则/工具/测试不再引用 `components/examples` 或 `components/ref2dex`。
+- 定向 pytest：`18 passed`；`researchctl list` 在无显式 root 时返回空清单，两个已清理 Task 的 config check 均为 `registry=none components=0`。
+- 全量 pytest：`310 passed, 3 skipped, 22 warnings`；`git diff --check` 通过。
+
+## 2026-09-01 — V1.2.12 撤出 CmDecoder 与 correspondence 的 Task Component/data/registry
+
+- change_level: L3（破坏性目录治理与数据入口迁移）
+- approval: user-approved（用户确认彻底删除 Component、Task data/registry，并将数据归回根空间）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.12`（两个 Task 的 `docs/plan/V1.md` 均 final）
+- category: `governance`、`operation`、`documentation`
+- post-commit: 未提交；真实数据、cache、checkpoint、output 和运行进程未移动或删除
+- scope: `src/task/CmDecoder/`、`src/task/correspondence_ptv3_v2/` 的 Task-local 入口、根组件兼容入口、当前目录文档
+
+**文件**
+
+- `src/task/CmDecoder/components/`、`data/`、`registry/` — 删除此前新增的 Task-local Component 清单、数据软链接和路径 registry。
+- `src/task/correspondence_ptv3_v2/components/`、`data/`、`registry/` — 同上。
+- `components/ref2dex/cmdecoder_pointflow`、`components/ref2dex/correspondence_ptv3_v2` — 删除根级兼容软链接。
+- 两个 Task 的 `config.py` — 移除 `component_registry`/`components` 选择，版本更新为 `V1.2.12`。
+- `docs/目录规范.md`、`docs/AI交接清单.md`、`docs/版本线与AI行为分类.md`、`components/README.md`、根架构日志 — 删除当前有效的 Task Component/registry 说明，保留历史日志事实。
+- 两个 Task 的 V1 plan、状态/架构/记忆/修改日志及根状态/决策/记忆/架构日志 — 记录边界、保护范围和回滚方式。
+- `tests/test_component_registry.py`、`tests/test_framework_contracts.py` — 将任务 manifest 测试改为确认已撤出，不再要求加载两个 Task 的入口。
+- `.gitignore` — 删除 Task registry 覆盖文件的过时忽略规则。
+
+**原因**
+
+用户明确要求两个 Task 的 Component 彻底删除，Task 内 data/registry 也撤出并统一使用根级数据空间。实际数据本来就位于根级目录，因此只删除入口和声明，不做数据迁移。
+
+**验证**
+
+- 两个 Task 与根组件入口扫描无残留；配置导入成功。
+- 全量 pytest、定向组件/框架测试和 `git diff --check` 通过。
+
+## 2026-08-31 — V1.2.11 将 Cm 外部资产入口下沉到 Task
+
+- change_level: L3（仓库路径治理与运行中资产兼容迁移）
+- approval: user-approved（用户要求将根 `assets/` 下放到具体 Task 并加入 `.gitignore`）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.11`（沿用 `src/task/Cm/docs/plan/V1.2.md`）
+- category: `governance`、`operation`
+- post-commit: 未提交；大型 checkpoint、数据、cache 和运行进程未移动或停止
+- scope: Cm Task 资产入口、根兼容软链接、全局目录规则
+
+**文件**
+
+- `src/task/Cm/assets/README.md`、`src/task/Cm/assets/checkpoints/densetoken` — 建立 Cm Task-local 资产入口和旧 checkpoint 软链接。
+- `assets` — 改为指向 Cm 资产入口的被忽略兼容软链接。
+- `src/task/Cm/src/config.py` — DenseToken 默认路径改用 Task-local canonical 入口。
+- `.gitignore`、`AGENTS.md`、`docs/目录规范.md`、`docs/项目总览.md`、`docs/版本线与AI行为分类.md` — 将 Task-local 资产设为规范位置并忽略实际文件。
+- `src/task/Cm/docs/README.md`、`src/task/Cm/docs/plan/V1.2.md` 及 Cm/root 状态、架构、记忆和修改日志 — 同步迁移事实、版本和回滚边界。
+
+**原因**
+
+根 `assets/` 当前只承载 Cm 的 DenseToken 入口。资产归属下沉到具体 Task 后，Task 配置、资产和研究边界一致；根兼容软链接保留旧路径，避免正在运行的 Cm 任务和历史命令受到影响。
+
+**验证**
+
+- `readlink -f src/task/Cm/assets/checkpoints/densetoken/best.pt` 与 `readlink -f assets/checkpoints/densetoken/best.pt` 指向同一 checkpoint。
+- Cm 配置导入、相关 loader 回归和全量 pytest：`311 passed, 3 skipped, 22 warnings`。
+- `git diff --check` 通过；未移动大型 checkpoint，当前 Cm 训练进程仍存在。
+
+## 2026-08-31 — V1.2.10 取消 Cm 路径索引
+
+- change_level: L2（Task 数据入口与目录治理）
+- approval: user-approved（用户明确决定不再增加路径索引）
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交；外部数据、cache、资产和 checkpoint 未移动或删除
+- scope: Cm Task 与全局路径规则说明
+
+**文件**
+
+- `src/task/Cm/registry/`、`src/task/Cm/data/` — 删除 Task 内路径 registry 和便捷软链接。
+- `AGENTS.md`、Cm 计划/README/状态 — 改为由配置直接声明外部路径，不再要求路径索引。
+
+**验证**
+
+- Cm 配置/loader 回归和全量 pytest（`311 passed, 3 skipped, 22 warnings`）通过。
+- `git diff --check` 通过；外部数据、cache、资产和 checkpoint 未触碰。
+
+## 2026-08-31 — V1.2.9 撤销隔离试验线
+
+- change_level: L3（破坏性目录回退、仓库治理）
+- approval: user-approved（用户明确要求停止该试验线并直接删除）
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交；用户既有的训练、数据、cache、checkpoint 和输出未覆盖
+- scope: 全局维护规范、Cm Task 和已删除的隔离目录
+
+**文件**
+
+- `src/task/CmComponent/`、`.agents/skills/modular-component-runtime/` — 删除隔离试验代码和专用维护 Skill。
+- `AGENTS.md`、保留 Skill — 移除该试验线规则，保留通用版本、审批、日志和实验流程。
+- `src/task/Cm/`、`docs/项目总览.md`、`components/README.md`、相关测试 — 移除 Cm 的清单/适配器入口和失效引用，保留数据/训练迁移。
+
+**原因**
+
+按用户指令停止隔离试验，避免旧入口和活动文档继续把它当作当前架构。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：`311 passed, 3 skipped, 22 warnings`。
+- `git diff --check` 通过；AGENTS.md 与 `.agents/skills/` 文本扫描无相关术语；Cm 配置导入通过。
+
+## 2026-08-31 — V1.2.8 声明层与运行层闭合
+
+- change_level: L2（Contract、Pipeline 启动校验和训练生命周期）+ L3（Task registry/CLI/治理文档）
+- approval: user-approved（用户明确要求按声明层/运行层审计、TrainableComponent 和首批 Tensor 合同继续改造）
+- skills_used: `research-change-control`、`modular-component-runtime`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.8`（沿用 final plan `V1.2`）
+- category: `architecture`、`code`、`governance`、`experiment`、`documentation`
+- post-commit: 未提交；未停止或修改运行中的旧 Cm 训练进程
+- scope: `src/base` Component/Contract/registry、`tools/researchctl.py`、CmComponent 训练运行时与 Task 清单
+
+**文件与变更**
+
+- `src/base/component.py`、`src/base/__init__.py` — 增加 `TrainableComponent` 的 build、参数组前缀、`id@version` checkpoint namespace 和兼容加载协议。
+- `src/base/contract.py` — 对 materialized tensor-like Artifact 检查声明 shape/dtype；保留 path-only Artifact 的 metadata 合同路径。
+- `src/base/registry.py`、`tools/researchctl.py` — 增加只读 `check_task_config` 和 `check-task-config` 命令，核验 config、Task `components.json`、manifest 与 entrypoint_kind。
+- `src/task/CmComponent/src/component_factory.py`、`src/task/CmComponent/src/pipeline.py`、`src/task/CmComponent/src/runner.py` — 构造阶段强制 registry 闸门和 pipeline.yaml 拓扑一致性；Pipeline/Runner 使用 TrainableComponent.build；首个 batch 严格合同检查。
+- `src/task/CmComponent/dataset/contracts.py` — 增加首批 dtype、finite、batch 对齐检查，后续支持 fast path。
+- `src/task/CmComponent/components/{dense_encoder,cm_head,pipeline}/*` — 实现 build 协议并在 manifest 声明 TrainableComponent 要求。
+- `src/task/Cm/components/components.json` — 补登记旧配置使用的 `ref2dex.correspondence.ptv3_v2@2.1.0/dense_encoder`，并对齐 runner role。
+- `AGENTS.md`、`components/README.md`、组件/Task 文档和测试 — 固化四个事实源职责、YAML 启动断言边界、Trainable 生命周期和 Contract 首检规则；补充回归测试。
+
+**验证**
+
+- `PYTHONPATH=. .../graspenv/bin/python -m pytest -q`：`329 passed, 3 skipped, 22 warnings`。
+- 两种坐标配置 CPU `max_steps=2` train/eval：hand_root test EPE `7.41653 mm`，object_pose test EPE `7.33270 mm`；这只是工程 smoke。
+- `researchctl check-task-config`：CmComponent smoke 与旧 Cm config 均通过；Pipeline `check --resolve-entrypoints` 通过。
+- 最新 run manifest：`outputs/cmcomponent/cm_component_smoke_20260831_172705/run_manifest.json`、`outputs/cmcomponent/cm_component_smoke_object_pose_20260831_172708/run_manifest.json`。
+- 用户指导、架构快照、旧 Cm 模型/数据/cache、历史产物和训练进程未被改写；未 stage/commit。
+
+## 2026-08-31 — V1.2.7 明确 Component 晋升与内部模块边界
+
+- change_level: L3（仓库治理与 Component 组织规范）
+- approval: user-approved（用户明确提出需区分小开关、内部模块和可插拔 Component，并要求保持解耦规范）
+- skills_used: `research-change-control`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.7`（沿用父计划 `V1.2`）
+- category: `governance`、`architecture`、`documentation`
+- post-commit: 未提交；未停止或修改运行中的旧 Cm 训练进程
+- scope: `AGENTS.md` 的 Component 晋升、文件粒度、开关和 Pipeline 同步边界
+
+**文件**
+
+- `AGENTS.md` — 增加 helper / Task-local module / 可发现 Component 三层边界；规定小开关必须保持完整 Contract、资源和生命周期不变；区分并存候选与单一路线 Contract/schema 迁移；明确 Component 不是一文件一组件，父 Contract 稳定时内部拆分不要求外层 Pipeline 同步。
+- `docs/项目总览.md`、`src/task/CmComponent/docs/README.md`、根/Task 状态、决策、修改和记忆日志 — 记录 V1.2.7 的治理决策、版本关系和当前有效规则。
+
+**原因**
+
+现有规则已说明何时晋升 Component，但没有明确告诉 Agent 何时只需内部模块或小开关，可能导致过度拆分文件和 manifest。补充判定层次，使代码保持解耦而不产生不必要的运行时组件。
+
+**验证**
+
+- `git diff --check` 通过。
+- change-control 局部审计通过；本轮无运行代码或实验变更，未重复执行训练测试。
+- 用户指导、架构快照、旧 Cm、数据/cache/checkpoint/output 和运行进程保持不变。
+
+## 2026-08-31 — V1.2.6 根节点唯一声明与递归配置解耦
+
+- change_level: L2（Component 选择与运行追溯合同）+ L3（Task 配置、规范和文档）
+- approval: user-approved（用户明确回复“可以，你直接修改吧”）
+- skills_used: `research-change-control`、`modular-component-runtime`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.6`（沿用父计划 `V1.2`）
+- category: `governance`、`architecture`、`code`、`experiment`、`documentation`
+- post-commit: 未提交；未停止旧 Cm 训练进程
+- scope: `src/task/CmComponent/` 嵌套 Component 配置、`src/base/run_manifest.py`、回归测试和规范文档
+
+**文件**
+
+- `src/task/CmComponent/src/config.py`、`configs/active/smoke_object_pose.yaml`、`components/components.json` — 删除根级重复的 encoder/head 选择，只保留 `coordinate_transform` 与 `pipeline` 根节点，子选择集中在 `pipeline.children`；操作版本升为 `V1.2.6`。
+- `src/task/CmComponent/src/component_factory.py`、`src/task/CmComponent/src/pipeline.py` — Pipeline 的 encoder/head 只从 `pipeline.children` 解析，支持保持父级合同时的内部递归拆分。
+- `src/base/run_manifest.py` — 以递归 `component_tree` 为规范来源，生成 child-first、去重的扁平 `components` 兼容视图，并修正叶节点空 `children`。
+- `AGENTS.md`、CmComponent README/registry README、项目总览 — 固化根节点唯一声明、扁平清单自动生成和外层 Pipeline 合同边界。
+- `tests/test_cm_component_task.py`、`tests/test_run_manifest.py` — 回归根/子 Component 选择、扁平/递归 manifest 和叶节点结构。
+
+**原因**
+
+用户指出父 Component 继续拆分时不应让外层 Pipeline 与配置维护重复选择；采用单一嵌套选择源，保持外层只依赖父级稳定合同。
+
+**验证**
+
+- 两种坐标配置均完成 CPU `max_steps=2` smoke train/eval；最新证据：`outputs/cmcomponent/cm_component_smoke_20260831_143310/`、`outputs/cmcomponent/cm_component_smoke_object_pose_20260831_143320/`。
+- 最新 run manifest：根节点为 `coordinate_transform`、`pipeline`；扁平视图按 `coordinate_transform`、`dense_encoder`、`cm_head`、`pipeline` 生成；配置快照无根级重复子选择。
+- 定向 pytest：`19 passed`；全量 pytest：`325 passed, 3 skipped, 22 warnings`。
+- `researchctl list`、Pipeline `check --resolve-entrypoints` 和 `run --dry-run` 均通过；`compileall`、YAML/JSON parse、`git diff --check` 和局部 modification audit 通过。
+- `src/task/Cm/`、用户指导、架构快照、旧数据/cache/checkpoint/output 和运行中的旧 Cm 进程未修改。
+
+## 2026-08-31 — V1.2.5 递归 Component 选择与组件树追溯
+
+- change_level: L2（递归 Component 选择与运行追溯合同）+ L3（Task 组件治理与文档）
+- approval: user-approved（用户明确回复“可以，你继续吧”）
+- skills_used: `research-change-control`、`modular-component-runtime`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.5`（沿用父计划 `V1.2`）
+- category: `governance`、`architecture`、`code`、`experiment`、`documentation`
+- post-commit: 未提交；未停止旧 Cm 训练进程
+- scope: `src/task/CmComponent/` 递归 Component 选择、`src/base/run_manifest.py`、AGENTS 与日志
+
+**文件**
+
+- `AGENTS.md` — 将 `children` 递归选择、扁平/递归双重追溯和 `component_tree` 要求纳入运行规范。
+- `src/task/CmComponent/src/component_factory.py`、`src/task/CmComponent/src/pipeline.py` — 支持父 role 路径和 `children` 递归解析。
+- `src/task/CmComponent/src/config.py`、`configs/active/smoke_object_pose.yaml`、`components/components.json` — 登记 `pipeline -> dense_encoder/cm_head` 子组件选择，操作版本升为 `V1.2.5`。
+- `src/base/run_manifest.py`、`tests/test_run_manifest.py` — 保留扁平 `components`，新增去重递归 `component_tree`。
+- `src/task/CmComponent/docs/README.md`、`registry/README.md`、根/Task 日志和项目总览 — 记录递归规则、版本和证据入口；未更新用户指导或架构快照。
+
+**原因**
+
+用户要求继续支持 Component 内部拆分。采用显式 `children` 和父 role 路径，避免隐式类扫描，且不改变旧的扁平清单消费者。
+
+**验证**
+
+- 两种 V1.2.5 CPU `max_steps=2` smoke train/eval 通过；run manifest 显示 `coordinate_transform` 与 `pipeline -> dense_encoder/cm_head`。
+- `researchctl` 两个坐标 manifest check、Pipeline dry-run 通过。
+- 定向 pytest：`18 passed`；全量 pytest：`324 passed, 3 skipped`。
+- `git diff --check` 与局部 modification audit 通过；旧 Cm 代码、数据/cache/checkpoint/output 和进程未修改。
+
+## 2026-08-31 — V1.2.4 坐标策略 Component 化与汇报规范
+
+- change_level: L2（坐标/数据合同与 Component 接口）+ L3（仓库 Agent 规范）
+- approval: user-approved（用户明确要求把两个坐标选项抽象为 Component，并补充 `AGENTS.md` 汇报标准）
+- skills_used: `research-change-control`、`modular-component-runtime`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.4`（沿用父计划 `V1.2`）
+- category: `governance`、`architecture`、`code`、`data`、`experiment`
+- post-commit: 未提交；未停止旧 Cm 训练进程
+- scope: `AGENTS.md`、`src/task/CmComponent/` 坐标 Component、smoke 配置与测试、根/Task 日志
+
+**文件**
+
+- `AGENTS.md` — 明确多个候选实现必须晋升为 Component、每个运行 role 恰好选择一个实现、可发现 manifest 统一使用 `component.yaml`、新增/替换组件必须有清单与合同测试，耦合处定义稳定接口，YAML/JSON 只选择而不执行，并新增完成汇报和规范反馈标准。
+- `src/base/run_manifest.py`、`tests/test_run_manifest.py` — 过滤 Component ID/version 等标量，保留 registry/spec 路径，避免把 provenance 标识误记为输入文件。
+- `src/task/CmComponent/src/component_factory.py`、`tests/test_cm_component_task.py` — 必需 role 缺失时显式失败；默认实现仅允许由调用方明确传入 `required=False` 的兼容场景。
+- `src/task/CmComponent/src/eval.py`、`tests/test_cm_component_task.py` — eval 未显式指定输出目录时，追溯文件默认写回 checkpoint 所属 run 目录。
+- `outputs/cmcomponent/_legacy_eval_root_20260831/` — 保留并归档本轮早期误写到仓库根目录的 12 个 eval 追溯副本；未删除，便于恢复核对。
+- `src/task/CmComponent/components/coordinate_transform/` — 新增 `HandRootFrameComponent` 与 `ObjectPoseFrameComponent`，共享 world→canonical 合同。
+- `src/task/CmComponent/src/`、`dataset/`、`configs/active/`、`components/components.json` — 接入坐标 role/version 选择、frame metadata、失败校验和双配置 smoke。
+- `tests/test_cm_component_task.py` — 增加坐标 Component registry、精确变换、候选选择和双 loader 验证。
+- 根/Task `docs/logs/`、Task README — 同步 V1.2.4 状态、决策、证据和规范反馈；未更新用户指导或架构快照。
+
+**原因**
+
+用户要求将出现多个候选实现的坐标处理抽象成真正的可插拔 Component，并让后续 Agent 遵循这一规则；同时要求完成后报告规范限制和改进建议。
+
+**验证**
+
+- registry 发现 5 个 CmComponent manifest，两个坐标 Component 的 entrypoint 和 Artifact contract 校验通过。
+- `hand_root_t` 与 `object_pose_t` 坐标变换、flow、缺失 pose 失败和 metadata 选择测试通过。
+- 两种 CPU `max_steps=2` smoke train 与 latest checkpoint test eval 通过；run manifest 记录实际坐标 Component、版本和 pose source。
+- 定向 pytest：`14 passed`（CmComponent）；全量 pytest：`323 passed, 3 skipped`。
+- `git diff --check` 通过；旧 Cm 代码、数据/cache/checkpoint/output 和进程未修改。
+
+
+## 2026-08-31 — V1.2.3 CmComponent 独立插拔式训练闭环
+
+- change_level: L2（Task-local Component 合同、模型和 checkpoint schema）+ L3（独立 Dataset、Runner、训练/评估入口和 smoke 运行）
+- approval: user-approved（用户明确回复“确认”）
+- skills_used: `research-change-control`、`modular-component-runtime`、`research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.3`（plan: `src/task/CmComponent/docs/plan/V1.2.3.md`, final）
+- category: `architecture`、`code`、`experiment`
+- post-commit: 未提交；未停止当前旧 Cm 训练进程
+- scope: `src/task/CmComponent/` 独立组件运行时、Task-local 数据契约、smoke 配置和定向测试；根级状态导航
+
+**文件**
+
+- `src/task/CmComponent/` — 移除旧 adapter 依赖，新增独立 encoder、slot-flow head、Pipeline、Dataset、Runner、smoke 配置和 `2.0.0` Component 清单。
+- `tests/test_cm_component_task.py` — 覆盖无旧 Cm 引用、清单、拓扑、版本、Artifact 合同、梯度和 state-dict roundtrip。
+- `docs/项目总览.md`、`docs/logs/status_log.md`、`docs/logs/repo_memory.md`、`docs/logs/modification_log.md` — 更新 V1.2.3 状态导航和可迁移事实；未更新架构快照或用户指导。
+
+**原因**
+
+用户确认将 CmComponent 做成不耦合旧 Cm、可通过统一 Runner 组合的可插拔训练框架，并先跑通最小 smoke。
+
+**验证**
+
+- `rg -n "src\\.task\\.Cm(?!Component)" src/task/CmComponent --pcre2 -g '*.py' -g '*.yaml' -g '*.json'`：无旧 Cm 运行时引用。
+- 三个 `2.0.0` manifest 的 `researchctl check --resolve-entrypoints`、Pipeline `check`、`graph` 和 `run --dry-run` 通过，拓扑为 `dense_encoder -> cm_head`。
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_cm_component_task.py`：`9 passed`；全量 pytest：`317 passed, 3 skipped`。
+- CPU `max_steps=2` train 通过，生成 `outputs/cmcomponent/cm_component_smoke_20260831_111831/` 的 run manifest、配置、metadata、metrics 和 checkpoint；latest checkpoint 的 test eval 通过（`test/flow/epe_mm=9.17651`）。
+- `git diff --check` 通过；未修改旧 Cm、旧数据/cache/checkpoint/output 或运行进程。
+
+
+## 2026-08-30 — V1.2.2 创建隔离的 CmComponent Task
+
+- change_level: L2（Component 合同与 checkpoint 兼容）+ L3（新增 Task-local Pipeline Runner）
+- approval: user-approved（用户明确要求“你先做吧”）
+- skills_used: `research-change-control`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.2`（plan: `src/task/CmComponent/docs/plan/V1.2.md`, final）
+- category: `architecture`、`code`、`governance`
+- post-commit: 未提交；未停止当前训练进程
+- scope: `src/task/CmComponent/` 新 Task、Component registry、Pipeline Runner 和项目索引
+
+**文件与变更**
+
+- `src/task/CmComponent/components/` — 新增真实 Dense encoder/Cm head Component、Pipeline manifest、显式 `pipeline.yaml` 拓扑和 Task `components.json`。
+- `src/task/CmComponent/src/` — 新增 Pipeline、Runner、配置、组件选择解析、train/eval 入口；Runner 复用旧 Cm 的数据、loss、指标生命周期，但模型由清单驱动的 Component Pipeline 构造。
+- `src/task/CmComponent/registry/`、`data/` — 新增相对数据入口、producer/consumer 追溯和只读软链接。
+- `src/task/CmComponent/docs/` — 新 Task README、V1.2 final plan、指导只读软链接及状态/决策/记忆/修改日志。
+- `docs/项目总览.md`、`docs/logs/status_log.md`、`docs/logs/repo_memory.md` — 增加新 Task 索引、当前细分版本和可迁移架构事实。
+
+**原因**
+
+用户要求用独立 Task 承载 Component 版本的 Cm，以便新架构可试验、可删除回滚，避免影响旧 Cm。
+
+**验证**
+
+- `researchctl check` 对 dense encoder、Cm head、pipeline 三个 manifest 的入口解析均通过；未实例化组件、未加载真实权重。
+- `researchctl check` 与 `graph` 对新 Task 的显式 Pipeline 拓扑通过，顺序为 `dense_encoder -> cm_head`。
+- `researchctl run ... --dry-run` 通过，仅打印拓扑，未启动训练或加载真实权重。
+- 新增 `tests/test_cm_component_task.py`，定向 pytest：`8 passed`；新 Task Python 文件通过 `py_compile`，`git diff --check` 通过。
+- 共享回归：全量 pytest `316 passed, 3 skipped`。
+- 尚未完成：使用真实 DenseToken checkpoint 的固定 batch 数值 parity；在该 parity 通过前不启动新 Task 正式训练。
+- 本轮未启动新 Task 正式训练，未移动或覆盖旧 Cm 的数据、cache、checkpoint、output 或训练进程。
+
+## 2026-08-30 — V1.2.1 版本线、Task Component 与数据注册治理
+
+- change_level: L3（仓库治理、Component 路径和运行追溯）
+- approval: user-approved（用户授权按 Agent 方案执行）
+- skills_used: `research-change-control`、`research-experiment-workflow`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.1`（plan: `V1.2`, final）
+- category: `governance`、`architecture`、`data`、`documentation`
+- post-commit: 未提交；未停止当前训练进程
+- scope: 全局组件发现、Task 组件目录、版本线、运行 manifest、Task 数据路径注册
+
+**文件与变更**
+
+- `src/task/Cm/components/`、`src/task/CmDecoder/components/`、`src/task/correspondence_ptv3_v2/components/` — Task 专属 manifest、adapter、`__init__.py` 和 `components.json`；记录组件 ID、版本、角色、manifest 和参数前缀。
+- `components/ref2dex/cm`、`components/ref2dex/cmdecoder_pointflow`、`components/ref2dex/correspondence_ptv3_v2` — 由旧实体目录改为指向 Task canonical 目录的相对软链接，保留旧入口兼容。
+- `src/task/*/registry/data_paths.json`、`external_paths.json.example`、Task 内 `data/` 软链接和 `.gitignore` — 以仓库相对路径区分数据/cache/共享资产，并记录 producer/consumer 配置关系；机器特有路径由忽略的覆盖文件提供。
+- `src/base/base_config.py`、`src/base/run_manifest.py`、`src/base/registry.py`、`tools/researchctl.py` — 配置显式携带版本/类别/组件清单，运行追溯写入这些字段，registry 默认发现 Task 组件并去重兼容软链接。
+- `AGENTS.md`、`docs/版本线与AI行为分类.md`、`docs/目录规范.md`、`docs/AI交接清单.md`、`docs/项目总览.md`、`components/README.md`、`src/task/Cm/docs/README.md`、`src/task/Cm/docs/plan/V1.2.md` — 固化版本层级、操作类别、组件/数据职责和交接入口。
+- `docs/logs/`、`src/task/Cm/docs/logs/` — 增加本次版本、类别、决策、状态和可迁移事实记录；架构事实文件不因本次治理自动建立新快照。
+
+**原因**
+
+用户要求从现在开始以 `Vn.m` plan 为主线、以 `Vn.m.k` 管理细小改动和并行实验，将 Task Component 下放并能在每次运行中看到组件及参数关系，同时保留软链接迁移的可逆性。
+
+**验证**
+
+- 配置加载可解析 `version_line=V1.2`、`plan_version=V1.2`、`operation_version=V1.2.1` 和组件清单。
+- `researchctl list/check --resolve-entrypoints` 可发现并校验 Task 组件；registry 对旧软链接与 canonical 路径去重。
+- 相关 `py_compile`、定向 pytest（`7 passed`）、全量 pytest（`308 passed, 3 skipped`）、`git diff --check` 和路径/JSON/YAML 检查通过；历史 run manifest 未回写。
+
+## 2026-08-30 — 统一研究产物与共享资产路径
+
+- change_level: L3（仓库治理与共享资产路径迁移；未移动大型文件）
+- approval: user-approved
+- skills_used: `research-change-control`、`research-experiment-workflow`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: 全局目录规范、Cm research 实验包、共享 DenseToken checkpoint 入口
+
+**文件**
+
+- `AGENTS.md`、`.gitignore`、`docs/目录规范.md`、`docs/AI交接清单.md`、`docs/项目总览.md`、`outputs/README.md`、`assets/README.md` — 固定源码、研究、数据、资产、运行产物和 manifest 的目录职责。
+- `src/task/Cm/research/`、`src/task/Cm/docs/README.md` — 将 t-SNE、DenseToken parity、hand-flow calibration 组织为实验包，并为每个实验增加 `README.md`、`experiment.yaml` 和独立 `output/`；三个入口默认写入各自的 `output/<run_id>/` 并生成 `run_manifest.json`。
+- `src/task/Cm/src/config.py`、`assets/checkpoints/densetoken` — 采用新共享资产入口；旧 checkpoint 目录暂不移动，保留软链接兼容。
+- `docs/logs/architecture_log.md`、`docs/logs/decision_log.md`、`docs/logs/repo_memory.md`、`docs/logs/status_log.md`、`docs/logs/modification_log.md`、`src/task/Cm/docs/logs/architecture_log.md`、`src/task/Cm/docs/logs/status_log.md`、`src/task/Cm/docs/logs/modification_log.md` — 同步治理决策、路径事实和交接记录。
+
+**改动原因**
+
+用户确认先以软链接方式迁移，解决 AI 随意创建 `output/`、`results/` 和源码旁产物的问题，同时不打断正在运行的多卡任务。根 `output/` 与现有历史结果保留，但不再作为新入口。
+
+**验证**
+
+- `python -m src.task.Cm.research.tsne_slots --help` 与旧软链接入口帮助命令通过；
+- 新旧 DenseToken 路径均能解析到同一 checkpoint；
+- `git diff --check` 通过；
+- 未停止训练，未删除或覆盖 data、cache、output、outputs、checkpoint 或历史 result。
+
+## 2026-08-30 — 收口 Component 合同、运行追溯与 Cm 坐标校验
+
+- change_level: L3（共享运行时与仓库治理）+ L2（公共坐标合同）
+- approval: user-approved（用户明确要求直接修改）
+- skills_used: `research-change-control`、`modular-component-runtime`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: 共享 Component/Artifact/Contract/Registry、BaseRunner run manifest、Cm loader 坐标一致性
+
+**文件**
+
+- `src/base/component.py`、`src/base/contract.py`、`src/base/registry.py` — 增加 Component 输入/输出校验入口、坐标字段归一化、可选严格 metadata 校验，并用 `entrypoint_kind` 防止把 task runner 误报为 Component。
+- `src/base/run_manifest.py`、`src/base/base_runner.py` — 过滤 manifest 自引用；train/eval/resume 生成配置、metadata 和不覆盖历史的时间戳 manifest。
+- `components/ref2dex/cm/component.yaml`、`components/ref2dex/cmdecoder_pointflow/component.yaml`、`components/ref2dex/correspondence_ptv3_v2/component.yaml` — 显式声明 task 入口；`components/ref2dex/cm/inference/component.yaml`、`components/ref2dex/cm/inference_v2/component.yaml` 与 `components/ref2dex/cm/adapter.py` — 保留 hand-root v1 并增加 object-pose v2 adapter 合同。
+- `components/README.md`、`.agents/skills/modular-component-runtime/references/component-template.md`、`tools/researchctl.py` — 同步 manifest 类型和显式入口检查说明。
+- `.agents/skills/research-change-control/scripts/audit_diff.py` — 增加局部 scope 前缀审计，避免 dirty worktree 中把其他任务改动混入一次审计。
+- `docs/logs/architecture_log.md`、`docs/logs/status_log.md`、`tests/test_framework_contracts.py` — 更新共享事实并覆盖入口、坐标和自引用回归。
+
+**原因**
+
+当前框架已有原型但存在三个闭环缺口：任务 runner manifest 与真正 Component 没有机器可区分的入口类型，eval/resume 可能覆盖运行追溯，数据根只看第一条序列会允许坐标系混用。本轮以最小差异补齐这些边界；不改模型、loss、GT、split 内容、checkpoint 或正在运行的训练。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_framework_contracts.py tests/test_component_registry.py tests/test_run_manifest.py tests/test_cm_object_v2.py tests/test_cm_sequence_dataset.py tests/test_cm_scene.py tests/test_cm_hrdexdb.py tests/test_cm_surface_sampling.py tests/test_hand_root_frame.py`：79 passed。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：307 passed，3 skipped。
+- `graspenv` 下修改模块 `py_compile`：通过；`git diff --check`：通过。
+- `researchctl list/check --resolve-entrypoints`：task/component 入口均按声明校验通过。
+
 - scope: root
-- last_updated: 2026-08-29
+- last_updated: 2026-08-30
 - related: [架构记录](architecture_log.md)、[仓库记忆](repo_memory.md)、[决策记录](decision_log.md)
+
+## 2026-08-30 — 增加通用目录路由、Component 晋升与 Run Manifest 规范
+
+- change_level: L3（仓库治理规则）
+- approval: user-approved
+- skills_used: `skill-creator`、`research-change-control`、`research-experiment-workflow`、`modular-component-runtime`
+- branch: working tree
+- post-commit: 未提交
+- scope: 全局治理 / 可复制工作流
+
+**文件**
+
+- `AGENTS.md` — 增加默认目录路由、自动归类和训练运行追溯要求。
+- `.agents/skills/research-change-control/SKILL.md` — 修改记录增加 `skills_used` 审计字段。
+- `.agents/skills/research-experiment-workflow/SKILL.md` — 增加默认产物位置和 Run Manifest 规则，并与 `outputs/<Task>/<run_id>/` Runner 路径对齐。
+- `.agents/skills/modular-component-runtime/SKILL.md` — 增加无需逐次指定场景的 Component 晋升规则。
+- `src/base/run_manifest.py` — 新增任务无关的配置、Git、输入引用和合同追溯清单生成器，不计算加密 hash。
+- `src/base/base_runner.py` — 训练启动时自动写入 `run_manifest.json`，并将其路径纳入运行 metadata。
+- `src/base/base_config.py` — 记录从文件加载配置时的私有来源路径，供 run manifest 使用。
+- `src/base/__init__.py` — 导出 run manifest 构建与写入接口。
+- `tests/test_run_manifest.py` — 覆盖配置快照引用、输入 manifest 文件基本信息、合同字段和原子写入。
+- `tests/test_overfit_diagnosis.py` — 增加 BaseRunner 启动时实际生成 run manifest 的集成断言。
+- `docs/logs/architecture_log.md`、`docs/logs/status_log.md` — 同步共享运行追溯合同和当前框架状态。
+
+**改动原因**
+
+让 Agent 能根据内容自动决定代码、配置、Component 和输出位置；并让训练入口实际生成 run manifest，
+区分数据 manifest、训练 run manifest 和实验日志，减少每次依赖用户手工指定目录或是否创建 Component。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_run_manifest.py tests/test_base_runner_max_steps.py tests/test_base_runner_validation.py`：9 passed。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：302 passed，3 skipped。
+- 移除 SHA-256 后重新运行完整测试：仍为 `302 passed，3 skipped`。
+- 三个仓库 Skill 通过 `skill-creator/scripts/quick_validate.py`。
+- `git diff --check`：通过。
+
+## 2026-08-30 — 同步 CmDecoder held-out test rollout 结果
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task 状态导航；change_level: L0；approval: auto
+
+**文件**
+
+- `docs/logs/status_log.md` — 记录 EXP-025 held-out Inspire test rollout 及当前训练状态。
+- `src/task/CmDecoder/docs/logs/{status,experiment,modification}_log.md` — 记录测试 episode、协议、指标和输出路径。
+
+**改动原因**
+
+响应用户要求使用 test 集验证当前 CmDecoder best checkpoint；未修改训练配置或训练进程。
+
+**验证**
+
+已确认 `inspire_f1/bamboo_basket/5` 为 test split，32 个有效 pair 成功生成 trajectory/PNG。
+
+## 2026-08-30 — 同步 CmDecoder EXP-022 当前验证状态
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task 状态导航；change_level: L0；approval: auto
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新三卡 CmDecoder 当前进度、最佳验证指标和 ETA。
+- `src/task/CmDecoder/docs/logs/{status,experiment,modification}_log.md` — 记录详细验证曲线与证据。
+
+**改动原因**
+
+响应用户训练状态检查；只同步运行证据，没有修改训练配置或进程。
+
+**验证**
+
+已核对活跃 torchrun、三卡利用率、训练日志和 checkpoint payload；未发现 OOM、NaN 或 NCCL 错误。
+
+## 2026-08-30 — 同步 CmDecoder best rollout 结果
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task 状态导航；change_level: L0；approval: auto
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新 EXP-023 rollout 已完成及关键指标。
+- `src/task/CmDecoder/docs/logs/{status,experiment,modification}_log.md` — 记录详细 rollout 证据。
+
+**改动原因**
+
+响应当前研究状态检查；只同步已生成的诊断结果，没有修改训练进程。
+
+**验证**
+
+已核对 trajectory、PNG、rollout 控制台输出及 EXP-022 三卡训练仍在运行；31 个有效 pair 成功生成。
+
+## 2026-08-29 — 停止 Cm 三卡训练并保留恢复锚点
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 长时任务；change_level: L3；approval: user-approved
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新 Cm 停止及 CmDecoder 三卡迁移待确认状态。
+- `src/task/Cm/docs/logs/{status,experiment,modification}_log.md` — 记录 Cm 停止、恢复 checkpoint 与最终完整验证证据。
+- `src/task/CmDecoder/docs/logs/{status,modification}_log.md` — 记录 decoder 当前单卡进度和待迁移状态。
+
+**改动原因**
+
+用户明确要求停止 GPU0/1/2 上的 Cm，将资源转给 CmDecoder。已确认 Cm torchrun 与 worker 全部退出，epoch 29 / step `124410` checkpoint 保留；decoder 尚未改为三卡。
+
+## 2026-08-29 — CmDecoder 改为三卡 global batch 48 并固定总 step
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 长时任务；change_level: L3；approval: user-approved
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新 CmDecoder 三卡 run 状态。
+- `src/task/CmDecoder/docs/logs/{status,experiment,decision,modification}_log.md` — 记录 EXP-022、训练预算和验证。
+
+**改动原因**
+
+用户确认保持总 optimizer step 数 `143110`，将 global batch 改为 `48` 并扩宽 epoch；已在 GPU0/1/2 启动并通过 distributed smoke。
+
+## 2026-08-29 — 记录 Cm 与 CmDecoder 单卡并行造成的吞吐变化
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 运行状态记录
+- change_level: L3（长时实验状态）
+- approval: user-approved
+
+**文件**
+
+- `docs/logs/status_log.md` — 记录 CmDecoder 并行后 Cm DDP 吞吐和 GPU1 慢卡现象。
+- `src/task/Cm/docs/logs/{status,experiment}_log.md` — 同步 Cm 当前 step、吞吐变化和显存状态。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 记录共享 GPU 的性能风险。
+
+**改动原因**
+
+对比并行前后 Cm 日志：step time 约由 `300--313 ms` 增至 `650 ms`，global throughput 约由 `306--335` 降至 `146--148 samples/s`；当前无 OOM/NaN，判断 GPU1 竞争通过 DDP 同步拖慢整体 Cm。
+
+## 2026-08-29 — 增加指导与执行计划协商流程
+
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: 全局治理 / 可复制工作流
+- change_level: L3（仓库治理规则）
+- approval: user-approved
+
+**文件**
+
+- `AGENTS.md` — 规定 `指导/V<n>.md` 与同版本 `plan/V<n>.md` 的职责、定稿闸门和偏离处理。
+- `.agents/skills/research-change-control/SKILL.md` — 增加任务无关的指导—plan 协商流程，明确草稿不写修改日志、定稿后记录最终实现。
+
+**原因**
+
+让用户提供研究方向、Agent 负责形成可执行计划，并在计划定稿前阻止直接修改代码；同时避免把协商过程的每次草稿变化伪装成代码修改历史。
+
+**验证**
+
+- 已核对规则与现有 `src/task/Cm/docs/指导/V2.md`、`plan/V2.md` 的版本配对方式；未修改或代填 V2 内容。
 
 ## 2026-08-29 — 完成 Cm 破坏性目录迁移并移除旧入口
 
@@ -295,6 +914,7 @@
 **改动原因**
 
 candidate mask 构建由逐帧全量距离张量改为半径邻域查询；单 episode CPU 探针由约 192.6 s 降至约 37.4 s。全量构建已按 4 workers、单线程 BLAS 启动。
+
 
 ## 2026-08-29 — 完成 Cm 破坏性目录迁移并移除旧入口
 

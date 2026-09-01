@@ -1,9 +1,21 @@
 # Ref2Dex 架构记录
 
 - scope: root
-- last_updated: 2026-08-29
-- last_verified: 2026-08-29
+- last_updated: 2026-09-01
+- last_verified: 2026-09-01
 - related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
+
+## 0. 运行目录与追溯合同
+
+- `BaseRunner` 的训练运行目录为 `outputs/<Task>/<run_id>/`，train/eval 启动时自动写入
+  配置、metadata 和 `run_manifest.json`；如果目标目录已有 manifest，续跑/评估写入带时间戳的
+  continuation manifest，不覆盖原始 provenance。
+- `run_manifest.json` 使用 `ref2dex.run.v1` schema，记录运行模式、Task/run 名称、指导与
+  plan 版本（若配置声明）、配置快照、Git 提交与 dirty 状态、输入数据/cache manifest
+  引用及文件基本信息、数据合同（schema/shape/坐标系）、seed、初始 checkpoint 和输出目录。
+  运行 manifest 不计算加密 hash，只记录输入文件存在性、大小和修改时间。
+- 数据 cache manifest、训练 run manifest 和 `experiment_log.md` 分别描述输入数据、一次
+  运行实例和科研证据，不互相替代。大型 cache、checkpoint 和生成产物仍不纳入 Git。
 
 ## 1. 研究目标与总体架构
 
@@ -458,28 +470,14 @@ q → link_tf [B,L,4,4]
 
 各阶段的完整实现事实分别见 [`correspondence_ptv3_v2/docs/架构.md`](../../src/task/correspondence_ptv3_v2/docs/架构.md)、[`Cm/docs/logs/architecture_log.md`](../../src/task/Cm/docs/logs/architecture_log.md) 和 [`CmDecoder/docs/logs/architecture_log.md`](../../src/task/CmDecoder/docs/logs/architecture_log.md)。
 
-## 9. 通用可组合运行时（Component Prototype）
+## 9. 已撤出 Task 组件原型
 
-`src/base/component.py`、`artifact.py`、`contract.py`、`context.py` 和 `pipeline.py`
-提供与具体研究 Task 无关的最小组件协议。核心执行抽象是 `Component`；`Artifact`、
-`Contract`、`Pipeline` 和 `Experiment` 是围绕它的支撑概念。组件通过 `component.yaml`
-声明身份、版本、入口、capabilities、端口合同和生命周期状态，registry 只做发现和
-合同检查，不在发现阶段导入或执行 entrypoint。
-
-第一版原型位于 `components/` 和 `tools/researchctl.py`，支持列出组件、校验 manifest
-及 pipeline 端口连接、显式解析 entrypoint、打印 pipeline 图和 dry-run 拓扑顺序。示例
-组件实现了最小的 `Component.execute` 闭环，用于验证 Artifact 在 pipeline 中的传递；
-当前 Ref2Dex Task 尚未迁移执行逻辑，但 `components/ref2dex/` 已提供 correspondence、
-Cm 和 CmDecoder 的只读 manifest，entrypoint 只有在显式 `--resolve-entrypoints` 时才导入。
-现有 `BaseRunner` 可作为未来的 runtime adapter。`ExecutionContext` 统一承载 run_id、seed、
-device、output_dir 和 provenance 入口，但本阶段仍不执行真实组件。
-Cm pilot 的 `components/ref2dex/cm/adapter.py` 是第一个真实 Task wrapper，对应独立的
-`components/ref2dex/cm/inference/component.yaml`；它接收
-`object_points/object_normals/hand_points/hand_normals/hand_flow/obj_valid_mask` 和可选
-`delta_time_s`，输出 `cm_tokens` 对应的 `representation` 及米制 `object_flow`。它只接受
-显式注入的模型或 `from_checkpoint(...)` 路径，不创建 dataloader、不训练、不自动选择 checkpoint。
-该层的公共不变量是：组件能力不能替代科学语义，正式实验仍需锁定组件版本、代码
-commit、配置和 Artifact hash。
+此前的通用 Component/Artifact/Contract/Registry 原型和 Cm、CmDecoder、
+correspondence 的 Task manifest 只作为历史实验记录保留在 Git 历史与修改日志中，
+不再属于当前 Task 架构。当前两个 Task 的模型、Runner、Dataset 和配置均由各自
+Task 目录直接承载；没有 Task-local `components/`、`components.json` 或组件选择入口。
+根 `components/` 目录及其通用示例也已在 V1.2.13 删除。`src/base/` 中现存的通用协议代码
+仅作为共享基础设施兼容代码保留，不提供默认 manifest 根，也不参与当前 Task 的运行选择。
 
 ## 10. 通用维护 Skill 与项目本地规则
 
@@ -487,12 +485,25 @@ commit、配置和 Artifact hash。
 
 - `research-change-control`：修改等级、审批边界、最小 diff、修改记录和文档—diff 一致性审计；
 - `research-experiment-workflow`：实验前置条件、产物隔离、证据记录和长任务等待；
-- `modular-component-runtime`：任务无关的 Component/Artifact/Contract/Pipeline 组合规则。
-
-该 Skill 的 [Component 模板](../../.agents/skills/modular-component-runtime/references/component-template.md)
-规定：Component 按逻辑职责划分，不要求一组件一文件；单一实现优先保留为普通模块，只有需要独立发现、版本、资源、生命周期或跨任务复用时才提供 manifest。
+- 任务无关的组件原型已停用；当前保留的 Skill 只负责修改治理和实验流程。
 
 Cm 的结构迁移入口见 [`src/task/Cm/docs/README.md`](../../src/task/Cm/docs/README.md)。Cm 已完成破坏性迁移，`src/task/Cm/src`、`dataset` 和 `visualization` 直接承载唯一真实实现，配置只从 `configs/active` 或 `configs/archive` 加载；旧顶层入口不再维护。需要复现迁移前运行时，应固定到迁移前的 commit。
 
 根 `AGENTS.md` 只保留 Ref2Dex 的路径、日志、科学不变量和 Skill 路由；通用 Skill 不假设
 任何特定仓库目录，复制后由目标仓库的 `AGENTS.md` 提供本地日志和路径约定。
+
+## 11. 目录、产物与追溯分层
+
+仓库将内容分为源码、实验定义、输入数据、外部资产、运行产物和证据日志六层：
+
+- 源码和共享运行时位于 `src/`、`process/` 和根 `tools/`；
+- Task-local 研究实验位于 `src/task/<Task>/research/<experiment>/`，每个实验必须有
+  `README.md` 和 `experiment.yaml`，生成内容只写入其 `output/<run_id>/`；
+- 原始数据与派生 cache 位于 `data/raw_data/` 和 `data/processed_data/`，Dataset 代码不携带项目 cache；
+- Task 专属预训练 checkpoint、body model 和 URDF 位于 `src/task/<Task>/assets/`，训练生成 checkpoint 位于 `outputs/`；根 `assets/` 只允许历史兼容软链接；
+- `experiment.yaml`、数据 `manifest.json`、资产 `asset_manifest.json` 和运行 `run_manifest.json`
+  分别承担实验定义、输入数据、外部依赖和单次运行追溯职责；
+- 根 `output/`、`results/` 和 `result/` 不再作为新入口。
+
+2026-08-31 已将 Cm 的 DenseToken 入口下沉到 `src/task/Cm/assets/checkpoints/densetoken`，根
+`assets` 保留被忽略的兼容软链接；真实大型文件仍在旧 Cm 目录，未因路径迁移复制或移动。

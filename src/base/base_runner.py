@@ -29,6 +29,7 @@ from .distributed import (
 )
 from .metrics import MetricAverager, MetricStat
 from .performance import PerformanceMonitor
+from .run_manifest import build_run_manifest, write_run_manifest
 from .schedulers import CosineRestartScheduler, cosine_schedule, linear_schedule
 from .utils import (
     JsonlLogger,
@@ -682,9 +683,12 @@ class BaseRunner:
                     "min_lr": float(self._resolve_min_lr()),
                 }
             )
-        if self.is_primary:
-            save_config(self.cfg, self.output_dir / "config.json")
-        self._write_metadata()
+        self._write_run_provenance(
+            initial_checkpoint=(
+                getattr(self.cfg.train, "init_checkpoint", None)
+                or getattr(self.cfg.train, "resume", None)
+            )
+        )
         self.model = self.build_model(self.cfg.model).to(self.device)
         if self.cfg.train.compile:
             self.model = torch.compile(self.model)
@@ -703,6 +707,8 @@ class BaseRunner:
         self._log_train_setup()
 
     def _setup_eval(self, checkpoint: str | Path) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        barrier()
         dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
         (self.train_loader, self.val_loader, self.test_loader, self.metadata,
          self.val_loaders, self.test_loaders) = (
@@ -711,6 +717,7 @@ class BaseRunner:
         if not self.val_loaders and not self.test_loaders:
             raise ValueError("No evaluation dataset is available. Set data.val_path, data.val_split > 0, or data.test_path.")
         self.configure_data(self.metadata, self.train_loader.dataset)
+        self._write_run_provenance(initial_checkpoint=checkpoint)
         self.model = self.build_model(self.cfg.model).to(self.device)
         self.load(checkpoint, load_optimizer=False, map_location=self.device)
         self.eval_mode()
@@ -1007,11 +1014,54 @@ class BaseRunner:
             artifact.add_file(str(checkpoint_path))
         self.wandb_run.log_artifact(artifact)
 
-    def _write_metadata(self) -> None:
+    def _write_run_provenance(self, *, initial_checkpoint: str | Path | None) -> None:
+        """Persist config, metadata and a non-overwriting run manifest.
+
+        A fresh run owns ``run_manifest.json``.  Evaluation into an existing
+        directory and train resume attempts receive timestamped snapshots so
+        the original provenance remains immutable.
+        """
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        base_manifest = self.output_dir / "run_manifest.json"
+        if base_manifest.exists():
+            suffix = "eval" if self.mode == "eval" else "resume" if getattr(self.cfg.train, "resume", None) else "attempt"
+            stamp = self._shared_timestamp()
+            manifest_path = self.output_dir / f"run_manifest_{suffix}_{stamp}.json"
+            config_path = self.output_dir / f"config_{suffix}_{stamp}.json"
+            metadata_path = self.output_dir / f"metadata_{suffix}_{stamp}.json"
+        else:
+            manifest_path = base_manifest
+            config_path = self.output_dir / "config.json"
+            metadata_path = self.output_dir / "metadata.json"
+
+        self.metadata.setdefault("run_name", self.run_name)
+        self.metadata.setdefault("description", str(getattr(self.cfg.train, "description", "") or ""))
+        self.metadata["run_manifest_path"] = str(manifest_path)
+        self.metadata["config_snapshot_path"] = str(config_path)
+        self.metadata["metadata_snapshot_path"] = str(metadata_path)
+        if self.is_primary:
+            save_config(self.cfg, config_path)
+        self._write_metadata(metadata_path)
+        if self.is_primary:
+            manifest = build_run_manifest(
+                task=self._task_slug(),
+                run_name=self.run_name,
+                output_dir=self.output_dir,
+                mode=self.mode,
+                config=self.cfg.to_dict(),
+                metadata=self.metadata,
+                config_source=getattr(self.cfg, "_config_source", None),
+                initial_checkpoint=initial_checkpoint,
+                config_snapshot=config_path,
+                metadata_snapshot=metadata_path,
+            )
+            write_run_manifest(manifest_path, manifest)
+
+    def _write_metadata(self, path: str | Path | None = None) -> None:
         if not self.is_primary:
             barrier()
             return
-        path = self.output_dir / "metadata.json"
+        path = self.output_dir / "metadata.json" if path is None else Path(path)
         with path.open("w", encoding="utf-8") as f:
             json.dump(to_jsonable(self.metadata), f, indent=2, ensure_ascii=False)
         barrier()

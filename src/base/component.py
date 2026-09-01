@@ -49,9 +49,117 @@ class Component(ABC):
     def spec(self) -> "ComponentSpec":
         raise NotImplementedError
 
+    def validate_inputs(self, inputs: Mapping[str, Artifact], *, strict_metadata: bool = False) -> None:
+        """Validate required input ports before executing a component."""
+        self._validate_ports(inputs, self.spec().inputs, direction="input", strict_metadata=strict_metadata)
+
+    def validate_outputs(self, outputs: Mapping[str, Artifact], *, strict_metadata: bool = False) -> None:
+        """Validate required output ports produced by a component."""
+        self._validate_ports(outputs, self.spec().outputs, direction="output", strict_metadata=strict_metadata)
+
+    @staticmethod
+    def _validate_ports(
+        artifacts: Mapping[str, Artifact],
+        ports: Mapping[str, "PortSpec"],
+        *,
+        direction: str,
+        strict_metadata: bool,
+    ) -> None:
+        if not isinstance(artifacts, Mapping):
+            raise TypeError(f"Component {direction}s must be a mapping of Artifact objects.")
+        missing = [name for name, port in ports.items() if not port.optional and name not in artifacts]
+        if missing:
+            raise ValueError(f"Missing required {direction}s: {', '.join(sorted(missing))}")
+        from .contract import Contract
+
+        for name, artifact in artifacts.items():
+            if not isinstance(artifact, Artifact):
+                raise TypeError(f"Component {direction} {name!r} must be an Artifact.")
+            port = ports.get(name)
+            if port is None:
+                # Extra fields are allowed for forward-compatible adapters.
+                continue
+            issues = Contract.from_port(port).validate(artifact, require_metadata=strict_metadata)
+            if issues:
+                raise ValueError(f"Invalid {direction} {name!r}: {'; '.join(issues)}")
+
     @abstractmethod
-    def execute(self, inputs: Mapping[str, Artifact], context: ExecutionContext) -> Mapping[str, Artifact]:
+    def execute(self, inputs: Mapping[str, Artifact], context: ExecutionContext | None = None) -> Mapping[str, Artifact]:
         raise NotImplementedError
+
+
+class TrainableComponent(Component):
+    """Optional lifecycle protocol for trainable PyTorch-like Components.
+
+    ``Component`` deliberately stays framework-neutral.  A trainable adapter
+    opts into this protocol when it owns parameters and must be built,
+    checkpointed, and restored through stable names.  The base class does not
+    import torch; duck typing keeps it usable by other tensor runtimes.
+    """
+
+    @classmethod
+    def build(cls, config: Any, **kwargs: Any) -> "TrainableComponent":
+        """Construct the Component from a Task configuration.
+
+        Concrete implementations should keep all Task-specific parameter
+        extraction here, instead of making a Pipeline depend on constructor
+        details.  ``config`` is intentionally opaque at this shared layer.
+        """
+        del config, kwargs
+        raise NotImplementedError(
+            f"Trainable Component {cls.__name__} must implement build(config, **kwargs)."
+        )
+
+    def parameter_groups(self, *, prefix: str = "") -> list[dict[str, Any]]:
+        """Return optimizer groups with an explicit checkpoint/name prefix."""
+        parameters_fn = getattr(self, "parameters", None)
+        if not callable(parameters_fn):
+            raise TypeError(f"Trainable Component {type(self).__name__} has no parameters() method.")
+        parameters = [parameter for parameter in parameters_fn() if getattr(parameter, "requires_grad", True)]
+        if not parameters:
+            raise ValueError(f"Trainable Component {type(self).__name__} has no trainable parameters.")
+        namespace = prefix.strip() or self.checkpoint_namespace()
+        return [{"name": namespace, "parameter_prefix": namespace, "params": parameters}]
+
+    def checkpoint_namespace(self) -> str:
+        spec = self.spec()
+        return f"{spec.id}@{spec.version}"
+
+    def checkpoint_state_dict(self) -> dict[str, Any]:
+        """Wrap ``state_dict`` with identity metadata for safe restoration."""
+        state_dict_fn = getattr(self, "state_dict", None)
+        if not callable(state_dict_fn):
+            raise TypeError(f"Trainable Component {type(self).__name__} has no state_dict() method.")
+        spec = self.spec()
+        return {
+            "namespace": self.checkpoint_namespace(),
+            "component_id": spec.id,
+            "component_version": spec.version,
+            "state_dict": state_dict_fn(),
+        }
+
+    def load_checkpoint_state_dict(self, payload: Mapping[str, Any], *, strict: bool = True) -> Any:
+        """Restore a namespaced payload and reject a different Component."""
+        if not isinstance(payload, Mapping):
+            raise TypeError("Component checkpoint payload must be a mapping.")
+        spec = self.spec()
+        expected_namespace = self.checkpoint_namespace()
+        if payload.get("namespace") != expected_namespace:
+            raise ValueError(
+                f"Checkpoint namespace {payload.get('namespace')!r} != {expected_namespace!r}."
+            )
+        if payload.get("component_id") != spec.id or payload.get("component_version") != spec.version:
+            raise ValueError(
+                "Checkpoint Component identity does not match "
+                f"{spec.id}@{spec.version}."
+            )
+        state_dict = payload.get("state_dict")
+        if not isinstance(state_dict, Mapping):
+            raise ValueError("Component checkpoint payload must contain a state_dict mapping.")
+        load_state_dict_fn = getattr(self, "load_state_dict", None)
+        if not callable(load_state_dict_fn):
+            raise TypeError(f"Trainable Component {type(self).__name__} has no load_state_dict() method.")
+        return load_state_dict_fn(state_dict, strict=strict)
 
 
 @dataclass(frozen=True)
@@ -76,6 +184,12 @@ class PortSpec:
         constraints = value.get("constraints", {})
         if not isinstance(constraints, Mapping):
             raise ManifestError(f"Port {name!r}.constraints must be a mapping.")
+        constraints = dict(constraints)
+        coordinate = value.get("coordinate")
+        if coordinate is not None:
+            if not isinstance(coordinate, str):
+                raise ManifestError(f"Port {name!r}.coordinate must be a string or null.")
+            constraints.setdefault("coordinate_frame", coordinate)
         return cls(
             name=name,
             type=port_type,
@@ -83,7 +197,7 @@ class PortSpec:
             dtype=_optional_string(value.get("dtype"), f"Port {name!r}.dtype"),
             unit=_optional_string(value.get("unit"), f"Port {name!r}.unit"),
             optional=bool(value.get("optional", False)),
-            constraints=dict(constraints),
+            constraints=constraints,
         )
 
 
@@ -97,6 +211,7 @@ class ComponentSpec:
     status: str
     inputs: Mapping[str, PortSpec]
     outputs: Mapping[str, PortSpec]
+    entrypoint_kind: str = "component"
     requires: Mapping[str, Any] = field(default_factory=dict)
     tags: Tuple[str, ...] = ()
     manifest_path: Optional[Path] = None
@@ -110,10 +225,13 @@ class ComponentSpec:
         capabilities = _string_tuple(raw.get("capabilities", ()), "capabilities")
         tags = _string_tuple(raw.get("tags", ()), "tags")
         status = str(raw.get("status", "experimental"))
-        if status not in {"experimental", "reference", "active", "deprecated"}:
+        if status not in {"experimental", "reference", "active", "deprecated", "archived"}:
             raise ManifestError(
-                f"Unsupported component status {status!r}; expected experimental/reference/active/deprecated."
+                f"Unsupported component status {status!r}; expected experimental/reference/active/deprecated/archived."
             )
+        entrypoint_kind = str(raw.get("entrypoint_kind", "component")).strip().lower()
+        if entrypoint_kind not in {"component", "task"}:
+            raise ManifestError("entrypoint_kind must be 'component' or 'task'.")
         inputs = _ports(raw.get("inputs", {}), "inputs")
         outputs = _ports(raw.get("outputs", {}), "outputs")
         requires = raw.get("requires", {})
@@ -126,6 +244,7 @@ class ComponentSpec:
             entrypoint=raw["entrypoint"],
             capabilities=capabilities,
             status=status,
+            entrypoint_kind=entrypoint_kind,
             inputs=inputs,
             outputs=outputs,
             requires=dict(requires),
@@ -165,6 +284,8 @@ def compatible_ports(output: PortSpec, input_port: PortSpec) -> Tuple[str, ...]:
             issues.append(
                 f"constraint {key!r} {output.constraints[key]!r} != {target_value!r}"
             )
+        elif key not in output.constraints:
+            issues.append(f"constraint {key!r} is not declared by output")
     return tuple(issues)
 
 

@@ -1,4 +1,7 @@
-# Cm 研究日志
+# Cm 研究日志（历史兼容）
+
+> 新实验的脚本与产物请使用同级 `research/<experiment>/` 实验包；新的科学结论写入
+> `src/task/Cm/docs/logs/experiment_log.md`。本文件仅保留历史迁移记录，不再新增条目。
 
 ## 2026-08-18：V1.2 object-only cache implementation gate
 

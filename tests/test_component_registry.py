@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.base.artifact import Artifact
-from src.base.component import ManifestError, compatible_ports, load_manifest, resolve_entrypoint
+from src.base.component import ManifestError, PortSpec, compatible_ports, load_manifest, resolve_entrypoint
 from src.base.contract import Contract
 from src.base.pipeline import PipelineError, PipelineSpec
 from src.base.registry import ComponentRegistry, RegistryError
@@ -14,8 +14,18 @@ from src.base.registry import ComponentRegistry, RegistryError
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_manifest_is_task_agnostic_and_discoverable() -> None:
-    registry = ComponentRegistry.discover([ROOT / "components/examples"])
+def test_manifest_is_task_agnostic_and_discoverable(tmp_path: Path) -> None:
+    for name in ("identity", "scale"):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / "component.yaml").write_text(
+            "api_version: component/v1\n"
+            f"id: example.{name}\nversion: 0.1.0\nentrypoint: json:JSONDecoder\n"
+            "entrypoint_kind: task\ncapabilities: [execute]\n"
+            "status: experimental\ntags: [transform]\n",
+            encoding="utf-8",
+        )
+    registry = ComponentRegistry.discover([tmp_path])
     assert [spec.id for spec in registry.list(capability="execute")] == [
         "example.identity",
         "example.scale",
@@ -25,19 +35,9 @@ def test_manifest_is_task_agnostic_and_discoverable() -> None:
     assert "transform" in spec.tags
 
 
-def test_ref2dex_tasks_are_read_only_registry_entries() -> None:
-    registry = ComponentRegistry.discover([ROOT / "components/ref2dex"])
-    assert [spec.id for spec in registry.list(status="active")] == [
-        "ref2dex.cm.v1",
-        "ref2dex.cmdecoder.pointflow.inspire_f1",
-        "ref2dex.correspondence.ptv3_v2",
-    ]
-    decoder = registry.get("ref2dex.cmdecoder.pointflow.inspire_f1")
-    assert decoder.inputs["representation"].shape == "[B,16,256]"
-    assert decoder.outputs["hand_flow"].constraints["coordinate_frame"] == "current_wrist"
-    pilot = registry.get("ref2dex.cm.inference.v1")
-    assert pilot.status == "experimental"
-    assert "predict" in pilot.capabilities
+def test_removed_task_manifests_are_not_discoverable() -> None:
+    """仓库不再提供根级 Component 目录。"""
+    assert not (ROOT / "components").exists()
 
 
 def test_manifest_rejects_missing_identity(tmp_path: Path) -> None:
@@ -62,9 +62,32 @@ def test_registry_rejects_duplicate_ids(tmp_path: Path) -> None:
         ComponentRegistry.discover([tmp_path])
 
 
-def test_pipeline_contract_check_accepts_compatible_ports() -> None:
-    registry = ComponentRegistry.discover([ROOT / "components"])
-    assert registry.check_pipeline(ROOT / "components/examples/example_pipeline.yaml") == []
+def test_pipeline_contract_check_accepts_compatible_ports(tmp_path: Path) -> None:
+    component_root = tmp_path / "component_root"
+    for name, ports in (
+        ("a", "outputs:\n  out: {type: scalar}\n"),
+        ("b", "inputs:\n  inp: {type: scalar}\n"),
+    ):
+        directory = component_root / name
+        directory.mkdir(parents=True)
+        (directory / "component.yaml").write_text(
+            "api_version: component/v1\n"
+            f"id: {name}\nversion: 0.1.0\nentrypoint: json:JSONDecoder\n"
+            "entrypoint_kind: task\n"
+            + ports,
+            encoding="utf-8",
+        )
+    pipeline = tmp_path / "pipeline.yaml"
+    pipeline.write_text(
+        "nodes:\n"
+        "  - {id: a, component: a}\n"
+        "  - {id: b, component: b}\n"
+        "edges:\n"
+        "  - {from: a.out, to: b.inp}\n",
+        encoding="utf-8",
+    )
+    registry = ComponentRegistry.discover([component_root])
+    assert registry.check_pipeline(pipeline) == []
 
 
 def test_pipeline_contract_check_reports_type_mismatch(tmp_path: Path) -> None:
@@ -98,8 +121,8 @@ def test_pipeline_contract_check_reports_type_mismatch(tmp_path: Path) -> None:
 
 
 def test_port_compatibility_allows_unspecified_source_metadata() -> None:
-    source = load_manifest(ROOT / "components/examples/identity/component.yaml").outputs["value"]
-    target = load_manifest(ROOT / "components/examples/scale/component.yaml").inputs["value"]
+    source = PortSpec(name="value", type="scalar")
+    target = PortSpec(name="value", type="scalar", dtype="float32")
     assert compatible_ports(source, target) == ()
 
 
@@ -134,57 +157,6 @@ def test_pipeline_topological_order_and_cycle_detection() -> None:
 
 
 def test_entrypoint_resolution_is_explicit() -> None:
-    assert resolve_entrypoint("components.examples.identity:IdentityComponent").__name__ == "IdentityComponent"
+    assert resolve_entrypoint("src.base.artifact:Artifact").__name__ == "Artifact"
     with pytest.raises(ManifestError, match="Cannot resolve"):
         resolve_entrypoint("src.base.artifact:Missing")
-
-
-def test_example_component_executes_without_task_specific_runtime() -> None:
-    from src.base.context import ExecutionContext
-
-    cls = resolve_entrypoint("components.examples.scale:ScaleComponent")
-    result = cls().execute({"value": Artifact(type="scalar", value=3.0)}, ExecutionContext(config={"factor": 2}))
-    assert result["value"].value == 6.0
-
-
-def test_cm_inference_adapter_maps_artifacts_to_model_outputs() -> None:
-    import torch
-
-    from components.ref2dex.cm.adapter import CmInferenceComponent
-    from src.base.context import ExecutionContext
-
-    class FakeCm(torch.nn.Module):
-        def forward(self, batch):
-            assert set(batch) == {
-                "object_points", "object_normals", "hand_points", "hand_normals",
-                "hand_flow", "obj_valid_mask",
-            }
-            size = batch["object_points"].shape[0]
-            device = batch["object_points"].device
-            return {
-                "cm_tokens": torch.zeros(size, 16, 256, device=device),
-                "pred_obj_flow": torch.zeros(size, 512, 3, device=device),
-            }
-
-    adapter = CmInferenceComponent(FakeCm())
-    inputs = {
-        "object_points": Artifact("point_cloud", torch.zeros(2, 512, 3)),
-        "object_normals": Artifact("normal_field", torch.zeros(2, 512, 3)),
-        "hand_points": Artifact("point_cloud", torch.zeros(2, 1538, 3)),
-        "hand_normals": Artifact("normal_field", torch.zeros(2, 1538, 3)),
-        "hand_flow": Artifact("point_flow", torch.zeros(2, 1538, 3)),
-        "obj_valid_mask": Artifact("validity_mask", torch.ones(2, 512, dtype=torch.bool)),
-    }
-    outputs = adapter.execute(inputs, ExecutionContext())
-    assert outputs["representation"].value.shape == (2, 16, 256)
-    assert outputs["object_flow"].metadata["unit"] == "meter"
-
-
-def test_cm_inference_adapter_rejects_incomplete_batch() -> None:
-    import torch
-
-    from components.ref2dex.cm.adapter import CmInferenceComponent
-    from src.base.context import ExecutionContext
-
-    with pytest.raises(ValueError, match="missing required inputs"):
-        CmInferenceComponent(torch.nn.Identity()).execute({}, ExecutionContext())

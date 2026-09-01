@@ -1,5 +1,36 @@
 # Cm AI 自主决策记录
 
+## 2026-08-30 — 单帧随机手表面采样与 object pose 坐标
+
+- 用户确认保持 1538 个手点，但每个 transition 在手部 mesh 表面重新面积加权采样；当前/未来端共享 face/barycentric 规格以保证 hand flow 逐点对应。
+- 用户确认 Inspire-F1 的训练、验证、测试统一使用 `stride=2`。
+- object-centered 采用当前帧物体完整 pose（旋转+平移）的逆变换；未来端沿用当前 pose，不以未来 pose 二次中心化，从而保留 object flow 的刚体运动。
+- 旧 cache 缺少 mesh/object pose 时保留 hand-root/fixed-point 回退，待 cache 重建后新合同生效。
+
+## 2026-08-30 — 扩展 pooled-Cm t-SNE 诊断为统一 stride 与幅度对照
+
+- scope: task:Cm / latent visualization
+- anchor: `src/task/Cm/research/tsne_slots.py` / 2026-08-30
+
+**未指定点**
+
+用户确认按 GRAB/Inspire-F1 test、stride 1--10、slot pooling、固定 stride=5 和 hand/object-flow magnitude 进行诊断，但未指定样本预算、matched magnitude 区间及输出文件组织。
+
+**实际选择**
+
+- 每个 source 在 stride 1--10 上等量抽样，`--max-samples=512` 表示每个 source 的总预算；每个 stride 取 ceil(512/10) 条。
+- sample-level 表征取 16 个 Cm slot 的 mean；所有 source/stride pooled 向量只 fit 一次 t-SNE，并共享给 dataset/stride/hand-flow/object-flow 四个 panel。
+- 固定 stride 对照使用 stride=5；matched hand-flow 默认采用 `[4,6] mm`，并对两 source 做等量下采样；范围可由 CLI 覆盖。
+- 同时保留合并数据的逐 slot t-SNE，避免 pooled 视图掩盖 slot-level domain separation。
+
+**选择理由与影响**
+
+该协议直接控制 stride 并显式观察 motion magnitude，能够区分 embodiment 分离与幅度分布差异；t-SNE、silhouette 和 matched 图仅用于离线诊断，不改变训练、checkpoint 或数据缓存。
+
+**可逆性 / 是否需要用户确认**
+
+完全可逆；仅修改诊断脚本，所有预算、区间和 t-SNE 参数均可通过命令行重跑。该工程性选择不改变核心科研目标，无需额外确认。
+
 ## 2026-08-28 — 混合手流重建采用独立几何 decoder 与 source 等权校准
 
 - scope: task:Cm / GRAB + Inspire-F1 混合训练
@@ -574,3 +605,8 @@ HRDexDB 内部不同机器人手型与 MANO 是否需要再做分层采样，以
 **可逆性 / 是否需要用户确认**
 
 - 可逆；旧短预算 output 保留，strict-budget run 可独立停止或继续，不覆盖任何旧 checkpoint。
+## 2026-08-30 — 最终采用全物体表面采样，不再使用 5cm 过滤
+
+- 用户明确确认：物体训练点从 object surface pool 随机采样 512 点，不按手部邻域筛选。
+- 为保持旧 loader/cache 文件接口，仍写入 candidate 索引/bitmap；新语义是完整 manipulated-object pool（bitmap 全真），`active_only` 不再代表接触过滤。
+- 新 cache 使用独立输出根目录，旧 5cm cache 不覆盖、不混用。

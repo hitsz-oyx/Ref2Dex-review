@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
 import numpy as np
 
+from src.base.run_manifest import build_run_manifest, write_run_manifest
 from src.task.Cm.dataset.hrdexdb import _manifest_specs
 from src.task.Cm.tools.data.compute_flow_scale import object_v2_train_sequence_dirs
 
@@ -30,7 +32,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-stride", type=int, default=1)
     parser.add_argument("--max-stride", type=int, default=10)
     parser.add_argument("--chunk-rows", type=int, default=64)
-    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--output",
+        default=None,
+        type=Path,
+        help="scale JSON path; defaults to this experiment's output/<run_id>/hand_flow_scale.json",
+    )
     return parser.parse_args()
 
 
@@ -167,10 +174,64 @@ def main() -> None:
         "inspire_train_episodes": inspire_episodes,
         "sources": source_payloads,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
+    output = (
+        args.output
+        if args.output is not None
+        else Path(__file__).resolve().parent
+        / "output"
+        / datetime.now().strftime("hand_flow_%Y%m%d_%H%M%S")
+        / "hand_flow_scale.json"
+    ).resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    config_snapshot = {
+        "grab_root": str(args.grab_root.resolve()),
+        "grab_split": str(args.grab_split.resolve()),
+        "hrdexdb_root": str(args.hrdexdb_root.resolve()),
+        "hrdexdb_manifest": str(args.hrdexdb_manifest.resolve()),
+        "hrdexdb_source_prefix": str(args.hrdexdb_source_prefix),
+        "min_stride": int(args.min_stride),
+        "max_stride": int(args.max_stride),
+        "chunk_rows": int(args.chunk_rows),
+    }
+    (output.parent / "config.json").write_text(
+        json.dumps(config_snapshot, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    (output.parent / "metadata.json").write_text(
+        json.dumps(
+            {
+                "schema_name": "cm_hand_flow_scale",
+                "dataset_split": "train",
+                "statistics_sources": payload["statistics_sources"],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    payload["output"] = str(output)
+    output.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    manifest = build_run_manifest(
+        task="Cm",
+        run_name=output.parent.name,
+        output_dir=output.parent,
+        mode="calibration",
+        config=config_snapshot,
+        metadata={
+            "schema_name": "cm_hand_flow_scale",
+            "dataset_split": "train",
+            "root": str(args.grab_root.resolve()),
+            "hrdexdb_root": str(args.hrdexdb_root.resolve()),
+            "hrdexdb_manifest": str(args.hrdexdb_manifest.resolve()),
+        },
+        config_source=Path(__file__).with_name("experiment.yaml"),
+        config_snapshot=output.parent / "config.json",
+        metadata_snapshot=output.parent / "metadata.json",
+        repo_root=Path(__file__).resolve().parents[5],
+    )
+    write_run_manifest(output.parent / "run_manifest.json", manifest)
     print(json.dumps(payload, indent=2, ensure_ascii=False))
 
 

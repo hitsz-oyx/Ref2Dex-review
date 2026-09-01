@@ -1,0 +1,16 @@
+schema: ref2dex.experiment.v1
+id: tsne_slots
+task: Cm
+kind: diagnostic
+status: maintained
+entrypoint: run.py
+legacy_entrypoint: ../tsne_slots.py
+output_root: output/<run_id>
+guide_version: V1.2.1
+plan_version: null
+public_contract_changes: false
+plan_required_before_next_run: true
+inputs:
+  checkpoint: outputs/cm/<run_id>/checkpoints/<name>.pt
+  grab_root: data/processed_data/<cm_object_v2_root>
+  hrdexdb_root: data/processed_data/<cm_decoder_root>

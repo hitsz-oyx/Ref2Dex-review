@@ -1,9 +1,15 @@
 # correspondence_ptv3_v2 architecture log
 
 - scope: task:correspondence_ptv3_v2
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
+- last_updated: 2026-09-01
+- last_verified: 2026-09-01
 - related: [当前状态](status_log.md) / [仓库记忆](repo_memory.md) / [实验](experiment_log.md)
+
+## 当前入口边界（V1.2.12）
+
+- correspondence_ptv3_v2 的模型、Runner、Dataset 和配置直接位于 `src/task/correspondence_ptv3_v2/`；Task-local `components/`、`data/` 和 `registry/` 已撤出。
+- 外部数据与 cache 使用根级 `data/processed_data/`、`dataset/` 和 `third_party/`；Task 内仅保留代码、配置、校准和研究文档。
+- 下方历史记录保留用于复现，不代表当前存在的 Component/registry 入口。
 
 ## 当前架构入口
 

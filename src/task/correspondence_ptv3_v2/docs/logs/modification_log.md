@@ -1,5 +1,55 @@
 # Modification log
 
+## 2026-09-01 — V1.2.12 撤出 Task-local Component/data/registry
+
+- change_level: L3（破坏性目录治理与数据入口迁移）
+- approval: user-approved（用户明确确认彻底删除 Component、Task data/registry，并使用根空间）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.12`（plan: `docs/plan/V1.md`, final）
+- category: `governance`、`operation`、`documentation`
+- post-commit: 未提交；真实数据、cache、checkpoint、output 和评估产物未触碰
+- scope: `src/task/correspondence_ptv3_v2/components/`、`data/`、`registry/`、配置和当前目录说明
+
+**文件**
+
+- 删除 Task-local Component 清单、数据软链接、路径 registry 及根级兼容软链接。
+- `config.py` 移除 Component 选择并更新细分版本；新增 V1 执行计划。
+- 状态、记忆和根/Task 文档同步当前入口，历史实验记录保留。
+- `src/task/correspondence_ptv3_v2/docs/logs/architecture_log.md` — 标记当前入口边界并区分历史架构描述。
+
+**验证**
+
+- 入口扫描无残留；correspondence 配置导入成功。
+- 全量 pytest 与 `git diff --check` 通过。
+
+## 2026-08-31 — 校准 correspondence Task component 声明
+
+- change_level: L2（公共声明合同；未改变训练、数据、GT、坐标系或 checkpoint 语义）
+- approval: user-approved（用户要求修理 `correspondence_ptv3_v2` component）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: task 内部组件清单与合同测试
+- version: `V1.2.1` 操作上下文；组件声明版本 `2.1.1`
+
+**文件**
+
+- `src/task/correspondence_ptv3_v2/components/component.yaml` — 将过时的 token/prior 输出改为当前模型实际返回的 cross-edge 与 hand-contact 预测端口，补充法向输入、Stage 3 schema 和可用坐标系声明。
+- `src/task/correspondence_ptv3_v2/components/components.json` — 将角色从 `dense_correspondence_encoder` 校准为 `correspondence_predictor`，并登记组件版本 `2.1.1`。
+- `src/task/correspondence_ptv3_v2/config.py` — 与 Task 选择清单同步组件版本和角色。
+- `tests/test_component_registry.py` — 增加 correspondence 输出合同和可选 hand-contact head 的回归断言。
+
+**原因**
+
+原 manifest 仍声明 `object_tokens`、`hand_tokens` 和 `hand_contact_prior`，但 live `StaticHOCPTv3V2.forward()` 已返回 `pred_cross_random_*`、`pred_cross_contact_aux_*` 和可选 `pred_hand_contact_*`；同时角色名只描述 encoder，无法反映实际预测任务。此次只修正文档/清单合同，不新增组件运行时，也不改变模型实现。
+
+**验证**
+
+- `PYTHONPATH=. python3 tools/researchctl.py check-task-config src/task/correspondence_ptv3_v2/config.py` — 通过。
+- `PYTHONPATH=. python3 tools/researchctl.py check src/task/correspondence_ptv3_v2/components/component.yaml --resolve-entrypoints` — 通过。
+- `PYTHONPATH=. python3 -m pytest -q tests/test_component_registry.py tests/test_framework_contracts.py tests/test_correspondence_ptv3_v2.py` — `39 passed, 3 warnings`。
+
 ## 2026-08-24 — 合入 hand PCA 分支并建立递归 memory
 
 - branch: `oyx`

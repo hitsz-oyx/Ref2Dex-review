@@ -19,7 +19,7 @@ stride/future/delta_time（§16），所以 dense bank 不含 stride 维。
 
     python -m src.task.Cm.tools.data.build_dense_cache \
         --root data/processed_data/cm_scene_v1 \
-        --dense-checkpoint src/task/Cm/densetoken_ckpt/best.pt \
+        --dense-checkpoint src/task/Cm/assets/checkpoints/densetoken/best.pt \
         --bank-size 4 --batch-size 64 --dtype float16 --device cuda:0
 """
 from __future__ import annotations

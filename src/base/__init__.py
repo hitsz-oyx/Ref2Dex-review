@@ -36,6 +36,7 @@ from .distributed import (
 )
 from .metrics import MetricAverager, MetricStat
 from .performance import PerformanceMonitor
+from .run_manifest import build_run_manifest, write_run_manifest
 from .utils import (
     JsonlLogger,
     format_seconds,
@@ -53,8 +54,8 @@ from .base_runner import (
     move_to_device,
     resolve_runner_class,
 )
-from .component import Component, ComponentSpec, ManifestError, PortSpec, compatible_ports, load_manifest, resolve_entrypoint
-from .registry import ComponentRegistry, RegistryError
+from .component import Component, ComponentSpec, ManifestError, PortSpec, TrainableComponent, compatible_ports, load_manifest, resolve_entrypoint
+from .registry import ComponentRegistry, RegistryError, check_task_config
 from .artifact import Artifact, ArtifactRef
 from .context import ExecutionContext
 from .pipeline import PipelineEdge, PipelineError, PipelineNode, PipelineSpec
@@ -91,6 +92,8 @@ __all__ = [
     "MetricAverager",
     "MetricStat",
     "PerformanceMonitor",
+    "build_run_manifest",
+    "write_run_manifest",
     "format_seconds",
     "import_from_path",
     "resolve_device",
@@ -105,6 +108,7 @@ __all__ = [
     "resolve_runner_class",
     "ComponentSpec",
     "Component",
+    "TrainableComponent",
     "ManifestError",
     "PortSpec",
     "compatible_ports",
@@ -112,6 +116,7 @@ __all__ = [
     "resolve_entrypoint",
     "ComponentRegistry",
     "RegistryError",
+    "check_task_config",
     "Artifact",
     "ArtifactRef",
     "ExecutionContext",
