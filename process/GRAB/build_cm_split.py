@@ -85,10 +85,18 @@ def main() -> None:
         test_dirs = assignments["test"]
         scene_cache = True
     else:
-        sequence_dirs = sorted(
-            path.parent for path in data_root.glob("*/*/shared.npz")
-            if (path.parent / "left.npz").exists() or (path.parent / "right.npz").exists()
+        scene_sequence_dirs = sorted(
+            path.parent.parent for path in data_root.glob("*/*/shared/raw_frame_id.npy")
         )
+        if scene_sequence_dirs:
+            sequence_dirs = scene_sequence_dirs
+            scene_cache = True
+        else:
+            sequence_dirs = sorted(
+                path.parent for path in data_root.glob("*/*/shared.npz")
+                if (path.parent / "left.npz").exists() or (path.parent / "right.npz").exists()
+            )
+            scene_cache = False
         if len(sequence_dirs) < 3:
             raise ValueError(f"Need at least 3 complete sequences under {data_root}, found {len(sequence_dirs)}.")
         rng = np.random.default_rng(args.seed)
@@ -101,7 +109,6 @@ def main() -> None:
         train_dirs = sequence_dirs[:train_count]
         val_dirs = sequence_dirs[train_count:train_count + val_count]
         test_dirs = sequence_dirs[train_count + val_count:]
-        scene_cache = False
 
     total = len(train_dirs) + len(val_dirs) + len(test_dirs)
 
@@ -112,7 +119,9 @@ def main() -> None:
         entries: list[str] = []
         for sequence_dir in sorted(dirs):
             if scene_cache:
-                entry = (sequence_dir / "shared" / "raw_frame_id.npy").relative_to(data_root).as_posix()
+                # Cm scene loader expects sequence directories; the shared
+                # frame-id file is only the discovery marker.
+                entry = sequence_dir.relative_to(data_root).as_posix()
                 entries.append(f"{path_prefix}/{entry}" if path_prefix else entry)
             else:
                 for side in ("left", "right"):

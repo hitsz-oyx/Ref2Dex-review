@@ -174,6 +174,7 @@ class SceneSequenceCache:
         self.raw_frame_id: np.ndarray = load_mmap(shared_dir / "raw_frame_id.npy")
         self.obj_points_world: np.ndarray = load_mmap(shared_dir / "obj_points_world.npy")
         self.obj_normals_world: np.ndarray = load_mmap(shared_dir / "obj_normals_world.npy")
+        self.obj_pose_world: np.ndarray | None = load_mmap(shared_dir / "obj_pose_world.npy") if (shared_dir / "obj_pose_world.npy").is_file() else None
         self.env_points_world: np.ndarray = load_mmap(shared_dir / "env_points_world.npy")
         self.env_normals_world: np.ndarray = load_mmap(shared_dir / "env_normals_world.npy")
         self.scene_source_id: np.ndarray = load_mmap(shared_dir / "scene_source_id.npy")
@@ -203,6 +204,8 @@ class SceneSequenceCache:
             raise ValueError(f"{self.dir}: asset_offsets must be strictly increasing")
         if self.raw_frame_id.shape != (self.obj_points_world.shape[0],):
             raise ValueError(f"{self.dir}: raw_frame_id length must match obj frames")
+        if self.obj_pose_world is not None and self.obj_pose_world.shape != (self.obj_points_world.shape[0], 4, 4):
+            raise ValueError(f"{self.dir}: obj_pose_world must be [T,4,4]")
         storage = str(self.shared_meta.get("environment_storage", "static_world"))
         if storage not in SUPPORTED_ENV_STORAGE:
             raise ValueError(f"{self.dir}: unsupported environment_storage {storage!r}")
@@ -232,6 +235,8 @@ class SceneSequenceCache:
             "hand_points_world": load_mmap(directory / "hand_points_world.npy"),
             "hand_normals_world": load_mmap(directory / "hand_normals_world.npy"),
             "hand_root_pose_world": load_mmap(directory / "hand_root_pose_world.npy"),
+            "hand_mesh_vertices_world": load_mmap(directory / "hand_mesh_vertices_world.npy") if (directory / "hand_mesh_vertices_world.npy").is_file() else None,
+            "hand_mesh_faces": load_mmap(directory / "hand_mesh_faces.npy") if (directory / "hand_mesh_faces.npy").is_file() else None,
             "candidate_offsets": load_mmap(directory / "candidate_offsets.npy"),
             "candidate_indices": load_mmap(directory / "candidate_indices.npy"),
         }

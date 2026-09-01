@@ -1,5 +1,47 @@
 # CmDecoder AI 自主决策记录
 
+## 2026-08-29 — 三卡 decoder 保持总 optimizer step 不变并扩宽 epoch
+
+- scope: task:CmDecoder
+- anchor: run `cm_decoder_20260829_225518`
+
+**未指定点**
+
+用户先确认将 decoder 分到 GPU0/1/2、global batch 设为 48，随后明确总 step 数保持不变并扩宽 epoch。
+
+**实际选择**
+
+每卡 batch16、global batch48；设置 `train.max_steps=143110` 保证总 optimizer step 精确不变，`train.epochs=30` 作为外层安全上限；从头使用同一混合 Cm snapshot，学习率保持 `3e-4`。
+
+**选择理由与影响**
+
+现有 runner 在三卡下会把每个 epoch 的 loader 长度约缩为三分之一；30 epoch 与 max_steps 组合可保持原 143110 次 optimizer update，同时扩大每步样本量。该选择增加总样本暴露量，不能把与 global batch16 的收敛曲线直接按 epoch 横向等同。
+
+**可逆性 / 是否需要用户确认**
+
+仅新增训练 run；用户已明确批准该预算变更，可停止并从本 run checkpoint 恢复。
+
+## 2026-08-29 — 单卡并行启动混合 Cm 驱动的 CmDecoder
+
+- scope: task:CmDecoder
+- anchor: run `cm_decoder_20260829_203306`
+
+**未指定点**
+
+用户确认使用当前混合 Cm 的 `latest.pt`、沿用上一版 CmDecoder 训练设置，并要求 Cm 与 CmDecoder 并行；随后将资源方案收敛为单卡。
+
+**实际选择**
+
+在物理 GPU 1 启动全新 CmDecoder 输出目录，使用 `meta.use_cached_cm_tokens=false` 在线加载并冻结启动时的混合 Cm snapshot；保持上一版 batch/epoch/学习率/数据合同，仅用命令行覆盖 checkpoint、10 epochs 和 `3e-4` 学习率。
+
+**选择理由与影响**
+
+GPU 1 在启动时有足够余量，且与继续运行的 Cm 共享资源无需停止现有实验。在线 token 保证 decoder 使用的表示与指定 snapshot 一致；snapshot 在启动时固定，Cm 后续产生的新 `latest.pt` 不会影响本次训练。
+
+**可逆性 / 是否需要用户确认**
+
+仅新增训练进程与输出，完全可停止/删除；关键资源与训练方案已获用户确认。
+
 ## 2026-08-27 — 新 Cm checkpoint 训练 decoder 时在线重算 Cm token
 
 - branch: working tree

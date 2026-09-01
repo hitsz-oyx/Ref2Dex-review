@@ -3,6 +3,7 @@ _base_: src/task/Cm/configs/active/hrdexdb_finetune_cm64.yaml
 name: cm_hrdexdb_inspire_f1_finetune_cm64_additive
 
 meta:
+  coordinate_frame: object_pose_t
   cm_dim: 64
   # Preserve the current C=64 additive GRAB semantics while adapting the
   # DenseToken and Cm head to Inspire-F1 geometry.
@@ -28,14 +29,14 @@ data:
   hrdexdb_only: true
   hrdexdb_source_prefix: inspire_f1
   use_dense_cache: false
-  hrdexdb_root: data/processed_data/cm_decoder/hrdexdb_all_v1/v4
-  hrdexdb_manifest: data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json
+  hrdexdb_root: data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4
+  hrdexdb_manifest: data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/selection_all_object_disjoint_seed42.json
   batch_size: 32
   val_batch_size: 32
   min_stride: 1
   max_stride: 10
-  val_strides: [1, 5, 10]
-  test_strides: [1, 5, 10]
+  val_strides: [2]
+  test_strides: [2]
 
 train:
   # Fresh 202300-step fine-tune phase; do not resume the source run's

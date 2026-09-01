@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.base import make_default_eval_sampler, make_file_split_dataloaders
 from src.task.correspondence_ptv3_v2.sampling import sample_object_indices, stable_frame_seed
+from src.task.Cm.dataset.surface_sampling import sample_surface_spec, evaluate_surface
 
 
 # Cm cache separates sequence-shared object states from hand-side states.
@@ -195,11 +196,13 @@ class Stage4CmDataset(Dataset):
         self.effective_fps: float | None = None
         # 预展开 (file, frame_idx) 样本列表，便于 __len__/__getitem__ 直接索引
         self._samples: list[tuple[Path, int]] = []
+        observed_frames: set[str] = set()
         for path in self.file_paths:
             shared_path = path.parent / "shared.npz"
             if not shared_path.exists():
                 raise FileNotFoundError(f"{path}: missing shared sequence file {shared_path}")
             with np.load(shared_path, allow_pickle=False) as shared, np.load(path, allow_pickle=False) as hand:
+                observed_frames.add("object_pose_t" if "obj_pose_world" in shared.files else "hand_root_t")
                 missing_shared = REQUIRED_SHARED_FIELDS.difference(shared.files)
                 missing_hand = REQUIRED_HAND_FIELDS.difference(hand.files)
                 if missing_shared:
@@ -262,6 +265,16 @@ class Stage4CmDataset(Dataset):
                                 if float(flow_norm) < self.min_object_flow_norm:
                                     continue
                             self._samples.append((path, current))
+        if len(observed_frames) != 1:
+            raise ValueError(
+                f"Cm Stage4 file split mixes coordinate frames: {sorted(observed_frames)}"
+            )
+        self.detected_coordinate_frame = next(iter(observed_frames))
+        if self.coordinate_frame != self.detected_coordinate_frame:
+            raise ValueError(
+                f"Cm Stage4 coordinate_frame={self.coordinate_frame!r} disagrees with cache "
+                f"({self.detected_coordinate_frame!r})"
+            )
         if max_samples is not None and int(max_samples) > 0:
             self._samples = self._samples[:int(max_samples)]
         if self.train_strides is not None and manifest_samples is not None:
@@ -327,8 +340,12 @@ class Stage4CmDataset(Dataset):
             int(np.random.default_rng(stride_seed).integers(self.min_stride, self.max_stride + 1))
         )
         future = current + stride
-        # 当前帧手根位姿作为世界->hand_root_t 的变换源
-        pose = data["hand_root_pose_world"][current]
+        if self.coordinate_frame == "object_pose_t":
+            if "obj_pose_world" not in data:
+                raise ValueError(f"{path}: object_pose_t requested but obj_pose_world is missing")
+            pose = data["obj_pose_world"][current]
+        else:
+            pose = data["hand_root_pose_world"][current]
         # 5cm 候选物点 mask：仅从这些点中再采 512 个作为运行时物点
         candidate = np.asarray(data["obj_candidate_mask_5cm"][current], dtype=bool)
         selected_idx, valid = sample_object_indices(candidate, num_samples=self.num_obj_points, seed=object_seed)
@@ -339,14 +356,26 @@ class Stage4CmDataset(Dataset):
         obj_normals = _normal_world_to_hand(data["obj_normals_world"][current, safe], pose)
         # 无效物点用 0 占位，模型/损失侧会用 valid mask 跳过
         obj_current[~valid] = obj_future[~valid] = obj_normals[~valid] = 0.0
-        # 手部：当前帧与未来帧都转到 hand_root_t，flow = future - current
-        hand_current = _world_to_hand(data["hand_points_world"][current], pose)
-        hand_future = _world_to_hand(data["hand_points_world"][future], pose)
+        # Hand surface samples are randomized per transition while sharing one
+        # face/barycentric specification across both endpoints.
+        mesh_v = data.get("hand_mesh_vertices_world")
+        mesh_f = data.get("hand_mesh_faces")
+        if mesh_v is not None and mesh_f is not None and np.asarray(mesh_v).ndim == 3 and np.asarray(mesh_v).shape[1] > 0:
+            face, bary = sample_surface_spec(mesh_v[current], mesh_f, self.num_hand_points, object_seed ^ 0xA11CE)
+            hand_world, hand_normals_world = evaluate_surface(mesh_v[current], mesh_f, face, bary)
+            hand_future_world, _ = evaluate_surface(mesh_v[future], mesh_f, face, bary)
+            hand_current = _world_to_hand(hand_world, pose)
+            hand_future = _world_to_hand(hand_future_world, pose)
+            hand_normals = _normal_world_to_hand(hand_normals_world, pose)
+        else:
+            hand_current = _world_to_hand(data["hand_points_world"][current], pose)
+            hand_future = _world_to_hand(data["hand_points_world"][future], pose)
+            hand_normals = _normal_world_to_hand(data["hand_normals_world"][current], pose)
         return {
             "obj_points": torch.from_numpy(obj_current), "obj_normals": torch.from_numpy(obj_normals),
             "obj_flow_gt": torch.from_numpy(obj_future - obj_current),
             "hand_points": torch.from_numpy(hand_current),
-            "hand_normals": torch.from_numpy(_normal_world_to_hand(data["hand_normals_world"][current], pose)),
+            "hand_normals": torch.from_numpy(hand_normals),
             "hand_flow": torch.from_numpy(hand_future - hand_current),
             "obj_valid_mask": torch.from_numpy(valid), "selected_obj_idx": torch.from_numpy(selected_idx.astype(np.int64)),
             "raw_frame_id": torch.tensor(raw_frame), "next_raw_frame_id": torch.tensor(int(data["raw_frame_id"][future])),
@@ -415,10 +444,18 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         [] if val_loader is None else val_loader.dataset.file_paths,
         [] if test_loader is None else test_loader.dataset.file_paths,
     )
+    observed_frames = {train_loader.dataset.detected_coordinate_frame}
+    if val_loader is not None:
+        observed_frames.add(val_loader.dataset.detected_coordinate_frame)
+    if test_loader is not None:
+        observed_frames.add(test_loader.dataset.detected_coordinate_frame)
+    if len(observed_frames) != 1:
+        raise ValueError(f"Cm Stage4 splits mix coordinate frames: {sorted(observed_frames)}")
+    detected_coordinate_frame = next(iter(observed_frames))
     # Read shared metadata through the Dataset merger rather than side NPZ alone.
     first = train_loader.dataset.file_paths[0]
     data = train_loader.dataset._load_file(first)
-    metadata.update({"schema_name": str(np.asarray(data["schema_name"]).item()), "coordinate_frame": "hand_root_t",
+    metadata.update({"schema_name": str(np.asarray(data["schema_name"]).item()), "coordinate_frame": detected_coordinate_frame,
                      "num_obj_pool": int(data["obj_points_world"].shape[1]), "num_obj_points": int(meta_cfg.num_obj_points),
                      "num_hand_points": int(data["hand_points_world"].shape[1]), "min_stride": common["min_stride"],
                      "max_stride": common["max_stride"], "ds_rate": int(train_loader.dataset.ds_rate),

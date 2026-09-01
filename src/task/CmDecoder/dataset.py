@@ -83,6 +83,28 @@ def _robot_hand_mesh(io: Any, urdf: Any, qpos: np.ndarray, mesh_cache: dict):
     return np.concatenate(vertices), np.concatenate(faces)
 
 
+def _robot_hand_surface_mesh(io: Any, urdf: Any, mesh_cache: dict):
+    """Return static link-local visual mesh and the link owning each face."""
+    vertices, faces, face_links = [], [], []
+    offset = 0
+    for visual in urdf.visuals:
+        if io.is_arm_visual(visual):
+            continue
+        key = (visual.mesh_path.resolve(), tuple(float(x) for x in visual.scale), visual.origin.tobytes())
+        if key not in mesh_cache:
+            mesh_cache[key] = io.transformed_mesh(io.load_mesh(visual.mesh_path), visual.origin, visual.scale)
+        local = mesh_cache[key]
+        value = np.asarray(local.vertices, dtype=np.float32)
+        indices = np.asarray(local.indices, dtype=np.int64)
+        vertices.append(value)
+        faces.append(indices + offset)
+        face_links.extend([str(visual.link)] * len(indices))
+        offset += len(value)
+    if not vertices:
+        raise RuntimeError("No hand visual mesh found in Inspire F1 URDF")
+    return np.concatenate(vertices), np.concatenate(faces), np.asarray(face_links, dtype=object)
+
+
 def _robot_hand_binding(io: Any, urdf: Any, face: np.ndarray, bary: np.ndarray, mesh_cache: dict):
     """Recover static link groups and link-local sampled points for a surface spec.
 
@@ -299,7 +321,7 @@ class LayeredCacheDataset(Dataset):
         self.include_cm_tokens = bool(include_cm_tokens)
         self.include_point_bindings = bool(include_point_bindings)
         threshold_rad = float(active_motion_threshold_deg) * np.pi / 180.0
-        for episode in episodes:
+        for episode_index, episode in enumerate(episodes):
             task_dir = self.cache_root / manifest["cache_dirs"][episode] / "task"
             task_manifest = json.loads((task_dir / "manifest.json").read_text(encoding="utf-8"))
             self._robot_types[task_dir] = str(task_manifest.get("robot_type", Path(episode).parts[0]))
@@ -409,30 +431,71 @@ class RandomHorizonGeometryDataset(Dataset):
               "obj_valid_mask", "q_t", "q_next", "delta_time_s")
 
     def __init__(self, cache_root: str, manifest_path: str, split: str, *, max_stride: int = 10,
+                 stride_values: tuple[int, ...] | list[int] | None = None,
+                 fixed_stride: int | None = None,
+                 all_strides: bool = False,
+                 coordinate_frame: str = "hand_root_t",
                  max_episodes: int | None = None, seed: int = 42):
         self.cache_root = Path(cache_root).expanduser().resolve()
         manifest = json.loads(Path(manifest_path).expanduser().read_text(encoding="utf-8"))
         self.max_stride = int(max_stride)
         if self.max_stride < 1:
             raise ValueError("max_stride must be positive")
+        self.coordinate_frame = str(coordinate_frame)
+        if self.coordinate_frame not in {"hand_root_t", "object_pose_t"}:
+            raise ValueError(f"Unsupported coordinate_frame={self.coordinate_frame!r}")
+        manifest_frame = manifest.get("coordinate_frame")
+        if manifest_frame is not None and str(manifest_frame) != self.coordinate_frame:
+            raise ValueError(
+                f"Cache manifest coordinate_frame={manifest_frame!r}, requested "
+                f"{self.coordinate_frame!r}: {manifest_path}"
+            )
+        if fixed_stride is not None and int(fixed_stride) <= 0:
+            raise ValueError("fixed_stride must be positive")
+        self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
+        if stride_values is None:
+            parsed_strides = tuple(range(1, self.max_stride + 1))
+        else:
+            parsed_strides = tuple(sorted({int(value) for value in stride_values}))
+            if not parsed_strides or any(value <= 0 for value in parsed_strides):
+                raise ValueError("stride_values must contain positive integers")
+        self.stride_values = parsed_strides
+        self.all_strides = bool(all_strides)
+        if self.fixed_stride is not None and self.fixed_stride not in self.stride_values:
+            self.stride_values = tuple(sorted(set(self.stride_values) | {self.fixed_stride}))
         episodes = list(manifest["splits"][split])
         if max_episodes is not None:
             episodes = episodes[:int(max_episodes)]
         self.entries: list[tuple[Path, int, int]] = []
         self._arrays: dict[Path, dict[str, np.ndarray]] = {}
         self._robot_types: dict[Path, str] = {}
-        for episode in episodes:
+        for episode_index, episode in enumerate(episodes):
             geometry = self.cache_root / manifest["cache_dirs"][episode] / "geometry"
             geometry_manifest = json.loads((geometry / "manifest.json").read_text(encoding="utf-8"))
+            geometry_frame = geometry_manifest.get("coordinate_frame")
+            if geometry_frame is not None and str(geometry_frame) != "world":
+                raise ValueError(f"Geometry cache must be world coordinates, got {geometry_frame!r}: {geometry}")
+            if self.coordinate_frame == "object_pose_t" and not (geometry / "obj_pose_world.npy").is_file():
+                raise ValueError(f"object_pose_t requires obj_pose_world.npy: {geometry}")
             self._robot_types[geometry] = str(geometry_manifest.get("robot_type", Path(episode).parts[0]))
             source_ids = np.load(geometry / "source_frame_id.npy", mmap_mode="r", allow_pickle=False)
             n = len(source_ids)
-            # One current frame per sample; choose a stable pseudo-random stride.
-            for frame in range(n - 1):
-                stride = 1 + ((frame * 1009 + int(seed) * 9176 + len(self.entries)) % self.max_stride)
-                target = frame + stride
-                if target < n and int(source_ids[target]) - int(source_ids[frame]) == stride:
-                    self.entries.append((geometry, frame, stride))
+            if self.fixed_stride is not None or self.all_strides:
+                candidate_strides = (self.fixed_stride,) if self.fixed_stride is not None else self.stride_values
+                for frame in range(n - 1):
+                    for stride in candidate_strides:
+                        target = frame + int(stride)
+                        if target < n and int(source_ids[target]) - int(source_ids[frame]) == int(stride):
+                            self.entries.append((geometry, frame, int(stride)))
+            else:
+                # One current frame per sample; choose a stable pseudo-random stride.
+                for frame in range(n - 1):
+                    stride = self.stride_values[
+                        (frame * 1009 + episode_index * 9176 + int(seed) * 7919) % len(self.stride_values)
+                    ]
+                    target = frame + int(stride)
+                    if target < n and int(source_ids[target]) - int(source_ids[frame]) == int(stride):
+                        self.entries.append((geometry, frame, int(stride)))
 
     def __len__(self):
         return len(self.entries)
@@ -443,13 +506,18 @@ class RandomHorizonGeometryDataset(Dataset):
         if geometry not in self._arrays:
             names = ("hand_points_world", "hand_normals_world", "obj_points_world",
                      "obj_normals_world", "wrist_pose_world", "q_full", "frame_time")
+            if self.coordinate_frame == "object_pose_t":
+                names = names + ("obj_pose_world",)
             self._arrays[geometry] = {
                 name: np.load(geometry / f"{name}.npy", mmap_mode="r", allow_pickle=False)
                 for name in names
             }
         a = self._arrays[geometry]
         target = frame + stride
-        wrist = np.asarray(a["wrist_pose_world"][frame], dtype=np.float32)
+        wrist = np.asarray(
+            a["obj_pose_world"][frame] if self.coordinate_frame == "object_pose_t" else a["wrist_pose_world"][frame],
+            dtype=np.float32,
+        )
         hand = np.asarray(a["hand_points_world"][frame], dtype=np.float32)
         hand_target = np.asarray(a["hand_points_world"][target], dtype=np.float32)
         obj = np.asarray(a["obj_points_world"][frame], dtype=np.float32)
@@ -471,6 +539,7 @@ class RandomHorizonGeometryDataset(Dataset):
             "q_t": torch.from_numpy(np.array(q_t, dtype=np.float32, copy=True)),
             "q_next": torch.from_numpy(np.array(q_next, dtype=np.float32, copy=True)),
             "delta_time_s": torch.tensor(float(a["frame_time"][target] - a["frame_time"][frame]), dtype=torch.float32),
+            "stride": torch.tensor(int(stride), dtype=torch.long),
         }
         return sample
 
@@ -493,10 +562,26 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         cache_kwargs = dict(max_episodes=getattr(data_cfg, "max_episodes", None), max_frames_per_episode=getattr(data_cfg, "max_frames_per_episode", None), active_motion_only=bool(getattr(data_cfg, "active_motion_only", False)), active_motion_threshold_deg=float(getattr(data_cfg, "active_motion_threshold_deg", 0.5)), require_30hz_pair=bool(getattr(data_cfg, "require_30hz_pair", True)), episode_filter=getattr(data_cfg, "episode_filter", None), include_cm_tokens=bool(getattr(meta_cfg, "use_cached_cm_tokens", False)), include_point_bindings=bool(getattr(meta_cfg, "use_cached_point_bindings", False)))
         random_horizon = int(getattr(data_cfg, "random_horizon_max_stride", 0))
         if random_horizon > 0:
-            random_kwargs = dict(max_stride=random_horizon, seed=seed)
+            stride_values = getattr(data_cfg, "random_horizon_stride_values", None)
+            if stride_values is not None:
+                stride_values = tuple(int(value) for value in stride_values)
+                random_horizon = max(random_horizon, max(stride_values))
+            coordinate_frame = str(getattr(meta_cfg, "coordinate_frame", "hand_root_t"))
+            random_kwargs = dict(
+                max_stride=random_horizon,
+                stride_values=stride_values,
+                coordinate_frame=coordinate_frame,
+                seed=seed,
+            )
             train = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "train", **random_kwargs)
-            val = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "val", **random_kwargs)
-            test = RandomHorizonGeometryDataset(str(meta_cfg.cache_root), str(manifest_path), "test", **random_kwargs)
+            val = RandomHorizonGeometryDataset(
+                str(meta_cfg.cache_root), str(manifest_path), "val",
+                **{**random_kwargs, "all_strides": bool(getattr(data_cfg, "eval_all_strides", False))}
+            )
+            test = RandomHorizonGeometryDataset(
+                str(meta_cfg.cache_root), str(manifest_path), "test",
+                **{**random_kwargs, "all_strides": bool(getattr(data_cfg, "eval_all_strides", False))}
+            )
         else:
             train = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "train", **cache_kwargs)
             val = LayeredCacheDataset(str(meta_cfg.cache_root), str(manifest_path), "val", **cache_kwargs)

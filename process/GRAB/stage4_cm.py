@@ -128,6 +128,8 @@ def build_shared_sequence(
         "coordinate_frame": np.asarray("world"),
         "obj_points_world": np.asarray(source["obj_points_world"], dtype=np.float32),
         "obj_normals_world": np.asarray(source["obj_normals_world"], dtype=np.float32),
+        "obj_pose_world": np.asarray(source.get("obj_root_pose"), dtype=np.float32)
+        if source.get("obj_root_pose") is not None else np.broadcast_to(np.eye(4, dtype=np.float32), (len(source["obj_points_world"]), 4, 4)).copy(),
         "obj_point_id": np.asarray(source["obj_point_id"], dtype=np.int32),
     }
 
@@ -169,6 +171,10 @@ def build_hand_sequence(
         "hand_root_pose_world": hand_root_pose_world,
         "hand_points_world": hand_world,
         "hand_normals_world": hand_normals_world,
+        "hand_mesh_vertices_world": np.asarray(source.get(f"{side}_hand_mesh_vertices_world"), dtype=np.float32)
+        if source.get(f"{side}_hand_mesh_vertices_world") is not None else np.empty((0, 0, 3), dtype=np.float32),
+        "hand_mesh_faces": np.asarray(source.get(f"{side}_hand_mesh_faces"), dtype=np.int32)
+        if source.get(f"{side}_hand_mesh_faces") is not None else np.empty((0, 3), dtype=np.int32),
         "hand_point_id": np.asarray(source[f"{side}_hand_point_id"], dtype=np.int32),
         "hand_cano_points": hand_cano_points,
         "hand_finger_id": np.asarray(source[f"{side}_hand_finger_id"], dtype=np.int32),

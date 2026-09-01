@@ -1,5 +1,276 @@
 # CmDecoder 修改记录
 
+## 2026-09-01 — 提交 Cm/CmDecoder 表面采样与 object-pose 训练链路
+
+- change_level: L3（训练/cache 迁移与长时任务）+ L2（采样、坐标系、GT、cache/schema）
+- approval: user-approved（用户确认 V1.1 计划并要求提交相关更改）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- post-commit: 已提交（以 Git 历史为准）
+- scope: `process/GRAB`、`process/common`、`src/task/Cm`、`src/task/CmDecoder` 及定向测试
+
+**文件**
+
+- `process/GRAB/build_cm_split.py` — 支持 scene cache 的序列发现和 manifest 路径。
+- `process/GRAB/raw.py` — 传递手部 mesh 顶点与面。
+- `process/GRAB/stage4_cm.py` — 写入物体姿态和手部 mesh 字段。
+- `process/GRAB/stage4_cm_scene.py` — 使用完整物体表面池并写入物体姿态。
+- `process/common/object_cache_v2.py` — 转换 cache 时保留物体姿态及手部 mesh 字段。
+- `src/task/Cm/configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` — 对齐当前 object-pose、surface512 和 Inspire-F1 stride 配置。
+- `src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yaml` — 对齐 HRDexDB Inspire-F1 finetune 数据合同。
+- `src/task/Cm/dataset/cache_schema.py` — 扩展 cache schema 字段合同。
+- `src/task/Cm/dataset/hrdexdb.py` — 支持姿态坐标、表面池和数据筛选。
+- `src/task/Cm/dataset/object_v2.py` — 支持新的物体表面与姿态字段。
+- `src/task/Cm/dataset/scene.py` — 支持 scene cache 新字段和候选语义。
+- `src/task/Cm/dataset/stage4.py` — 适配 stage4 表面采样与坐标字段。
+- `src/task/Cm/dataset/surface_sampling.py` — 提供物体/手部表面采样实现。
+- `src/task/CmDecoder/build_cache.py`、`dataset.py` — 使用运行时表面采样、`object_pose_t` 和偶数 stride pair。
+- `src/task/CmDecoder/current_cm_point_config.py`、`prepare_object_pose_cache.py`、`recompute_candidate_mask.py` — 当前 Cm 初始化配置、cache view 和可复现 mask 工具。
+- `src/task/CmDecoder/docs/plan/V1.1.md` 及 `docs/logs/*.md` — 记录最终计划、决策、实验、状态和实际修改。
+- `tests/test_cm_surface_sampling.py` — 覆盖表面采样行为。
+
+**原因**
+
+将 Cm 与 CmDecoder 的数据合同统一到物体姿态坐标系，支持物体表面 512 点采样和 Inspire-F1 偶数 stride，并保留可审计的 cache/训练入口；本次提交不包含生成的 cache、checkpoint、output 或运行进程状态。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_cm_surface_sampling.py tests/test_run_manifest.py`：5 passed。
+- `git diff --cached --check`：通过。
+- `audit_diff.py --log src/task/CmDecoder/docs/logs/modification_log.md --staged`：提交前重新运行并通过。
+
+## 2026-09-01 — Cm 停止与 CmDecoder V1.1 计划草案
+
+- change_level: L3（长时训练与大型 cache）+ L2（cache/schema、GT 和坐标系）
+- approval: pending（用户确认停止 Cm；新 Decoder 计划待定稿）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: working tree
+- post-commit: 未提交
+- scope: `task:CmDecoder` 计划和状态记录；不修改代码、cache 或训练配置
+
+**文件**
+- `src/task/CmDecoder/docs/plan/V1.1.md` — 新增使用当前 Cm `best.pt` 训练 point-flow Decoder 的 cache、object_pose_t 坐标合同、stride、token sidecar、验证和回滚计划。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 记录 Cm 已停止及计划待确认状态。
+
+**原因**
+用户要求停止当前 Cm，并在处理 cache 与坐标系后使用该版本训练 CmDecoder；现有旧 hand-root/v2 task cache 与当前 Cm 的 `object_pose_t` 合同不兼容。
+
+**验证**
+- 已确认旧 Cm torchrun 及其 rank 进程退出。
+- 已读取当前 CmDecoder V1 指导、V1 plan、架构/决策/实验日志、v4 geometry manifest 和当前 Cm 配置。
+- 仅新增文档；未重建 cache、未修改代码、未启动 Decoder 训练。
+
+## 2026-09-01 — CmDecoder V1.1 object_pose_t cache 与训练启动
+
+- change_level: L3（长时三卡训练）+ L2（cache/schema、坐标系和采样合同）
+- approval: user-approved（用户确认 V1.1 计划并授权执行）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: working tree
+- post-commit: 未提交
+- scope: `task:CmDecoder` runtime pair cache、配置、训练进程和日志
+
+**文件与产物**
+- `src/task/CmDecoder/dataset.py` — `RandomHorizonGeometryDataset` 增加 `object_pose_t`、偶数 stride、全 stride eval 和 stride 记录；修正训练 stride 分布偏置。
+- `src/task/CmDecoder/prepare_object_pose_cache.py` — 新增轻量 object-pose cache manifest/symlink 生成器，避免复制 v4 geometry。
+- `src/task/CmDecoder/current_cm_point_config.py` — 新增当前 Cm C=64 point-flow Decoder 配置。
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1_object_pose_t_20260901/` — 新 cache view（manifest + geometry symlink，不复制大型数组）。
+- `outputs/cmdecoder/cm_decoder_20260901_151052/` — 新三卡 Decoder 训练输出。
+
+**原因**
+旧 CmDecoder v2 task cache 的 hand-flow 在 current-wrist frame，而当前 Cm checkpoint 使用 `object_pose_t`；本次统一坐标合同并按当前 Cm 的偶数 stride 分布训练。
+
+**验证**
+- cache manifest：576 episodes，object-disjoint train/val/test=`455/58/63`。
+- loader：train/val/test=`224551/277764/263722`，train stride 分布近似均衡，val/test 覆盖 `{2,4,6,8,10,12,14,16,18,20}`。
+- 单 batch CUDA forward/backward：输出 `[2,1538,3]`，finite，梯度存在，Cm 参数冻结。
+- 正式训练启动：world size=3，step 100 hand-flow EPE=`8.136 mm`，zero-flow=`10.734 mm`；无 OOM/NaN/NCCL 错误。
+
+## 2026-09-01 — V1.2.12 撤出 Task-local Component/data/registry
+
+- change_level: L3（破坏性目录治理与数据入口迁移）
+- approval: user-approved（用户明确确认彻底删除 Component、Task data/registry，并使用根空间）
+- skills_used: `research-change-control`
+- branch: `feature/modular-component-runtime`
+- version: `V1.2.12`（plan: `docs/plan/V1.md`, final）
+- category: `governance`、`operation`、`documentation`
+- post-commit: 未提交；真实数据、cache、checkpoint、output 和运行进程未触碰
+- scope: `src/task/CmDecoder/components/`、`data/`、`registry/`、配置和当前目录说明
+
+**文件**
+
+- 删除 Task-local Component 清单、数据软链接、路径 registry 及根级兼容软链接。
+- `config.py` 移除 Component 选择并更新细分版本；新增 V1 执行计划。
+- 状态、记忆和根/Task 文档同步当前入口，历史实验记录保留。
+- `src/task/CmDecoder/docs/logs/repo_memory.md` — 记录 CmDecoder 数据入口统一回到根空间。
+- `src/task/CmDecoder/docs/logs/architecture_log.md` — 标记当前入口边界并区分历史架构描述。
+
+**验证**
+
+- 入口扫描无残留；CmDecoder 配置导入成功。
+- 全量 pytest 与 `git diff --check` 通过。
+
+## 2026-08-30 — 完成 held-out Inspire test rollout
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验产物与文档；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新 test rollout 证据与泛化边界。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-025，记录 test episode、协议、指标和结论。
+
+**原因**
+
+响应用户要求将当前 best 的 Inspire rollout 改到 test split；使用 `inspire_f1/bamboo_basket/5`，不影响三卡训练。
+
+**验证**
+
+manifest 核对该 episode 属于 test；32 个有效 pair 成功生成 NPZ/PNG，point EPE mean/final=`6.896/11.415 mm`，无运行错误。
+
+## 2026-08-30 — 核对 Inspire rollout 序列的 split 归属
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md`、`experiment_log.md` — 明确 EXP-023 使用的 `inspire_f1/apple/2` 属于 train split，限制其泛化解释。
+
+**原因**
+
+响应用户询问 rollout 使用 train 还是 test；通过读取 `selection_576_seed42.json` 的 `splits` 字段核对，`apple/2` 在 train 列表中。
+
+**验证**
+
+manifest split 计数为 train/val/test=`455/58/63`，`inspire_f1/apple/2` 命中 train，未命中 val/test。
+
+## 2026-08-30 — 完成 GRAB→Inspire 无配对重定向诊断
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验产物与文档；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 同步跨手型重定向诊断结论。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-024，记录 source hand-flow、target robot、结果和边界。
+
+**原因**
+
+响应用户澄清：保持当前 Cm/decoder checkpoint，改用 GRAB 数据产生 Cm tokens 驱动 Inspire F1，而不是使用 Inspire 数据产生的 Cm。
+
+**验证**
+
+已有 `grab_retarget.py` 完成 32 帧 CUDA 运行并生成 NPZ/PNG；无异常退出。机器人 centroid-object 距离末帧 `471.5 mm`，显示当前序列明显漂移。
+
+## 2026-08-30 — 启动 EXP-023 rollout Viser 可视化
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部可视化服务；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 记录当前 Viser 播放地址。
+
+**原因**
+
+响应用户要求直接查看当前 best 的 rollout；使用已有 `inspire_rollout.py --load-trajectory --serve`，不重新计算轨迹、不影响三卡训练。
+
+**验证**
+
+Viser 已监听 `*:8096`，控制台输出 `Inspire rollout viewer: http://localhost:8096`。
+
+## 2026-08-30 — 完成 EXP-022 best 的 action-conditioned rollout
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验产物与文档；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 同步 rollout 结论与下一步。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-023，记录命令、协议、指标、对比和结论。
+
+**原因**
+
+响应用户要求，用 EXP-022 当前 `best.pt` 检查 rollout 效果；保持三卡训练不停止，评估放在物理 GPU3。
+
+**验证**
+
+rollout 生成 31 个有效 pair，trajectory/PNG 均成功写出；point EPE mean/final=`7.325/13.450 mm`，wrist=`4.830/9.574 mm`，无运行错误。
+
+## 2026-08-30 — 同步 EXP-022 epoch 16 验证与当前进度
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档；change_level: L0；approval: auto
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新 step、epoch、吞吐、ETA、最佳 checkpoint 与风险判断。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 记录 epoch 1–16 validation 曲线和当前最佳证据。
+
+**改动原因**
+
+响应训练状态检查；仅同步已有运行证据，不修改训练进程、配置或科研合同。
+
+**验证**
+
+进程、三卡利用率、`train.log`、`metrics.jsonl` 和 checkpoint payload 已交叉核对；当前 step 约 `79200`，best 为 epoch 15 / step `71550`、`1.4249 mm`，未发现训练错误。
+
+## 2026-08-29 — 启动三卡 global batch 48、固定总 step 的 CmDecoder
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部长时实验；change_level: L3；approval: user-approved
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新三卡 run 状态和 global batch/step 合同。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-022，记录命令、snapshot、预算和早期 smoke 证据。
+- `src/task/CmDecoder/docs/logs/decision_log.md` — 记录保持总 step、扩宽 epoch 的选择及样本暴露量影响。
+
+**改动原因**
+
+按用户确认停止单卡试跑并在 GPU0/1/2 启动 decoder；显式打开 distributed，设置 global batch48、`max_steps=143110`、30 epoch。首次启动因 distributed 开关保护退出，补齐 `train.distributed.enable=true` 后启动成功。
+
+**验证**
+
+`train_setup` 已报告 `world_size=3 per_device_batch=16 global_batch=48 total_steps=143110`；step500 正常记录，无 OOM/NaN。
+
+## 2026-08-29 — 记录三卡 Cm 停止后的 decoder 待迁移状态
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验文档；change_level: L3；approval: user-approved
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新单卡 decoder 当前 step，并记录 Cm 已停止及三卡迁移待确认项。
+
+**改动原因**
+
+用户要求停止 Cm 并将 GPU0/1/2 改用于 CmDecoder；当前 decoder 尚无 epoch checkpoint，故在训练预算和续训语义确认前保持单卡进程运行，避免丢弃已完成的约 `11500` steps。
+
+## 2026-08-29 — 启动混合 Cm 驱动的单卡 CmDecoder 实验
+
+- branch: working tree
+- post-commit: 未提交
+- scope: task 内部实验；change_level: L3；approval: user-approved
+
+**文件**
+
+- `src/task/CmDecoder/docs/logs/status_log.md` — 更新当前运行、资源占用与下一步。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-021，记录 checkpoint、命令、配置、产物和早期证据。
+- `src/task/CmDecoder/docs/logs/decision_log.md` — 记录单卡并行与启动时固定 Cm snapshot 的实现选择。
+
+**改动原因**
+
+响应用户确认：不停止现有 Cm，使用当前混合 Cm `latest.pt`，按上一版 CmDecoder 合同在单卡 GPU1 启动新训练。启动 smoke 已验证 `world_size=1`、总步数 `143110`，训练进程与日志持续更新；未修改模型源码或基线配置。
+
 ## 2026-08-27 — 同步新版 Inspire decoder 的 epoch 1 状态
 
 - branch: working tree
@@ -1092,3 +1363,96 @@ v1 目标点坐标系会消除腕部运动；用户要求保留 v1，创建语�
 **改动原因**
 
 保持 candidate mask 语义不变，同时降低 4096×1538 距离计算的 CPU 和峰值内存；单 episode 探针约从 192.6 s 降至 37.4 s。
+## 2026-08-30 — 物体表面采样 cache 移除 5cm 查询
+
+- branch: `feature/modular-component-runtime`
+- scope: HRDexDB CmDecoder cache builder/loader
+- change_level: L2（用户已确认）
+- approval: 用户确认物体表面随机采样 512 点，不再按 5cm 邻域过滤
+
+**修改与验证**
+
+- `src/task/CmDecoder/build_cache.py` 直接将完整 4096 点 object surface pool 标为有效，保留旧 mask 文件名以维持 manifest/loader 兼容。
+- 新 cache 根目录为 `data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_20260830`。
+- 相关回归测试通过；导出任务已重新启动。
+## 2026-08-30 — Inspire-F1 逐帧 mesh/FK 优化与 CUDA 批量变换
+
+- branch: `feature/modular-component-runtime`
+- scope: HRDexDB cache builder
+- change_level: L2（用户已确认）
+- approval: 用户要求继续优化并启用 GPU
+
+**修改**
+
+- `src/task/CmDecoder/build_cache.py`：每帧只调用一次 `compute_link_transforms`，直接变换 1538 个已采样局部表面点；物体表面点和法线也支持批量 CUDA 变换。移除逐帧百万级完整机器人 mesh 构造路径。
+- builder 新增 `--device cpu|cuda[:index]`，cache manifest 记录 `transform_device`。
+
+**验证**
+
+- 代表性 episode：旧路径约 700–1,500 秒；优化后完整 builder CPU 5.11 秒、CUDA 4.44 秒。
+- CPU/CUDA sampled-point 输出最大差 `5.96e-8`，与旧缓存手点最大差约 `2.09e-7`。
+- 相关测试通过，当前全量 Inspire-F1 使用 `--workers 8 --device cuda:0` 导出。
+
+## 2026-08-30 — 重新计算 Inspire-F1 5cm candidate mask sidecar
+
+- change_level: L2（恢复数据帧过滤判据，新增 cache sidecar）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:CmDecoder geometry cache / Cm 数据筛选
+
+**文件与产物**
+
+- `src/task/CmDecoder/recompute_candidate_mask.py` — 新增可复现的 CPU/GPU 逐帧 5cm 查询工具，支持批量 `torch.cdist` 和原子 sidecar 写入。
+- `data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/episodes/*/geometry/obj_candidate_mask_5cm_recomputed.npy` — 576 个 episode 的独立重算 mask（生成数据，不纳入版本控制）。
+- `src/task/CmDecoder/docs/logs/status_log.md` — 记录进度、统计和当前未切换状态。
+
+**原因**
+
+恢复旧版“没有任何 5cm object candidate 的 current frame 不进入训练”的帧级规则，同时不改变新 cache 的 4096 点 object surface pool 和运行时 512 点随机采样。sidecar 与当前全真兼容文件分离，避免训练进程读到半成品或发生行空间变化。
+
+**验证**
+
+- 命令：`CUDA_VISIBLE_DEVICES=7 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYTHONPATH=. python src/task/CmDecoder/recompute_candidate_mask.py --root data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4 --device cuda:0 --frame-batch 32`。
+- 结果：576/576 episode、362,027 帧全部生成；输出 mask 均为 `[T,4096] bool`。全量 point-level 有效率 `0.235443`；train/val/test transition-level 有效帧率分别为 `56.015%/58.529%/59.248%`。
+- GPU7 计算耗时约 2.2 分钟；当前 GPU0/1/2 的 Cm 混合训练进程保持运行，未被此任务停止或修改。
+
+## 2026-08-31 — 切换到当前 Cm 的 Inspire-F1 逐点解码器训练
+
+- change_level: L3（停止三卡长时任务并启动新的三卡训练）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:Cm 与 Task:CmDecoder 训练进程切换
+
+**文件与运行**
+
+- 停止当前 `src.task.Cm.src.train` 三卡进程，保留其 `best.pt/latest.pt`；
+- 预检使用当前 Cm `best.pt`、`CmPointFlowModel` 和 Inspire-F1 object-disjoint v2 cache，前向/反向通过，输出手流形状 `[B,1538,3]`，可训练参数 `21,284`；
+- 启动 `outputs/cmdecoder/cm_decoder_20260831_165400`，冻结 Cm checkpoint 为 `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/checkpoints/best.pt`，`meta.use_cached_cm_tokens=false`，GPU0/1/2、global batch=48、30 epoch/143110 steps。
+
+**验证**
+
+- 旧 Cm torchrun 与 rank 已退出；
+- 新 decoder step `100` 已写入训练日志，初始 hand-flow EPE=`7.201 mm`、zero-flow=`10.572 mm`；无 OOM/NaN/NCCL 错误。
+
+## 2026-08-31 — 因坐标系不一致停止短暂 decoder run
+
+- change_level: L3（停止不满足坐标合同的长时任务，未改动数据）
+- approval: research-safety stop，依据用户已确认的坐标约束
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: Task:CmDecoder 训练有效性审计
+
+**发现与处置**
+
+- `outputs/cmdecoder/cm_decoder_20260831_165400` 使用的 `hrdexdb_inspire_f1_3hz/v2` task cache 由 `build_horizon_cache.py` 生成，`hand_points`、`obj_points` 和 `hand_flow` 均在 current-wrist frame；其 manifest 明确 `hand_flow_frame=current_wrist`、`horizon_stride=10`。
+- 当前冻结 Cm `best.pt` 的 checkpoint metadata 为 `coordinate_frame=object_pose_t`；Cm PointFlow 前向虽然可运行，但坐标语义不一致。
+- 该 run 仅到 step `300` / epoch `1`，未写入 checkpoint，已安全停止；其 loss/EPE 不纳入实验结论。
+
+**后续边界**
+
+- 需要从 `hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4` 的 world geometry 重新生成 object-pose task cache（并明确 stride/hand-flow frame），通过坐标合同与 loader/model smoke 后才能重启训练；旧 v2 task arrays 和 C=256 token sidecar 不复用。

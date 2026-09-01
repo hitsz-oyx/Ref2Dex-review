@@ -37,6 +37,7 @@ from src.task.Cm.dataset.cache_schema import (
     validate_scene_root,
 )
 from src.task.correspondence_ptv3_v2.sampling import stable_frame_seed
+from src.task.Cm.dataset.surface_sampling import sample_surface_spec, evaluate_surface
 
 
 # 每个 DataLoader worker 保留的 mmap 序列句柄上限（shared cache 与 side
@@ -65,8 +66,9 @@ def gather_frame_scene_inputs(
     *,
     frame: int,
     bank: int,
+    coordinate_frame: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Current-frame 512 scene points/normals in ``hand_root_t`` + valid mask.
+    """Current-frame 512 scene points/normals in object-pose frame (or legacy hand-root).
 
     Dataset 在线路径与 ``build_dense_cache`` 预计算路径共用本函数，保证
     cached DenseToken 与在线 Frozen PTv3 的输入逐位一致（parity Test D）。
@@ -82,7 +84,13 @@ def gather_frame_scene_inputs(
         np.asarray(cache.obj_normals_world[int(frame)], dtype=np.float32),
         np.asarray(cache.env_normals_world, dtype=np.float32),
     ])
-    pose = np.asarray(side_arrays["hand_root_pose_world"][int(frame)], dtype=np.float32)
+    if coordinate_frame == "object_pose_t":
+        if cache.obj_pose_world is None:
+            raise ValueError("object_pose_t requested but scene cache has no obj_pose_world")
+        pose_source = cache.obj_pose_world[int(frame)]
+    else:
+        pose_source = side_arrays["hand_root_pose_world"][int(frame)]
+    pose = np.asarray(pose_source, dtype=np.float32)
     points = _world_to_hand(scene_world[safe], pose)
     normals = _normal_world_to_hand(normals_world[safe], pose)
     points[~valid] = 0.0
@@ -152,6 +160,18 @@ class Stage4CmSceneDataset(Dataset):
 
         self.file_list = file_list
         self.sequence_dirs = self._resolve_sequence_dirs(file_list)
+        observed_frames = {
+            "object_pose_t" if SceneSequenceCache(sequence).obj_pose_world is not None else "hand_root_t"
+            for sequence in self.sequence_dirs
+        }
+        if len(observed_frames) != 1:
+            raise ValueError(f"Cm scene sequence set mixes coordinate frames: {sorted(observed_frames)}")
+        self.detected_coordinate_frame = next(iter(observed_frames))
+        if self.coordinate_frame != self.detected_coordinate_frame:
+            raise ValueError(
+                f"Cm scene coordinate_frame={self.coordinate_frame!r} disagrees with cache "
+                f"({self.detected_coordinate_frame!r})"
+            )
         self._seq_meta: dict[str, dict[str, Any]] = {}
         # key "seq|side" -> {"side_arrays", "bank", "dense"}；LRU 限量打开。
         self._open_records: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
@@ -329,27 +349,43 @@ class Stage4CmSceneDataset(Dataset):
         bank_indices = record["bank"]
         points, normals, valid = gather_frame_scene_inputs(
             cache, record["side_arrays"], bank_indices, frame=current, bank=bank,
+            coordinate_frame=self.coordinate_frame,
         )
         # 未来端：同一个 selected_idx 访问 scene pool 的 future 行（V1.md §7）。
         selected = np.asarray(bank_indices[current, bank], dtype=np.int64)
         safe = np.where(selected != INVALID_INDEX, selected, 0)
-        pose = np.asarray(record["side_arrays"]["hand_root_pose_world"][current], dtype=np.float32)
+        if self.coordinate_frame == "object_pose_t":
+            if cache.obj_pose_world is None:
+                raise ValueError(f"{sequence_dir}: object_pose_t requested but obj_pose_world is missing")
+            pose_source = cache.obj_pose_world[current]
+        else:
+            pose_source = record["side_arrays"]["hand_root_pose_world"][current]
+        pose = np.asarray(pose_source, dtype=np.float32)
         scene_future_world = np.concatenate([
             np.asarray(cache.obj_points_world[future], dtype=np.float32),
             np.asarray(cache.env_points_world, dtype=np.float32),
         ])
         obj_future = _world_to_hand(scene_future_world[safe], pose)
         obj_future[~valid] = 0.0
-        hand_current = _world_to_hand(np.asarray(record["side_arrays"]["hand_points_world"][current], dtype=np.float32), pose)
-        hand_future = _world_to_hand(np.asarray(record["side_arrays"]["hand_points_world"][future], dtype=np.float32), pose)
+        mesh_v = record["side_arrays"].get("hand_mesh_vertices_world")
+        mesh_f = record["side_arrays"].get("hand_mesh_faces")
+        if mesh_v is not None and mesh_f is not None and np.asarray(mesh_v).ndim == 3 and np.asarray(mesh_v).shape[1] > 0:
+            hand_face, hand_bary = sample_surface_spec(mesh_v[current], mesh_f, self.num_hand_points, int(stride_seed) ^ 0xA11CE)
+            hand_world, hand_normals_world = evaluate_surface(mesh_v[current], mesh_f, hand_face, hand_bary)
+            hand_future_world, _ = evaluate_surface(mesh_v[future], mesh_f, hand_face, hand_bary)
+            hand_current = _world_to_hand(hand_world, pose)
+            hand_future = _world_to_hand(hand_future_world, pose)
+            hand_normals = _normal_world_to_hand(hand_normals_world, pose)
+        else:
+            hand_current = _world_to_hand(np.asarray(record["side_arrays"]["hand_points_world"][current], dtype=np.float32), pose)
+            hand_future = _world_to_hand(np.asarray(record["side_arrays"]["hand_points_world"][future], dtype=np.float32), pose)
+            hand_normals = _normal_world_to_hand(np.asarray(record["side_arrays"]["hand_normals_world"][current], dtype=np.float32), pose)
         sample: dict[str, torch.Tensor] = {
             "obj_points": torch.from_numpy(points),
             "obj_normals": torch.from_numpy(normals),
             "obj_flow_gt": torch.from_numpy(obj_future - points),
             "hand_points": torch.from_numpy(hand_current),
-            "hand_normals": torch.from_numpy(
-                _normal_world_to_hand(np.asarray(record["side_arrays"]["hand_normals_world"][current], dtype=np.float32), pose)
-            ),
+            "hand_normals": torch.from_numpy(hand_normals),
             "hand_flow": torch.from_numpy(hand_future - hand_current),
             "obj_valid_mask": torch.from_numpy(valid),
             "selected_obj_idx": torch.from_numpy(selected.astype(np.int64)),
@@ -479,11 +515,19 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         [] if val_loader is None else [Path(p).resolve().as_posix() for p in val_loader.dataset.sequence_dirs],
         [] if test_loader is None else [Path(p).resolve().as_posix() for p in test_loader.dataset.sequence_dirs],
     )
+    observed_frames = {train_loader.dataset.detected_coordinate_frame}
+    if val_loader is not None:
+        observed_frames.add(val_loader.dataset.detected_coordinate_frame)
+    if test_loader is not None:
+        observed_frames.add(test_loader.dataset.detected_coordinate_frame)
+    if len(observed_frames) != 1:
+        raise ValueError(f"Cm scene splits mix coordinate frames: {sorted(observed_frames)}")
+    detected_coordinate_frame = next(iter(observed_frames))
     first = train_loader.dataset
     first_cache = first._get_cache(first.sequence_dirs[0])
     metadata.update({
         "schema_name": SCHEMA_NAME,
-        "coordinate_frame": "hand_root_t",
+        "coordinate_frame": detected_coordinate_frame,
         "num_obj_pool": first_cache.num_scene_pool,
         "num_env_pool": first_cache.num_env_pool,
         "num_obj_points": int(meta_cfg.num_obj_points),

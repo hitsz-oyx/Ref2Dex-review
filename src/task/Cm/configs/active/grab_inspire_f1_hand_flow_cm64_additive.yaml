@@ -2,7 +2,12 @@ _base_: src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yam
 
 name: cm_grab_inspire_f1_hand_flow_cm64_additive
 
+version_line: V1.2
+operation_version: V1.2.1
+operation_category: [experiment, data]
+
 meta:
+  coordinate_frame: object_pose_t
   # Keep the adapted DenseToken from the Inspire-F1 latest checkpoint fixed.
   freeze_dense_encoder: true
   save_dense_encoder_in_checkpoint: true
@@ -18,10 +23,15 @@ data:
   hrdexdb_only: false
   hrdexdb_source_prefix: inspire_f1
   hrdexdb_bucket_name: inspire_f1
-  root: data/processed_data/cm_object_v2_subject_template_20260820/grab
-  train_path: data/processed_data/cm_object_v2_subject_template_20260820/grab
-  base_root: data/processed_data/cm_object_v2_subject_template_20260820/grab
-  base_split_json_path: data/processed_data/cm_object_v2_subject_template_20260820/grab/splits_seed42/splits.json
+  hrdexdb_candidate_mask_name: obj_candidate_mask_5cm_recomputed.npy
+  root: data/processed_data/cm_object_v2_surface512_object_pose_20260830
+  train_path: data/processed_data/cm_object_v2_surface512_object_pose_20260830
+  base_root: data/processed_data/cm_object_v2_surface512_object_pose_20260830
+  base_split_json_path: data/processed_data/cm_object_v2_surface512_object_pose_20260830/splits_seed42/split.json
+  base_frame_activity_mask_name: candidate_active_5cm.npy
+  # Do not inherit the legacy object-v2 split descriptor; HRDexDB loader
+  # temporarily binds split_json_path to base_split_json_path when needed.
+  split_json_path: null
   base_source_names: [grab]
   # Clear the inherited three-source mapping.  The loader's audited default
   # assigns equal probability to the active buckets: grab=0.5, inspire_f1=0.5.
@@ -31,8 +41,13 @@ data:
   val_batch_size: 32
   min_stride: 1
   max_stride: 10
-  val_strides: [1, 5, 10]
-  test_strides: [1, 5, 10]
+  val_strides: [2]
+  test_strides: [2]
+  # Inspire-F1 keeps the frame-level geometry cache and samples even strides
+  # at training time; GRAB retains its independent random 1..10 policy.
+  hrdexdb_train_strides: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+  hrdexdb_val_strides: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+  hrdexdb_test_strides: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
 
 train:
   # Fresh mixed phase: only model weights are loaded; optimizer/scheduler and

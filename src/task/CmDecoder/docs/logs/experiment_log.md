@@ -1,12 +1,173 @@
 # CmDecoder 实验记录
 
-- last_updated: 2026-08-28
-- last_verified: 2026-08-28
+- last_updated: 2026-08-30
+- last_verified: 2026-08-30
 - related: [当前状态](status_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
 
 ## 当前状态
 
-已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。2026-08-24 启动 GRAB-trained MANO decoder，拟在 ARCTIC MANO 上做跨域泛化验证。2026-08-27 已启动基于新版 Inspire F1 `Cm` checkpoint 的全量 object-disjoint 3 Hz point-flow decoder；训练仍在进行，尚无最终验证结论。
+已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。2026-08-24 启动 GRAB-trained MANO decoder，拟在 ARCTIC MANO 上做跨域泛化验证。EXP-018 已有中途验证记录；EXP-021 单卡试跑未完成 epoch 1 即停止，EXP-022 已改为三卡 global batch48、保持总 step 数的正式 run。
+
+## EXP-025 — EXP-022 best 的 Inspire F1 held-out test rollout
+
+### 日期
+
+2026-08-30
+
+### 假设与边界
+
+将 EXP-023 的 action-conditioned rollout 从训练集固定序列移到 held-out test episode，检验当前 decoder 在未参与训练的 Inspire 序列上的短程状态反馈。Cm 每步仍接收该 test episode 的真实 Inspire hand-flow；因此不是完全自主策略，也不测试 GRAB→Inspire 跨手型重定向。
+
+### 配置与运行
+
+- checkpoint: `outputs/cmdecoder/cm_decoder_20260829_225518/checkpoints/best.pt`（EXP-022 epoch 15 / step 71550）；
+- manifest/split: `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_576_seed42.json` 的 `test`，episode=`inspire_f1/bamboo_basket/5`；
+- protocol: 自动选择最长连续有效链，`start_pair=510`，32 帧请求、实际 32 个有效 30 Hz pair；
+- output: `output/research/inspire_rollout_exp022_best_test_bamboo_basket5_20260830.npz` / `output/research/inspire_rollout_exp022_best_test_bamboo_basket5_20260830.png`；评估放在物理 GPU3，三卡训练不停止。
+
+### 结果
+
+- point EPE mean/final/max=`6.896/11.415/11.415 mm`，首步=`0.388 mm`；第 24 个 rollout index 起超过 `10 mm`，32 步内未超过 `20 mm`；
+- wrist translation EPE mean/final=`8.897/13.240 mm`，rotation error mean/final=`2.463/5.065°`；
+- q MAE mean/final=`2.281/4.932°`；predicted contact ratio mean/final=`4.36%/0.91%`，GT=`4.82%/0.59%`。
+
+相较 train episode EXP-023 的 point `7.325/13.450 mm`，该 test 序列短程点误差相近且末帧略低；这只是单个 held-out episode，不能外推为全 test split 泛化结论。
+
+### 结论状态
+
+`SUPPORTED`（单个 held-out test episode、action-conditioned 短程 rollout）；不支持长期闭环完全稳定或完全自主控制结论。
+
+### 产物
+
+- trajectory: `output/research/inspire_rollout_exp022_best_test_bamboo_basket5_20260830.npz`；
+- diagnostic figure: `output/research/inspire_rollout_exp022_best_test_bamboo_basket5_20260830.png`。
+
+## EXP-024 — GRAB hand-flow → 当前 Cm → Inspire F1 无配对重定向
+
+### 日期
+
+2026-08-30
+
+### 假设与边界
+
+保持 EXP-022 的 decoder/Cm checkpoint，但不使用 Inspire 轨迹生成 Cm；改用 GRAB 右手真实 hand-flow 生成 action tokens，再由 Inspire F1 目标机器人从固定接近姿态递归预测。该实验测试跨手型无配对重定向数据链路，不提供 Inspire 侧 target q/hand-flow GT，也不等价于完整自主策略。
+
+### 配置与运行
+
+- decoder/Cm: `outputs/cmdecoder/cm_decoder_20260829_225518/checkpoints/best.pt`（Cm snapshot 为混合 GRAB+Inspire F1，C=64）；
+- entry: `src/task/CmDecoder/grab_retarget.py`；GRAB sequence=`s1/scissors_offhand_1`，right hand，`start_frame=131`，32 帧，30 Hz；
+- target: Inspire F1 joint-limit midpoint 初始化，物体中心外侧 `0.12 m` 接近位姿；每帧仅把 GRAB sample 的 human hand-flow 送入 frozen Cm，decoder 输入 Inspire 当前机器人几何，执行 point-flow→q/wrist fitting；
+- evaluation GPU: 物理 GPU3；GPU0/1/2 三卡训练保持运行；
+- output: `output/research/grab_retarget_exp022_best_20260830.npz` / `output/research/grab_retarget_exp022_best_20260830.png`。
+
+### 结果
+
+- 32 帧 robot hand centroid-object 距离：首帧/末帧=`27.9/471.5 mm`，均值=`245.4 mm`；GRAB 真实手对应距离首帧/末帧=`134.5/80.9 mm`；
+- Inspire robot 质心累计位移=`297.1 mm`，平均相邻帧点位移=`13.5 mm`；GRAB 手对应累计质心位移=`57.6 mm`；
+- q 输出范围约 `13.5°..64.6°`，运行链路无异常退出。
+
+当前单序列显示明显的目标手漂移/物体关系破坏；由于没有 Inspire GT，不能报告 target EPE。该结果不能区分 Cm 跨域表示不足、decoder 训练分布、坐标/尺度与初始化因素，需后续受控诊断。
+
+### 结论状态
+
+`INCONCLUSIVE`（数据链路成功但当前无配对重定向效果不理想；不将实现诊断直接记为科研反证）
+
+### 产物
+
+- trajectory: `output/research/grab_retarget_exp022_best_20260830.npz`；
+- static figure: `output/research/grab_retarget_exp022_best_20260830.png`。
+
+## EXP-023 — EXP-022 best 的 Inspire F1 action-conditioned rollout
+
+### 日期
+
+2026-08-30
+
+### 假设与边界
+
+使用当前混合 Cm 驱动 decoder 的最佳 validation checkpoint，沿用既有 action-conditioned 闭环协议，检验训练后 point-flow→FK 状态反馈的误差累积是否改善。Cm 每一步仍使用真实 Inspire hand-flow；因此这是 decoder/state-feedback 诊断，不是完全自主策略 rollout。
+
+### 配置与运行
+
+- checkpoint: `outputs/cmdecoder/cm_decoder_20260829_225518/checkpoints/best.pt`（EXP-022，epoch 15 / step 71550，val hand-flow EPE=`1.4249 mm`）；
+- episode/protocol: `inspire_f1/apple/2`，自动选择最长连续有效链，`start_pair=165`，31 个有效 30 Hz pair；与 EXP-020 相同；
+- split 归属: 该 episode 在 `data/processed_data/cm_decoder/hrdexdb_inspire_f1/v4/selection_576_seed42.json` 中属于 `train`（不是 held-out test）；本实验是固定训练集序列的闭环诊断；
+- command: `CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoder.inspire_rollout --decoder-checkpoint outputs/cmdecoder/cm_decoder_20260829_225518/checkpoints/best.pt --episode inspire_f1/apple/2 --frames 32 --device cuda --output output/research/inspire_rollout_cmdecoder_exp022_best_20260830.npz --figure output/research/inspire_rollout_cmdecoder_exp022_best_20260830.png`；
+- evaluation GPU: 物理 GPU3，避免干扰 GPU0/1/2 上仍在运行的 EXP-022 训练。
+
+### 结果
+
+- point EPE mean/final/max=`7.325/13.450/13.450 mm`，首步=`0.603 mm`；第 20 个 rollout index 首次超过 `10 mm`，31 步内未超过 `20 mm`；
+- wrist translation EPE mean/final=`4.830/9.574 mm`，rotation error mean/final=`5.830/10.386°`；
+- q MAE mean/final=`2.466/4.210°`；predicted contact ratio mean/final=`1.896%/4.096%`，GT=`1.695%/5.072%`；
+- 相较 EXP-020 的 point `47.675/94.188 mm`、wrist `48.136/94.727 mm`，本次 mean/final 分别降低约 `84.6%/85.7%` 与 `90.0%/89.9%`。由于 decoder/Cm checkpoint 不同，这属于同协议 checkpoint 对比，不是严格同权重 ablation。
+
+### 结论状态
+
+`SUPPORTED`（当前单 episode、action-conditioned 协议下误差累积显著减小）；仍不支持“长期闭环完全稳定”或“完全自主控制”结论。
+
+### 产物
+
+- trajectory: `output/research/inspire_rollout_cmdecoder_exp022_best_20260830.npz`；
+- diagnostic figure: `output/research/inspire_rollout_cmdecoder_exp022_best_20260830.png`。
+
+## EXP-022 — 混合 GRAB+Inspire F1 Cm latest → 三卡 global batch 48 point-flow decoder
+
+### 日期
+
+2026-08-29
+
+### 假设与边界
+
+使用当前混合 GRAB+Inspire F1 `Cm` snapshot 训练现有 point-flow CmDecoder；保持 optimizer 总步数与单卡合同一致，但将每步样本数从 16 增至 48，因此总样本暴露量约增为三倍。本实验仍是配对 HRDexDB 单步监督，不等价于跨手型无配对泛化或闭环稳定性结论。
+
+### 配置与运行
+
+- frozen Cm snapshot: `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/checkpoints/latest.pt`；
+- decoder: `src.task.CmDecoder.point_config:Config`，`meta.use_cached_cm_tokens=false`；
+- device: `CUDA_VISIBLE_DEVICES=0,1,2`，torchrun world size 3，每卡 batch16，global batch48；
+- budget: `train.max_steps=143110`、`train.epochs=30`（epoch 作为安全上限），学习率 `3e-4`，其余上一版设置不变；
+- output/log: `outputs/cmdecoder/cm_decoder_20260829_225518` / `output/exp/cmdecoder_grab_inspire_f1_mixed_cm_latest_gpu012_global48_20260829.log`；W&B disabled；
+- command: `CUDA_VISIBLE_DEVICES=0,1,2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoder.train --config src.task.CmDecoder.point_config:Config --set train.distributed.enable=true --set meta.cm_checkpoint=outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/checkpoints/latest.pt --set meta.use_cached_cm_tokens=false --set data.batch_size=16 --set data.val_batch_size=16 --set train.epochs=30 --set train.max_steps=143110 --set train.lr=3e-4 --set train.description=cmdecoder_grab_inspire_f1_mixed_cm_latest_gpu012_global48_143110steps --set wandb.enable=false`。
+
+### 当前状态
+
+当前约 step `79200/143110`（`55.3%`）/ epoch `17`，吞吐约 `139--142 samples/s`，预计剩余约 `6.0 h`，未见 OOM/NaN/NCCL 错误。epoch 1–16 validation hand-flow EPE 依次为：
+
+`2.291, 2.064, 1.888, 1.805, 1.676, 1.679, 1.594, 1.580, 1.553, 1.536, 1.521, 1.505, 1.499, 1.501, 1.425, 1.542 mm`。
+
+当前 best 为 epoch 15 / step `71550` 的 `1.4249 mm`，相对 zero-flow=`12.1176 mm` 改善约 `88.2%`；`best.pt` 与 `latest.pt` 均指向该完整 checkpoint。epoch 16 单点回升，尚不能判定收敛平台或过拟合。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中；尚无 validation 证据）
+
+## EXP-021 — 混合 GRAB+Inspire F1 Cm latest → 单卡 point-flow decoder
+
+### 日期
+
+2026-08-29
+
+### 假设与边界
+
+当前混合 GRAB+Inspire F1 手流 `Cm` 的表示可被现有逐点 point-flow CmDecoder 解码；本实验只评价配对 HRDexDB 单步监督，不等价于跨手型无配对泛化或闭环稳定性结论。
+
+### 配置与运行
+
+- frozen Cm snapshot: `outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/checkpoints/latest.pt`（启动时读取；后续 Cm 继续训练不会动态改变本次 decoder 的权重）；
+- decoder config: `src.task.CmDecoder.point_config:Config`，沿用上一版 CmDecoder 的数据、batch、优化器和调度设置；覆盖 `train.epochs=10`、`train.lr=3e-4`，`meta.use_cached_cm_tokens=false`；
+- data: full 576 object-disjoint 3 Hz selection manifest，`per_device/global batch=16`，总预算 `143110` steps；
+- device: 物理 GPU 1，单卡；Cm 同时继续在物理 GPU 0/1/2 运行；W&B disabled；
+- command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoder.train --config src.task.CmDecoder.point_config:Config --set meta.cm_checkpoint=outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/checkpoints/latest.pt --set meta.use_cached_cm_tokens=false --set train.epochs=10 --set train.lr=3e-4 --set train.description=cmdecoder_grab_inspire_f1_mixed_cm_latest_10ep --set wandb.enable=false`；
+- output/log: `outputs/cmdecoder/cm_decoder_20260829_203306` / `output/exp/cmdecoder_grab_inspire_f1_mixed_cm_latest_gpu1_20260829.log`。
+
+### 当前状态
+
+启动 smoke 已通过：`world_size=1`，step `600` / epoch `1`，训练 hand-flow EPE `3.529 mm`（最近记录），吞吐约 `24 samples/s`，估计纯训练剩余约 `26 h`；与 Cm 共享 GPU1 时显存约 `4.5 GiB`（整卡仍有余量），未见 OOM、NaN 或数据错误。首次 validation 尚未到达。
+
+### 结论状态
+
+`INCONCLUSIVE`（运行中；尚无 validation 证据）
 
 ## EXP-020 — Inspire F1 action-conditioned closed-loop rollout
 
