@@ -47,12 +47,9 @@ class TaskConfig(BaseConfig):
     """任务配置模板。具体任务应继承此类并显式覆盖字段。"""
 
     name = "task"
-    # Version-line provenance is explicit so every task run can be tied to a
-    # plan and a fine-grained operation without overloading the experiment name.
-    version_line = ""
-    guide_version = ""
-    plan_version = ""
-    operation_version = ""
+    # Every current run/change points to one modification boundary.  Guidance
+    # and plan numbers remain document-only links and are not config fields.
+    modification_version = ""
     operation_category = []
     component_registry = ""
     # Task configs override this with entries from their local

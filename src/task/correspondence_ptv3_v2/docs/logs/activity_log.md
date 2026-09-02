@@ -1,4 +1,37 @@
-# correspondence_ptv3_v2 当前状态
+# correspondence_ptv3_v2 活动记录
+
+- scope: task:correspondence_ptv3_v2
+- last_updated: 2026-09-01
+- current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- related: [架构](architecture_log.md)、[仓库记忆](repo_memory.md)、[实验](experiment_log.md)、[历史修改](modification_log.md)、[当前指导](../指导/V1.md)
+
+## 2026-09-01 21:12:26 +0800 — V1.2.15 活动记录切换
+
+- activity_id: ACT-20260901-211226-CORRESPONDENCE
+- timestamp: 2026-09-01 21:12:26 +0800
+- modification_version: V1.2.15
+- type: governance / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 根级治理方案获用户直接批准；本 Task 仅迁移日志入口，不改变 correspondence 研究语义
+- skills_used: research-change-control, research-experiment-workflow
+- branch: feature/modular-component-runtime
+- base_commit: d9cecd0889087fbe7bff6ba85751e269cee8aac7
+- worktree_dirty: true
+- scope: root/governance mirror; task:correspondence_ptv3_v2 活动日志入口；不涉及模型、数据、GT、坐标、split、checkpoint 或训练变量
+
+**文件**
+- [`activity_log.md`](activity_log.md) — 从切换点开始作为本 Task 活动时间线，保留原 `status_log.md` 历史内容。
+- [`repo_memory.md`](repo_memory.md) — 更新活动入口链接。
+- [`architecture_log.md`](architecture_log.md) — 收窄架构记录头部为更新时间。
+- [`../../config.py`](../../config.py) — 将当前运行元数据改为 `modification_version`。
+- [`../../../../../docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 链接根级当前版本指针。
+
+**原因**
+统一本 Task 的运行反馈、产物导航和治理事件记录；历史 `modification_log.md` 继续只读保留。
+
+**验证**
+- 根级文档/版本指针校验和全量回归：`311 passed, 3 skipped`；本次仅为工程治理迁移，`conclusion: N/A`。
 
 ## 当前操作 — V1.2.12：撤出 Task-local Component/data/registry（2026-09-01）
 

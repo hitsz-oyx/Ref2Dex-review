@@ -11,10 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 class Config(TaskConfig):
     name = "cm_decoder"
     runner_class = "src.task.CmDecoder.runner.CmDecoderRunner"
-    version_line = "V1.2"
-    guide_version = "V1"
-    plan_version = "V1"
-    operation_version = "V1.2.12"
+    modification_version = "V1.2.12"
     operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):

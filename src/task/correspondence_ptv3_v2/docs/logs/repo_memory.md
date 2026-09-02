@@ -3,7 +3,7 @@
 - scope: task:correspondence_ptv3_v2
 - last_updated: 2026-08-24
 - last_verified: 2026-08-24
-- related: [当前状态](status_log.md)、[架构](architecture_log.md)、[实验](experiment_log.md)
+- related: [活动记录](activity_log.md)、[架构](architecture_log.md)、[实验](experiment_log.md)
 
 ## V1.2.12 — 数据入口回到根空间
 

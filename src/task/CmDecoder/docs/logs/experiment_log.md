@@ -2,11 +2,154 @@
 
 - last_updated: 2026-08-30
 - last_verified: 2026-08-30
-- related: [当前状态](status_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
+- related: [活动记录](activity_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
 
 ## 当前状态
 
 已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。2026-08-24 启动 GRAB-trained MANO decoder，拟在 ARCTIC MANO 上做跨域泛化验证。EXP-018 已有中途验证记录；EXP-021 单卡试跑未完成 epoch 1 即停止，EXP-022 已改为三卡 global batch48、保持总 step 数的正式 run。
+
+## EXP-026 — 当前 CmDecoder best 的 object-pose runtime rollout（无效实现）
+
+### 日期
+
+2026-09-02
+
+### 假设与边界
+
+用当前 CmDecoder `best.pt` 在 held-out Inspire-F1 test episode 上测试点流解码器的闭环状态反馈。Cm 每步接收真实 Inspire hand-flow，因此这是 teacher-forced action-conditioned rollout，不是自主 Cm action prediction，也不代表跨手型重定向结果。
+
+### 配置与运行
+
+- checkpoint: `outputs/cmdecoder/cm_decoder_20260901_151052/checkpoints/best.pt`（当前训练 run best）；
+- cache/坐标：`hrdexdb_inspire_f1_object_pose_t_20260901`、`object_pose_t`；
+- episode/split：`inspire_f1/bamboo_basket/5`、test；
+- protocol：固定 stride=2，自动选择 active start=`68`，请求并完成32个连续 pair；
+- device：GPU7；入口：`src/task/CmDecoder/runtime_rollout.py`；
+- artifacts：`output/research/inspire_runtime_rollout_cmdecoder_best_20260902.npz/.png`，对应 run manifest 和 summary。
+
+### 结果
+
+- point EPE mean/final/max=`84.406/146.855/146.855 mm`；
+- wrist 平移 EPE mean/final=`57.401/113.304 mm`，旋转误差 mean/final=`22.366/37.247°`；
+- q MAE mean/final=`6.797/7.645°`；
+- 预测与 GT contact ratio 在该 episode 的采样点上均为0，不能作为本次主要判断依据。
+
+### 结论
+
+`INVALID_IMPLEMENTATION`：评估入口漏加载 Decoder checkpoint 的 `payload["model"]`，结果实际来自随机初始化 Decoder；本节数值不纳入模型结论。
+
+## EXP-027 — 修正权重加载后的当前 best object-pose runtime rollout
+
+### 日期
+
+2026-09-02
+
+### 设置与边界
+
+沿用 EXP-026 的 test episode、object_pose_t、stride=2 和 32 个连续 pair；修正 runtime evaluator 并明确加载 `best.pt` 的完整模型权重。Cm 每步仍接收真实 hand-flow，仅测试 Decoder 状态反馈。
+
+### 结果
+
+- point EPE mean/final/max=`14.669/22.807/22.807 mm`，首步=`2.506 mm`；
+- 同一32个 pair、每步均使用 GT 当前手状态的 teacher-forced 单步 point EPE mean/final/max=`1.314/0.757/2.722 mm`；因此主要恶化来自状态反馈/q-wrist fitting，而不是该 episode 的单步 point-flow 预测。
+- wrist 平移 EPE mean/final=`18.305/18.895 mm`，旋转误差 mean/final=`22.722/39.631°`；
+- q MAE mean/final=`7.930/10.666°`。
+
+### 结论
+
+`INCONCLUSIVE`：修正后结果表明当前模型不是随机输出，但在该 held-out episode 上仍有明显状态反馈漂移。相较旧 EXP-025 的 `6.896/11.415 mm`，当前 run 不能直接作严格消融，因为训练坐标系（object_pose_t vs current_wrist）、stride 分布（2..20 vs 旧 3 Hz task cache）和 frozen Cm checkpoint 均不同。
+
+## EXP-028 — 当前 best 的 GRAB stride=2 → Inspire-F1 跨手型 rollout
+
+### 日期
+
+2026-09-02
+
+### 设置与边界
+
+沿用历史 EXP-024 的 GRAB 轨迹和 Inspire 初始化，但将 GRAB action source 改为 stride=2，以匹配当前 CmDecoder 的 Inspire 偶数 stride 训练分布。GRAB hand-flow 只用于生成 frozen Cm action token；Inspire 无对应 GT，因此本实验只评价物体相对距离和状态漂移，不报告 Inspire EPE。
+
+### 配置
+
+- source：`s1/scissors_offhand_1/right`，start frame=`131`，32 steps，stride=2（15 Hz）；
+- checkpoint：`outputs/cmdecoder/cm_decoder_20260901_151052/checkpoints/best.pt`（step46780/epoch10）；
+- target：Inspire-F1 joint-limit midpoint，物体中心外侧 `0.12 m` approach pose；q fitting 40 steps；
+- 坐标：`object_pose_t`；GPU7；入口：`src/task/CmDecoder/grab_runtime_rollout.py`。
+
+### 结果
+
+- robot/object centroid distance 初始/最终/均值/最大=`38.822/264.293/212.433/372.609 mm`；
+- GRAB source/object centroid distance 初始/最终/均值=`130.053/59.834/74.048 mm`；
+- robot centroid cumulative displacement=`650.358 mm`，GRAB source=`391.940 mm`；平均单步 `20.324` vs `12.248 mm`。
+
+### 结论
+
+`INCONCLUSIVE`：当前模型能够运行跨手型 action-token 链路，但机器人轨迹逐步破坏物体相对关系，说明当前无配对跨手型泛化尚不稳定。该结果混合了 Cm 跨域表征、Inspire 初始化差异、point-flow→q/wrist 非唯一拟合和闭环误差，不能单独归因于某一模块。
+
+## EXP-029 — 当前 best 的 GRAB 30 Hz（stride=1）→ Inspire-F1 跨手型 rollout
+
+### 日期
+
+2026-09-02
+
+### 设置与边界
+
+应用户要求，将 GRAB source 从 EXP-028 的 stride=2 改为原始 30 Hz 连续帧（stride=1），其余 episode、初始化、checkpoint、坐标系和 q/wrist fitting 协议保持不变。GRAB hand-flow 仅生成 frozen Cm action token；Inspire 无对应 GT，因此只评价物体相对距离和状态漂移。
+
+### 配置
+
+- source：`s1/scissors_offhand_1/right`，start frame=`131`，32 steps，stride=1（30 Hz）；
+- checkpoint：`outputs/cmdecoder/cm_decoder_20260901_151052/checkpoints/best.pt`（step46780/epoch10）；
+- target：Inspire-F1 joint-limit midpoint，物体中心外侧 `0.12 m` approach pose；q fitting 40 steps；
+- 坐标：`object_pose_t`；GPU7；入口：`src/task/CmDecoder/grab_runtime_rollout.py`。
+
+### 结果
+
+- robot/object centroid distance 初始/最终/均值/最大=`27.644/316.077/99.922/316.077 mm`；
+- GRAB source/object centroid distance 初始/最终/均值=`130.053/65.808/87.817 mm`；
+- robot centroid cumulative displacement=`377.780 mm`，GRAB source=`114.285 mm`；平均单步（含首帧零位移）分别 `11.806/3.571 mm`。
+
+stride=1 相比 EXP-028 stride=2 的机器人累计位移和平均步长更小，但末帧物体相对距离更大；两次均为单 episode、无 Inspire GT，且 stride=1 不在当前 Decoder 偶数 stride `{2,...,20}` 训练分布内，不能据此判断 30 Hz 泛化优劣。
+
+### 结论状态
+
+`INCONCLUSIVE`（30 Hz OOD 评估；链路可运行，但跨手型闭环仍不稳定）
+
+### 产物
+
+- trajectory: `output/research/grab_runtime_rollout_cmdecoder_best_30hz_20260902.npz`；
+- static figure: `output/research/grab_runtime_rollout_cmdecoder_best_30hz_20260902.png`；
+- run manifest / summary: 同前缀 `.run_manifest.json` / `.summary.json`。
+
+## EXP-030 — 5 cm 起点与 GRAB 质心对齐初始化的 30 Hz rollout
+
+### 日期
+
+2026-09-02
+
+### 设置与边界
+
+针对 EXP-029 的远距离初始化疑问，改为自动选择 GRAB 首个手/物表面最近距离不超过 5 cm 的帧，并将 Inspire 中性姿态的手部采样点质心平移到该帧 GRAB 手部质心；保留物体朝向的初始化旋转。其余 checkpoint、30 Hz source、32 steps、object_pose_t 和 q/wrist fitting 协议不变。
+
+### 配置与起点验证
+
+- source：`s1/scissors_offhand_1/right`，自动选择 start frame=`131`；frame 130 最近距离=`56.831 mm`，frame 131=`43.174 mm`；
+- checkpoint：`outputs/cmdecoder/cm_decoder_20260901_151052/checkpoints/best.pt`（step46780/epoch10）；target Inspire-F1；GPU7；q fitting 40 steps；
+- 代码：`src/task/CmDecoder/grab_runtime_rollout.py`；初始化前状态的 robot/object 质心距离=`130.053 mm`，与 GRAB 同帧距离一致，说明质心平移生效。
+
+### 结果
+
+- robot/object centroid distance（首个 decoder 更新后开始记录）均值/末帧/最大=`162.399/277.948/277.948 mm`；
+- GRAB source/object centroid distance 均值/末帧=`87.817/65.808 mm`；
+- robot/GRAB centroid 累计位移=`366.729/114.285 mm`，平均单步（含首帧零位移）=`11.460/3.571 mm`。
+
+初始化对齐后，起始几何关系已与 GRAB 对齐，但多步闭环仍出现明显漂移；该实验没有 Inspire target GT，且 stride=1 仍是当前 Decoder 偶数 stride `2..20` 训练分布外，因此结论为 `INCONCLUSIVE`。
+
+### 产物
+
+- trajectory: `output/research/grab_runtime_rollout_cmdecoder_best_30hz_aligned_20260902.npz`；
+- static figure: `output/research/grab_runtime_rollout_cmdecoder_best_30hz_aligned_20260902.png`；
+- run manifest / summary: 同前缀 `.run_manifest.json` / `.summary.json`。
 
 ## EXP-025 — EXP-022 best 的 Inspire F1 held-out test rollout
 

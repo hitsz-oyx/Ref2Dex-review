@@ -230,7 +230,7 @@ GPU 2/3 启动前空闲；第一条启动后每卡仅占约 1.8 GB，第二条�
 
 - scope: task:Cm
 - last_updated: 2026-08-23
-- related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[实验记录](experiment_log.md)
+- related: [活动记录](activity_log.md)、[架构记录](architecture_log.md)、[实验记录](experiment_log.md)
 
 ## 2026-08-23 — 四卡续训释放 GPU 4/7
 

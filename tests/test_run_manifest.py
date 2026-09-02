@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from src.base.run_manifest import build_run_manifest, write_run_manifest
+from src.base.run_manifest import build_run_manifest, write_run_manifest, write_run_summary
 
 
 def test_run_manifest_records_contract_and_input_metadata(tmp_path: Path) -> None:
@@ -41,6 +41,32 @@ def test_run_manifest_records_contract_and_input_metadata(tmp_path: Path) -> Non
     assert json.loads(output.read_text(encoding="utf-8"))["task"] == "Example"
 
 
+def test_run_summary_is_terminal_user_readable_snapshot(tmp_path: Path) -> None:
+    output = tmp_path / "run"
+    output.mkdir()
+    (output / "config_eval_20260901_120000.json").write_text("{}\n", encoding="utf-8")
+    summary = output / "summary.json"
+    write_run_summary(
+        summary,
+        task="Example",
+        run_name="example_20260901_120000",
+        output_dir=output,
+        mode="eval",
+        run_status="COMPLETED",
+        modification_version="V1.2.3",
+        metrics={"test/loss": 0.25},
+        global_step=12,
+        artifact_paths={"config": output / "config_eval_20260901_120000.json"},
+    )
+    payload = json.loads(summary.read_text(encoding="utf-8"))
+    assert payload["summary_schema"] == "ref2dex.run_summary.v1"
+    assert payload["run_id"] == "example_20260901_120000"
+    assert payload["run_status"] == "COMPLETED"
+    assert payload["modification_version"] == "V1.2.3"
+    assert payload["metrics"]["test/loss"] == 0.25
+    assert payload["artifacts"]["config"].endswith("config_eval_20260901_120000.json")
+
+
 def test_run_manifest_records_version_and_component_selection(tmp_path: Path) -> None:
     components = [
         {
@@ -57,20 +83,17 @@ def test_run_manifest_records_version_and_component_selection(tmp_path: Path) ->
         output_dir=tmp_path / "run",
         mode="train",
         config={
-            "version_line": "V1.2",
-            "guide_version": "V1.2",
-            "plan_version": "V1.2",
-            "operation_version": "V1.2.3",
+            "modification_version": "V1.2.3",
             "operation_category": ["experiment", "diagnostic"],
             "component_registry": "src/task/Example/components/components.json",
             "components": components,
         },
         metadata={},
     )
-    assert payload["version_line"] == "V1.2"
-    assert payload["guide_version"] == "V1.2"
-    assert payload["plan_version"] == "V1.2"
-    assert payload["operation_version"] == "V1.2.3"
+    assert payload["modification_version"] == "V1.2.3"
+    assert "guide_version" not in payload
+    assert "plan_version" not in payload
+    assert "operation_version" not in payload
     assert payload["operation_category"] == ["experiment", "diagnostic"]
     assert payload["component_registry"].endswith("components.json")
     assert payload["components"] == components

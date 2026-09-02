@@ -1,9 +1,6 @@
 # correspondence_ptv3_v2 architecture log
 
-- scope: task:correspondence_ptv3_v2
 - last_updated: 2026-09-01
-- last_verified: 2026-09-01
-- related: [当前状态](status_log.md) / [仓库记忆](repo_memory.md) / [实验](experiment_log.md)
 
 ## 当前入口边界（V1.2.12）
 

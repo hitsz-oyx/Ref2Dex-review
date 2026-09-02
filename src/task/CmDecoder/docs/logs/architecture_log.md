@@ -1,9 +1,6 @@
 # CmDecoder 张量架构
 
-- scope: task:CmDecoder
 - last_updated: 2026-09-01
-- last_verified: 2026-09-01
-- related: [当前状态](status_log.md), [实验](experiment_log.md), [接手记忆](repo_memory.md)
 
 ## 当前入口边界（V1.2.12）
 

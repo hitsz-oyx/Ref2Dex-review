@@ -22,5 +22,5 @@ research/<experiment_id>/
 - `dense_cache_v1_1_1/`：DenseToken cache parity benchmark；
 - `hand_flow_decoder/`：手流尺度校准。
 
-`log.md` 和 `results/` 是历史记录入口。新的实验结论写入 `../docs/logs/experiment_log.md`，
+`log.md` 和 `results/` 是历史记录入口。新的活动摘要写入 `../docs/logs/activity_log.md`，新的实验结论写入 `../docs/logs/experiment_log.md`，
 不要继续在这里增加结果汇总文件。

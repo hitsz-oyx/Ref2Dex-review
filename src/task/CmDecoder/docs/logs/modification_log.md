@@ -1,5 +1,78 @@
 # CmDecoder 修改记录
 
+## 2026-09-02 — 增加 GRAB stride=2 到 Inspire-F1 跨手型 rollout 入口
+
+- change_level: L1（任务内只读评估实现）
+- approval: user-approved（用户确认 GRAB 轨迹、stride=2 和 Inspire 初始化协议）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: `task:CmDecoder` 跨手型 rollout 评估
+
+**文件**
+
+- `src/task/CmDecoder/grab_runtime_rollout.py` — 从 object-pose GRAB cache 读取 stride=2 hand-flow，生成 Cm token，并在 Inspire-F1 object_pose_t 状态上执行 point-flow→q/wrist 闭环。
+- `src/task/CmDecoder/docs/logs/activity_log.md`、`experiment_log.md` — 记录 EXP-028、输入、产物和结论。
+
+**原因**
+
+旧 `grab_retarget.py` 使用 hand-root 机器人输入，不能直接用于当前 object_pose_t Decoder；新增独立入口避免混用坐标合同。
+
+**验证**
+
+- `py_compile` 通过；GPU7 完成 32 steps，无运行时异常。
+- robot/object centroid distance 初始/最终=`38.822/264.293 mm`，均值=`212.433 mm`；robot cumulative displacement=`650.358 mm`，GRAB source=`391.940 mm`。
+- trajectory NPZ、PNG、run manifest、summary 均生成；训练 GPU0/1/2 未停止或修改。
+
+## 2026-09-02 — 修正 runtime rollout 的 Decoder 权重加载
+
+- change_level: L1（评估实现缺陷修正）
+- approval: user-approved（用户要求使用当前 best.pt 运行 rollout）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: `src/task/CmDecoder/runtime_rollout.py` 与 rollout 评估记录
+
+**文件**
+
+- `src/task/CmDecoder/runtime_rollout.py` — 构造模型后显式加载 checkpoint `payload["model"]`，确保 point-flow Decoder 使用 best.pt 权重。
+- `src/task/CmDecoder/docs/logs/activity_log.md`、`experiment_log.md` — 将上一轮随机初始化结果标记为 `INVALID_IMPLEMENTATION`，补记修正后结果。
+
+**原因**
+
+上一轮 runtime evaluator 漏掉 Decoder 权重加载，导致 point-flow head 保持随机初始化；该轮 `84.406/146.855 mm` 结果无效。
+
+**验证**
+
+- 修正后 `py_compile` 通过，检查 checkpoint 中 `edge_flow_head` 非零权重。
+- 同一 test episode、object_pose_t、stride=2、32 pair、GPU7 重跑完成：point EPE mean/final=`14.669/22.807 mm`，wrist 平移 EPE mean/final=`18.305/18.895 mm`。
+- NPZ/PNG、run manifest、summary 均生成；训练 GPU0/1/2 未停止或修改。
+
+## 2026-09-02 — 增加当前 best 的 object-pose runtime rollout 评估入口
+
+- change_level: L1（任务内只读评估实现）
+- approval: user-approved（用户要求使用当前 best.pt 运行 Inspire rollout）
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/modular-component-runtime`
+- post-commit: 未提交
+- scope: `task:CmDecoder` rollout 评估入口与实验产物记录
+
+**文件**
+
+- `src/task/CmDecoder/runtime_rollout.py` — 从当前 object-pose geometry cache 按固定 stride=2 运行连续 Inspire-F1 point-flow→q/wrist fitting rollout，避免旧 30Hz hand-root task cache。
+- `src/task/CmDecoder/docs/logs/activity_log.md` — 记录活动、输入、产物和结论。
+- `src/task/CmDecoder/docs/logs/experiment_log.md` — 新增 EXP-026 及定量结果。
+
+**原因**
+
+现有 `inspire_rollout.py` 固定读取旧 hand-root 30Hz task cache，不能直接用于当前 `object_pose_t` best checkpoint；新增 runtime 入口使评估坐标与训练合同一致。
+
+**验证**
+
+- `PYTHONPATH=. ... python -m py_compile src/task/CmDecoder/runtime_rollout.py`：通过。
+- GPU7 rollout 完成32个 test pair；point EPE mean/final=`84.406/146.855 mm`，wrist 平移 EPE mean/final=`57.401/113.304 mm`。
+- NPZ、PNG、run manifest、summary 均生成；训练 GPU0/1/2 未停止或修改。
+
 ## 2026-09-01 — 提交 Cm/CmDecoder 表面采样与 object-pose 训练链路
 
 - change_level: L3（训练/cache 迁移与长时任务）+ L2（采样、坐标系、GT、cache/schema）
@@ -1456,3 +1529,42 @@ v1 目标点坐标系会消除腕部运动；用户要求保留 v1，创建语�
 **后续边界**
 
 - 需要从 `hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4` 的 world geometry 重新生成 object-pose task cache（并明确 stride/hand-flow frame），通过坐标合同与 loader/model smoke 后才能重启训练；旧 v2 task arrays 和 C=256 token sidecar 不复用。
+
+## 2026-09-02 — GRAB 30 Hz 跨手型 rollout 评估记录
+
+- branch: `feature/modular-component-runtime`
+- scope: Task:CmDecoder runtime evaluation and research logs
+- change_level: L1（只读评估；新增运行产物与记录）
+- approval: user-approved（用户要求 GRAB 不间隔、按 30 Hz 运行）
+- skills_used: research-change-control, research-experiment-workflow
+- post-commit: 未提交
+
+**文件与产物**
+
+- `output/research/grab_runtime_rollout_cmdecoder_best_30hz_20260902.{npz,png,run_manifest.json,summary.json}` — 使用 `grab_runtime_rollout.py`，GRAB `stride=1` / 30 Hz，GPU7。
+- `src/task/CmDecoder/docs/logs/{activity_log.md,experiment_log.md}` — 追加 EXP-029 与活动记录。
+
+**验证**
+
+- runtime rollout 正常完成 32 steps，无 OOM/NaN/异常退出；模型权重为 `best.pt` step=`46780` / epoch=`10`，坐标合同为 `object_pose_t`。
+- 结果已标注为当前 Decoder 偶数 stride `2..20` 训练分布之外的 OOD 评估，结论 `INCONCLUSIVE`。
+
+## 2026-09-02 — 5 cm 起点与 GRAB 质心对齐初始化
+
+- branch: `feature/modular-component-runtime`
+- scope: Task:CmDecoder cross-hand rollout initialization and start-frame selection
+- change_level: L2（改变实验起点和初始化语义）
+- approval: user-approved（用户确认方案）
+- approval_basis: 用户确认“可以”
+- skills_used: research-change-control, research-experiment-workflow
+- post-commit: 未提交
+
+**文件与改动**
+
+- `src/task/CmDecoder/grab_runtime_rollout.py` — 默认自动寻找首个手/物表面距离 ≤5 cm 的 GRAB 帧；保留 object-facing rotation，将中性 Inspire 手部采样点质心平移至 GRAB 起始手部质心；记录 pre-update 初始化距离。
+- `output/research/grab_runtime_rollout_cmdecoder_best_30hz_aligned_20260902.{npz,png,run_manifest.json,summary.json}` — 新实验产物，不覆盖 EXP-029。
+
+**验证**
+
+- py_compile 通过；自动起点为 frame 131（43.174 mm，frame130 为 56.831 mm）；pre-update robot/object 距离=`130.053 mm`。
+- GPU7 rollout 完成 32 steps，无 OOM/NaN/异常退出；结果记录为 `INCONCLUSIVE`，并注明 stride=1 相对当前 Decoder 偶数 stride 训练分布是 OOD。

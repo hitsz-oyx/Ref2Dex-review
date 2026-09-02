@@ -36,7 +36,7 @@ from .distributed import (
 )
 from .metrics import MetricAverager, MetricStat
 from .performance import PerformanceMonitor
-from .run_manifest import build_run_manifest, write_run_manifest
+from .run_manifest import build_run_manifest, write_run_manifest, write_run_summary
 from .utils import (
     JsonlLogger,
     format_seconds,
@@ -94,6 +94,7 @@ __all__ = [
     "PerformanceMonitor",
     "build_run_manifest",
     "write_run_manifest",
+    "write_run_summary",
     "format_seconds",
     "import_from_path",
     "resolve_device",

@@ -1,9 +1,6 @@
 # Cm 任务架构记录
 
-- scope: task:Cm
-- last_updated: 2026-08-31
-- last_verified: 2026-08-31
-- related: [当前状态](status_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[V1.2.1 指导](../指导/V1.2.1.md)
+- last_updated: 2026-09-01
 
 ## 当前规范目录
 

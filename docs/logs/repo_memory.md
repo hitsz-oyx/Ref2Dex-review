@@ -3,7 +3,17 @@
 - scope: root
 - last_updated: 2026-09-01
 - last_verified: 2026-09-01
-- related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[修改记录](modification_log.md)
+- related: [活动记录](activity_log.md)、[架构记录](architecture_log.md)、[历史修改](modification_log.md)
+
+## V1.2.15 — 活动时间线与版本指针收口
+
+- category: governance / documentation
+- status: active
+- last_verified: 2026-09-01
+- fact: 新活动统一写入最近作用域的 `activity_log.md`；历史 `modification_log.md` 只读保留，`status_log.md` 不再作为规范入口。
+- fact: `docs/current_versions.yaml` 是当前版本指针，只记录各作用域的 `modification_version`；运行 manifest 不再记录 guidance/plan 版本字段。
+- fact: BaseRunner train/eval 终态写入 `summary.json`；它与配置快照、run manifest、metrics 曲线和 activity 事件各司其职。
+- source / anchor: [`AGENTS.md`](../../AGENTS.md)、[`docs/current_versions.yaml`](../current_versions.yaml)、[`docs/目录规范.md`](../目录规范.md)。
 
 ## V1.2.14 — AGENTS 通用规则与仓库约定分层
 
@@ -132,7 +142,7 @@
 - fact: 版本层级统一为 `Vn`（用户确认的大版本）→ `Vn.m`（必须存在并定稿的 plan）→ `Vn.m.k`（细分操作/并行实验）；指导只由用户更新，架构快照只在用户明确指令下更新。`V1.2.1` 是治理收口操作，当前活动细分操作为 `V1.2.3`，对应父计划 `src/task/CmComponent/docs/plan/V1.2.md` 和已确认的操作计划 `V1.2.3.md`。
 - fact: Task 专属 Component 的 canonical 入口是 `src/task/<Task>/components/`，根 `components/` 仅保留跨 Task 组件和示例；旧 `components/ref2dex/*` 允许保留相对软链接兼容。每个 Task 的 `components.json` 是运行选择清单，不替代单组件 `component.yaml`。
 - fact: Task 的仓库内数据/cache/资产入口写在 `src/task/<Task>/registry/data_paths.json`，Task 内 `data/` 可用相对软链接便于查找；机器特有绝对路径放入被 Git 忽略的 `external_paths.json`。
-- source / anchor: `AGENTS.md`、`docs/版本线与AI行为分类.md`、`src/task/Cm/docs/plan/V1.2.md`。
+- source / anchor: `AGENTS.md`、`docs/modification_policy.md`、`src/task/Cm/docs/plan/V1.2.md`。
 
 ## 2026-08-30 — V1.2.2 CmComponent 隔离 Task
 

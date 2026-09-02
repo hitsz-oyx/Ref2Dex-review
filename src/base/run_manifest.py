@@ -243,11 +243,8 @@ def build_run_manifest(
     output = Path(output_dir).resolve()
     config_data = dict(config)
     metadata_data = dict(metadata)
-    guide_version = _first_value(config_data, metadata_data, keys=("guide_version", "guide"))
-    plan_version = _first_value(config_data, metadata_data, keys=("plan_version", "plan"))
-    version_line = _first_value(config_data, metadata_data, keys=("version_line",))
-    operation_version = _first_value(
-        config_data, metadata_data, keys=("operation_version", "revision")
+    modification_version = _first_value(
+        config_data, metadata_data, keys=("modification_version", "revision")
     )
     operation_category = _first_value(
         config_data, metadata_data, keys=("operation_category", "category")
@@ -267,13 +264,10 @@ def build_run_manifest(
         "mode": str(mode),
         "task": str(task),
         "run_name": str(run_name),
-        "version_line": version_line,
-        "operation_version": operation_version,
+        "modification_version": modification_version,
         "operation_category": to_jsonable(operation_category or []),
         "component_registry": component_registry,
         "output_dir": str(output),
-        "guide_version": guide_version,
-        "plan_version": plan_version,
         "config_source": None if config_source is None else str(Path(config_source).resolve()),
         "config_snapshot": str(Path(config_snapshot).resolve() if config_snapshot is not None else output / "config.json"),
         "metadata_snapshot": str(Path(metadata_snapshot).resolve() if metadata_snapshot is not None else output / "metadata.json"),
@@ -314,6 +308,79 @@ def write_run_manifest(path: str | Path, manifest: Mapping[str, Any]) -> None:
     temporary = target.with_name(f".{target.name}.tmp")
     temporary.write_text(
         json.dumps(to_jsonable(dict(manifest)), indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+
+
+def write_run_summary(
+    path: str | Path,
+    *,
+    task: str,
+    run_name: str,
+    output_dir: str | Path,
+    mode: str,
+    run_status: str,
+    conclusion: str = "N/A",
+    modification_version: str | None = None,
+    started_at: str | None = None,
+    finished_at: str | None = None,
+    metrics: Mapping[str, Any] | None = None,
+    global_step: int | None = None,
+    epoch: int | None = None,
+    best_metric: float | None = None,
+    error: str | None = None,
+    artifact_paths: Mapping[str, str | Path] | None = None,
+    repo_root: str | Path | None = None,
+) -> None:
+    """Write a compact, user-readable terminal summary for one run.
+
+    This is deliberately a terminal snapshot, not a heartbeat or live state
+    file.  ``activity_log.md`` remains the event timeline; this JSON only
+    makes the final run result easy to inspect and link.
+    """
+    target = Path(path)
+    output = Path(output_dir).resolve()
+    git = _git_provenance(None if repo_root is None else Path(repo_root).resolve())
+    default_artifact_paths: dict[str, str | Path] = {
+        "config": output / "config.json",
+        "manifest": output / "run_manifest.json",
+        "metrics": output / "metrics.jsonl",
+        "train_log": output / "train.log",
+        "best_checkpoint": output / "checkpoints" / "best.pt",
+        "latest_checkpoint": output / "checkpoints" / "latest.pt",
+    }
+    if artifact_paths:
+        default_artifact_paths.update(artifact_paths)
+    payload: dict[str, Any] = {
+        "summary_schema": "ref2dex.run_summary.v1",
+        "task": str(task),
+        "run_id": str(run_name),
+        "run_name": str(run_name),
+        "output_dir": str(output),
+        "mode": str(mode),
+        "run_status": str(run_status),
+        "conclusion": str(conclusion),
+        "modification_version": modification_version,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "base_commit": git.get("commit"),
+        "worktree_dirty": git.get("dirty"),
+        "global_step": None if global_step is None else int(global_step),
+        "epoch": None if epoch is None else int(epoch),
+        "best_metric": None if best_metric is None else float(best_metric),
+        "metrics": to_jsonable(dict(metrics or {})),
+        "artifacts": {
+            name: str(Path(path_value).resolve()) if Path(path_value).exists() else None
+            for name, path_value in default_artifact_paths.items()
+        },
+    }
+    if error:
+        payload["error"] = str(error)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(
+        json.dumps(to_jsonable(payload), indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     temporary.replace(target)

@@ -1,11 +1,39 @@
-# Cm 当前状态
+# Cm 活动记录
 
 - scope: task:Cm
 - last_updated: 2026-09-01
-- last_verified: 2026-08-31
-- current_version: V1.2.11
-- current_plan: `src/task/Cm/docs/plan/V1.2.md`（final）
+- current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- current_plan: [`src/task/Cm/docs/plan/V1.2.md`](../plan/V1.2.md)（final）
 - related: [架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[训练结果对比](../../results/object_v2_training_comparison.md)
+
+## 2026-09-01 21:12:26 +0800 — V1.2.15 活动记录切换
+
+- activity_id: ACT-20260901-211226-CM
+- timestamp: 2026-09-01 21:12:26 +0800
+- modification_version: V1.2.15
+- type: governance / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 根级治理方案获用户直接批准；本 Task 仅迁移日志入口，不改变 Cm 研究语义
+- skills_used: research-change-control, research-experiment-workflow
+- branch: feature/modular-component-runtime
+- base_commit: d9cecd0889087fbe7bff6ba85751e269cee8aac7
+- worktree_dirty: true
+- scope: root/governance mirror; task:Cm 日志入口和文档导航；不涉及模型、数据、GT、坐标、split、checkpoint 或训练变量
+
+**文件**
+- [`activity_log.md`](activity_log.md) — 从切换点开始作为 Cm 的活动时间线，保留原 `status_log.md` 历史内容。
+- [`../README.md`](../README.md)、[`architecture_log.md`](architecture_log.md)、[`experiment_log.md`](experiment_log.md) — 更新当前入口和记录职责说明。
+- [`repo_memory.md`](repo_memory.md)、[`decision_log.md`](decision_log.md) — 更新活动入口链接。
+- [`../../research/README.md`](../../research/README.md) — 更新实验产物和 activity 入口说明。
+- [`../../src/config.py`](../../src/config.py)、[`../../configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml`](../../configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml)、[`../../research/dense_cache_v1_1_1/experiment.yaml`](../../research/dense_cache_v1_1_1/experiment.yaml)、[`../../research/hand_flow_decoder/experiment.yaml`](../../research/hand_flow_decoder/experiment.yaml)、[`../../research/tsne_slots/experiment.yaml`](../../research/tsne_slots/experiment.yaml)、[`../../research/tsne_slots/run.py`](../../research/tsne_slots/run.py) — 将当前运行/实验元数据改为 `modification_version`。
+- [`../../../../../docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 链接根级当前版本指针。
+
+**原因**
+让 Cm 的启动、运行、停止、产物和文档修改都有单一事件入口；Task 不复制根项目总览，机器事实改由 `machine_memory.md` 承担。
+
+**验证**
+- 根级文档/版本指针校验和全量回归：`311 passed, 3 skipped`；本次仅为工程治理迁移，`conclusion: N/A`。
 
 ## V1.2.11 — Cm 资产入口下沉到 Task（2026-08-31）
 
