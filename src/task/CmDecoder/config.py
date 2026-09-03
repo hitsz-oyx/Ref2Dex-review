@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[3]
 class Config(TaskConfig):
     name = "cm_decoder"
     runner_class = "src.task.CmDecoder.runner.CmDecoderRunner"
+    modification_version = "V1.2.12"
+    operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):
         cm_checkpoint: str = str(

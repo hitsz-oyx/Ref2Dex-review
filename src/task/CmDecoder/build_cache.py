@@ -12,14 +12,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial import cKDTree
 
 from src.task.CmDecoder.dataset import (
     _eval_surface,
     _load_hrdex_io,
     _load_pose,
     _robot_hand_binding,
-    _robot_hand_mesh,
+    _robot_hand_surface_mesh,
     _urdf_link_order,
     _rotate_to_frame,
     _surface_spec,
@@ -196,6 +195,85 @@ def _save_arrays(root: Path, arrays: dict[str, np.ndarray]) -> None:
         np.save(root / f"{name}.npy", np.asarray(value), allow_pickle=False)
 
 
+def _transform_surface_sequence(
+    points_local: np.ndarray,
+    normals_local: np.ndarray,
+    poses_world: np.ndarray,
+    *,
+    device: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Transform one static surface sample set through a pose sequence.
+
+    Only sampled points are transformed (not the full visual mesh).  The
+    optional CUDA path batches all frames and keeps the cache output in NumPy.
+    """
+    points_local = np.asarray(points_local, dtype=np.float32)
+    normals_local = np.asarray(normals_local, dtype=np.float32)
+    poses_world = np.asarray(poses_world, dtype=np.float32)
+    if not str(device).startswith("cuda"):
+        rotation = poses_world[:, :3, :3]
+        translation = poses_world[:, None, :3, 3]
+        points = np.einsum("tij,pj->tpi", rotation, points_local) + translation
+        normals = np.einsum("tij,pj->tpi", rotation, normals_local)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True).clip(1e-8, None)
+        return points.astype(np.float32), normals.astype(np.float32)
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(f"CUDA device requested but unavailable: {device}")
+    torch_device = torch.device(device)
+    with torch.inference_mode():
+        p = torch.from_numpy(points_local).to(torch_device)
+        n = torch.from_numpy(normals_local).to(torch_device)
+        pose = torch.from_numpy(poses_world).to(torch_device)
+        rotation = pose[:, :3, :3]
+        translation = pose[:, None, :3, 3]
+        points = torch.einsum("tij,pj->tpi", rotation, p) + translation
+        normals = torch.einsum("tij,pj->tpi", rotation, n)
+        normals = normals / normals.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        return points.cpu().numpy().astype(np.float32), normals.cpu().numpy().astype(np.float32)
+
+
+def _transform_link_surface_sequence(
+    points_local: np.ndarray,
+    normals_local: np.ndarray,
+    point_link_index: np.ndarray,
+    link_poses_world: np.ndarray,
+    *,
+    device: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Transform sampled robot surface points using one FK result per frame."""
+    points_local = np.asarray(points_local, dtype=np.float32)
+    normals_local = np.asarray(normals_local, dtype=np.float32)
+    point_link_index = np.asarray(point_link_index, dtype=np.int64)
+    link_poses_world = np.asarray(link_poses_world, dtype=np.float32)
+    if not str(device).startswith("cuda"):
+        selected = link_poses_world[:, point_link_index]
+        rotation = selected[:, :, :3, :3]
+        translation = selected[:, :, :3, 3]
+        points = np.einsum("tpij,pj->tpi", rotation, points_local) + translation
+        normals = np.einsum("tpij,pj->tpi", rotation, normals_local)
+        normals /= np.linalg.norm(normals, axis=-1, keepdims=True).clip(1e-8, None)
+        return points.astype(np.float32), normals.astype(np.float32)
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(f"CUDA device requested but unavailable: {device}")
+    torch_device = torch.device(device)
+    with torch.inference_mode():
+        local_points = torch.from_numpy(points_local).to(torch_device)
+        local_normals = torch.from_numpy(normals_local).to(torch_device)
+        link_poses = torch.from_numpy(link_poses_world).to(torch_device)
+        link_index = torch.from_numpy(point_link_index).to(torch_device)
+        selected = link_poses[:, link_index]
+        rotation = selected[:, :, :3, :3]
+        translation = selected[:, :, :3, 3]
+        points = torch.einsum("tpij,pj->tpi", rotation, local_points) + translation
+        normals = torch.einsum("tpij,pj->tpi", rotation, local_normals)
+        normals = normals / normals.norm(dim=-1, keepdim=True).clamp_min(1e-8)
+        return points.cpu().numpy().astype(np.float32), normals.cpu().numpy().astype(np.float32)
+
+
 def _episode_sources(root: Path, episode: Path, robot_urdf: Path | None) -> tuple[list[Path], str, Path, list[Path]]:
     poses, pose_source = _resolve_pose_sources(root, episode)
     kind = _episode_kind(root, episode)
@@ -232,6 +310,7 @@ def _build_one(payload: dict) -> dict:
     num_obj = int(payload["num_obj_points"])
     num_obj_pool = int(payload.get("num_obj_pool", 4096))
     candidate_threshold_m = float(payload.get("candidate_threshold_m", 0.05))
+    device = str(payload.get("device", "cpu"))
     if num_obj_pool < num_obj:
         raise ValueError(f"num_obj_pool={num_obj_pool} must be >= num_obj_points={num_obj}")
     if candidate_threshold_m <= 0.0:
@@ -338,6 +417,8 @@ def _build_one(payload: dict) -> dict:
             wrist_world.append(wrist)
         hand_world = np.asarray(hand_world, dtype=np.float32)
         hand_normals_world = np.asarray(hand_normals_world, dtype=np.float32)
+        hand_mesh_vertices_world = np.asarray(mano_vertices, dtype=np.float32)
+        hand_mesh_faces = np.asarray(mano_faces, dtype=np.int32)
         wrist_world = np.asarray(wrist_world, dtype=np.float32)
         q_full = np.zeros((len(hand_world), 12), dtype=np.float32)
         q_semantics = "unavailable_mano"
@@ -352,55 +433,52 @@ def _build_one(payload: dict) -> dict:
         c2r = np.asarray(np.load(episode / "C2R.npy", allow_pickle=False), dtype=np.float32)
         urdf = io.parse_urdf(robot_urdf)
         mesh_cache: dict = {}
-        first_vertices, first_faces = _robot_hand_mesh(io, urdf, q_full[0], mesh_cache)
-        hand_face, hand_bary = _surface_spec(first_vertices, first_faces, num_hand, seed + 991)
+        static_vertices, static_faces, static_face_links = _robot_hand_surface_mesh(io, urdf, mesh_cache)
+        hand_face, hand_bary = _surface_spec(static_vertices, static_faces, num_hand, seed + 991)
         hand_point_group, hand_points_local, hand_binding_groups = _robot_hand_binding(io, urdf, hand_face, hand_bary, mesh_cache)
         link_order = _urdf_link_order(urdf)
         link_to_index = {name: index for index, name in enumerate(link_order)}
         hand_point_link_index = np.asarray([link_to_index[hand_binding_groups[int(group)]] for group in hand_point_group], dtype=np.int16)
-        hand_world, hand_normals_world, wrist_world = [], [], []
+        _, hand_normals_local = _eval_surface(static_vertices, static_faces, hand_face, hand_bary)
+        hand_link_pose_world = []
         for frame in range(len(q_full)):
-            vertices, faces = _robot_hand_mesh(io, urdf, q_full[frame], mesh_cache)
-            hp, hn = _eval_surface(vertices, faces, hand_face, hand_bary)
-            hand_world.append(_to_world(hp, c2r))
-            hand_normals_world.append(hn @ c2r[:3, :3].T)
-            wrist_robot = io.compute_link_transforms(urdf, q_full[frame]).get("base_link", np.eye(4))
-            wrist_world.append(c2r @ wrist_robot)
-        hand_world = np.asarray(hand_world, dtype=np.float32)
-        hand_normals_world = np.asarray(hand_normals_world, dtype=np.float32)
-        wrist_world = np.asarray(wrist_world, dtype=np.float32)
+            link_tfs = io.compute_link_transforms(urdf, q_full[frame])
+            hand_link_pose_world.append(np.asarray([
+                c2r @ np.asarray(link_tfs.get(link_name, np.eye(4)), dtype=np.float32)
+                for link_name in link_order
+            ], dtype=np.float32))
+        hand_link_pose_world = np.asarray(hand_link_pose_world, dtype=np.float32)
+        hand_world, hand_normals_world = _transform_link_surface_sequence(
+            hand_points_local,
+            hand_normals_local,
+            hand_point_link_index,
+            hand_link_pose_world,
+            device=device,
+        )
+        wrist_world = hand_link_pose_world[:, link_to_index.get("base_link", 0)]
+        hand_mesh_vertices_world = None
+        hand_mesh_vertices_local = np.asarray(static_vertices, dtype=np.float32)
+        hand_mesh_faces = np.asarray(static_faces, dtype=np.int32)
+        hand_mesh_face_link_index = np.asarray([link_to_index[str(name)] for name in static_face_links], dtype=np.int16)
         q_semantics = f"{kind}_arm6_hand{q_full.shape[1] - 6}"
         hand_binding_semantics = "link_index_and_link_local_point_v1"
-    object_world, object_normals_world = [], []
-    object_pool_world, object_pool_normals_world = [], []
-    for frame in range(len(q_full)):
-        object_world.append(obj_local @ pose_seq[frame, :3, :3].T + pose_seq[frame, :3, 3])
-        object_normals_world.append(obj_local_normals @ pose_seq[frame, :3, :3].T)
-        object_pool_world.append(obj_local_pool @ pose_seq[frame, :3, :3].T + pose_seq[frame, :3, 3])
-        object_pool_normals_world.append(obj_local_normals_pool @ pose_seq[frame, :3, :3].T)
+    object_world, object_normals_world = _transform_surface_sequence(
+        obj_local, obj_local_normals, pose_seq, device=device
+    )
+    object_pool_world, object_pool_normals_world = _transform_surface_sequence(
+        obj_local_pool, obj_local_normals_pool, pose_seq, device=device
+    )
     hand_world = np.asarray(hand_world, dtype=np.float32)
     hand_normals_world = np.asarray(hand_normals_world, dtype=np.float32)
-    object_world = np.asarray(object_world, dtype=np.float32)
-    object_normals_world = np.asarray(object_normals_world, dtype=np.float32)
-    object_pool_world = np.asarray(object_pool_world, dtype=np.float32)
-    object_pool_normals_world = np.asarray(object_pool_normals_world, dtype=np.float32)
     wrist_world = np.asarray(wrist_world, dtype=np.float32)
 
     # Candidate membership is invariant to the current wrist transform, so it
     # can be computed directly in the HRDexDB world frame.  Keep it aligned to
     # the stable object pool; the Cm loader samples from this mask at runtime.
-    candidate_mask = np.empty((len(q_full), num_obj_pool), dtype=np.bool_)
-    for frame in range(len(q_full)):
-        # Query the exact Euclidean radius with a KD-tree instead of materializing
-        # a (num_obj_pool, num_hand_points, 3) distance tensor per frame.  This
-        # keeps the candidate semantics unchanged while cutting both CPU work and
-        # peak memory substantially for the 4096 x 1538 pool/hand contract.
-        candidate_mask[frame] = (
-            cKDTree(hand_world[frame]).query_ball_point(
-                object_pool_world[frame], r=candidate_threshold_m, return_length=True
-            )
-            > 0
-        )
+    # Object points are sampled from the complete surface pool.  The legacy
+    # mask field is retained as an all-true compatibility bitmap; it no longer
+    # represents a 5cm hand-proximity query or filters training rows.
+    candidate_mask = np.ones((len(q_full), num_obj_pool), dtype=np.bool_)
 
     geometry_arrays = {
         "frame_time": frame_times,
@@ -408,8 +486,14 @@ def _build_one(payload: dict) -> dict:
         "source_frame_id": source_frame_id,
         "q_full": q_full,
         "wrist_pose_world": wrist_world,
+        "obj_pose_world": np.asarray(pose_seq, dtype=np.float32),
         "hand_points_world": hand_world,
         "hand_normals_world": hand_normals_world,
+        "hand_mesh_vertices_world": hand_mesh_vertices_world if hand_mesh_vertices_world is not None else np.empty((0, 0, 3), dtype=np.float32),
+        "hand_mesh_vertices_local": hand_mesh_vertices_local if kind != "human" else np.empty((0, 3), dtype=np.float32),
+        "hand_mesh_faces": hand_mesh_faces,
+        "hand_mesh_face_link_index": hand_mesh_face_link_index if kind != "human" else np.empty((0,), dtype=np.int16),
+        "hand_link_pose_world": hand_link_pose_world if kind != "human" else np.empty((0, 0, 4, 4), dtype=np.float32),
         "hand_point_link_index": hand_point_link_index,
         "hand_points_local": hand_points_local,
         "obj_points_world": object_world,
@@ -448,6 +532,8 @@ def _build_one(payload: dict) -> dict:
               "implementation_sha256": implementation_fingerprint,
               "frames": len(q_full), "num_hand_points": num_hand, "num_obj_points": num_obj,
               "num_obj_pool": num_obj_pool, "candidate_threshold_m": candidate_threshold_m,
+              "candidate_semantics": "all_object_surface_points",
+              "transform_device": device,
               "sampling_seed": seed, "frame_mapping_strategy": "pose_index_to_nearest_normalized_video_index",
               "object_pose_source": pose_source,
               "video_frames": int(len(video_times)) if timestamp_path.exists() else None,
@@ -475,6 +561,10 @@ def main() -> None:
     parser.add_argument("--num-obj-points", type=int, default=512)
     parser.add_argument("--num-obj-pool", type=int, default=4096)
     parser.add_argument("--candidate-threshold-m", type=float, default=0.05)
+    parser.add_argument(
+        "--device", type=str, default="cpu",
+        help="Device for batched sampled-surface transforms (cpu or cuda[:index]).",
+    )
     parser.add_argument(
         "--reuse-schema-cache",
         action="store_true",
@@ -510,6 +600,7 @@ def main() -> None:
                  "episode": episode, "seed": args.seed,
                  "num_hand_points": args.num_hand_points, "num_obj_points": args.num_obj_points,
                  "num_obj_pool": args.num_obj_pool, "candidate_threshold_m": args.candidate_threshold_m,
+                 "device": args.device,
                  "reuse_schema_cache": args.reuse_schema_cache}
                 for episode in relative]
     results = []

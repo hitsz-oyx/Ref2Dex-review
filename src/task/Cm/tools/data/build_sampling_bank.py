@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.task.Cm.cache_schema import (
+from src.task.Cm.dataset.cache_schema import (
     INVALID_INDEX,
     SCHEMA_NAME,
     SceneSequenceCache,

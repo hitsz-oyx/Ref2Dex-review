@@ -1,10 +1,11 @@
-"""Build the Cm Scene Cache V1.1 (mmap scene geometry + ragged candidates).
+"""Build the Cm Scene Cache V1.1 (mmap scene geometry + ragged sampling indices).
 
 依照 ``src/task/Cm/docs/指导/V1.1.md`` 实现 Scene Cache 的第一级。语义上
 ``P_t`` 变为当前手附近的 local scene points；每个 manipulated/environment
 asset 各采 4096 点，sequence 间允许不同数量的 asset，object 与 environment
-完全一视同仁。candidate 仍是「当前手 5cm」，但改存 ragged index 而不是 bool
-mask。环境资产通过 ``GRABSeqData.get_environment_assets`` 通用接口获得，Stage4
+完全一视同仁。物体采样索引覆盖整个 manipulated-object surface pool，不再做
+5cm 查询；仍使用 ragged index 格式保持旧 cache 接口兼容。环境资产通过
+``GRABSeqData.get_environment_assets`` 通用接口获得，Stage4
 不感知 environment == table。
 
 用法::
@@ -27,7 +28,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from src.task.Cm.cache_schema import (
+from src.task.Cm.dataset.cache_schema import (
     ENV_SOURCE_ENVIRONMENT,
     ENV_SOURCE_OBJECT,
     SCHEMA_NAME,
@@ -255,6 +256,8 @@ def build_sequence_scene(
         "raw_frame_id": np.asarray(source["raw_frame_id"], dtype=np.int32),
         "obj_points_world": obj_points,
         "obj_normals_world": obj_normals,
+        "obj_pose_world": np.asarray(source.get("obj_root_pose"), dtype=np.float32)
+        if source.get("obj_root_pose") is not None else np.broadcast_to(np.eye(4, dtype=np.float32), (len(obj_points), 4, 4)).copy(),
         "env_points_world": env_points,
         "env_normals_world": env_normals,
         "scene_source_id": scene_source_id,
@@ -276,7 +279,7 @@ def write_sequence(
 ) -> None:
     shared_dir = sequence_dir / "shared"
     shared_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("raw_frame_id", "obj_points_world", "obj_normals_world",
+    for name in ("raw_frame_id", "obj_points_world", "obj_normals_world", "obj_pose_world",
                  "env_points_world", "env_normals_world", "scene_source_id",
                  "scene_asset_id", "asset_offsets"):
         np.save(shared_dir / f"{name}.npy", shared[name])
@@ -294,6 +297,7 @@ def write_sequence(
             "ds_rate": int(ds_rate),
             "source_fps": SOURCE_FPS,
             "coordinate_frame": "world",
+            "candidate_semantics": "all_manipulated_object_surface_points",
             "environment_storage": "static_world",
             "environment_assets": shared["environment_names"],
             "assets": [
@@ -326,15 +330,19 @@ def write_side(
     hand_root = np.asarray(source[f"{side}_hand_root_pose"], dtype=np.float32)
     obj_world = np.asarray(source["obj_points_world"], dtype=np.float32)
     frames = obj_world.shape[0]
-    scene_world = np.concatenate([obj_world, np.broadcast_to(env_points_world, (frames,) + env_points_world.shape)], axis=1)
-    offsets, indices = compute_scene_candidate_ragged(
-        scene_world, hand_world, hand_root,
-        candidate_threshold=candidate_threshold,
-        frame_batch_size=frame_batch_size,
-        device=device,
-    )
+    # The final contract samples uniformly from the manipulated object's
+    # surface pool.  Keep the historical ragged files for compatibility, but
+    # expose every object-pool point and no environment point as a candidate.
+    object_count = int(obj_world.shape[1])
+    offsets = np.arange(frames + 1, dtype=np.int64) * object_count
+    indices = np.tile(np.arange(object_count, dtype=np.int32), frames)
     np.save(side_dir / "hand_points_world.npy", hand_world)
     np.save(side_dir / "hand_normals_world.npy", hand_normals)
+    mesh_vertices = source.get(f"{side}_hand_mesh_vertices_world")
+    mesh_faces = source.get(f"{side}_hand_mesh_faces")
+    if mesh_vertices is not None and mesh_faces is not None:
+        np.save(side_dir / "hand_mesh_vertices_world.npy", np.asarray(mesh_vertices, dtype=np.float32))
+        np.save(side_dir / "hand_mesh_faces.npy", np.asarray(mesh_faces, dtype=np.int32))
     np.save(side_dir / "hand_root_pose_world.npy", hand_root)
     np.save(side_dir / "candidate_offsets.npy", offsets)
     np.save(side_dir / "candidate_indices.npy", indices)
@@ -492,6 +500,7 @@ def main() -> None:
         model_scene_points=512,
         hand_points=int(adapter.num_hand_points),
         candidate_threshold_m=float(args.candidate_threshold),
+        candidate_semantics="all_manipulated_object_surface_points",
         num_hand_points=int(adapter.num_hand_points),
         ds_rate=int(args.ds_rate),
         source_fps=SOURCE_FPS,

@@ -1,9 +1,14 @@
 # Cm 任务架构记录
 
-- scope: task:Cm
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
-- related: [当前状态](status_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[V1.2.1 指导](../指导/V1.2.1.md)
+- last_updated: 2026-09-01
+
+## 当前规范目录
+
+Cm 已完成破坏性目录迁移，以下目录直接承载唯一真实实现：`src/`（模型、runner、配置和脚本）、`dataset/`（数据适配器与 cache schema）、`visualization/`（可视化入口）。配置按生命周期位于 `configs/active/` 与 `configs/archive/`；不再提供顶层兼容软链接。
+
+Cm 专属外部资产的 canonical 入口为 `src/task/Cm/assets/`，其中大型文件和软链接均被忽略；当前
+`assets/checkpoints/densetoken` 是指向该 Task 入口的根级兼容软链接，实际 DenseToken 文件仍保留在
+历史 `src/task/Cm/densetoken_ckpt/`，不因本次路径迁移复制或移动。
 
 ## V1.2 主 Pipeline
 
@@ -117,6 +122,21 @@ pred_obj_flow_scaled [B, N_o, 3]  # 沿 K 加权求和
 pred_obj_flow        [B, N_o, 3]  # 除以 object_flow_target_scale，恢复米制
 ```
 
+当 `use_additive_slot_contributions=true` 时，decoder 保留相同的 edge feature 和
+3-D flow head，但不再把输出解释为完整候选，也不使用 `dynamic_logits` 的 slot
+softmax 聚合：
+
+```text
+slot_contribution_flow_scaled [B, N_o, K, 3]
+pred_obj_flow_scaled = sum_k slot_contribution_flow_scaled[:, :, k, :]
+```
+
+此模式必须直接监督 aggregate `pred_obj_flow`，并关闭 candidate-mixture 与 hard
+gate/count 目标。可选 group sparsity 先在每个样本内部对有效物点求
+`mean_p ||contribution[p,k]||₂`，再沿 slot 求和并对 batch 求平均；因此其尺度不随
+batch size 或 padding 点数变化。它学习的是 effective slot 数，训练期仍计算
+`K_max` 个 slot，实际减少结构需要训练后 pruning。
+
 无效 object 点的最终预测强制为零。`C=256` 时历史 context edge 输入维度为 518、feature 维度为 128；`C=64` 时分别为 134、32。
 
 当 `use_object_context=false` 时，`z_obj` 和 `object_context_encoder` 完全不进入 object-flow decoder。物体侧只保留原始几何与 Cm-relative 几何：
@@ -131,7 +151,7 @@ pred_obj_flow        [B, N_o, 3]  # 除以 object_flow_target_scale，恢复米�
 
 ### 5. Loss / 诊断张量
 
-Runner 对有效 object 点计算 scaled vector Smooth-L1 flow loss；slot 辅助项包括 L0 风格 count loss、max-probability confidence loss，以及可选 active-overlap loss。`decoder_slot_usage` 为 `[B,K]`，用于统计 `effective_branch_count`、top-1 usage 和 slot 熵；这些诊断量默认不自动成为监督目标。
+Runner 对有效 object 点计算 scaled vector Smooth-L1 flow loss；legacy slot 辅助项包括 L0 风格 count loss、max-probability confidence loss，以及可选 active-overlap loss。additive 模式改用 contribution vector norm 的轻量 group sparsity，并报告 per-slot strength、effective branch count 与 top-1 usage。`decoder_slot_usage` 为 `[B,K]`，用于统计 legacy routing 或 additive contribution usage；这些诊断量默认不自动成为监督目标。
 
 ## 数据与评估合同
 
@@ -154,10 +174,10 @@ DexYCB 跨数据集评估复用同一 Stage4 sequence schema。其序列 world f
 | 新版 mixed split | `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/splits_seed42/splits.json` | sequence 级、按 dataset 分层，train/val/test=`1308/164/164` |
 | 新版 mixed calibration | `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/metadata.json` | seed42 train-only、stride 1--10 等权，RMS=`0.07328625889337191 m` |
 | 新版 mixed E1 statistics | `data/processed_data/cm_object_v2_grab_arctic_subject_template_20260820/object_v2_statistics.json` | GRAB=`327798`、ARCTIC=`334248` samples |
-| 新版训练配置 | `src/task/Cm/configs/object_v2_grab_arctic_subject_template_20260820.yaml` | C=256 正式训练入口，训练中 |
+| 新版训练配置 | `src/task/Cm/configs/active/object_v2_grab_arctic_subject_template_20260820.yaml` | C=256 正式训练入口，训练中 |
 | DexYCB Stage4 cache | `data/processed_data/stage4/data/dexycb` | 修复版 subject-10/right；50 sequences / 2853 frames / active-frame ratio 80.30% |
 | DexYCB 正式评测 split | `data/processed_data/stage4/splits/dexycb_subject10_fixed_v1/split.json` | test 含全部 50 条 DexYCB；train 仅为 loader 所需的 1 条 GRAB 占位，不参与评测 |
-| DexYCB C=256 评测配置 | `src/task/Cm/configs/eval_dexycb_subject10_c256_fixed_20260822.yaml` | 固定 stride 1/5/10、batch 32、沿用训练 checkpoint scale |
+| DexYCB C=256 评测配置 | `src/task/Cm/configs/active/eval_dexycb_subject10_c256_fixed_20260822.yaml` | 固定 stride 1/5/10、batch 32、沿用训练 checkpoint scale |
 
 ## Scale 与缓存
 
@@ -169,4 +189,33 @@ DexYCB 跨数据集评估复用同一 Stage4 sequence schema。其序列 world f
 
 该 geometry cache 不包含 DenseToken 特征。HRDexDB fine-tune 时 `data.use_dense_cache` 必须为 `false`，模型在线执行 DenseToken；因此即使 `meta.freeze_dense_encoder=false`，梯度仍能从 Cm loss 回到 DenseToken。任何包含 `cached_z_obj/cached_z_hand/cached_hand_contact` 的 dense feature bank 都禁止用于该阶段。
 
-`BalancedCmMixture` 将 GRAB、ARCTIC、HRDexDB 三个外部 source bucket 按 `1/3,1/3,1/3` 概率抽样，保持 Cm 的 object-flow 语义；验证和测试按 `source × stride∈{1,5,10}` 建立独立 loader，并额外汇总 `val/mean_stride_epe_mm` 供 checkpoint 选择。微调固定沿用 base 的 `object_flow_target_scale`，不重新 calibration；该 scale 只作为 loss 数值归一化，不改变米制指标。`configs/hrdexdb_finetune_cm64.yaml` 是方案 A 的入口：从 base C=64 checkpoint 恢复后将 `meta.freeze_dense_encoder=false`，DenseToken 与 Cm head 联合训练。冻结阶段 checkpoint 不保存 DenseToken；可训练阶段 checkpoint 保存该前缀以支持恢复。
+`BalancedCmMixture` 接受配置声明的 base source bucket 和一个过滤后的 HRDexDB bucket，并按 `source_probabilities`（未配置时 source 等权）抽样；验证和测试按 `source × stride∈{1,5,10}` 建立独立 loader，并额外汇总 `val/mean_stride_epe_mm` 供 checkpoint 选择。旧 GRAB/ARCTIC/HRDexDB 三源入口仍是 `1/3` 等权；`configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml` 仅启用 GRAB 与 `inspire_f1/`，二者各 `0.5`。微调固定沿用 base 的 `object_flow_target_scale`；该 scale 只作为 loss 数值归一化，不改变米制指标。`configs/active/hrdexdb_finetune_cm64.yaml` 是方案 A 的入口：从 base C=64 checkpoint 恢复后将 `meta.freeze_dense_encoder=false`，DenseToken 与 Cm head 联合训练。冻结阶段 checkpoint 不保存 DenseToken；可训练阶段 checkpoint 保存该前缀以支持恢复。
+
+## 2026-08-30 单帧 mesh/object-pose 更新
+
+- 手部 cache 额外保存 `hand_mesh_vertices_world [T,V,3]` 与固定拓扑 `hand_mesh_faces [F,3]`；Dataset 每个 transition 按三角形面积随机采样 1538 个 face/barycentric 位置，当前与未来端共享该规格。
+- 新 cache 保存 `obj_pose_world [T,4,4]`。输入、hand flow 和 object flow 均以当前帧 object pose 的逆变换表达（平移+旋转）；未来端仍使用当前 pose，保留物体平移/旋转运动。旧 cache 缺少该字段时保持 hand-root 兼容路径。
+- Inspire-F1 HRDexDB 的 train/val/test source prefix 为 `inspire_f1` 时固定 `stride=2`，非 Inspire source 不改变原 stride 策略。
+
+可选手流 decoder 与 object additive decoder 同为逐 slot contribution：对每个手点构造 `[hand_xyz(3), hand_normal(3), Cm(C), hand_xyz-Cm_anchor(3), Cm_anchor_normal(3)]`，独立 MLP 输出 `[B,1538,K,3]` 并沿 slot 求和为米制 `pred_hand_flow [B,1538,3]`。decoder 边输入不拼接 `z_hand`、contact prior 或 GT `hand_flow`；但 Cm encoder 本身仍按既有合同从 DenseToken、当前手几何和动作流编码 Cm。手流使用独立 train-only RMS scale 和 scaled vector Smooth-L1，正式混合配置的 `lambda_hand=1`；object loss 保持 `lambda_obj=1`，checkpoint 仍只按 object `val/mean_stride_epe_mm` 选择。GRAB/Inspire-F1 等权、stride 1--10 等权校准得到 hand RMS=`0.06986298856554198 m`、scale=`14.313730639533834`。
+## 2026-08-30 语义更新：物体表面采样替代 5cm candidate
+
+用户确认单帧 GRAB + Inspire-F1 cache 不再按手-物体距离筛选。物体池仍固定为 4096 个表面点，训练每次从完整 manipulated-object pool 随机采样 512 点；旧 `candidate_offsets/candidate_indices` 与 `obj_candidate_mask_5cm` 文件仅作为兼容字段保存，其中索引覆盖全部物体池、mask 全真，不包含环境点。
+
+## 2026-08-30 框架合同收口
+
+- `object_v2`、Stage4 和 HRDexDB loader 在初始化时扫描被选 train/val/test 序列；同一数据集只能使用一个坐标合同。全量提供 `obj_pose_world` 时声明 `object_pose_t`，全量缺失时保留 `hand_root_t`，混合或配置声明不一致立即失败，不再依据第一条序列静默推断。
+- `_MmapSequenceDataset`、`Stage4CmDataset`、`Stage4CmSceneDataset` 和 `HrdexdbGeometryDataset` 的 epoch 都通过进程共享值传播给 persistent workers；object/scene/HRDexDB 的 mmap 记录使用有界 LRU，避免长期训练无限持有文件句柄。
+- `src/task/Cm/docs/plan/V1.2.1.md` 是本轮实现的最终执行计划。模型、loss、GT、split 内容和正在运行的训练不在本轮修改范围内。
+
+## 2026-08-30 研究实验与资产路径
+
+Cm 的研究脚本按独立实验包组织：`research/<experiment>/` 下必须有实验说明和
+`experiment.yaml`，运行产物写入 `output/<run_id>/`。正式训练/评估仍写入根级
+`outputs/cm/<run_id>/`；根 `output/research/` 只保留历史产物。
+
+DenseToken 是 Cm 使用的外部预训练资产，不属于 Cm 源码。规范入口为
+`src/task/Cm/assets/checkpoints/densetoken/`，当前通过软链接兼容旧的
+`src/task/Cm/densetoken_ckpt/`；根 `assets/` 只保留兼容软链接。
+DenseToken feature cache 仍属于 `data/processed_data/`，训练生成的 Cm checkpoint 仍属于
+`outputs/cm/<run_id>/checkpoints/`。

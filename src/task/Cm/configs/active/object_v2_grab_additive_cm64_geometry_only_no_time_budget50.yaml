@@ -1,0 +1,13 @@
+_base_: src/task/Cm/configs/active/object_v2_grab_additive_cm64_geometry_only_no_time.yaml
+
+name: cm_object_v2_grab_additive_cm64_geometry_only_no_time_budget50
+
+train:
+  # Strictly match the C=64 hard-gate comparison: global batch 64,
+  # 50 epochs, and the same cosine schedule / total optimizer budget.
+  epochs: 50
+  max_steps: 202300
+  description: "GRAB object-only C=64 additive contribution strict budget match: global batch 64, 50 epochs, aggregate supervision, group sparsity."
+
+wandb:
+  tags: [cm, object-v2, grab-only, cm64, geometry-only-object, no-time, additive-contribution, group-sparsity, strict-budget50]

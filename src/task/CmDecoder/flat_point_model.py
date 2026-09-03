@@ -8,7 +8,7 @@ from torch import nn
 
 from src.base.checkpoint import load_checkpoint
 from src.base.base_config import task_config_from_dict
-from src.task.Cm.model import CmFlowModel
+from src.task.Cm.src.model import CmFlowModel
 
 
 class CmFlatPointFlowModel(nn.Module):

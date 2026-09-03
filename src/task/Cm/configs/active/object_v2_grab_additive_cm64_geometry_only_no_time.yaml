@@ -1,0 +1,33 @@
+_base_: src/task/Cm/configs/active/object_v2_grab_gate_cm64_geometry_only_no_time.yaml
+
+name: cm_object_v2_grab_additive_cm64_geometry_only_no_time
+
+meta:
+  # Overcomplete K_max=16 additive contribution pilot.  Each slot emits a
+  # 3-D contribution; the public object flow is their sum.  No candidate
+  # soft-min or hard gate is used in this first pass.
+  cm_dim: 64
+  use_object_context: false
+  use_time_condition: false
+  use_slot_gate: false
+  gate_warmup_enabled: false
+  use_additive_slot_contributions: true
+  loss_flow_weight: 1.0
+  loss_candidate_mixture_weight: 0.0
+  loss_slot_group_sparsity_weight: 0.001
+  loss_slot_count_weight: 0.0
+  loss_slot_confidence_weight: 0.0
+  loss_active_overlap_weight: 0.0
+
+data:
+  batch_size: 32
+  val_batch_size: 32
+
+train:
+  epochs: 10
+  max_steps: 80920
+  description: "GRAB object-only C=64 additive slot-flow contributions: aggregate supervision with light group sparsity, no gate, 10 epochs."
+
+wandb:
+  mode: offline
+  tags: [cm, object-v2, grab-only, cm64, geometry-only-object, no-time, additive-contribution, group-sparsity, pilot]

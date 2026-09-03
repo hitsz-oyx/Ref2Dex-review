@@ -39,6 +39,8 @@ def convert_sequence(source: Path, output: Path, *, overwrite: bool = False) -> 
         shared_out.mkdir(exist_ok=True)
         for key in ("raw_frame_id", "obj_points_world", "obj_normals_world", "obj_point_id"):
             np.save(shared_out / f"{key}.npy", np.asarray(shared[key]))
+        if "obj_pose_world" in shared.files:
+            np.save(shared_out / "obj_pose_world.npy", np.asarray(shared["obj_pose_world"]))
         meta = {key: str(np.asarray(shared[key]).item()) for key in ("dataset_name", "seq_id", "subject_id", "seq_name", "object_name") if key in shared.files}
         meta.update({"schema_name": SCHEMA_NAME, "schema_version": SCHEMA_VERSION,
                      "ds_rate": int(np.asarray(shared["ds_rate"]).item()),
@@ -57,6 +59,9 @@ def convert_sequence(source: Path, output: Path, *, overwrite: bool = False) -> 
                 if key not in hand.files:
                     raise KeyError(f"{side_path}: missing {key}")
                 np.save(out / f"{key}.npy", np.asarray(hand[key]))
+            if "hand_mesh_vertices_world" in hand.files and "hand_mesh_faces" in hand.files:
+                np.save(out / "hand_mesh_vertices_world.npy", np.asarray(hand["hand_mesh_vertices_world"]))
+                np.save(out / "hand_mesh_faces.npy", np.asarray(hand["hand_mesh_faces"]))
             offsets, indices = _ragged(hand["obj_candidate_mask_5cm"])
             np.save(out / "candidate_offsets.npy", offsets)
             np.save(out / "candidate_indices.npy", indices)

@@ -1,0 +1,35 @@
+_base_: src/task/Cm/configs/active/object_v2_grab_gate_cm64_geometry_only_no_time.yaml
+
+name: cm_object_v2_grab_mixture_cm64_geometry_only_no_time
+
+meta:
+  # Candidate-level soft-min pilot.  Keep the object-only/no-time contract
+  # from the C=64 capacity baseline, but remove hard gate/count pressure so
+  # each object point can learn a slot responsibility from candidate loss.
+  cm_dim: 64
+  use_object_context: false
+  use_time_condition: false
+  use_slot_gate: false
+  gate_warmup_enabled: false
+  loss_flow_weight: 0.0
+  loss_candidate_mixture_weight: 1.0
+  candidate_mixture_temperature: 0.05
+  loss_slot_count_weight: 0.0
+  loss_slot_confidence_weight: 0.0
+  loss_active_overlap_weight: 0.0
+
+data:
+  # Single-GPU pilot on GPU 7; preserve the C=64 baseline per-device batch.
+  batch_size: 32
+  val_batch_size: 32
+
+train:
+  epochs: 10
+  # The object-v2 train loader has about 8092 steps/epoch at global B=32;
+  # cap explicitly at 10 epochs so the pilot budget is unambiguous.
+  max_steps: 80920
+  description: "GRAB object-only C=64 candidate-flow mixture pilot: no gate/count, tau=0.05, 10 epochs."
+
+wandb:
+  mode: offline
+  tags: [cm, object-v2, grab-only, cm64, geometry-only-object, no-time, candidate-mixture, softmin, pilot]

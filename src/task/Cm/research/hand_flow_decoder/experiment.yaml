@@ -1,0 +1,10 @@
+schema: ref2dex.experiment.v1
+id: hand_flow_decoder
+task: Cm
+kind: calibration
+status: maintained
+entrypoint: calibrate_hand_flow_scale.py
+output_root: output/<run_id>
+modification_version: V1.2.1
+public_contract_changes: false
+plan_required_before_next_run: true

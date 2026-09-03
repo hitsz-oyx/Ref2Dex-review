@@ -93,7 +93,7 @@ def _is_object_v2_root(train_path: Path) -> bool:
 
 
 def object_v2_train_sequence_dirs(train_path: Path, split_json_path: Optional[Path]) -> List[Path]:
-    from src.task.Cm.dataset_object_v2 import _read_sequence_split, _sequence_dirs
+    from src.task.Cm.dataset.object_v2 import _read_sequence_split, _sequence_dirs
     if split_json_path is None:
         return _sequence_dirs(train_path)
     payload = json.loads(split_json_path.read_text(encoding="utf-8"))
@@ -236,7 +236,7 @@ def calibrate_flow_scale_scene(
     唯一区别是候选集合来自 scene pool——static environment 点贡献恒零 flow，
     这正是 Scene V1 的目标分布（V1.md §23）。
     """
-    from src.task.Cm.cache_schema import SceneSequenceCache, iter_sequence_dirs
+    from src.task.Cm.dataset.cache_schema import SceneSequenceCache, iter_sequence_dirs
 
     if min_stride <= 0 or max_stride < min_stride:
         raise ValueError("Require 0 < min_stride <= max_stride.")

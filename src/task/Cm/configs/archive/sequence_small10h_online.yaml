@@ -1,0 +1,40 @@
+_base_: src.task.Cm.src.config:Config
+
+name: cm_sequence_small10h_stride12
+
+data:
+  # 10 raw GRAB sequences x 160 contiguous original frames.  One sequence is
+  # held out at the sequence level, so no temporal neighbours cross the split.
+  train_path: data/processed_data/stage4/cm_sequence_small10h
+  active_only: true
+  min_stride: 1
+  max_stride: 12
+  val_strides: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  group_val_by_sequence: true
+  # PTv3/spconv is stable on this host at this batch size in FP32.
+  batch_size: 2
+  val_batch_size: 2
+  num_workers: 4
+  persistent_workers: true
+
+train:
+  lr: 1.5e-4
+  amp: false
+  # Measured on GPU 1 in FP32: about 4 s/step, so 8k steps targets 9--10 h.
+  # This is roughly 11.2 epochs over the 1,432-sample training split.
+  epochs: 15
+  max_steps: 8000
+  log_every_steps: 50
+  # A complete 12-stride validation is expensive; every two epochs yields
+  # several comparable checkpoints across this ~10-hour small-data run.
+  eval_every_epochs: 2
+  save_every_steps: 1000
+  save_every_epochs: 2
+  metric_for_best: val/mean_stride_epe_mm
+  lower_is_better: true
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [cm, small-scale, sequence-cache, dynamic-stride, stride12, online-wandb]

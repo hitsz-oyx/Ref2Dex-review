@@ -19,7 +19,7 @@ stride/future/delta_time（§16），所以 dense bank 不含 stride 维。
 
     python -m src.task.Cm.tools.data.build_dense_cache \
         --root data/processed_data/cm_scene_v1 \
-        --dense-checkpoint src/task/Cm/densetoken_ckpt/best.pt \
+        --dense-checkpoint src/task/Cm/assets/checkpoints/densetoken/best.pt \
         --bank-size 4 --batch-size 64 --dtype float16 --device cuda:0
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any, Callable
 import numpy as np
 import torch
 
-from src.task.Cm.cache_schema import (
+from src.task.Cm.dataset.cache_schema import (
     SCHEMA_NAME,
     SceneSequenceCache,
     dense_cache_fingerprint,
@@ -43,7 +43,7 @@ from src.task.Cm.cache_schema import (
     update_meta,
     validate_scene_root,
 )
-from src.task.Cm.dataset_scene import (
+from src.task.Cm.dataset.scene import (
     _normal_world_to_hand,
     _world_to_hand,
     gather_frame_scene_inputs,
@@ -314,7 +314,7 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
-    from src.task.Cm.dense_token import FrozenDenseTokenEncoder
+    from src.task.Cm.src.dense_token import FrozenDenseTokenEncoder
 
     checkpoint = Path(args.dense_checkpoint).resolve()
     encoder = FrozenDenseTokenEncoder(checkpoint).to(torch.device(args.device))

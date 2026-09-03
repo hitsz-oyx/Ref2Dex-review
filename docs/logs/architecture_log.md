@@ -1,9 +1,21 @@
 # Ref2Dex 架构记录
 
-- scope: root
-- last_updated: 2026-08-25
-- last_verified: 2026-08-25
-- related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
+- last_updated: 2026-09-01
+
+## 0. 运行目录与追溯合同
+
+- `BaseRunner` 的训练运行目录为 `outputs/<Task>/<run_id>/`，train/eval 启动时自动写入
+  配置、metadata 和 `run_manifest.json`；如果目标目录已有 manifest，续跑/评估写入带时间戳的
+  continuation manifest，不覆盖原始 provenance。
+- train/eval 正常或异常终态由 `BaseRunner` 写入用户可读的 `summary.json`（已有 summary 时使用
+  带时间戳的 eval/resume/attempt 文件）；它是终态快照，不是实时状态或 heartbeat。
+- `run_manifest.json` 使用 `ref2dex.run.v1` schema，记录运行模式、Task/run 名称、修改版本、
+  配置快照、Git 提交与 dirty 状态、输入数据/cache manifest 引用及文件基本信息、数据合同
+  （schema/shape/坐标系）、seed、初始 checkpoint 和输出目录。指导/计划通过活动和文档链接
+  关联，不作为运行 manifest 的版本字段。
+  运行 manifest 不计算加密 hash，只记录输入文件存在性、大小和修改时间。
+- 数据 cache manifest、训练 run manifest 和 `experiment_log.md` 分别描述输入数据、一次
+  运行实例和科研证据，不互相替代。大型 cache、checkpoint 和生成产物仍不纳入 Git。
 
 ## 1. 研究目标与总体架构
 
@@ -53,8 +65,6 @@ Ref2Dex 的目标不是直接把一套手的关节角回归成另一套手的关
   x_hand_root = R_hand_root^T (x_world - t_hand_root)
   ```
 
-- OakInk 当前规范导出使用官方 MANO root quaternion 同时移除手、物体的 camera/world root rotation，并携带可供训练端重建的 axis-angle45 MANO 参数；旧版只减 wrist 的 camera-frame 数据不满足该跨数据集坐标合同。
-
 - CmDecoder 的机器人 task cache 使用当前机器人 wrist 坐标系；目标点和 `hand_flow` 都表达在当前 wrist frame，避免把目标腕部刚体运动错误地从 flow 中消掉。
 - 法向只做旋转，不施加平移；所有 flow、平移和 point loss 的单位为米，旋转向量和关节角的单位为弧度。
 
@@ -75,14 +85,6 @@ hand_flow = hand_points_(t+stride) - hand_points_t
 HRDexDB 的共享 geometry layer 必须遵守同一合同：保留稳定的 `[T,4096,3]` 物体池和 `[T,4096]` 的当前手 5 cm candidate mask，Cm loader 再在线采样 `[512,3]`。仅有全表面 `[T,512,3]` 且没有 candidate mask 的 decoder smoke cache 不可直接作为 Cm 训练输入；CmDecoder 的 legacy task layer 仍可保留独立的 512 点字段。
 
 HRDexDB 的仓库内规范原始数据入口为 `dataset/HRDexDB/v0_nonvideo`，配套机器人资产和读取 helper 位于同级 `assets/`、`hrdexdb_contact_heatmaps/`；整个 `dataset/HRDexDB/` 是机器本地数据，不纳入 Git。
-
-correspondence_ptv3_v2 的 HRDexDB robot 路径采用独立 URDF/FK q-space：固定
-link/barycentric 手点绑定，hand q joints 加受限噪声后回到 `base_link` hand-root；
-不把 robot qpos 转成 MANO 字段，也不将 arm/base 扰动与当前 hand-root corruption
-混合。七域 mixed loader 通过样本级 contract dispatch 同时容纳 MANO 与 robot，三种
-机器人按 FK 标定使用不同 q-space 噪声乘数。
-
-minimal allhands archive 的 Stage3 适配由 `process/HRDexDB/correspondence_minimal_adapter.py` 统一处理四种手型：human 使用 MANO reconstruction，三类机器人使用对应 URDF/FK。输出仍使用统一 4096 object pool、1538 hand points 和 hand-root schema。
 
 ## 3. 阶段一：correspondence_ptv3_v2 / DenseToken
 
@@ -451,7 +453,7 @@ q → link_tf [B,L,4,4]
 可视化入口：
 
 - `src/task/correspondence_ptv3_v2/visualize.py`：接触/对应关系；
-- `src/task/Cm/visualize.py` 与 evaluator：object flow、Cm slot、anchor；
+- `src/task/Cm/visualization/visualize.py` 与 evaluator：object flow、Cm slot、anchor；
 - `src/task/CmDecoder/viewer.py`：当前手、GT 手和预测手；
 - `src/task/CmDecoder/grab_retarget.py`：导出 GRAB → Inspire F1 轨迹和 PNG。
 
@@ -467,3 +469,41 @@ q → link_tf [B,L,4,4]
 - 缺失 subject-specific MANO template、非连续帧、错误坐标声明、错误 cache 版本或不一致 calibration 必须直接报错，不能静默回退。
 
 各阶段的完整实现事实分别见 [`correspondence_ptv3_v2/docs/架构.md`](../../src/task/correspondence_ptv3_v2/docs/架构.md)、[`Cm/docs/logs/architecture_log.md`](../../src/task/Cm/docs/logs/architecture_log.md) 和 [`CmDecoder/docs/logs/architecture_log.md`](../../src/task/CmDecoder/docs/logs/architecture_log.md)。
+
+## 9. 已撤出 Task 组件原型
+
+此前的通用 Component/Artifact/Contract/Registry 原型和 Cm、CmDecoder、
+correspondence 的 Task manifest 只作为历史实验记录保留在 Git 历史与修改日志中，
+不再属于当前 Task 架构。当前两个 Task 的模型、Runner、Dataset 和配置均由各自
+Task 目录直接承载；没有 Task-local `components/`、`components.json` 或组件选择入口。
+根 `components/` 目录及其通用示例也已在 V1.2.13 删除。`src/base/` 中现存的通用协议代码
+仅作为共享基础设施兼容代码保留，不提供默认 manifest 根，也不参与当前 Task 的运行选择。
+
+## 10. 通用维护 Skill 与项目本地规则
+
+仓库内 `.agents/skills/` 保存可复制到其他任务的通用工作流：
+
+- `research-change-control`：修改等级、审批边界、最小 diff、修改记录和文档—diff 一致性审计；
+- `research-experiment-workflow`：实验前置条件、产物隔离、证据记录和长任务等待；
+- 任务无关的组件原型已停用；当前保留的 Skill 只负责修改治理和实验流程。
+
+Cm 的结构迁移入口见 [`src/task/Cm/docs/README.md`](../../src/task/Cm/docs/README.md)。Cm 已完成破坏性迁移，`src/task/Cm/src`、`dataset` 和 `visualization` 直接承载唯一真实实现，配置只从 `configs/active` 或 `configs/archive` 加载；旧顶层入口不再维护。需要复现迁移前运行时，应固定到迁移前的 commit。
+
+根 `AGENTS.md` 只保留 Ref2Dex 的路径、日志、科学不变量和 Skill 路由；通用 Skill 不假设
+任何特定仓库目录，复制后由目标仓库的 `AGENTS.md` 提供本地日志和路径约定。
+
+## 11. 目录、产物与追溯分层
+
+仓库将内容分为源码、实验定义、输入数据、外部资产、运行产物和证据日志六层：
+
+- 源码和共享运行时位于 `src/`、`process/` 和根 `tools/`；
+- Task-local 研究实验位于 `src/task/<Task>/research/<experiment>/`，每个实验必须有
+  `README.md` 和 `experiment.yaml`，生成内容只写入其 `output/<run_id>/`；
+- 原始数据与派生 cache 位于 `data/raw_data/` 和 `data/processed_data/`，Dataset 代码不携带项目 cache；
+- Task 专属预训练 checkpoint、body model 和 URDF 位于 `src/task/<Task>/assets/`，训练生成 checkpoint 位于 `outputs/`；根 `assets/` 只允许历史兼容软链接；
+- `experiment.yaml`、数据 `manifest.json`、资产 `asset_manifest.json` 和运行 `run_manifest.json`
+  分别承担实验定义、输入数据、外部依赖和单次运行追溯职责；
+- 根 `output/`、`results/` 和 `result/` 不再作为新入口。
+
+2026-08-31 已将 Cm 的 DenseToken 入口下沉到 `src/task/Cm/assets/checkpoints/densetoken`，根
+`assets` 保留被忽略的兼容软链接；真实大型文件仍在旧 Cm 目录，未因路径迁移复制或移动。

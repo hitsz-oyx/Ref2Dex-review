@@ -37,7 +37,7 @@ wait "$PID_5"
 
 cd "$ROOT"
 CUDA_VISIBLE_DEVICES=4,5 "$TORCHRUN_BIN" --standalone --nproc_per_node=2 \
-  -m src.task.Cm.train \
-  --config src/task/Cm/configs/sequence_full_grab_16slot.yaml \
+  -m src.task.Cm.src.train \
+  --config src/task/Cm/configs/archive/sequence_full_grab_16slot.yaml \
   --distributed \
   --set 'train.description=Full GRAB (1335 raw sequences): 16 slots, no gate, physical time conditioning, two-GPU DDP.'

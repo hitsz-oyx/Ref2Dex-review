@@ -1,0 +1,25 @@
+_base_: src/task/Cm/configs/archive/sequence_full_grab_16slot.yaml
+
+name: cm_full_grab_16slot_resume20e
+
+train:
+  # Continue exactly 20 epochs from the completed 80k-step checkpoint.
+  # The old cosine schedule has reached zero, so start a distinct, lower-LR
+  # cosine fine-tuning phase while retaining AdamW's moment estimates.
+  resume: outputs/cm/cm_full_grab_16slot_20260805_000407/checkpoints/best.pt
+  epochs: 20
+  max_steps: 400000
+  scheduler: cosine_restart
+  finetune_steps: 320000
+  lr: 1.0e-5
+  min_lr: 1.0e-7
+  warmup_steps: 0
+  warmup_ratio: 0.0
+  eval_every_epochs: 1
+  save_every_epochs: 1
+  save_every_steps: 16000
+
+wandb:
+  enable: true
+  mode: online
+  tags: [cm, full-grab, slot-16, no-gate, time-conditioned, ddp-2, resume, finetune-20e]

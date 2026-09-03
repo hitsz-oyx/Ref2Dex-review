@@ -1,10 +1,13 @@
-# Cm 研究日志
+# Cm 研究日志（历史兼容）
+
+> 新实验的脚本与产物请使用同级 `research/<experiment>/` 实验包；新的科学结论写入
+> `src/task/Cm/docs/logs/experiment_log.md`。本文件仅保留历史迁移记录，不再新增条目。
 
 ## 2026-08-18：V1.2 object-only cache implementation gate
 
 **假设**：现有 GRAB/ARCTIC Stage4 已提供相同 object-only schema，因此无需重新做 MANO forward、object surface sampling 或 candidate cdist。
 
-**改动**：新增 `process/common/object_cache_v2.py`、`src/task/Cm/build_object_sampling_bank.py`、`src/task/Cm/dataset_object_v2.py` 和 `object_v2_grab_arctic.yaml`。转换器固定 4096 object pool，candidate 转 ragged `uint32`，sampling bank 为 `[T,4,512]`；Dataset 保持单侧 1538 hand 输入并返回物理 `delta_time_s`，`dataset_id` 仅诊断使用。
+**改动**：新增 `process/common/object_cache_v2.py`、`src/task/Cm/tools/data/build_object_sampling_bank.py`、`src/task/Cm/dataset/object_v2.py` 和 `configs/active/object_v2_grab_arctic.yaml`。转换器固定 4096 object pool，candidate 转 ragged `uint32`，sampling bank 为 `[T,4,512]`；Dataset 保持单侧 1538 hand 输入并返回物理 `delta_time_s`，`dataset_id` 仅诊断使用。
 
 **证据**：新增模块通过 `python3 -m py_compile`。既有 pytest 未能收集，因为当前系统 Python 缺少 `smplx` 依赖；未宣称真实数据 E0/E1 或训练 gate 通过。
 

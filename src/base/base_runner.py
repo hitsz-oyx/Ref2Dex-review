@@ -7,6 +7,7 @@ import time
 import traceback
 from contextlib import nullcontext
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,7 @@ from .distributed import (
 )
 from .metrics import MetricAverager, MetricStat
 from .performance import PerformanceMonitor
+from .run_manifest import build_run_manifest, write_run_manifest, write_run_summary
 from .schedulers import CosineRestartScheduler, cosine_schedule, linear_schedule
 from .utils import (
     JsonlLogger,
@@ -158,6 +160,8 @@ class BaseRunner:
         self.is_primary = self.distributed.is_primary
         self.run_name, self.output_dir = self._resolve_run_identity()
         self.cfg.train.output_dir = str(self.output_dir)
+        self._run_started_at = datetime.now(timezone.utc).isoformat()
+        self._summary_written = False
         self.seed = int(cfg.train.seed)
         self.process_seed = set_seed(self.seed + self.distributed.rank)
         self.device = resolve_device(
@@ -213,13 +217,18 @@ class BaseRunner:
         # otherwise fall back to validation.  This keeps CLI checkpoint evals
         # from silently reporting validation metrics when a test loader bundle
         # is available.
-        if self._resolve_test_loaders():
-            metrics = self.evaluate_test_all()
-        else:
-            metrics = self.evaluate_all()
+        try:
+            if self._resolve_test_loaders():
+                metrics = self.evaluate_test_all()
+            else:
+                metrics = self.evaluate_all()
+        except BaseException:
+            self._write_terminal_summary(run_status="FAILED", error=traceback.format_exc())
+            raise
         if self.is_primary:
             for key, value in metrics.items():
                 self._log_line(f"{key}: {value:.6g}")
+        self._write_terminal_summary(run_status="COMPLETED", metrics=metrics)
         return metrics
 
     def learn(self) -> dict[str, float]:
@@ -229,13 +238,16 @@ class BaseRunner:
         if performance is not None:
             performance.start()
         try:
-            return self._learn_impl()
+            metrics = self._learn_impl()
+            self._write_terminal_summary(run_status="COMPLETED", metrics=metrics)
+            return metrics
         except BaseException:
             # ``train.log`` is the durable, user-facing run record.  stdout
             # may be redirected by W&B or an external launcher, so persist an
             # unhandled training traceback here before propagating the error.
             if self.is_primary:
                 self._log_line("Training failed:\n" + traceback.format_exc())
+            self._write_terminal_summary(run_status="FAILED", error=traceback.format_exc())
             raise
         finally:
             if performance is not None:
@@ -288,6 +300,7 @@ class BaseRunner:
             last_metrics.update(val_metrics)
             self._handle_validation(val_metrics, final_epoch)
         self.save(epoch=final_epoch, is_best=False)
+        self._last_epoch = final_epoch
         elapsed = format_seconds(time.time() - start_time)
         if self._early_stopping_triggered:
             if self.is_primary:
@@ -682,9 +695,12 @@ class BaseRunner:
                     "min_lr": float(self._resolve_min_lr()),
                 }
             )
-        if self.is_primary:
-            save_config(self.cfg, self.output_dir / "config.json")
-        self._write_metadata()
+        self._write_run_provenance(
+            initial_checkpoint=(
+                getattr(self.cfg.train, "init_checkpoint", None)
+                or getattr(self.cfg.train, "resume", None)
+            )
+        )
         self.model = self.build_model(self.cfg.model).to(self.device)
         if self.cfg.train.compile:
             self.model = torch.compile(self.model)
@@ -703,6 +719,8 @@ class BaseRunner:
         self._log_train_setup()
 
     def _setup_eval(self, checkpoint: str | Path) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        barrier()
         dataloader_bundle = self.make_dataloaders(self.cfg.data, seed=self.seed)
         (self.train_loader, self.val_loader, self.test_loader, self.metadata,
          self.val_loaders, self.test_loaders) = (
@@ -711,6 +729,7 @@ class BaseRunner:
         if not self.val_loaders and not self.test_loaders:
             raise ValueError("No evaluation dataset is available. Set data.val_path, data.val_split > 0, or data.test_path.")
         self.configure_data(self.metadata, self.train_loader.dataset)
+        self._write_run_provenance(initial_checkpoint=checkpoint)
         self.model = self.build_model(self.cfg.model).to(self.device)
         self.load(checkpoint, load_optimizer=False, map_location=self.device)
         self.eval_mode()
@@ -1007,11 +1026,119 @@ class BaseRunner:
             artifact.add_file(str(checkpoint_path))
         self.wandb_run.log_artifact(artifact)
 
-    def _write_metadata(self) -> None:
+    def _write_run_provenance(self, *, initial_checkpoint: str | Path | None) -> None:
+        """Persist config, metadata and a non-overwriting run manifest.
+
+        A fresh run owns ``run_manifest.json``.  Evaluation into an existing
+        directory and train resume attempts receive timestamped snapshots so
+        the original provenance remains immutable.
+        """
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        base_manifest = self.output_dir / "run_manifest.json"
+        if base_manifest.exists():
+            suffix = "eval" if self.mode == "eval" else "resume" if getattr(self.cfg.train, "resume", None) else "attempt"
+            stamp = self._shared_timestamp()
+            manifest_path = self.output_dir / f"run_manifest_{suffix}_{stamp}.json"
+            config_path = self.output_dir / f"config_{suffix}_{stamp}.json"
+            metadata_path = self.output_dir / f"metadata_{suffix}_{stamp}.json"
+        else:
+            manifest_path = base_manifest
+            config_path = self.output_dir / "config.json"
+            metadata_path = self.output_dir / "metadata.json"
+
+        self.metadata.setdefault("run_name", self.run_name)
+        self.metadata.setdefault("description", str(getattr(self.cfg.train, "description", "") or ""))
+        self.metadata["run_manifest_path"] = str(manifest_path)
+        self.metadata["config_snapshot_path"] = str(config_path)
+        self.metadata["metadata_snapshot_path"] = str(metadata_path)
+        if self.is_primary:
+            save_config(self.cfg, config_path)
+        self._write_metadata(metadata_path)
+        if self.is_primary:
+            manifest = build_run_manifest(
+                task=self._task_slug(),
+                run_name=self.run_name,
+                output_dir=self.output_dir,
+                mode=self.mode,
+                config=self.cfg.to_dict(),
+                metadata=self.metadata,
+                config_source=getattr(self.cfg, "_config_source", None),
+                initial_checkpoint=initial_checkpoint,
+                config_snapshot=config_path,
+                metadata_snapshot=metadata_path,
+            )
+            write_run_manifest(manifest_path, manifest)
+
+    def _write_terminal_summary(
+        self,
+        *,
+        run_status: str,
+        metrics: dict[str, float] | None = None,
+        error: str | None = None,
+    ) -> None:
+        """Write one terminal summary without introducing live state/heartbeat files."""
+        if not self.is_primary or getattr(self, "_summary_written", False):
+            return
+        output_dir = getattr(self, "output_dir", None)
+        if output_dir is None:
+            # Lightweight control-flow tests may construct a runner via
+            # ``__new__`` without a filesystem-backed run directory.
+            return
+        output_dir = Path(output_dir)
+        summary_path = output_dir / "summary.json"
+        if summary_path.exists():
+            suffix = (
+                "eval"
+                if self.mode == "eval"
+                else "resume"
+                if getattr(self.cfg.train, "resume", None)
+                else "attempt"
+            )
+            summary_path = output_dir / f"summary_{suffix}_{self._shared_timestamp()}.json"
+        config_data = self.cfg.to_dict()
+        modification_version = config_data.get("modification_version") or self.metadata.get(
+            "modification_version"
+        )
+        try:
+            write_run_summary(
+                summary_path,
+                task=self._task_slug(),
+                run_name=self.run_name,
+                output_dir=self.output_dir,
+                mode=self.mode,
+                run_status=run_status,
+                conclusion="N/A",
+                modification_version=modification_version,
+                started_at=getattr(self, "_run_started_at", datetime.now(timezone.utc).isoformat()),
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                metrics=metrics,
+                global_step=getattr(self, "global_step", None),
+                epoch=getattr(self, "_last_epoch", None),
+                best_metric=getattr(self, "best_metric", None),
+                error=error[-12000:] if error else None,
+                artifact_paths={
+                    key: value
+                    for key, value in {
+                        "config": self.metadata.get("config_snapshot_path"),
+                        "manifest": self.metadata.get("run_manifest_path"),
+                        "metrics": output_dir / "metrics.jsonl",
+                        "train_log": output_dir / "train.log",
+                        "best_checkpoint": output_dir / "checkpoints" / "best.pt",
+                        "latest_checkpoint": output_dir / "checkpoints" / "latest.pt",
+                    }.items()
+                    if value is not None
+                },
+            )
+        except Exception as exc:  # pragma: no cover - filesystem failure is environment-specific
+            self._log_line(f"Unable to write terminal summary: {exc}")
+            return
+        self._summary_written = True
+
+    def _write_metadata(self, path: str | Path | None = None) -> None:
         if not self.is_primary:
             barrier()
             return
-        path = self.output_dir / "metadata.json"
+        path = self.output_dir / "metadata.json" if path is None else Path(path)
         with path.open("w", encoding="utf-8") as f:
             json.dump(to_jsonable(self.metadata), f, indent=2, ensure_ascii=False)
         barrier()

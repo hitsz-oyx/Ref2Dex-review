@@ -3,7 +3,15 @@
 - scope: task:CmDecoder
 - last_updated: 2026-08-24
 - last_verified: 2026-08-24
-- related: [当前状态](status_log.md)、[架构](architecture_log.md)、[实验](experiment_log.md)
+- related: [活动记录](activity_log.md)、[架构](architecture_log.md)、[实验](experiment_log.md)
+
+## V1.2.12 — 数据入口回到根空间
+
+- category: governance / operation
+- status: active
+- last_verified: 2026-09-01
+- fact: CmDecoder 不再维护 Task-local `components/`、`data/` 或 `registry/`。配置直接引用根级 `data/processed_data/`、`dataset/` 和 `outputs/`；历史 Task manifest 和软链接已删除。
+- source / anchor: `config.py`、`docs/plan/V1.md`、根 `.gitignore`。
 
 本文记录可随仓库迁移的 CmDecoder 长期事实。绝对数据路径、NAS 映射和本机资产计数写入同目录下被 Git 忽略的 `machine_memory.md`。
 

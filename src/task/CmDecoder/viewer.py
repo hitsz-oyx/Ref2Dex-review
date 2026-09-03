@@ -4,8 +4,14 @@ Example:
     PYTHONPATH=. python -m src.task.CmDecoder.viewer \
       --object apple --scene 2 --port 8095
 
+    PYTHONPATH=. python -m src.task.CmDecoder.viewer \
+      --rollout-trajectory output/research/inspire_rollout_cmdecoder_apple2_30hz_32.npz \
+      --port 8096
+
 The default checkpoint is the full object-disjoint 3 Hz ``qt_cm`` model. Pass
 ``--decoder-checkpoint`` to visualize another compatible CmDecoder checkpoint.
+Both commands expose the same UI; the rollout mode is disabled unless a
+trajectory NPZ is explicitly supplied.
 """
 from __future__ import annotations
 
@@ -45,6 +51,7 @@ TASK_FIELDS = (
     "obj_valid_mask",
     "q_t",
     "q_next",
+    "q_delta_abs_max",
     "delta_time_s",
 )
 
@@ -115,6 +122,8 @@ class CmDecoderViewerData:
         *,
         dataset_root: Path | None = None,
         device: str = "auto",
+        manifest_path: Path | None = None,
+        cache_root: Path | None = None,
     ) -> None:
         self.checkpoint = checkpoint.resolve()
         payload = load_checkpoint(self.checkpoint, map_location="cpu")
@@ -135,8 +144,8 @@ class CmDecoderViewerData:
         self.object_name = object_name
         self.scene = str(scene)
         self.episode_id = f"inspire_f1/{object_name}/{self.scene}"
-        manifest_path = _resolve_path(self.cfg.data.cache_manifest)
-        self.selection_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_file = _resolve_path(manifest_path if manifest_path is not None else self.cfg.data.cache_manifest)
+        self.selection_manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
         if self.episode_id not in self.selection_manifest["cache_dirs"]:
             raise KeyError(
                 f"Episode {self.episode_id!r} is not present in checkpoint cache manifest {manifest_path}"
@@ -145,9 +154,9 @@ class CmDecoderViewerData:
             (name for name, episodes in self.selection_manifest["splits"].items() if self.episode_id in episodes),
             "unknown",
         )
-        cache_root = _resolve_path(self.cfg.meta.cache_root)
+        cache_root_path = _resolve_path(cache_root if cache_root is not None else self.cfg.meta.cache_root)
         cache_relative = self.selection_manifest["cache_dirs"][self.episode_id]
-        self.cache_episode = cache_root / cache_relative
+        self.cache_episode = cache_root_path / cache_relative
         self.task_dir = self.cache_episode / "task"
         self.task_manifest = json.loads((self.task_dir / "manifest.json").read_text(encoding="utf-8"))
         self.task_arrays = {
@@ -156,7 +165,7 @@ class CmDecoderViewerData:
         }
         self.sample_count = int(self.task_manifest["samples"])
 
-        self.geometry_dir = _geometry_dir(cache_root, cache_relative, self.episode_id)
+        self.geometry_dir = _geometry_dir(cache_root_path, cache_relative, self.episode_id)
         self.q_full = np.load(self.geometry_dir / "q_full.npy", mmap_mode="r", allow_pickle=False)
         self.source_frame_ids = np.load(
             self.geometry_dir / "source_frame_id.npy", mmap_mode="r", allow_pickle=False
@@ -167,17 +176,34 @@ class CmDecoderViewerData:
         self.obj_points_world = np.load(
             self.geometry_dir / "obj_points_world.npy", mmap_mode="r", allow_pickle=False
         )
+        self.obj_normals_world = np.load(
+            self.geometry_dir / "obj_normals_world.npy", mmap_mode="r", allow_pickle=False
+        )
         self.wrist_pose_world = np.load(
             self.geometry_dir / "wrist_pose_world.npy", mmap_mode="r", allow_pickle=False
         )
         stride = int(self.task_manifest.get("horizon_stride", 1))
         self.horizon_stride = stride
         self.current_indices, self.target_indices = _pair_indices(self.source_frame_ids, stride)
+        self._task_valid_rows: np.ndarray | None = None
         if len(self.current_indices) != self.sample_count:
-            raise ValueError(
-                f"Task/geometry pair mismatch for {self.episode_id}: "
-                f"task={self.sample_count}, geometry={len(self.current_indices)}"
-            )
+            # The 30 Hz v4 task layer stores one row for every source frame
+            # (including pairs broken by a dropped frame), while the geometry
+            # pair index keeps only contiguous source-frame pairs.  Filter the
+            # per-row task arrays to the same valid-pair rows before serving
+            # them to the model.  Horizon caches already contain this filter.
+            if stride == 1 and self.sample_count == len(self.source_frame_ids) - 1:
+                self._task_valid_rows = np.asarray(self.current_indices, dtype=np.int64)
+                self.task_arrays = {
+                    name: (array[self._task_valid_rows] if array.ndim > 0 and array.shape[0] == self.sample_count else array)
+                    for name, array in self.task_arrays.items()
+                }
+                self.sample_count = len(self._task_valid_rows)
+            else:
+                raise ValueError(
+                    f"Task/geometry pair mismatch for {self.episode_id}: "
+                    f"task={self.sample_count}, geometry={len(self.current_indices)}"
+                )
 
         root_value = dataset_root if dataset_root is not None else Path(self.cfg.meta.dataset_root)
         self.dataset_root = _resolve_path(root_value)
@@ -201,6 +227,8 @@ class CmDecoderViewerData:
             cm_checkpoint = _resolve_path(self.cfg.meta.cm_checkpoint)
             if token_manifest.get("cm_checkpoint_sha256") == _sha256(cm_checkpoint):
                 self.cm_tokens = np.load(token_path, mmap_mode="r", allow_pickle=False)
+                if self._task_valid_rows is not None and self.cm_tokens.shape[0] != self.sample_count:
+                    self.cm_tokens = self.cm_tokens[self._task_valid_rows]
         self._predictions: dict[int, np.ndarray] = {}
         self._predicted_flows: dict[int, np.ndarray] = {}
         self._wrist_predictions: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -330,31 +358,80 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--decoder-checkpoint", type=Path, default=DEFAULT_DECODER_CHECKPOINT)
     parser.add_argument("--dataset-root", type=Path, default=None)
-    parser.add_argument("--object", dest="object_name", required=True)
+    parser.add_argument("--object", dest="object_name", default=None)
     parser.add_argument("--scene", default="0")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8095)
     parser.add_argument("--fps", type=float, default=6.0)
+    parser.add_argument(
+        "--rollout-trajectory", type=Path, default=None,
+        help=("Enable closed-loop rollout from an existing NPZ; single-pair mode "
+              "always predicts online from checkpoint/cache"),
+    )
     args = parser.parse_args()
 
-    data = CmDecoderViewerData(
-        _resolve_path(args.decoder_checkpoint),
-        args.object_name,
-        args.scene,
-        dataset_root=args.dataset_root,
-        device=args.device,
-    )
+    rollout: dict[str, np.ndarray] | None = None
+    single_object = args.object_name
+    single_scene = args.scene
+    if args.rollout_trajectory is not None:
+        trajectory_path = _resolve_path(args.rollout_trajectory)
+        with np.load(trajectory_path, allow_pickle=False) as payload:
+            rollout = {key: payload[key] for key in payload.files}
+        if "pred_hand_world" not in rollout or "gt_hand_world" not in rollout:
+            parser.error(f"rollout trajectory is missing hand arrays: {trajectory_path}")
+        if single_object is None:
+            episode_value = rollout.get("episode")
+            episode_text = str(np.asarray(episode_value).item()) if episode_value is not None else ""
+            parts = episode_text.split("/")
+            if len(parts) >= 3 and parts[-3] == "inspire_f1":
+                single_object, single_scene = parts[-2], parts[-1]
+    elif single_object is None:
+        parser.error("--object is required for single-pair viewer (or pass --rollout-trajectory)")
+
+    # Keep one stable UI for both data sources. A trajectory only enables the
+    # extra mode; it must not replace the single-pair controls.
+    has_rollout = rollout is not None
+    data = None
+    if single_object is not None:
+        data = CmDecoderViewerData(
+            _resolve_path(args.decoder_checkpoint), single_object, single_scene,
+            dataset_root=args.dataset_root, device=args.device,
+        )
     server = viser.ViserServer(host=args.host, port=args.port)
-    frame = server.gui.add_slider("Pair", min=0, max=len(data) - 1, step=1, initial_value=0)
+    mode = server.gui.add_dropdown(
+        "Visualization mode",
+        options=("Single pair (teacher-forced)", "Closed-loop rollout"),
+        initial_value="Closed-loop rollout" if has_rollout else "Single pair (teacher-forced)",
+        disabled=not has_rollout,
+        hint="Closed-loop rollout requires --rollout-trajectory.",
+    )
+    pair = server.gui.add_slider(
+        "Pair", min=0, max=len(data) - 1 if data is not None else 0, step=1,
+        initial_value=0, disabled=has_rollout,
+    )
+    rollout_step = server.gui.add_slider(
+        "Rollout step", min=0,
+        max=len(rollout["pred_hand_world"]) - 1 if has_rollout else 0,
+        step=1, initial_value=0, disabled=not has_rollout,
+    )
     play = server.gui.add_button("Play")
     stop = server.gui.add_button("Stop")
-    show_current = server.gui.add_checkbox("Current hand", True)
-    show_gt = server.gui.add_checkbox("GT hand", True)
-    show_predicted = server.gui.add_checkbox("Predicted hand", True)
-    show_object = server.gui.add_checkbox("Show Object Samples", True)
-    show_points = server.gui.add_checkbox("Show Hand Samples", True)
-    show_flow = server.gui.add_checkbox("Show Hand Flow", True)
+    server.gui.add_markdown(
+        "### Geometry / color legend\n"
+        "🔵 **blue** — current hand (rollout start in rollout mode)\n\n"
+        "🟢 **green** — ground-truth target hand\n\n"
+        "🟠 **orange** — decoder prediction\n\n"
+        "⚪ **gray** — object surface samples; light gray points — current/predicted hand samples\n\n"
+        "🟣 **magenta arrows** — GT hand flow (single-pair mode only).\n\n"
+        "Meshes are translucent surfaces; point clouds are sampled geometry."
+    )
+    show_current = server.gui.add_checkbox("Current / rollout-start mesh", True)
+    show_gt = server.gui.add_checkbox("GT target mesh", True)
+    show_predicted = server.gui.add_checkbox("Predicted mesh", True)
+    show_object = server.gui.add_checkbox("Object samples", True)
+    show_points = server.gui.add_checkbox("Hand samples", True)
+    show_flow = server.gui.add_checkbox("GT hand flow", True, disabled=has_rollout)
     hand_point_size = server.gui.add_slider(
         "Hand Point Size", min=0.001, max=0.020, step=0.001, initial_value=0.005
     )
@@ -374,7 +451,23 @@ def main() -> None:
 
     def render() -> None:
         nonlocal handles
-        sample = data.frame(int(frame.value))
+        is_rollout = mode.value == "Closed-loop rollout" and rollout is not None
+        pair.disabled = is_rollout or data is None
+        rollout_step.disabled = not is_rollout
+        show_flow.disabled = is_rollout
+        if is_rollout:
+            step = int(np.clip(rollout_step.value, 0, len(rollout["pred_hand_world"]) - 1))
+            sample = {
+                "hand_points": np.asarray(rollout["pred_hand_world"][step], dtype=np.float32),
+                "object_points": np.asarray(rollout["object_world"][step], dtype=np.float32),
+                "meshes": {
+                    "current": (np.asarray(rollout["pred_mesh_world"][0], dtype=np.float32), rollout["faces"]),
+                    "gt": (np.asarray(rollout["gt_mesh_world"][step], dtype=np.float32), rollout["faces"]),
+                    "predicted": (np.asarray(rollout["pred_mesh_world"][step], dtype=np.float32), rollout["faces"]),
+                },
+            }
+        else:
+            sample = data.frame(int(pair.value))
         with server.atomic():
             for handle in handles:
                 handle.remove()
@@ -410,7 +503,7 @@ def main() -> None:
                         point_size=float(hand_point_size.value),
                     )
                 )
-            if show_flow.value:
+            if show_flow.value and not is_rollout:
                 starts = sample["hand_points"][::8]
                 ends = (sample["hand_points"] + sample["flow"] * float(flow_scale.value))[::8]
                 segments = np.stack([starts, ends], axis=1)
@@ -422,41 +515,36 @@ def main() -> None:
                         line_width=float(flow_line_width.value),
                     )
                 )
-        mae_deg = float(np.abs(sample["q_pred"] - sample["q_gt"]).mean() * 180.0 / np.pi)
-        identity_deg = float(np.abs(sample["q_t"] - sample["q_gt"]).mean() * 180.0 / np.pi)
-        wrist_translation_error_mm = float(
-            np.linalg.norm(
-                sample["wrist_pred_relative"][:3, 3] - sample["wrist_gt_relative"][:3, 3]
-            ) * 1000.0
-        )
-        wrist_rotation_error = (
-            sample["wrist_pred_relative"][:3, :3].T @ sample["wrist_gt_relative"][:3, :3]
-        )
-        wrist_rotation_error_deg = float(
-            np.degrees(
-                np.arccos(np.clip((np.trace(wrist_rotation_error) - 1.0) * 0.5, -1.0, 1.0))
+        if is_rollout:
+            episode = rollout.get("episode", np.asarray("Inspire F1"))
+            episode = episode.item() if np.asarray(episode).ndim == 0 else str(episode)
+            status.content = (
+                f"**{episode}** — **Closed-loop rollout**, step **{step}/{len(rollout['pred_hand_world'])-1}**  \n"
+                f"source → target frame: **{int(rollout['source_frame_id'][step])} → {int(rollout['target_frame_id'][step])}**  \n"
+                f"Point EPE: **{float(rollout['point_epe_mm'][step]):.2f} mm**, wrist EPE: **{float(rollout['wrist_epe_mm'][step]):.2f} mm**, q MAE: **{float(rollout['q_mae_deg'][step]):.2f}°**  \n"
+                "Blue is the rollout-start mesh; orange is the current prediction."
             )
-        )
-        status.content = (
-            f"**{data.episode_id}** ({data.split})  \n"
-            f"Pair: **{int(frame.value)}/{len(data)-1}**, source frames: "
-            f"**{sample['source_frame_id']} → {sample['target_frame_id']}**, "
-            f"Δt: **{sample['delta_time_s']:.3f} s**  \n"
-            f"Decoder input: **{data.decoder_input}**, q MAE: **{mae_deg:.3f}°**, "
-            f"identity: **{identity_deg:.3f}°**  \n"
-            f"Wrist error: **{wrist_translation_error_mm:.2f} mm / "
-            f"{wrist_rotation_error_deg:.2f}°**  \n"
-            f"q current: `{np.array2string(sample['q_t'], precision=4)}`  \n"
-            f"q GT: `{np.array2string(sample['q_gt'], precision=4)}`  \n"
-            f"q predicted: `{np.array2string(sample['q_pred'], precision=4)}`  \n"
-            "GT/predicted meshes use relative wrist SE(3); future arm FK is not used."
-        )
+        else:
+            mae_deg = float(np.abs(sample["q_pred"] - sample["q_gt"]).mean() * 180.0 / np.pi)
+            identity_deg = float(np.abs(sample["q_t"] - sample["q_gt"]).mean() * 180.0 / np.pi)
+            wrist_translation_error_mm = float(np.linalg.norm(sample["wrist_pred_relative"][:3, 3] - sample["wrist_gt_relative"][:3, 3]) * 1000.0)
+            wrist_rotation_error = sample["wrist_pred_relative"][:3, :3].T @ sample["wrist_gt_relative"][:3, :3]
+            wrist_rotation_error_deg = float(np.degrees(np.arccos(np.clip((np.trace(wrist_rotation_error) - 1.0) * 0.5, -1.0, 1.0))))
+            status.content = (
+                f"**{data.episode_id}** ({data.split}) — **Single pair (teacher-forced)**  \n"
+                f"Pair: **{int(pair.value)}/{len(data)-1}**, source frames: **{sample['source_frame_id']} → {sample['target_frame_id']}**, Δt: **{sample['delta_time_s']:.3f} s**  \n"
+                f"Decoder input: **{data.decoder_input}**, q MAE: **{mae_deg:.3f}°**, identity: **{identity_deg:.3f}°**  \n"
+                f"Wrist error: **{wrist_translation_error_mm:.2f} mm / {wrist_rotation_error_deg:.2f}°**  \n"
+                "GT/predicted meshes use relative wrist SE(3); future arm FK is not used."
+            )
 
     def render_locked() -> None:
         with lock:
             render()
 
-    frame.on_update(lambda _: render_locked())
+    pair.on_update(lambda _: render_locked())
+    rollout_step.on_update(lambda _: render_locked())
+    mode.on_update(lambda _: render_locked())
     play.on_click(lambda _: state.update(playing=True))
     stop.on_click(lambda _: state.update(playing=False))
     for control in (
@@ -476,7 +564,10 @@ def main() -> None:
     print(f"CmDecoder viewer: http://localhost:{args.port}", flush=True)
     while True:
         if state["playing"]:
-            frame.value = (int(frame.value) + 1) % len(data)
+            if mode.value == "Closed-loop rollout" and rollout is not None:
+                rollout_step.value = (int(rollout_step.value) + 1) % len(rollout["pred_hand_world"])
+            elif data is not None:
+                pair.value = (int(pair.value) + 1) % len(data)
         time.sleep(1.0 / max(args.fps, 1e-3))
 
 
