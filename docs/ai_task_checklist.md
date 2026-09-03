@@ -29,7 +29,8 @@
 1. `git diff --stat` 和 `git diff`：确认实际修改范围；
 2. 当前作用域最新的 `activity_log.md`：确认时间戳、`modification_version`、`base_commit`、原因、等级、审批和验证；
 3. 本次运行目录中的 `run_manifest.json`：确认代码、配置、数据、资产、seed、修改版本和输出没有漂移；
-4. 最终回复中的 Markdown 链接：确认 plan、activity、run、manifest、summary 和关键产物都可跳转。
+4. 最终回复中的 Markdown 链接：确认 plan、activity、run、manifest、metrics/train.log、checkpoint
+   和关键产物都可跳转；BaseRunner 新运行不要求 `summary.json`。
 
 链接显示文本使用仓库根目录相对路径；仓库文档的目标按文档位置解析，聊天回复的 target 使用客户端
 支持的本地绝对文件路径。交接前对最近作用域运行

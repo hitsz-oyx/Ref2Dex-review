@@ -1,8 +1,8 @@
 # Ref2Dex 仓库记忆
 
 - scope: root
-- last_updated: 2026-09-01
-- last_verified: 2026-09-01
+- last_updated: 2026-09-03
+- last_verified: 2026-09-03
 - related: [活动记录](activity_log.md)、[架构记录](architecture_log.md)、[历史修改](modification_log.md)
 
 ## V1.2.15 — 活动时间线与版本指针收口
@@ -12,7 +12,7 @@
 - last_verified: 2026-09-01
 - fact: 新活动统一写入最近作用域的 `activity_log.md`；历史 `modification_log.md` 只读保留，`status_log.md` 不再作为规范入口。
 - fact: `docs/current_versions.yaml` 是当前版本指针，只记录各作用域的 `modification_version`；运行 manifest 不再记录 guidance/plan 版本字段。
-- fact: BaseRunner train/eval 终态写入 `summary.json`；它与配置快照、run manifest、metrics 曲线和 activity 事件各司其职。
+- fact: BaseRunner 负责写入配置、`metadata.json`、`run_manifest.json` 和运行日志；不再自动生成标准 `summary.json`。训练/评估终态、最后 step/epoch、best metric、checkpoint 及失败/停止原因由最近作用域的 `activity_log.md` 登记；历史或 Task 专属 summary 可保留。
 - source / anchor: [`AGENTS.md`](../../AGENTS.md)、[`docs/current_versions.yaml`](../current_versions.yaml)、[`docs/目录规范.md`](../目录规范.md)。
 
 ## V1.2.14 — AGENTS 通用规则与仓库约定分层

@@ -1,9 +1,134 @@
 # Ref2Dex 活动记录
 
 - scope: root
-- last_updated: 2026-09-02
+- last_updated: 2026-09-03
 - current_pointer: [docs/current_versions.yaml](../current_versions.yaml)
 - historical_audit: [modification_log.md](modification_log.md)
+
+## 2026-09-03 22:03:39 +0800 — V1.2.15 共享运行追溯与测试治理提交边界
+
+- activity_id: ACT-20260903-220339
+- timestamp: 2026-09-03 22:03:39 +0800
+- modification_version: V1.2.15
+- type: governance / code / documentation / operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求将当前更改划定范围并分次提交；BaseRunner/manifest 收缩和测试目录治理此前均已逐项确认。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2c4256d927a6c93b97ca3eb0d14df63227142ca9
+- worktree_dirty: true（根目录运行快照和 CmDecoder 历史 modification 重复条目不纳入提交）
+- scope: 共享 BaseRunner 运行产物职责、run manifest 精简、测试目录归属和相关治理文档；不修改科研模型、数据、GT、坐标系、split、checkpoint、output 或正在运行的训练进程。
+
+**文件**
+
+- [`.agents/`](../../.agents/) — 同步修改治理和实验运行 Skill 的 summary、manifest、测试范围及交接规则。
+- [`AGENTS.md`](../../AGENTS.md) — 固化任务模式、测试归属、终态 activity 和路径导航合同。
+- [`docs/`](../) — 更新文档导航、目录规范、交接清单、根架构/记忆和 V1.2.15 最终计划。
+- [`src/base/`](../../src/base/) — 取消 BaseRunner 标准 `summary.json` 自动生成，并精简新 `run_manifest.json`。
+- [`tests/`](../../tests/) — 增加根 legacy 测试归类清单，并补充 manifest/BaseRunner 回归断言。
+- [`docs/logs/activity_log.md`](activity_log.md) — 登记共享变更、验证和本次提交边界。
+
+**原因**
+
+将已经批准并验证的共享治理/基础设施更改与 Task 实现、实验活动和生成产物分开提交，保证每个提交可独立审计和回滚；根目录运行快照不属于源码，废弃的 `modification_log.md` 不再接收重复新记录。
+
+**验证**
+
+- `python3 -m py_compile src/base/base_runner.py src/base/run_manifest.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：`320 passed, 3 skipped`；仅有既有弃用/兼容警告。
+- `audit_diff.py --staged --check-links`：通过，覆盖 `14` 个 staged 变更路径，最新条目 `6` 个本地链接可导航；`git diff --cached --check`：通过。
+- 工程回归不构成科研效果证据；`conclusion: N/A`。
+
+**回滚**
+
+可独立回退本批共享治理/BaseRunner 提交；此前的 CmDecoder 活动提交和 ObjectInteractionCm V1.2.1 Task 提交不在该回滚范围内，运行产物与训练进程无需处理。
+
+## 2026-09-03 11:34:30 +0800 — V1.2.15 收缩运行追溯与取消 BaseRunner 标准 summary
+
+- activity_id: ACT-20260903-113430
+- timestamp: 2026-09-03 11:34:30 +0800
+- modification_version: V1.2.15
+- type: governance / code / documentation / diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认取消 `summary.json`、保留 `metadata.json`、移除 manifest 中完整 `dataset_metadata`，并允许继续处理 `src/base/`。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true（工作区另有用户/运行生成的未纳入本次范围的改动）
+- run_status: COMPLETED
+- conclusion: N/A（工程追溯与治理变更，不构成科研效果证据）
+- scope: 共享 BaseRunner 运行产物职责、run manifest 精简、metadata 字段归属说明和相关回归测试；不修改模型、数据、GT、坐标系、split、checkpoint 内容或历史运行产物。
+
+**文件**
+
+- [`src/base/base_runner.py`](../../src/base/base_runner.py) — 移除 BaseRunner 对标准 `summary.json` 的自动写入，保留配置、metadata、manifest、metrics 和 train.log 既有流程。
+- [`src/base/run_manifest.py`](../../src/base/run_manifest.py) — 新 manifest 不再内嵌完整 `dataset_metadata` 或 `dataset_split`，仅保留轻量静态 `contract`；旧 `write_run_summary` API 保留给历史/Task 专属调用方。
+- [`tests/test_run_manifest.py`](../../tests/test_run_manifest.py) — 验证新 manifest 不重复展开 metadata，兼容旧 summary writer 测试继续保留。
+- [`tests/test_overfit_diagnosis.py`](../../tests/test_overfit_diagnosis.py) — 增加 BaseRunner 新运行不产生 `summary.json` 的回归断言。
+- [`AGENTS.md`](../../AGENTS.md)、[`.agents/skills/research-change-control/SKILL.md`](../../.agents/skills/research-change-control/SKILL.md)、[`.agents/skills/research-experiment-workflow/SKILL.md`](../../.agents/skills/research-experiment-workflow/SKILL.md) — 固化终态 activity、metadata_snapshot 和 summary 兼容边界。
+- [`docs/目录规范.md`](../目录规范.md)、[`docs/ai_task_checklist.md`](../ai_task_checklist.md)、[`docs/plan/V1.2.15.md`](../plan/V1.2.15.md) — 同步 JSON 职责、终态导航、字段归属和已确认决定。
+- [`docs/logs/architecture_log.md`](architecture_log.md)、[`docs/logs/repo_memory.md`](repo_memory.md) — 更新共享运行追溯事实。
+- [`src/task/ObjectInteractionCm/docs/architecture/V1.1.md`](../../src/task/ObjectInteractionCm/docs/architecture/V1.1.md)、[`src/task/ObjectInteractionCm/docs/plan/V1.1.md`](../../src/task/ObjectInteractionCm/docs/plan/V1.1.md) — 清理当前 Task 规范中对标准 summary 的过时要求。
+- [`docs/logs/activity_log.md`](activity_log.md) — 登记本次变更及验证入口。
+
+**原因**
+
+`summary.json` 与 activity、metrics、train.log 和 checkpoint 产生终态信息重复，且完整
+`dataset_metadata` 与 `metadata.json` 重复。新运行将终态集中到 activity，manifest 只做小型 provenance
+索引并引用 metadata snapshot；历史输出和显式 Task summary 不回写、不删除。
+
+**验证**
+
+- `python3 -m py_compile src/base/base_runner.py src/base/run_manifest.py`：通过。
+- `python3 -m pytest -q tests/test_run_manifest.py tests/test_overfit_diagnosis.py`：`24 passed`。
+- `python3 -m pytest -q tests/test_framework_contracts.py tests/test_base_runner_max_steps.py tests/test_base_runner_validation.py tests/test_checkpoint_compat.py tests/test_audit_diff.py`：`25 passed`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：`320 passed, 3 skipped`；保留环境弃用警告，不影响本次回归。
+- `git diff --check`：通过；`audit_diff.py --worktree --check-links`：通过，覆盖 `14` 个本次变更路径，最新条目 `15` 个本地链接可导航。
+
+**回滚**
+
+回退本条列出的共享代码、规范文档和定向测试即可恢复旧的 BaseRunner summary 写入与 manifest 展开逻辑；不触碰已有运行目录、数据、cache 或 checkpoint。
+
+## 2026-09-03 10:21:27 +0800 — V1.2.15 测试目录归属规范与根测试 legacy 分类
+
+- activity_id: ACT-20260903-102127
+- timestamp: 2026-09-03 10:21:27 +0800
+- modification_version: V1.2.15
+- type: governance / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认采用“只建立规范和分类清单，暂不物理迁移旧 tests”的方案
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 7b63dc50896392023c5c0f33c7d508cbe4436b50
+- worktree_dirty: true（CmDecoder ObjectInteractionCm 另有用户未提交改动，本次不纳入）
+- scope: 测试目录所有权、验证范围和现有根 tests 的 legacy 分类；不移动、删除或改写任何现有测试文件，不改变 pytest.ini、tests/conftest.py 或科研语义
+
+**文件**
+
+- [tests/README.md](../../tests/README.md) — 记录未来 Task/process/shared/integration/governance 目录和当前 63 个根测试的逐文件归类。
+- [docs/目录规范.md](../目录规范.md) — 增加测试目录、验证范围和根 legacy 规则。
+- [docs/README.md](../README.md) — 增加测试规范导航。
+- [AGENTS.md](../../AGENTS.md) — 增加测试规范加载入口、测试所有权和按影响范围选择验证的常驻要求。
+- [.agents/skills/research-change-control/SKILL.md](../../.agents/skills/research-change-control/SKILL.md) — 要求按测试归属选择最窄验证集。
+- [docs/plan/V1.2.15.md](../plan/V1.2.15.md) — 记录用户确认的测试分类边界。
+- [docs/logs/activity_log.md](activity_log.md) — 记录本次治理事件。
+
+**原因**
+
+根 `tests/` 同时混合 Task、共享基础设施、数据处理和跨 Task 测试，导致 Task 小改动默认触发无关测试。
+本次先建立所有权和验证范围规范，保留旧文件路径以避免迁移引入 import、pytest 收集和 fixture 风险。
+
+**验证**
+
+- 逐一核对根目录现有 `63` 个 `test_*.py`，分类清单无遗漏或重复。
+- 未修改 `pytest.ini`、`tests/conftest.py` 和任何根测试内容；现有 `pytest` 行为保持不变。
+- 分类核对：`63` 个根测试无遗漏、无重复。
+- `audit_diff.py --worktree --check-links`（仅本次治理路径）：覆盖 `6` 个变更路径，`7` 个本地链接可导航；
+  `git diff --check`：通过。
+- 本次为治理/文档规范，不构成科研效果证据；`conclusion: N/A`。
 
 ## 2026-09-02 15:30:36 +0800 — V1.2.15 提交治理与运行入口改动
 

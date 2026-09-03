@@ -41,6 +41,7 @@ Skill 负责通用流程；本文件负责下面的 Ref2Dex 特殊路径、日�
 - [`docs/modification_policy.md`](docs/modification_policy.md)：版本线、`modification_version` 和操作类别；涉及版本判断、plan/指导、activity 归档、治理或文档规范修改时必读。
 - [`docs/目录规范.md`](docs/目录规范.md)：数据、cache、资产、research、运行目录和 manifest 的放置规则；创建、移动或判断这些产物路径时必读。
 - [`docs/ai_task_checklist.md`](docs/ai_task_checklist.md)：开始/完成交接的摘要清单；复杂交接、长任务或用户要求复核时读取。它不新增或覆盖其他规范。
+- [`tests/README.md`](tests/README.md)：现有根测试的 legacy 分类和未来测试归属；涉及测试选择、迁移或验证范围时读取。
 
 文档权威性按以下顺序解释：本文件的安全与审批规则优先；具体路径和产物职责以 `docs/目录规范.md` 为准；版本和操作分类以 `docs/modification_policy.md` 为准；交接清单仅作检查表。发现冲突时暂停并记录，不静默选择。
 
@@ -58,7 +59,7 @@ Skill 负责通用流程；本文件负责下面的 Ref2Dex 特殊路径、日�
 
 根级路径为 `docs/logs/`，Task 级路径为 `src/task/<Task>/docs/logs/`。根级只记录跨 Task 或全仓库事实；Task 级记录局部事实。`machine_memory.md` 必须被 Git 忽略，`repo_notes_log.md` 已废弃且禁止重新创建。`status_log.md` 从切换点起不再作为规范入口。
 
-活动条目按事件类型记录必要字段：修改事件包含 `change_level`、`approval`、分支、scope、文件、原因和验证；运行事件包含 `run_id`、`run_status`、命令、输出和证据入口。所有活动条目都包含精确到秒的 `timestamp`、`activity_id`、`modification_version` 和 `base_commit`。
+活动条目按事件类型记录必要字段：修改事件包含 `change_level`、`approval`、分支、scope、文件、原因和验证；运行事件包含 `run_id`、`run_status`、命令、输出和证据入口。训练/评估终态还应记录 `last_step`/`last_epoch`（可得时）、`best_metric`、最佳/最近 checkpoint（存在时）、运行产生的 `metrics.jsonl`/`train.log` 入口；失败或停止时记录退出原因。所有活动条目都包含精确到秒的 `timestamp`、`activity_id`、`modification_version` 和 `base_commit`。
 
 ## 4. 开始修改 Task 前的入口
 
@@ -109,12 +110,11 @@ src/task/<Task>/docs/logs/machine_memory.md（存在时）
 - 使用的 `modification_version`、操作类别和审批状态；如涉及 plan/指导，提供其文档链接而不是新增版本字段；
 - 验证命令、关键结果、输出/manifest 入口，以及结果属于 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 还是 `INVALID_IMPLEMENTATION`；
 - 明确区分工程 smoke 证据与科研结论，不把实现可运行误报为效果成立；
-- 只要产生或更新 plan、activity、实验产物、运行目录或 manifest，必须提供可点击的 Markdown 路径；运行状态同时给出 `run_id` 和 `run_status`；
+- 只要产生或更新 plan、activity、实验产物、运行目录或 manifest，必须提供可点击的 Markdown 路径；运行状态同时给出 `run_id` 和 `run_status`；终态以 activity 为唯一状态入口，并链接实际生成的 `metrics.jsonl`/`train.log` 和关键 checkpoint；
 - 上述本地链接的显示文本使用仓库根目录相对路径；仓库文档中的 target 按该 Markdown 文件位置使用
   相对链接，聊天回复中的 target 使用当前客户端支持的本地绝对文件路径，不把文档中的 `../` 原样
-  复制到回复；回复中的本地路径或路径链接与前后中文、标点之间留半角空格，例如
-  `活动记录： [docs/logs/activity_log.md](/workspace/Ref2Dex/docs/logs/activity_log.md) 。`，独立列表项的
-  行首和行尾除外；
+  复制到回复；回复中的本地路径或路径链接与前后中文、标点之间留半角空格，即在“活动记录：”与
+  链接、链接与句号之间各留一个半角空格；独立列表项的行首和行尾除外；
 - 活动记录至少导航到本次输出目录和关键产物；交接前使用 `audit_diff.py --check-links` 校验最新活动
   条目的本地链接。运行中尚未生成的链接只允许在 `run_status` 为 `STARTED` / `RUNNING` 且同一行标记
   `PENDING` 时保留；终态不得留下失效链接；
@@ -164,11 +164,17 @@ git diff --cached
 ### 8.1 路径、运行和目录路由
 
 共享运行时在 `src/base/`，数据预处理入口在 `process/`，Task 实现在 `src/task/<Task>/`，诊断实验在
-`src/task/<Task>/research/<experiment>/`。具体目录、递归文档、运行产物、数据/cache、资产和各类
+`src/task/<Task>/research/<experiment>/`。具体目录、递归文档、运行产物、数据/cache、资产、测试和各类
 manifest 的唯一规范见 [`docs/目录规范.md`](docs/目录规范.md)；Agent 不需要用户为每次小改动指定目录，
 应按该规范自动归类。
 
 `outputs/`、研究 output、训练输出、cache、原始数据和 checkpoint 默认不提交；根 `output/` 只作为历史
 兼容目录，不再新增内容。训练、评估、benchmark 和正式数据处理仍必须生成 `run_manifest.json`，并在
-activity 中登记 `activity_id`、`run_id`、精确到秒的时间戳、`base_commit` 和可点击产物路径；字段和路径
-细节以目录规范及适用 Skill 为准。
+activity 中登记 `activity_id`、`run_id`、精确到秒的时间戳、`base_commit`、终态字段和可点击产物路径；
+BaseRunner 不再自动生成标准 `summary.json`，历史或 Task 专属 summary 可保留。字段和路径细节以目录规范
+及适用 Skill 为准。
+
+测试归属和验证范围遵循 [`tests/README.md`](tests/README.md) 与目录规范：单一 Task 的新测试放入
+`src/task/<Task>/tests/`，共享基础设施、跨 Task、数据处理和治理测试分别放入约定目录；根 `tests/`
+中现有文件暂作为 legacy 保留，根目录不再新增测试。Task 内小改动默认不运行无关 Task 的测试，
+公共合同或跨 Task 改动才扩大验证范围。

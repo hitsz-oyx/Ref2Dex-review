@@ -1,18 +1,20 @@
 # Ref2Dex 架构记录
 
-- last_updated: 2026-09-01
+- last_updated: 2026-09-03
 
 ## 0. 运行目录与追溯合同
 
 - `BaseRunner` 的训练运行目录为 `outputs/<Task>/<run_id>/`，train/eval 启动时自动写入
   配置、metadata 和 `run_manifest.json`；如果目标目录已有 manifest，续跑/评估写入带时间戳的
   continuation manifest，不覆盖原始 provenance。
-- train/eval 正常或异常终态由 `BaseRunner` 写入用户可读的 `summary.json`（已有 summary 时使用
-  带时间戳的 eval/resume/attempt 文件）；它是终态快照，不是实时状态或 heartbeat。
+- `BaseRunner` 不再自动生成标准 `summary.json`；train/eval 的正常、失败或停止终态由最近作用域的
+  `activity_log.md` 登记，运行日志和 `metrics.jsonl` 保留过程证据。历史或 Task 专属 summary
+  不受此规则影响。
 - `run_manifest.json` 使用 `ref2dex.run.v1` schema，记录运行模式、Task/run 名称、修改版本、
   配置快照、Git 提交与 dirty 状态、输入数据/cache manifest 引用及文件基本信息、数据合同
-  （schema/shape/坐标系）、seed、初始 checkpoint 和输出目录。指导/计划通过活动和文档链接
-  关联，不作为运行 manifest 的版本字段。
+  （schema/shape/坐标系）、seed、初始 checkpoint 和输出目录；完整任务 metadata 通过
+  `metadata_snapshot` 引用，不在 manifest 中内嵌。指导/计划通过活动和文档链接关联，不作为运行
+  manifest 的版本字段。
   运行 manifest 不计算加密 hash，只记录输入文件存在性、大小和修改时间。
 - 数据 cache manifest、训练 run manifest 和 `experiment_log.md` 分别描述输入数据、一次
   运行实例和科研证据，不互相替代。大型 cache、checkpoint 和生成产物仍不纳入 Git。

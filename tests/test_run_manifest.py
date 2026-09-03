@@ -4,7 +4,7 @@ from pathlib import Path
 from src.base.run_manifest import build_run_manifest, write_run_manifest, write_run_summary
 
 
-def test_run_manifest_records_contract_and_input_metadata(tmp_path: Path) -> None:
+def test_run_manifest_records_contract_and_input_metadata_without_inlining_metadata(tmp_path: Path) -> None:
     input_manifest = tmp_path / "split.json"
     input_manifest.write_text('{"train": ["a"]}\n', encoding="utf-8")
     checkpoint = tmp_path / "init.pt"
@@ -26,6 +26,10 @@ def test_run_manifest_records_contract_and_input_metadata(tmp_path: Path) -> Non
     assert payload["manifest_schema"] == "ref2dex.run.v1"
     assert payload["seed"] == 7
     assert payload["contract"]["coordinate_frame"] == "object_pose_t"
+    assert "dataset_split" not in payload["contract"]
+    assert "dataset_metadata" not in payload
+    assert "components" not in payload
+    assert "component_tree" not in payload
     refs = {item["resolved_path"]: item for item in payload["input_references"]}
     record = refs[str(input_manifest.resolve())]
     assert record["kind"] == "file"
