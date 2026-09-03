@@ -1,4 +1,4 @@
-"""V1.1 configuration for the independent ObjectInteractionCm task."""
+"""V1.2.1 configuration for the independent ObjectInteractionCm task."""
 from __future__ import annotations
 
 from src.base import TaskConfig
@@ -7,7 +7,7 @@ from src.base import TaskConfig
 class Config(TaskConfig):
     name = "object_interaction_cm"
     runner_class = "src.task.ObjectInteractionCm.runner.ObjectInteractionCmRunner"
-    modification_version = "V1.1.3"
+    modification_version = "V1.2.1"
     operation_category = ["architecture", "code", "data", "operation"]
 
     class meta(TaskConfig.meta):
@@ -20,12 +20,23 @@ class Config(TaskConfig):
         interaction_radius_m = 0.05
         frame_filter_distance_m = 0.05
         hand_supervision_radius_m = 0.03
+        processing_dim = 128
+        cm_dim = 32
+        # feature_dim remains as a legacy construction alias for old tests/checkpoints.
         feature_dim = 32
         num_cm_tokens = 16
         slot_iters = 3
         flow_smooth_l1_beta = 0.005
         loss_obj_flow_weight = 1.0
         loss_hand_flow_weight = 1.0
+        geometry_scale_m = 0.05
+        hand_flow_input_scale = 1.0
+        object_flow_target_scale = 1.0
+        hand_flow_target_scale = 1.0
+        scale_manifest_path = "data/processed_data/object_interaction_cm_v1_2_1/scales_train.json"
+        sample_loss_mask = True
+        dummy_token_policy = "zero"
+        sampling_retry_attempts = 0
 
     class model(TaskConfig.model):
         class_path = "src.task.ObjectInteractionCm.model.ObjectInteractionCmModel"
@@ -61,10 +72,10 @@ class Config(TaskConfig):
         log_every_steps = 100
         eval_every_epochs = 1
         save_every_epochs = 1
-        description = "GRAB + Inspire-F1 mixed ObjectInteractionCm V1.1.1; available-hand union, 1024 object points."
+        description = "GRAB + Inspire-F1 mixed ObjectInteractionCm V1.2.1; delayed compression, masked SlotAttn, additive decoders."
 
     class wandb(TaskConfig.wandb):
         enable = False
         project = "ref2dex"
         mode = "offline"
-        tags = ["object-interaction-cm", "dual-hand", "slot-attention", "v1.1"]
+        tags = ["object-interaction-cm", "slot-attention", "delayed-compression", "v1.2.1"]

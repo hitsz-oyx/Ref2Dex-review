@@ -119,6 +119,11 @@ class _SequenceView:
             if not active_path.is_file():
                 raise ValueError(f"{self.path}: Inspire geometry missing object candidate mask")
             self._inspire_active = np.asarray(np.load(active_path, mmap_mode="r"), dtype=bool)
+            self._inspire_active_count = (
+                self._inspire_active.sum(axis=1).astype(np.int32)
+                if self._inspire_active.ndim == 2
+                else self._inspire_active.astype(np.int32)
+            )
             if self._inspire_active.ndim == 2:
                 self._inspire_active = self._inspire_active.any(axis=1)
             self._load_inspire_stream()
@@ -231,6 +236,15 @@ class _SequenceView:
 
     def candidate_active(self, frame: int) -> bool:
         return any(bool(stream["active"][frame]) for stream in self.streams.values())
+
+    def candidate_count(self, frame: int) -> int:
+        """Number of active points in the full 4096 pool (union across streams)."""
+        if self.kind == "inspire" and hasattr(self, "_inspire_active_count"):
+            return int(np.asarray(self._inspire_active_count[frame]).item())
+        counts = [np.asarray(stream["active"][frame], dtype=bool) for stream in self.streams.values()]
+        if not counts:
+            return 0
+        return int(np.logical_or.reduce(counts, axis=0).sum())
 
     def hand(self, side: str, frame: int) -> tuple[np.ndarray, np.ndarray]:
         arrays = self.streams[side]
@@ -402,6 +416,7 @@ class ObjectInteractionCmDataset(Dataset):
             "dataset_id": sequence.dataset_id,
             "source": sequence.source_name,
             "hand_valid_points": torch.tensor(real_hand_count, dtype=torch.int64),
+            "full_active_count": torch.tensor(sequence.candidate_count(current), dtype=torch.int64),
         }
 
 
