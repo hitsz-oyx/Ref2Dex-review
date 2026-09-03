@@ -20,11 +20,14 @@ class Config(TaskConfig):
         point_feat_dim: int = 11
 
         # Coordinate frame for points read from Stage 3 .npz:
-        #   "object"    - object-root SE(3) frame (legacy)
+        #   "object"    - object-root SE(3) frame (object-centered protocol)
         #   "hand_root" - MANO wrist at origin, orientation = MANO global_orient
         # The Stage 3 .npz must be regenerated with the matching
         # --coordinate-frame flag.
         coordinate_frame: str = "hand_root"
+        # Allow read-only hand-root Stage3 trees to be converted lazily to
+        # object frame at dataset load time, avoiding a duplicate NAS tree.
+        transform_to_object_frame: bool = False
 
         ptv3_repo_path: str = str(ROOT / "third_party" / "PointTransformerV3")
         ptv3_grid_size: float = 0.003
@@ -85,6 +88,37 @@ class Config(TaskConfig):
         mano_model_dir: str = str(ROOT / "dataset" / "arctic" / "data" / "body_models" / "mano")
         use_mano_reconstruction: bool = True
         apply_hand_perturb: bool = False
+        # Object-centered protocol: perturb the hand wrist/root pose directly
+        # (in the local hand-root frame), mutually exclusive with MANO/robot
+        # pose noise when ``exclusive_hand_object_perturb`` is enabled.
+        apply_hand_root_perturb: bool = False
+        hand_root_rot_std_deg: float = 10.0
+        hand_root_trans_std: float = 0.01
+        hand_root_perturb_prob: float = 1.0
+        val_apply_hand_root_perturb: bool = False
+        # Robot Stage 3 samples use a separate URDF/FK q-space path. Only
+        # hand joints are perturbed; the arm/base qpos remains fixed so the
+        # stored hand-root frame stays unchanged.
+        use_robot_reconstruction: bool = False
+        apply_robot_perturb: bool = False
+        robot_perturb_prob: float = 1.0
+        # A mixed batch may contain MANO human samples and robot-FK samples;
+        # the dataset/runner dispatches reconstruction per sample when this
+        # flag is enabled.  It is intentionally opt-in so legacy homogeneous
+        # configs retain their strict schema validation.
+        mixed_hand_reconstruction: bool = False
+        # Runtime robot q-space noise multiplier.  Values are calibrated per
+        # HRDexDB robot domain so the resulting surface displacement is about
+        # the requested geometric target rather than sharing one radian std.
+        robot_perturb_noise_scale_by_domain: dict[str, float] = {}
+        # Deprecated: q-space scales are the authoritative robot protocol;
+        # this scalar is retained only so historical YAMLs remain loadable.
+        robot_perturb_target_rms_m: float = 0.01
+        # Target protocol for exclusive augmentation: 40% hand-only,
+        # 40% object-only, and 20% clean.  The tuple is normalized and
+        # validated by the dataset; hand/object perturbations are never
+        # compounded in one sample.
+        exclusive_perturb_mode_probs: tuple[float, float, float] = (0.4, 0.4, 0.2)
         # When enabled, each sample is assigned to either the hand-noise path
         # or the object-noise path with a stable per-frame gate.  This avoids
         # presenting compounded hand+object errors during training.
@@ -107,6 +141,12 @@ class Config(TaskConfig):
         # Keys are normalized dataset IDs (grab/arctic/contactpose), values
         # are JSON files emitted by tools/calibrate_mano_geometry_noise.py.
         hand_geometry_calibration_paths: dict[str, str] = {}
+
+        # Keep only frames whose clean hand/object closest-point distance is
+        # within the interaction window.  This is a frame filter, not merely
+        # a candidate-object mask; it is applied before object sampling.
+        filter_non_interacting_frames: bool = False
+        interaction_max_distance_m: float = 0.05
         hand_geometry_noise_scale: float = 1.0
         hand_geometry_noise_required: bool = False
         # Fix #6: number of FPS-sampled hand proxy face indices. The
@@ -121,12 +161,11 @@ class Config(TaskConfig):
         # this path is required and validated fail-fast by the runner.
         stored_hand_proxy_indices_path: str | None = None
         runtime_resample_object: bool = True
+        # Deprecated compatibility fields. Runtime sampling no longer uses
+        # near/global quotas or cdist proxies, but old experiment YAMLs may
+        # still contain these keys.
         runtime_near_pool_points: int = 1024
         runtime_near_obj_points: int = 384
-        # Fix #7: block size for the 4096x256 cdist used to score every
-        # pool point against the hand proxy. 512 keeps the peak
-        # distance-matrix memory at B x 512 x 256 floats (≈8 MB at
-        # B=16).
         runtime_cdist_chunk_size: int = 512
 
         loss_cross_edge_weight: float = 1.0
@@ -154,6 +193,11 @@ class Config(TaskConfig):
         # Optional persistent file/frame-count index. Keep it outside the
         # dataset tree so NAS data stays read-only.
         cache_index_path = None
+        # Optional uncompressed NPZ sidecar tree. Source Stage 3 remains the
+        # canonical file list; matching relative cache files only replace the
+        # array-read path.
+        array_cache_path = None
+        array_cache_required = False
 
     class train(TaskConfig.train):
         amp = False

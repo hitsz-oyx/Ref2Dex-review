@@ -1,0 +1,101 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_grab_arctic_hrdexdb_oakink2_object_centered
+
+data:
+  root: .
+  train_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/processed/stage3/grab_initonly_4096_v21
+  batch_size: 56
+  val_batch_size: 56
+  num_workers: 2
+  drop_last: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 1
+  domain_paths:
+    - id: grab
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/processed/stage3/grab_initonly_4096_v21
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_uncompressed_v2/grab
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_grab.json
+    - id: arctic
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_full_mano_v21_20260823
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_expanded_v1/arctic
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_arctic.json
+    - id: hrdexdb_human
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/human
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_expanded_v1/hrdex_human
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_hrdexdb_human.json
+    - id: hrdexdb_inspire_dftp
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/inspire_dftp
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_expanded_v1/hrdex_inspire_dftp
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_hrdexdb_inspire_dftp.json
+    - id: hrdexdb_inspire_f1
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/inspire_f1
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_expanded_v1/hrdex_inspire_f1
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_hrdexdb_inspire_f1.json
+    - id: hrdexdb_allegro_v5
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/allegro_v5
+      array_cache_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3_cache/object_centered_expanded_v1/hrdex_allegro_v5
+      array_cache_required: true
+      cache_index_path: output/cache/expanded_object_hrdexdb_allegro_v5.json
+    - id: oakink2
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1/train
+      val_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1/val
+      cache_index_path: output/cache/expanded_object_oakink2.json
+
+meta:
+  coordinate_frame: object
+  transform_to_object_frame: true
+  use_mano_reconstruction: true
+  use_robot_reconstruction: true
+  mixed_hand_reconstruction: true
+  mano_model_dir: /mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano
+  apply_obj_perturb: false
+  obj_perturb_prob: 0.0
+  val_apply_obj_perturb: false
+  val_obj_perturb_prob: 0.0
+  apply_hand_root_perturb: true
+  hand_root_rot_std_deg: 10.0
+  hand_root_trans_std: 0.01
+  hand_root_perturb_prob: 1.0
+  apply_hand_perturb: true
+  hand_perturb_prob: 1.0
+  hand_geometry_noise_required: false
+  hand_axis_angle_std_rad: 0.05
+  hand_axis_angle_clip_rad: 0.15
+  hand_pca_std: 0.5
+  hand_pca_noise_scale: 0.10
+  hand_pca_noise_clip: 3.0
+  runtime_resample_object: true
+  apply_robot_perturb: true
+  robot_perturb_prob: 1.0
+  robot_perturb_noise_scale_by_domain:
+    hrdexdb_inspire_dftp: 25.0
+    hrdexdb_inspire_f1: 15.0
+    hrdexdb_allegro_v5: 9.0
+  exclusive_hand_object_perturb: true
+  exclusive_perturb_mode_probs: [0.4, 0.4, 0.2]
+  filter_non_interacting_frames: true
+  interaction_max_distance_m: 0.05
+
+train:
+  seed: 20260901
+  epochs: 50
+  save_every_steps: 5000
+  save_every_epochs: null
+  eval_every_epochs: 1
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, v2, grab, arctic, hrdexdb, oakink2, object-centered, hand-root-perturb, pose-perturb]

@@ -48,10 +48,31 @@ def main() -> None:
     cfg.data.train_path = str(test_root)
     cfg.data.val_path = str(test_root)
     cfg.data.test_path = None
+    # A mixed-training checkpoint carries its original ``domain_paths``.
+    # This evaluator intentionally evaluates one external root, so clear the
+    # mixed-domain branch; otherwise make_dataloaders() ignores the explicit
+    # ARCTIC val_path and may report that no evaluation loader exists.
+    cfg.data.domain_paths = []
     cfg.data.val_split = 0.0
+    # Object-centered checkpoints can consume a hand-root external tree only
+    # when it carries both root poses needed by the lossless lazy transform.
+    # Hand-root checkpoints keep the stored frame unchanged.
+    if str(getattr(cfg.meta, "coordinate_frame", "hand_root")) == "object":
+        cfg.meta.transform_to_object_frame = True
+    # The external ARCTIC root is a single human dataset.  Do not inherit the
+    # mixed MANO/robot contract from a GRAB+Inspire training checkpoint.
+    cfg.meta.mixed_hand_reconstruction = False
+    cfg.meta.use_robot_reconstruction = False
+    cfg.meta.apply_robot_perturb = False
+    # External evaluation should use the complete test root.  The training
+    # checkpoint may carry an interaction-only frame filter, but inheriting it
+    # would silently turn HOCap's 23,896-frame test into a 4,691-frame subset.
+    cfg.meta.filter_non_interacting_frames = False
     cfg.data.batch_size = args.batch_size
     cfg.data.val_batch_size = args.batch_size
-    cfg.data.dataset_id = "arctic" if "arctic" in test_root.name.lower() else None
+    test_root_name = test_root.name.lower()
+    is_hocap = "hocap" in test_root_name
+    cfg.data.dataset_id = "hocap" if is_hocap else ("arctic" if "arctic" in test_root_name else None)
     cfg.data.num_workers = args.num_workers
     cfg.data.persistent_workers = args.num_workers > 0
     is_hand_condition = args.condition in {"hand_only", "hand_object"}
@@ -70,9 +91,16 @@ def main() -> None:
         # respectively, so they are evaluated on different fractions of
         # perturbed frames despite sharing the same condition name.
         cfg.meta.hand_perturb_prob = 1.0
+        calibration_dataset = "hocap" if is_hocap else "arctic"
+        calibration_filename = (
+            "hocap_pca45_target_9mm.json"
+            if is_hocap
+            else "arctic_axis_angle45_target_9mm_sample.json"
+        )
         cfg.meta.hand_geometry_calibration_paths = {
-            "arctic": str(
-                Path("src/task/correspondence_ptv3_v2/calibration/arctic_axis_angle45_target_9mm_sample.json")
+            calibration_dataset: str(
+                Path("src/task/correspondence_ptv3_v2/calibration")
+                .joinpath(calibration_filename)
                 .resolve()
             )
         }
@@ -111,7 +139,10 @@ def main() -> None:
             "condition": args.condition,
             "hand_perturb": is_hand_condition,
             "hand_perturb_probability": 1.0 if is_hand_condition else 0.0,
-            "hand_perturb_representation": "axis_angle45" if is_hand_condition else None,
+            "hand_perturb_representation": (
+                "pca45" if is_hocap and is_hand_condition else
+                "axis_angle45" if is_hand_condition else None
+            ),
             "hand_target_rms_mm": float(args.hand_target_rms_mm) if is_hand_condition else None,
             "runtime_resample_object": False,
             "object_perturb": args.condition in {"object_only", "hand_object"},

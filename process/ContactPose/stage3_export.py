@@ -353,9 +353,10 @@ def _write_stage3_npz(
     *,
     output_root: Path,
     candidate_threshold: float,
+    interaction_max_distance: float | None,
     frame_batch_size: int,
     device: torch.device,
-) -> Path:
+) -> Path | None:
     candidate_mask, hand_to_obj_min_dist = _compute_contact_statistics(
         sequence.obj_points,
         sequence.hand_points,
@@ -363,6 +364,15 @@ def _write_stage3_npz(
         frame_batch_size=frame_batch_size,
         device=device,
     )
+    frame_indices = np.arange(sequence.num_frames, dtype=np.int32)
+    if interaction_max_distance is not None:
+        keep = np.min(hand_to_obj_min_dist, axis=1) <= float(interaction_max_distance)
+        frame_indices = frame_indices[keep]
+        if frame_indices.size == 0:
+            return None
+    else:
+        keep = np.ones((sequence.num_frames,), dtype=bool)
+    num_frames = int(frame_indices.size)
     subject_dir = output_root / sequence.ref.subject_id
     subject_dir.mkdir(parents=True, exist_ok=True)
     output_path = subject_dir / f"{sequence.ref.seq_name}_{sequence.side}.npz"
@@ -377,25 +387,25 @@ def _write_stage3_npz(
         seq_id=np.asarray(sequence.ref.seq_id),
         object_name=np.asarray(sequence.ref.object_name),
         side=np.asarray(sequence.side),
-        raw_frame_id=np.arange(sequence.num_frames, dtype=np.int32),
-        obj_points=sequence.obj_points.astype(np.float32),
-        obj_normals=sequence.obj_normals.astype(np.float32),
-        hand_points=sequence.hand_points.astype(np.float32),
-        hand_normals=sequence.hand_normals.astype(np.float32),
-        hand_to_obj_min_dist=hand_to_obj_min_dist.astype(np.float32),
-        obj_candidate_mask_5cm=candidate_mask.astype(bool),
+        raw_frame_id=frame_indices,
+        obj_points=sequence.obj_points[keep].astype(np.float32),
+        obj_normals=sequence.obj_normals[keep].astype(np.float32),
+        hand_points=sequence.hand_points[keep].astype(np.float32),
+        hand_normals=sequence.hand_normals[keep].astype(np.float32),
+        hand_to_obj_min_dist=hand_to_obj_min_dist[keep].astype(np.float32),
+        obj_candidate_mask_5cm=candidate_mask[keep].astype(bool),
         coordinate_frame=np.asarray("hand_root"),
         mano_global_orient=np.broadcast_to(
-            sequence.mano_global_orient[None], (sequence.num_frames, 3)
+            sequence.mano_global_orient[None], (num_frames, 3)
         ).astype(np.float32).copy(),
-        mano_transl=np.zeros((sequence.num_frames, 3), dtype=np.float32),
+        mano_transl=np.zeros((num_frames, 3), dtype=np.float32),
         mano_pose=np.broadcast_to(
             sequence.mano_pose[None],
-            (sequence.num_frames, sequence.mano_pose.shape[0]),
+            (num_frames, sequence.mano_pose.shape[0]),
         ).astype(np.float32).copy(),
         mano_betas=np.broadcast_to(
             sequence.mano_betas[None],
-            (sequence.num_frames, sequence.mano_betas.shape[0]),
+            (num_frames, sequence.mano_betas.shape[0]),
         ).astype(np.float32).copy(),
         mano_v_template=sequence.mano_v_template.astype(np.float32),
         mano_use_pca=np.asarray(True),
@@ -403,7 +413,7 @@ def _write_stage3_npz(
         mano_flat_hand_mean=np.asarray(False),
         mano_pose_repr=np.asarray("pca"),
         hand_root_pose=np.broadcast_to(
-            sequence.hand_root_pose[None], (sequence.num_frames, 4, 4)
+            sequence.hand_root_pose[None], (num_frames, 4, 4)
         ).astype(np.float32).copy(),
     )
     return output_path
@@ -424,6 +434,9 @@ def _write_meta(
         "num_obj_pool": int(args.num_obj_pool),
         "num_hand_points": NUM_HAND_POINTS,
         "candidate_threshold": float(args.candidate_threshold),
+        "interaction_max_distance": (
+            None if args.interaction_max_distance is None else float(args.interaction_max_distance)
+        ),
         "intent": str(args.intent),
         "single_hand_only": bool(args.single_hand_only),
         "contactpose_root": str(Path(args.contactpose_root).resolve()),
@@ -453,6 +466,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--num-obj-pool", type=int, default=4096)
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
+    parser.add_argument(
+        "--interaction-max-distance",
+        type=float,
+        default=None,
+        help="Keep only frames whose closest clean hand/object distance is <= this value in metres.",
+    )
     parser.add_argument("--frame-batch-size", type=int, default=4)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--single-hand-only", action="store_true", default=True)
@@ -512,9 +531,19 @@ def main() -> None:
                     sequence,
                     output_root=output_root,
                     candidate_threshold=float(args.candidate_threshold),
+                    interaction_max_distance=args.interaction_max_distance,
                     frame_batch_size=int(args.frame_batch_size),
                     device=device,
                 )
+                if result is None:
+                    skipped.append({
+                        "seq_id": ref.seq_id,
+                        "reason": (
+                            f"no frame within interaction_max_distance="
+                            f"{args.interaction_max_distance}"
+                        ),
+                    })
+                    continue
                 written.append(str(result))
                 print(f"[ok] {ref.seq_id} {side} -> {result}")
         except Exception as exc:  # noqa: BLE001

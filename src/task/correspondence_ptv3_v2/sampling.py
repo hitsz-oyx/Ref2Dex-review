@@ -282,6 +282,61 @@ class PerturbedGeometry:
     obj_perturbed: bool
 
 
+def perturb_hand_root_geometry(
+    *,
+    hand_points: np.ndarray,
+    hand_normals: np.ndarray,
+    hand_root_pose_world: np.ndarray,
+    obj_root_pose_world: np.ndarray,
+    seed: int,
+    apply_perturb: bool,
+    rot_std_deg: float,
+    trans_std: float,
+    perturb_prob: float,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Perturb the hand wrist/root pose while points live in object frame.
+
+    The sampled delta is expressed in the local hand-root frame and is
+    right-multiplied onto ``T_object_from_hand_root``.  Consequently the
+    rotation is around the wrist root (rather than the object origin), and
+    the resulting geometry is still expressed in the object coordinate frame.
+    """
+    points = np.asarray(hand_points, dtype=np.float32).copy()
+    normals = np.asarray(hand_normals, dtype=np.float32).copy()
+    if not (
+        apply_perturb
+        and perturb_prob > 0.0
+        and (rot_std_deg > 0.0 or trans_std > 0.0)
+    ):
+        return points, normals, False
+    rng = np.random.default_rng(seed)
+    if rng.random() > perturb_prob:
+        return points, normals, False
+    angle = np.deg2rad(rng.normal(0.0, rot_std_deg))
+    rotation = _rotation_matrix(_random_axis(rng), float(angle))
+    translation = rng.normal(0.0, trans_std, size=3)
+
+    # T_obj_hand maps hand-root local coordinates to object coordinates.
+    obj_pose = np.asarray(obj_root_pose_world, dtype=np.float64)
+    hand_pose = np.asarray(hand_root_pose_world, dtype=np.float64)
+    t_obj_hand = np.linalg.inv(obj_pose) @ hand_pose
+    delta = np.eye(4, dtype=np.float64)
+    delta[:3, :3] = rotation
+    delta[:3, 3] = translation
+    t_obj_hand_perturbed = t_obj_hand @ delta
+    # Convert object-frame points to hand-root local coordinates, apply the
+    # perturbed root pose, and return to object frame.
+    t_local = np.linalg.inv(t_obj_hand)
+    local = points.astype(np.float64) @ t_local[:3, :3].T + t_local[:3, 3]
+    perturbed = local @ t_obj_hand_perturbed[:3, :3].T + t_obj_hand_perturbed[:3, 3]
+    perturbed_normals = normals.astype(np.float64) @ (
+        t_obj_hand_perturbed[:3, :3] @ t_local[:3, :3]
+    ).T
+    norms = np.linalg.norm(perturbed_normals, axis=-1, keepdims=True)
+    perturbed_normals = perturbed_normals / np.clip(norms, 1e-8, None)
+    return perturbed.astype(np.float32), perturbed_normals.astype(np.float32), True
+
+
 def perturb_object_geometry(
     *,
     obj_points: np.ndarray,

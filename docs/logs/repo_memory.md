@@ -1,11 +1,19 @@
 # Ref2Dex 仓库记忆
 
 - scope: root
-- last_updated: 2026-08-24
+- last_updated: 2026-08-25
 - last_verified: 2026-08-24
 - related: [当前状态](status_log.md)、[架构记录](architecture_log.md)、[修改记录](modification_log.md)
 
 本文只记录可随仓库迁移的长期事实。解释器绝对路径、GPU、代理、NAS 挂载点和仓库软链的本机目标写入同目录下被 Git 忽略的 `machine_memory.md`。
+
+## 2026-08-24 — OakInk 严格 hand-root 数据合同
+
+- category: convention / pitfall
+- status: active
+- last_verified: 2026-08-24
+- fact: 跨数据集使用 OakInk 时，应采用官方 root quaternion 完成 rotation-canonicalized hand-root 的版本；只在 camera frame 减 wrist 的旧产物属于历史兼容数据。OakInk `hand_tsl` 是 wrist joint 世界位置，不等于 `smplx.MANO.transl`，转换器必须减去 shape-dependent wrist template offset。
+- source / anchor: `src/task/correspondence_ptv3_v2/research/oakink_conversion/convert_oakink_pilot.py`、该 Task EXP-013。
 
 ## 2026-08-24 — 仓库与机器记忆分离
 
@@ -54,6 +62,15 @@
 - last_verified: 2026-08-24
 - fact: `data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json` 是四手型 HRDexDB 的正式 object-disjoint manifest，共 2088 个有效 episode，train/val/test=`1642/232/214`。缺少机器人 `C2R.npy` 的 16 个 episode 被 selector 排除；cache 不包含 DenseToken 输出。
 - source / anchor: `src/task/CmDecoder/build_cache.py`、正式 manifest。
+
+## 2026-08-25 — HRDexDB correspondence minimal allhands 压缩包边界
+
+- category: path / convention / pitfall
+- status: active
+- last_verified: 2026-08-25
+- fact: `output/HRDexDB_correspondence_minimal_allhands_20260825.tar.gz` 是四手型 HRDexDB 的 minimal 原始输入包，不是完整原始仓库备份。包内覆盖 2104 个 episode：human 441、inspire_dftp 618、inspire_f1 592、allegro_v5 453；其中机器人 `C2R.npy` 有效 episode 为 2088，正好排除 inspire_f1 的 16 个缺失 C2R episode。v1/v2 object pose 的并集覆盖全部 2104 个 episode，`mesh_v2` 覆盖所有使用到的物体。
+- fact: 该包只保留 correspondence/Cm 所需的手部几何或机器人 raw q/arm/hand/timestamp/C2R、集中式 object pose、mesh_v2 和 robot assets/helper；不含 camera 参数、`grasp_result`、episode 内 `object_6d_pose*.npz`、视频等完整原始模态。当前 correspondence 转换器不能直接把它当作现有 `v0_nonvideo` 目录使用，需要适配集中式 pose 和 `assets/mesh_v2` 布局。
+- source / anchor: `output/HRDexDB_correspondence_minimal_allhands_20260825.tar.gz` tar listing、2026-08-25 只读结构/字段核验。
 
 ## 2026-08-20 — 共享 GRAB raw asset 约定
 

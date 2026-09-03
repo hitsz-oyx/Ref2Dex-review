@@ -41,3 +41,15 @@ DexYCB sequence-level `pose.npz` 没有在仓库中携带独立 schema 文档，
 **可逆性 / 是否需要用户确认**
 
 可通过切回旧目录恢复；用户已明确授权非视频数据迁移。
+## 2026-08-25 — 七域训练统一采用 sample-wise MANO/robot contract
+
+- scope: root / correspondence_ptv3_v2 与共享 Stage3 数据
+- anchor: working tree / 2026-08-25
+
+**实际选择**
+
+将 GRAB、ContactPose、OakInk、HRDexDB human 和三个 HRDexDB robot domain 放入一个等比例 sampler；不同手类型不再靠全局 reconstruction 开关区分，而由每个样本的 MANO/robot contract 分流。ContactPose 采用 5 cm clean 交互帧过滤，机器人采用经 FK 标定的约 10 mm domain-specific q-space 扰动。
+
+**影响**
+
+共享 loader 可保持统一模型和 loss 接口，同时避免把 robot qpos 误解释为 MANO。ContactPose 新导出目录独立于旧 v2.0 数据，不改变历史实验可复现性。

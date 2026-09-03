@@ -73,18 +73,34 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 # and serialized runtime config agree regardless of cwd.
                 self.cfg.meta.mano_model_dir = str(resolved_mano_dir)
 
+    def evaluate_all(self) -> dict[str, float]:
+        """Evaluate validation loaders and expose the macro model-selection metric.
+
+        Domain loaders are intentionally reported separately.  For a mixed
+        run, ``val_clean/cross_edge_random_qfl`` is the equal-weight mean of
+        the per-domain values, so checkpoint selection cannot silently follow
+        the largest dataset.
+        """
+        metrics = super().evaluate_all()
+        domain_values = [
+            float(value)
+            for key, value in metrics.items()
+            if key.startswith("val_clean/")
+            and key.endswith("/cross_edge_random_qfl")
+            and np.isfinite(float(value))
+        ]
+        if len(domain_values) >= 2:
+            metrics["val_clean/cross_edge_random_qfl"] = float(np.mean(domain_values))
+        return metrics
+
     def _load_stored_hand_proxy_indices(self) -> np.ndarray | None:
         runtime_resample = bool(getattr(self.cfg.meta, "runtime_resample_object", True))
         use_mano = bool(getattr(self.cfg.meta, "use_mano_reconstruction", False))
         raw_path = getattr(self.cfg.meta, "stored_hand_proxy_indices_path", None)
         if raw_path in {None, ""}:
-            if runtime_resample and not use_mano:
-                raise ValueError(
-                    "runtime_resample_object=True with use_mano_reconstruction=False "
-                    "requires meta.stored_hand_proxy_indices_path. The index file "
-                    "must select a fixed spatial proxy from the stored hand_points; "
-                    "the runner will not silently fall back to MANO or linspace indices."
-                )
+            # Geometry-agnostic runtime sampling no longer needs a hand proxy.
+            # Keep accepting the optional file for backwards compatibility
+            # with legacy, non-runtime callers.
             return None
 
         from src.task.correspondence_ptv3_v2.config import ROOT as repo_root
@@ -213,7 +229,15 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             contact_seed_list = None
         with torch.no_grad():
             if mano_side is not None and self._should_reconstruct_mano(batch):
-                self._reconstruct_hand_from_mano(batch, side=mano_side)
+                active = self._mano_active_indices(batch)
+                if active.numel() > 0:
+                    sub_batch = self._select_batch_samples(batch, active)
+                    self._reconstruct_hand_from_mano(
+                        sub_batch,
+                        side=sub_batch.get("__mano_side__", mano_side),
+                    )
+                    batch["points"].index_copy_(0, active, sub_batch["points"])
+                    batch["normals"].index_copy_(0, active, sub_batch["normals"])
             if contact_seed_list is not None:
                 self._resample_object_from_perturbed_hand(batch)
                 self._build_supervision_gpu(batch, contact_seed_list=contact_seed_list)
@@ -231,19 +255,55 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         has_mano = batch.get("has_mano")
         if has_mano is None:
             return False
-        if torch.is_tensor(has_mano):
-            # DataLoader stacks the per-sample booleans into a (B,) tensor.
-            # Reconstruction is only triggered if every sample in the
-            # batch carries MANO parameters; mixed batches fall back to
-            # the legacy hand_points for safety.
-            if has_mano.numel() == 0:
-                return False
-            if not bool(has_mano.all().item()):
-                return False
-        elif not bool(has_mano):
+        if not torch.is_tensor(has_mano):
+            has_mano = torch.as_tensor(has_mano, dtype=torch.bool, device=batch["points"].device)
+        if has_mano.numel() == 0 or not bool(has_mano.any().item()):
             return False
+        apply_flag = batch.get("apply_hand_perturb")
+        if apply_flag is not None:
+            if not torch.is_tensor(apply_flag):
+                apply_flag = torch.as_tensor(
+                    apply_flag, dtype=torch.bool, device=batch["points"].device
+                )
+            has_mano = has_mano.reshape(-1) & apply_flag.reshape(-1)
+            if not bool(has_mano.any().item()):
+                return False
         required = ("mano_global_orient", "mano_transl", "mano_pose", "mano_betas")
         return all(batch.get(k) is not None for k in required)
+
+    @staticmethod
+    def _mano_active_indices(batch: dict[str, Any]) -> torch.Tensor:
+        """Return MANO samples that actually require noisy reconstruction."""
+        points = batch["points"]
+        has_mano = batch.get("has_mano")
+        if has_mano is None:
+            return torch.empty(0, dtype=torch.long, device=points.device)
+        if not torch.is_tensor(has_mano):
+            has_mano = torch.as_tensor(has_mano, dtype=torch.bool, device=points.device)
+        active = has_mano.reshape(-1).bool()
+        apply_flag = batch.get("apply_hand_perturb")
+        if apply_flag is not None:
+            if not torch.is_tensor(apply_flag):
+                apply_flag = torch.as_tensor(
+                    apply_flag, dtype=torch.bool, device=points.device
+                )
+            active = active & apply_flag.reshape(-1).bool()
+        return torch.nonzero(active, as_tuple=False).reshape(-1)
+
+    @staticmethod
+    def _select_batch_samples(batch: dict[str, Any], indices: torch.Tensor) -> dict[str, Any]:
+        """Select a homogeneous MANO subset while preserving scalar metadata."""
+        batch_size = int(batch["points"].shape[0])
+        selected: dict[str, Any] = {}
+        index_list = [int(value) for value in indices.detach().cpu().tolist()]
+        for key, value in batch.items():
+            if torch.is_tensor(value) and value.ndim > 0 and value.shape[0] == batch_size:
+                selected[key] = value.index_select(0, indices)
+            elif isinstance(value, (list, tuple)) and len(value) == batch_size:
+                selected[key] = [value[i] for i in index_list]
+            else:
+                selected[key] = value
+        return selected
 
     def _get_mano_cache(self, device: torch.device):
         if self._mano_cache is None:
@@ -742,7 +802,8 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         # The MANO forward output `vertices` lives in the **world** frame
         # (smplx applies global_orient + transl internally). To splice
         # the rebuilt hand into the batch we must bring the face
-        # centers back to the stored ``hand_root`` frame, exactly the
+        # centers back to the configured frame. In object-centered runs use
+        # obj_root_pose_world; in legacy hand-root runs use hand_root_pose_world.
         # inverse of ``_points_world_to_hand_root`` in
         # ``process/common/stage3_corr.py``:
         #     hand_root_point = R_inv @ (world_point - t)
@@ -750,13 +811,17 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         # optional in v2.0; if absent we assume identity (i.e. the npz
         # was built with world-frame points, which matches the v2.0
         # legacy "object" frame convention).
-        hand_root_pose = batch.get("hand_root_pose_world")
-        if hand_root_pose is None:
+        target_frame = str(getattr(self.cfg.meta, "coordinate_frame", "hand_root"))
+        if target_frame == "object":
+            target_pose = batch.get("obj_root_pose_world")
+        else:
+            target_pose = batch.get("hand_root_pose_world")
+        if target_pose is None:
             hand_root_points = face_centers
             hand_root_normals = face_normals
         else:
-            R = hand_root_pose[:, :3, :3]
-            t = hand_root_pose[:, :3, 3]
+            R = target_pose[:, :3, :3]
+            t = target_pose[:, :3, 3]
             R_inv = R.transpose(-1, -2)
             hand_root_points = torch.einsum(
                 "bij,bnj->bni", R_inv, face_centers - t[:, None, :]
@@ -806,6 +871,44 @@ class CorrespondencePTV3V2Runner(BaseRunner):
 
         device = full_input_obj.device
         batch_size, pool_size, _ = full_input_obj.shape
+
+        # Runtime sampling is intentionally geometry-agnostic: the complete
+        # object pool is first transformed by the sampled perturbation in the
+        # dataset, then a fixed-budget random subset is drawn from that
+        # perturbed observation.  Do not use clean-GT nearest neighbours,
+        # hand FPS proxies, or a near/global quota here; those choices leak a
+        # privileged interaction prior into the input distribution.
+        seeds = batch.get("object_seed")
+        if torch.is_tensor(seeds):
+            seeds_list = [int(v) for v in seeds.reshape(-1).tolist()]
+        else:
+            seeds_list = list(range(batch_size))
+        selected_rows: list[torch.Tensor] = []
+        for b, seed in enumerate(seeds_list):
+            gen = torch.Generator(device="cpu")
+            gen.manual_seed(int(seed))
+            selected_rows.append(torch.randperm(pool_size, generator=gen)[:num_obj])
+        selected = torch.stack(selected_rows, dim=0).to(device=device)
+        valid_mask = torch.ones((batch_size, num_obj), dtype=torch.bool, device=device)
+
+        def gather_pool(pool: torch.Tensor) -> torch.Tensor:
+            idx = selected.unsqueeze(-1).expand(-1, -1, pool.shape[-1])
+            return torch.gather(pool, dim=1, index=idx)
+
+        obj_points = gather_pool(full_input_obj).to(batch["points"].dtype)
+        obj_normals = gather_pool(full_input_normals).to(batch["normals"].dtype)
+        gt_obj_points = gather_pool(full_gt_obj).to(batch["gt_points"].dtype)
+        gt_obj_normals = gather_pool(full_gt_normals).to(batch["gt_normals"].dtype)
+        batch["points"] = torch.cat([obj_points, hand_input.to(batch["points"].dtype)], dim=1)
+        batch["normals"] = torch.cat([obj_normals, hand_input_normals.to(batch["normals"].dtype)], dim=1)
+        batch["gt_points"] = torch.cat([gt_obj_points, hand_gt.to(batch["gt_points"].dtype)], dim=1)
+        batch["gt_normals"] = torch.cat([gt_obj_normals, hand_gt_normals.to(batch["gt_normals"].dtype)], dim=1)
+        batch["runtime_obj_valid_mask"] = valid_mask
+        batch["runtime_obj_selected_idx"] = selected
+        batch["point_valid_mask"] = torch.cat(
+            [valid_mask, torch.ones((batch_size, num_hand), dtype=torch.bool, device=device)], dim=1
+        )
+        return
 
         # Fix #5: per-sample side list. The dataset emits one string per
         # sample via ``__mano_side__``; PyTorch's default collate keeps
@@ -1069,6 +1172,16 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         }
         if hand_contact_bce is not None:
             aux_metrics["hand_contact_bce"] = hand_contact_bce
+        robot_rms = batch.get("robot_perturb_rms_m")
+        robot_mask = batch.get("has_robot")
+        if torch.is_tensor(robot_rms) and torch.is_tensor(robot_mask):
+            robot_mask = robot_mask.bool().reshape(-1)
+            robot_values = robot_rms.reshape(-1).float()[robot_mask]
+            if robot_values.numel() > 0:
+                aux_metrics["robot_perturb_rms_m"] = MetricStat(
+                    total=float(robot_values.detach().sum().cpu()),
+                    count=float(robot_values.numel()),
+                )
         if recovery_terms is not None:
             aux_metrics.update(self._pseudo_recovery_metrics(recovery_terms))
         if compute_diagnostics:

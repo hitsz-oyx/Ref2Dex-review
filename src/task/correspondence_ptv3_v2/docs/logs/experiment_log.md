@@ -16,6 +16,68 @@
 
 2026-08-24 已用纯 GRAB、训练时关闭手部扰动的 noPCA latest checkpoint 完成 HOCap subject_1 首次外部评估。28 个序列/物体文件共 23,896 个帧样本全部通过；clean random QFL 为 0.00016607，固定 10°/10 mm object perturb 后为 0.00020392，recovery Brier 为 0.5267。该结果只覆盖一个 subject，且接触 GT 为几何派生，因此先作为可运行基线，不作模型优劣定论。
 
+2026-08-24 已完成 OakInk true-hand-root 全量重导出。新产物使用官方 root quaternion 同时规范化手和物体，并携带可由训练端 `smplx.MANO` 重建的 axis-angle45 参数；2596 个文件 / 252,172 帧通过 loader、MANO 重建、接触距离和四视角一致性校验。572 个视角组因官方下载缺少 object mesh 跳过。
+
+## EXP-013 — OakInk true-hand-root 全量重导出与 MANO 重建校验
+
+### 日期
+
+2026-08-24
+
+### 目的
+
+替换 2026-08-18 只做 wrist 平移中心化的 OakInk Stage 3，使 OakInk 与 GRAB/ContactPose 的严格 rotation-canonicalized hand-root 合同一致，并保留后续 MANO 手姿态扰动所需参数。
+
+### 转换协议
+
+- 数据源：OakInk-Image 官方 `hand_v`、`hand_j`、`obj_transf`、`general_info` 和 object mesh；
+- root pose：使用 `general_info.hand_anno.hand_pose[0]` 的 `[w,x,y,z]` quaternion 与 `hand_tsl` 构造 `T_world_root`，再由 `cam_extr @ T_world_root` 得到 camera-space root；
+- 几何：camera-space 手顶点、物体点和法向统一乘 root pose 的逆变换；778 MANO vertices 通过标准拓扑转换为 1538 face centers/normals；
+- MANO：保存 axis-angle45 local pose、global orientation、betas、template 和 `hand_root_pose`；
+- translation：OakInk `hand_tsl` 是 wrist joint 世界位置，导出时减去 shape-dependent MANO wrist template offset，得到 `smplx.MANO.transl`；
+- 输出不覆盖旧目录，旧 wrist-centered 版本保留用于历史实验复现。
+
+### 结果
+
+| 项目 | 结果 |
+| --- | ---: |
+| 输入视角组 | 3168 |
+| 成功 NPZ | 2596 |
+| 总帧数 | 252,172 |
+| 缺 object mesh 跳过组 | 572 |
+| Stage 3 体积 | 约 17 GB |
+| 抽样 MANO 重建 RMS | 0.000040–0.000069 mm |
+| 抽样 MANO 重建最大误差 | ≤ 0.000131 mm |
+| 接触距离缓存最大误差 | ≤ 1.50×10⁻⁸ m |
+| 四视角 hand RMS | ≤ 0.000030 mm |
+| 四视角 object RMS | ≤ 0.000069 mm |
+
+### 实现核验
+
+Verdict: PASS
+
+- 2596 个 `.npz` 均完成原子 `mano_transl` 修复，没有 `.repairing.npz` 残留；
+- `CorrStaticDatasetV2(use_mano_reconstruction=true, apply_hand_perturb=true, coordinate_frame=hand_root)` 严格加载通过；
+- 首、中、末及跨目录抽样的字段、有限值、root rotation 正交性、KD-tree 距离缓存和训练端 MANO forward 均通过；
+- 同一物理帧四个 camera view 在 hand-root 中重合，证明 camera rotation 已被消除；
+- 汇总记录 `schema_version=2.0.0`，能力门槛由完整 MANO 字段而非版本字符串决定。
+
+### 结论状态
+
+**SUPPORTED**（数据转换与训练接口的工程/几何结论，不代表训练效果）
+
+### 限制与下一步
+
+- 缺 mesh 的 572 个视角无法从当前本地官方下载内容补出物体监督；
+- 历史配置仍指向旧目录，下一次启动训练前必须显式切换到新目录；
+- 是否把 OakInk 纳入手扰动训练是后续训练设计选择，本次仅保证数据能力，不自动改变已有实验协议。
+
+### 证据
+
+- `research/oakink_conversion/convert_oakink_pilot.py`
+- `research/oakink_conversion/repair_oakink_mano_transl.py`
+- NAS 输出汇总 `oakink_pilot_stats.json`
+
 ## EXP-012 — 纯 GRAB noPCA 在 HOCap subject_1 的外部测试
 
 ### 日期
@@ -1083,3 +1145,171 @@ INCONCLUSIVE
 - resumed run: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_grab_contactpose_oakink_equal_resume_gpu12_20260822_050212`
 - resumed tmux: `mixed_equal_resume_20260822_gpu12`
 - resumed W&B: `https://wandb.ai/hitsz-oyx/ref2dex/runs/d5yvor4z`
+## EXP-014 — 各数据集相邻帧手部运动幅度诊断（2026-08-30）
+
+- **假设**：在不额外跳帧的情况下，可用相邻 Stage 3 帧的手点位移估计数据集的自然运动尺度，并据此同步扰动幅度。
+- **方法**：对每个 NPZ 的相邻存储帧计算 1538 个手点欧氏位移的 frame-mean 与 frame-RMS；有 `obj_root_pose_world` 的域额外转换到 object frame。单位为 mm/相邻存储帧。
+- **结论**：object-frame RMS 的均值约为 HRDex human 3.04、Inspire DFTP 2.75、Inspire F1 2.52、Allegro V5 3.39、GRAB 6.19 mm。GRAB Stage 3 的 `raw_frame_id` 间隔恒为 4，故其值对应预处理后的 4-frame 间隔；ContactPose 导出序列内手点/MANO/root 全部静止；OakInk 有 24.1% 非连续 raw id，直接相邻统计会被跳变污染。
+- **状态**：SUPPORTED（作为运动尺度诊断；不作为原始视频 stride=1 的严格测量）。
+
+### Temporal stride 对比
+
+- Inspire F1 object-frame hand RMS 均值：stride=1/2/3 分别为 `2.515/4.291/5.933 mm`；对应中位数为 `1.305/2.213/3.034 mm`。
+- GRAB 当前 Stage 3 的 raw frame 间隔恒为 4，object-frame hand RMS 均值/中位数为 `6.190/3.733 mm`。
+- 判断：F1 stride=2 是合理的中间折中，但若目标是匹配 GRAB 的单帧幅度，stride=3 更接近；最终 stride 仍需结合两套数据的真实采样频率确定，不能只按位移倍数选择。
+
+## EXP-015 — object-centered GRAB + Inspire F1 checkpoint 的 ARCTIC min11 快速外部评估（2026-08-31）
+
+### 目的
+
+快速检查当前验证最佳 checkpoint 在未参与训练的 ARCTIC 数据上的迁移效果，先使用已有 11 物体子集，避免直接等待全量逐帧评估。
+
+### 协议
+
+- checkpoint：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_inspire_f1_object_centered_root_pose_20260829_135110/checkpoints/best.pt`，实际保存 step `148008` / epoch `28`；
+- 数据：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/arctic_min11_mano_v1`，11 个序列、4175 帧；
+- 坐标：输入树为 hand-root，评估器使用 `hand_root_pose` 与 `obj_root_pose_world` 惰性转换到 object frame；
+- 条件：分别评估 `object_only`、`hand_only`、`hand_object`；hand 条件使用 axis-angle45、5 mm RMS，object 条件使用 10° rotation + 10 mm translation，runtime object resampling 均关闭；
+- batch size 16，GPU 1，单进程。
+
+### 结果
+
+| condition | clean QFL | perturbed QFL | ΔQFL | perturbed MAE | recovery Brier | recovery projection |
+|---|---:|---:|---:|---:|---:|---:|
+| object-only | 0.00014361 | 0.00027877 | +0.00013516 | 0.007418 | 0.4344 | 0.3490 |
+| hand-only | 0.00014367 | 0.00015647 | +0.00001280 | 0.006849 | -0.0562 | 0.3990 |
+| hand+object | 0.00014367 | 0.00028649 | +0.00014283 | 0.007303 | 0.4342 | 0.3445 |
+
+object-only 与 hand+object 的 random QFL 分别增加 `0.00013516`（约 `94.1%`）和 `0.00014283`（约 `99.4%`）；hand-only 的 QFL 仅增加 `0.00001280`（约 `8.9%`），但其 recovery Brier 为 `-0.0562`，说明在该外部 hand 扰动协议下恢复质量不理想。三种条件均能完成推理。
+
+### 实现核验与限制
+
+- 外部 evaluator 发现并修复了混合 checkpoint 的 `domain_paths`、mixed hand/robot contract 和 object-frame 转换兼容问题；训练权重和训练配置未修改。
+- 先启动的全量 `arctic_full_mano_v21_20260823` 评估因 NAS 逐帧 I/O 过慢在约 1 小时后主动中止，无结果文件；本 EXP 仅采用 min11 快速子集。
+- 子集覆盖 11 个物体但仅为历史 min11 规模，不能替代全量或按 object-macro 的正式 benchmark，也没有同协议 baseline 横向对照。
+
+### 结论状态
+
+**INCONCLUSIVE**（工程迁移和方向性结果可用，但不足以形成 ARCTIC 泛化结论）
+
+### 证据
+
+- `output/research/arctic_v1/stratified/object_centered_best_object_only_20260831.json`
+- `output/research/arctic_v1/stratified_object_centered_best_object_only_20260831.log`
+
+## EXP-016 — object-centered GRAB + Inspire F1 checkpoint 的 HOCap subject_1 全量外部评估（2026-08-31）
+
+### 目的
+
+验证当前 object-centered checkpoint 在 HOCap 未参与训练的数据上的迁移能力，并与既有纯 GRAB HOCap baseline 使用相同的 object-only 协议对照。
+
+### 协议
+
+- checkpoint：当前 `best.pt`，step `148008` / epoch `28`；
+- 数据：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hocap_subject1_annotation_v1`，28 个序列、23896 帧；
+- HOCap 原始 Stage 3 为 hand-root，使用 `hand_root_pose` 与 `obj_root_pose_world` 无损转换到 object frame；
+- clean 使用存储的 clean hand points；perturbed 固定 object 10° rotation + 10 mm translation；
+- runtime object resampling 关闭；batch size 16，GPU 1，单进程；关闭训练期交互帧过滤，覆盖全部帧。
+
+### 结果
+
+| Metric | clean | object perturbed |
+|---|---:|---:|
+| `cross_edge_random_qfl` | 0.00007205 | 0.00015032 |
+| `cross_edge_random_mae` | 0.002261 | 0.002686 |
+| `pseudo_recovery_brier` | — | 0.4886 |
+| `pseudo_recovery_projection` | — | 0.4080 |
+| `pseudo_changed_edge_fraction` | 0 | 0.002767 |
+
+object perturb 使 random QFL 增加 `0.00007826`（约 `108.6%` 相对 clean）。相较既有纯 GRAB noPCA baseline（clean `0.00016607`、perturbed `0.00020392`、recovery Brier `0.5267`），当前 checkpoint 的 clean / perturbed QFL 分别降低约 `56.6%` / `26.3%`，但 recovery Brier 低 `0.0381`。
+
+### 实现核验与限制
+
+- 外部评估器已修复混合 checkpoint 的 `domain_paths`、mixed hand/robot contract、object-frame 转换和训练期交互帧过滤继承问题；训练权重与训练配置未修改。
+- 结果覆盖 subject_1 的 28 个序列，但 HOCap 接触 GT 为几何派生，且仍只有单一 subject；与既有 baseline 的训练预算、坐标协议和模型结构并非完全 matched，因此只作方向性外部证据。
+
+### 结论状态
+
+**INCONCLUSIVE**（工程兼容性和方向性泛化结果已确认，不能据此形成跨 subject 正式结论）
+
+### 证据
+
+- `output/research/hocap_subject1_object_centered_20260831/object_centered_best_object_only_full.json`
+- 既有 baseline：`output/research/hocap_subject1_grab_nopca_20260824/full_object_only.json`
+
+## EXP-017 — 七域混合 best checkpoint 的 HOCap 全量外部评估（2026-09-01）
+
+### 目的
+
+验证完成七域混合续训后的最佳 checkpoint 在 HOCap 完整 subject_1 数据上的迁移表现。
+
+### 协议
+
+- checkpoint：七域混合 `best.pt`，step `34907` / epoch `1`；
+- 数据：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hocap_subject1_annotation_v1`，28 个序列、共 23896 帧；
+- 条件：沿用既有 HOCap 全量 `object_only` 协议，clean 使用存储手点，perturbed 使用 10° object rotation + 10 mm translation；runtime object resampling 关闭；
+- batch size 16，GPU 1，单进程，关闭训练期交互帧过滤。
+
+### 结果
+
+| Metric | clean | object perturbed |
+|---|---:|---:|
+| `cross_edge_random_qfl` | 0.00007355 | 0.00014111 |
+| `cross_edge_random_mae` | 0.004540 | 0.005136 |
+| `pseudo_recovery_brier` | — | 0.5913 |
+| `pseudo_recovery_projection` | — | 0.5026 |
+
+object perturb 使 random QFL 增加 `0.00006757`（约 `91.9%`）。与上一版 object-centered GRAB + Inspire F1 checkpoint 的 HOCap 结果（clean `0.00007205`、perturbed `0.00015032`、recovery Brier `0.4886`）相比，七域版 clean 基本持平，perturbed QFL 略低，但 recovery Brier / projection 较差。该比较仅作方向性参考，两个 checkpoint 的坐标系、训练域和训练协议不同。
+
+### 实现核验与限制
+
+- 全量 object-only 推理正常完成，覆盖 HOCap 当前可用的全部 28 个序列 / 23896 帧。
+- 尝试 `hand_only` / `hand_object` 时发现现有 HOCap Stage 3 将 axis-angle45 数据错误标记为 `mano_use_pca=True`，评测器因此缺少匹配的手噪声 profile；这两种条件本次未产出结果，不将失败当作模型结论。
+- HOCap 当前只有 subject_1，接触 GT 为几何派生，仍不足以形成正式跨主体 benchmark。
+
+### 结论状态
+
+**INCONCLUSIVE**（全量 object-only 工程评测完成，科研泛化结论受数据与协议限制）
+
+### 证据
+
+- `output/research/hocap_subject1_seven_domain_20260901/object_only.json`
+- `output/research/hocap_subject1_object_centered_20260831/object_centered_best_object_only_full.json`
+
+## EXP-018 — HOCap PCA45 profile 修正、subject_1 重导出与三条件评测（2026-09-01）
+
+### 目的
+
+修复 HOCap 手部扰动评测因缺少 PCA45 几何噪声 profile 而无法运行的问题，并在重导出后的完整 subject_1 数据上完成七域 checkpoint 的三条件评测。
+
+### 实现修正
+
+- 核验原始 `poses_m.npy` 与 `process/HOCap/stage3_export.py`：HOCap 手部参数为 MANO PCA45，原有 `mano_use_pca=True` / `mano_num_pca_comps=45` / `mano_pose_repr="pca"` 标记是正确的，不将其错误改写为 axis-angle；
+- 使用完整 subject_1 Stage 3 样本标定 `hocap_pca45_target_9mm.json`，并让外部 evaluator 对 HOCap 自动选择 `hocap` 数据集 ID 与该 profile；
+- 使用包含 cv2/PyYAML 的 `hocopt` 环境重新导出 subject_1，7 个序列、28 个文件、23896 帧，`failed=0`；重导出前后抽查文件的几何与 MANO 字段完全一致。
+
+### 协议
+
+- checkpoint：七域混合 `best.pt`，step `34907` / epoch `1`；
+- HOCap：`processed_data/stage3/hocap_subject1_annotation_v1`，完整 28 序列 / 23896 帧；
+- `object_only`：10° object rotation + 10 mm translation；
+- `hand_only`：HOCap PCA45 几何标定噪声，目标 9 mm RMS；
+- `hand_object`：同时启用上述 hand/object 扰动；runtime object resampling 关闭；batch size 16，GPU 1，单进程。
+
+### 结果
+
+| condition | clean QFL | perturbed QFL | perturbed MAE | recovery Brier | recovery projection |
+|---|---:|---:|---:|---:|---:|
+| object-only | 0.00007366 | 0.00014232 | 0.005145 | 0.5907 | 0.5015 |
+| hand-only | 0.00007365 | 0.00015818 | 0.004488 | 0.4739 | 0.3962 |
+| hand+object | 0.00007365 | 0.00024166 | 0.004871 | 0.4617 | 0.3552 |
+
+### 结论状态
+
+**INCONCLUSIVE**（工程链路已修复并完成全量 subject_1 评测；HOCap 仍只有一个主体，接触 GT 为几何派生，结果仅作方向性证据）
+
+### 证据
+
+- `src/task/correspondence_ptv3_v2/calibration/hocap_pca45_target_9mm.json`
+- `output/research/hocap_subject1_seven_domain_reexport_20260901/{object_only,hand_only,hand_object}.json`
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/HOCap/logs/subject_1_stage3_reexport_20260901.log`

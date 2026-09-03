@@ -1,0 +1,97 @@
+_base_: src/task/correspondence_ptv3_v2/configs/hand_heatmap.yaml
+
+name: correspondence_ptv3_v2_mixed_seven_domain_mano_robot_10mm_5cm
+
+# Seven equal-weight domains.  Each entry is a read-only NAS Stage-3 tree;
+# the sampler allocates one seventh of every local batch to each domain.
+data:
+  root: .
+  # Kept non-empty for the generic training entrypoint; domain_paths controls
+  # the actual data stream.
+  train_path: /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/processed/stage3/grab_initonly_4096_v21
+  domain_paths:
+    - id: grab
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/processed/stage3/grab_initonly_4096_v21
+      cache_index_path: output/cache/mixed_seven_grab.json
+    - id: contactpose
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/contactpose_v21_interaction5cm_allhands_20260825
+      cache_index_path: output/cache/mixed_seven_contactpose.json
+    - id: oakink
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk/processed/stage3_corr_oakink_true_handroot_20260824
+      cache_index_path: output/cache/mixed_seven_oakink.json
+    - id: hrdexdb_human
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/human
+      cache_index_path: output/cache/mixed_seven_hrdexdb_human.json
+    - id: hrdexdb_inspire_dftp
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/inspire_dftp
+      cache_index_path: output/cache/mixed_seven_hrdexdb_inspire_dftp.json
+    - id: hrdexdb_inspire_f1
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/inspire_f1
+      cache_index_path: output/cache/mixed_seven_hrdexdb_inspire_f1.json
+    - id: hrdexdb_allegro_v5
+      path: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_minimal_allhands_v1/allegro_v5
+      cache_index_path: output/cache/mixed_seven_hrdexdb_allegro_v5.json
+  batch_size: 56
+  val_batch_size: 56
+  num_workers: 8
+  drop_last: true
+  sequence_locality_shuffle: true
+  persistent_workers: true
+  prefetch_factor: 2
+
+meta:
+  coordinate_frame: hand_root
+  use_mano_reconstruction: true
+  use_robot_reconstruction: true
+  mixed_hand_reconstruction: true
+  apply_hand_perturb: true
+  hand_perturb_prob: 1.0
+  hand_geometry_calibration_paths:
+    grab: src/task/correspondence_ptv3_v2/calibration/grab_pca24_target_9mm.json
+    contactpose: src/task/correspondence_ptv3_v2/calibration/contactpose_pca15_target_9mm_sample.json
+  hand_geometry_noise_required: false
+  hand_geometry_noise_scale: 1.0
+  hand_axis_angle_std_rad: 0.05
+  hand_axis_angle_clip_rad: 0.15
+  hand_pca_std: 0.5
+  hand_pca_noise_scale: 0.10
+  hand_pca_noise_clip: 3.0
+  mano_model_dir: /mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano
+  apply_obj_perturb: true
+  obj_perturb_prob: 1.0
+  val_obj_perturb_prob: 1.0
+  runtime_resample_object: true
+  apply_robot_perturb: true
+  robot_perturb_prob: 1.0
+  # Empirical q-space multipliers from the HRDexDB FK smoke calibration;
+  # clipping and link geometry make one shared multiplier inappropriate.
+  robot_perturb_noise_scale_by_domain:
+    # Recalibrated against coordinate-RMS displacement of the 1538 stored
+    # surface samples (the old 16/10/5 values produced only ~5--7 mm).
+    hrdexdb_inspire_dftp: 25.0
+    hrdexdb_inspire_f1: 15.0
+    hrdexdb_allegro_v5: 9.0
+  exclusive_hand_object_perturb: true
+  # 40% hand-only, 40% object-only, 20% clean; hand and object noise never
+  # occur together in a training sample.
+  exclusive_perturb_mode_probs: [0.4, 0.4, 0.2]
+  filter_non_interacting_frames: true
+  interaction_max_distance_m: 0.05
+
+train:
+  seed: 20260825
+  epochs: 100
+  max_steps: 154670
+  eval_every_epochs: 1
+  save_every_steps: 5000
+  save_every_epochs: null
+  distributed:
+    enable: true
+    backend: auto
+    timeout_minutes: 60
+
+wandb:
+  enable: true
+  project: ref2dex
+  mode: online
+  tags: [correspondence, ptv3, v2, mixed-seven-domain, mano, robot-fk, hand-perturb, robot-10mm, interaction-5cm]

@@ -1,8 +1,8 @@
 # Ref2Dex 架构记录
 
 - scope: root
-- last_updated: 2026-08-23
-- last_verified: 2026-08-23
+- last_updated: 2026-08-25
+- last_verified: 2026-08-25
 - related: [接手记忆](repo_memory.md)、[修改记录](modification_log.md)、[项目总览](../项目总览.md)
 
 ## 1. 研究目标与总体架构
@@ -53,6 +53,8 @@ Ref2Dex 的目标不是直接把一套手的关节角回归成另一套手的关
   x_hand_root = R_hand_root^T (x_world - t_hand_root)
   ```
 
+- OakInk 当前规范导出使用官方 MANO root quaternion 同时移除手、物体的 camera/world root rotation，并携带可供训练端重建的 axis-angle45 MANO 参数；旧版只减 wrist 的 camera-frame 数据不满足该跨数据集坐标合同。
+
 - CmDecoder 的机器人 task cache 使用当前机器人 wrist 坐标系；目标点和 `hand_flow` 都表达在当前 wrist frame，避免把目标腕部刚体运动错误地从 flow 中消掉。
 - 法向只做旋转，不施加平移；所有 flow、平移和 point loss 的单位为米，旋转向量和关节角的单位为弧度。
 
@@ -73,6 +75,14 @@ hand_flow = hand_points_(t+stride) - hand_points_t
 HRDexDB 的共享 geometry layer 必须遵守同一合同：保留稳定的 `[T,4096,3]` 物体池和 `[T,4096]` 的当前手 5 cm candidate mask，Cm loader 再在线采样 `[512,3]`。仅有全表面 `[T,512,3]` 且没有 candidate mask 的 decoder smoke cache 不可直接作为 Cm 训练输入；CmDecoder 的 legacy task layer 仍可保留独立的 512 点字段。
 
 HRDexDB 的仓库内规范原始数据入口为 `dataset/HRDexDB/v0_nonvideo`，配套机器人资产和读取 helper 位于同级 `assets/`、`hrdexdb_contact_heatmaps/`；整个 `dataset/HRDexDB/` 是机器本地数据，不纳入 Git。
+
+correspondence_ptv3_v2 的 HRDexDB robot 路径采用独立 URDF/FK q-space：固定
+link/barycentric 手点绑定，hand q joints 加受限噪声后回到 `base_link` hand-root；
+不把 robot qpos 转成 MANO 字段，也不将 arm/base 扰动与当前 hand-root corruption
+混合。七域 mixed loader 通过样本级 contract dispatch 同时容纳 MANO 与 robot，三种
+机器人按 FK 标定使用不同 q-space 噪声乘数。
+
+minimal allhands archive 的 Stage3 适配由 `process/HRDexDB/correspondence_minimal_adapter.py` 统一处理四种手型：human 使用 MANO reconstruction，三类机器人使用对应 URDF/FK。输出仍使用统一 4096 object pool、1538 hand points 和 hand-root schema。
 
 ## 3. 阶段一：correspondence_ptv3_v2 / DenseToken
 

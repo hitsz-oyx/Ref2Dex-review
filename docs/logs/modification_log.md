@@ -1,8 +1,43 @@
 # 全局 AI 修改记录
 
 - scope: root
-- last_updated: 2026-08-24
+- last_updated: 2026-08-25
 - related: [架构记录](architecture_log.md)、[仓库记忆](repo_memory.md)、[决策记录](decision_log.md)
+
+## 2026-08-24 — 核验 correspondence 三域 mixed 在线状态
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: 全局状态记录
+
+**文件**
+
+- `docs/logs/status_log.md` — 记录三域 DDP 当前 step、GPU、checkpoint 落后风险及新旧 OakInk 数据版本边界。
+
+**改动原因**
+
+用户询问三域混合训练进展；只读检查确认 GRAB/ContactPose/OakInk 任务仍在 GPU 1、2 运行，未因 OakInk 重导出自动切换数据路径。
+
+## 2026-08-24 — 建立 OakInk 严格 hand-root 外部数据版本
+
+- branch: `oyx`
+- post-commit: 未提交
+- scope: 跨 task / 外部数据处理
+
+**文件 / 数据**
+
+- `src/task/correspondence_ptv3_v2/research/oakink_conversion/{convert_oakink_pilot,repair_oakink_mano_transl}.py` — 用官方 root quaternion 转换完整 hand-root，并对齐 OakInk wrist-position 与 `smplx.MANO.transl` 语义。
+- `docs/logs/{architecture_log,status_log,repo_memory,modification_log}.md` — 同步全仓库坐标合同、当前数据状态和兼容性边界。
+- correspondence Task 的架构、状态、记忆、实验、决策和修改日志 — 记录 2596 文件 / 252,172 帧产物及验证证据。
+- NAS 新目录 `OakInk/processed/stage3_corr_oakink_true_handroot_20260824` — 保留旧版的同时新增严格 hand-root 数据版本。
+
+**改动原因**
+
+OakInk 是跨数据集 mixed 训练输入；旧版只减 wrist 的 camera-frame 语义与仓库统一 hand-root 合同不一致，且缺少可用于手扰动的 MANO 参数。
+
+**验证**
+
+严格 Dataset MANO 路径、训练端 MANO 重建、接触距离缓存和四视角一致性均通过；详细数值见 correspondence EXP-013。
 
 ## 2026-08-24 — 合并 hand PCA 分支并拆分仓库/机器记忆
 
@@ -63,6 +98,89 @@
 **改动原因**
 
 candidate mask 构建由逐帧全量距离张量改为半径邻域查询；单 episode CPU 探针由约 192.6 s 降至约 37.4 s。全量构建已按 4 workers、单线程 BLAS 启动。
+
+## 2026-08-25 — 记录 HRDexDB 分域 smoke 完成
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 全局状态
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新 HRDexDB 全量 Stage3 已完成且 human/robot 独立 loader/PTv3 smoke 已通过的状态，并记录暂不加入现有 mixed 的边界。
+
+**改动原因**
+
+新增 HRDexDB 配置与验证结果已经影响仓库级“下一步”判断，但没有改变正在运行的三域 mixed 配置。
+
+## 2026-08-25 — 记录 ContactPose 原始 MANO 可用性核验
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 全局状态
+
+**文件**
+
+- `docs/logs/status_log.md` — 更新 ContactPose 原始 MANO 字段存在、当前 Stage3 未提取以及后续需 v2.1 重导出的状态。
+
+**改动原因**
+
+原始数据核验改变了“ContactPose 无法进行手扰动”的结论：限制来自当前 v2.0 产物，而非数据集本身。
+
+## 2026-08-25 — 启动 HRDexDB minimal allhands Stage3 全量适配
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 外部数据处理
+
+**文件 / 产物**
+
+- `process/HRDexDB/correspondence_minimal_adapter.py` — 新增 minimal archive 到统一 correspondence Stage3 的适配入口。
+- NAS staging `/mnt/ugreen_nas/storage/Ref2Dex_storage/HRDexDB_minimal_allhands_20250825/` 和四手型 Stage3 后台转换会话。
+
+**改动原因**
+
+用户确认按四手型、2088 个 C2R-valid episode 开始适配；原始 archive、现有 mixed 配置和训练进程均未覆盖或修改。
+
+## 2026-08-25 — HRDexDB minimal allhands Stage3 转换完成
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 外部数据处理
+
+**结果**
+
+- NAS 独立输出共 2088 个 Stage3 文件、1,265,425 帧；human/DFTP/F1/Allegro 分别为 441/618/576/453。
+- 四个 manifest 的 errors 均为空，代表性 schema/shape/finite 核验通过；未修改现有 mixed 训练配置。
+
+## 2026-08-25 — 新增 HRDexDB robot correspondence FK smoke 路径
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 外部数据
+
+**文件 / 产物**
+
+- `process/HRDexDB/robot_stage3_export.py`、`src/task/correspondence_ptv3_v2/robot_recon.py` — 为 Inspire DFTP 增加独立 robot Stage 3 与 q-space 扰动实现。
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/hrdexdb_robot_smoke_v1/` — 64 帧 NAS smoke 输出。
+
+**改动原因**
+
+用户确认按 hand-joint q-space 形式给机器手施加扰动。该路径保持 arm/base 和 hand-root 固定，避免把机器人运动学误塞入 MANO 或破坏共享 correspondence 坐标契约；当前 mixed 训练配置未修改。
+
+## 2026-08-25 — 核验 HRDexDB minimal allhands 压缩包边界
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 外部数据只读核验
+
+**文件**
+
+- `docs/logs/repo_memory.md`、`docs/logs/status_log.md` — 记录压缩包的 episode 覆盖、C2R-valid 数量和 minimal 模态边界。
+
+**改动原因**
+
+用户要求确认 `/home/wbcd/workspace/oyx_ws/Ref2Dex/output/HRDexDB_correspondence_minimal_allhands_20260825.tar.gz` 是否全量。核验未修改压缩包、原始数据或训练配置。
 
 ## 从 feature/hand-pca-perturbation 合并的历史记录
 
@@ -418,3 +536,32 @@ DexYCB subject-10 评估异常经 raw label、外参和刚体回代互证后确�
 **改动原因**
 
 candidate mask 构建由逐帧全量距离张量改为半径邻域查询；单 episode CPU 探针由约 192.6 s 降至约 37.4 s。全量构建已按 4 workers、单线程 BLAS 启动。
+## 2026-08-25 — 启用七域 MANO/robot mixed 数据合同
+
+- branch: working tree
+- post-commit: 未提交
+- scope: 跨 task / 全局训练数据与共享 Stage3 约定
+
+**文件与数据**
+
+- `src/task/correspondence_ptv3_v2/{config.py,dataset.py,runner.py,robot_recon.py}` — 支持 MANO/robot 按样本分流、5 cm 交互帧过滤和 domain-specific robot noise。
+- `process/ContactPose/stage3_export.py` — ContactPose v2.1 MANO 全量导出与交互帧过滤。
+- `src/task/correspondence_ptv3_v2/configs/mixed_seven_domain_mano_robot_10mm_5cm.yaml` — 七域等比例训练入口。
+- NAS `.../contactpose_v21_interaction5cm_allhands_20260825` — 1477 文件 / 621514 帧。
+
+**验证**
+
+七域 loader 首次扫描成功，混合 batch shape `(56,2050,3)`；人手 MANO、机器人 FK、runtime object resampling 与 PTv3 forward/backward 均 finite。详细证据见 task modification log。
+## 2026-08-26 — 修正 HOCap 导出 frame 统计
+
+- branch: oyx
+- post-commit: working tree（未提交）
+- scope: 跨 task / process/HOCap
+
+**文件**
+
+- `process/HOCap/stage3_export.py` — 统计每个输出 object/hand 文件实际包含的 frame samples，避免多对象序列只累计一次源时间轴。
+
+**改动原因**
+
+HOCap 序列会生成多个物体/手输出，原 `stats.frames` 低估导出样本数；修正后 metadata 与 NPZ 总帧数一致。

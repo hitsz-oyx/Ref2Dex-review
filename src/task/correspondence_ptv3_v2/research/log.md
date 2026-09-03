@@ -1,5 +1,11 @@
 # correspondence_ptv3_v2 研究日志
 
+## 更正：OakInk 官方 annotation 含 MANO pose/shape，已重导出 true hand-root（2026-08-24）
+
+此前本日志中“OakInk annotation 未提供 MANO global orientation/pose/betas”的判断来自未检查 `general_info`，现已确认错误。官方 `general_info.hand_anno` 包含 root/local quaternion、`hand_shape` 和 wrist-position `hand_tsl`；`cam_extr` 可把 world root pose 变换到 camera。当前导出器已使用这些字段同时消除手、物体的 root rotation，并保存 axis-angle45 MANO 参数。
+
+新 NAS 产物为 2596 个 NPZ / 252,172 帧，训练端 MANO 重建、接触距离和四视角一致性均通过。旧的 wrist-centered camera-frame 结论只描述 2026-08-18 产物，不再是当前 OakInk 数据事实；正式证据和兼容边界见 `docs/logs/experiment_log.md` 的 EXP-013。
+
 ## 实验：新旧 checkpoint 的 ContactPose 跨数据集测试
 
 **假设**

@@ -401,7 +401,14 @@ def _export_sequence(args: argparse.Namespace, sequence: str) -> dict[str, Any]:
             )
             results.append(str(output_path))
             print(f"[hocap] wrote {output_path} frames={len(frame_indices)} object={object_id} side={side}", flush=True)
-    return {"sequence": sequence, "files": results, "frames": len(frame_indices)}
+    return {
+        "sequence": sequence,
+        "files": results,
+        # Each object/hand output contains the complete selected timeline;
+        # report frame samples (not just source timeline frames) in metadata.
+        "frames": len(frame_indices),
+        "frame_samples": len(frame_indices) * len(results),
+    }
 
 
 def _parse_args() -> argparse.Namespace:
@@ -433,7 +440,7 @@ def main() -> None:
         try:
             result = _export_sequence(args, sequence)
             stats["written_files"] += len(result["files"])
-            stats["frames"] += result["frames"]
+            stats["frames"] += result["frame_samples"]
         except Exception as exc:  # noqa: BLE001
             stats["failed"] += 1
             stats["failures"].append({"sequence": sequence, "error": f"{type(exc).__name__}: {exc}"})
