@@ -1615,3 +1615,40 @@ INCONCLUSIVE（point-flow 的 full/high-motion val/test 已完成；q/wrist fitt
 ### 结论状态
 
 `INCONCLUSIVE（中途 checkpoint；当前证据不支持 rollout 改善）`
+
+## EXP-V1.2-001 — ObjectInteractionCm → Inspire-F1 全手点流条件自编码
+
+### 日期与状态
+
+- 日期：2026-09-03
+- modification_version：V1.2
+- run_id：`cm_decoder_20260903_091220`
+- run_status：`RUNNING`
+- approval：user-approved
+
+### 假设与设置
+
+- 假设：ObjectInteractionCm 的冻结 `cm_tokens [B,16,32]` 保留足够的 Inspire-F1 手部运动信息，使独立 Decoder 能从 token 和当前手几何重建同一 pair 的 hand-flow。
+- 自编码定义：编码器输入包含 GT `hand_flow(t→t+stride)`，Decoder 重建同一 pair；不把结果解释为未知未来运动预测。
+- frozen checkpoint：`outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_1_20260903_003948/checkpoints/best.pt`。
+- 数据：Inspire-F1 object-disjoint split，455/58/63 episodes；坐标 `object_pose_t`；全 1538 手点监督；3076 padded union 仅用于编码器输入。
+- stride：`{2,4,6,8,10,12,14,16,18,20}` 全部展开为 pair；1024 物体点从 4096 pool 确定性采样。
+- Decoder：`SharedHandFlowDecoder(dim=32)` 独立副本，随机初始化；Cm 及其 object/hand head 全部冻结；首轮在线算 token，不使用 sidecar。
+- 训练基线：三卡 DDP、每卡 batch16、global batch48、AdamW、lr=`3e-4`、weight decay=`1e-4`、30 epochs、无 AMP。
+
+### 证据入口
+
+- [V1.2 指导](../指导/V1.2.md)
+- [V1.2 最终计划](../plan/V1.2.md)
+- [pair index manifest](../../../../../data/processed_data/cm_decoder/cmdecoder_inspire_f1_object_pose_t_v1_2/manifest.json)
+- [pair index run manifest](../../../../../data/processed_data/cm_decoder/cmdecoder_inspire_f1_object_pose_t_v1_2/run_manifest.json)
+- [运行目录](../../../../../outputs/cmdecoder/cm_decoder_20260903_091220/)
+- [run manifest](../../../../../outputs/cmdecoder/cm_decoder_20260903_091220/run_manifest.json)
+- [逐步指标](../../../../../outputs/cmdecoder/cm_decoder_20260903_091220/metrics.jsonl)
+- [训练日志](../../../../../outputs/cmdecoder/cm_decoder_20260903_091220/train.log)
+
+### 当前结果
+
+- 单卡 smoke 与三卡 DDP 10-step smoke 通过；仅新 Decoder 参数产生梯度，输出 shape 和数值检查通过。
+- 全量运行启动时 `total_steps=1,403,370`，早期约 step 1200 吞吐约 1,680 samples/s，估计剩余约 11 小时；目前无 OOM/NaN/NCCL。
+- 当前结论：`INCONCLUSIVE（RUNNING，等待终态 test）`。
