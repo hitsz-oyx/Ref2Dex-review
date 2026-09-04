@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from pytorch3d.ops import knn_points
 from torch import nn
 
 from .decoder import (
@@ -217,15 +218,49 @@ class LocalHandInteraction(nn.Module):
         num_hand = hand_points.shape[1]
         if hand_valid_mask is None:
             hand_valid_mask = torch.ones((bsz, num_hand), dtype=torch.bool, device=hand_points.device)
-        distances = torch.cdist(object_points, hand_points)
-        distances = distances.masked_fill(~hand_valid_mask[:, None, :].bool(), float("inf"))
-        k = min(self.knn_k, num_hand)
-        edge_distances, indices = torch.topk(distances, k=k, largest=False, dim=-1)
+        hand_valid_mask = hand_valid_mask.bool()
+
+        # CmDecoder pads 1,538 real hand points to 3,076 and supplies a
+        # prefix mask. Compact this prefix before KNN so we do not construct
+        # an object-by-3,076 distance matrix. Global nearest-K followed by the
+        # radius mask below is equivalent to radius-first nearest-K (up to
+        # exact distance ties) for the fixed K=8 interaction contract.
+        valid_counts = hand_valid_mask.sum(dim=-1)
+        prefix_fast_path = False
+        if valid_counts.numel() > 0 and torch.all(valid_counts == valid_counts[0]) and int(valid_counts[0]) > 0:
+            expected_prefix = torch.arange(num_hand, device=hand_valid_mask.device)[None, :] < valid_counts[:, None]
+            prefix_fast_path = bool(torch.equal(hand_valid_mask, expected_prefix))
+
+        if prefix_fast_path:
+            compact_count = int(valid_counts[0])
+            search_hand_points = hand_points[:, :compact_count]
+            search_hand_normals = hand_normals[:, :compact_count]
+            search_hand_flow = hand_flow[:, :compact_count]
+            k = min(self.knn_k, compact_count)
+            knn_result = knn_points(
+                object_points,
+                search_hand_points,
+                K=k,
+                return_nn=False,
+                return_sorted=True,
+            )
+            edge_distances = knn_result.dists.clamp_min(0.0).sqrt()
+            indices = knn_result.idx
+            local_valid = torch.ones_like(indices, dtype=torch.bool)
+        else:
+            # Preserve the original semantics for arbitrary masks (where
+            # valid points are not contiguous) and all-invalid rows.
+            distances = torch.cdist(object_points, hand_points)
+            distances = distances.masked_fill(~hand_valid_mask[:, None, :], float("inf"))
+            k = min(self.knn_k, num_hand)
+            edge_distances, indices = torch.topk(distances, k=k, largest=False, dim=-1)
+            search_hand_points, search_hand_normals, search_hand_flow = hand_points, hand_normals, hand_flow
+            local_valid = torch.gather(hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices)
+
         gather_idx = indices[..., None].expand(-1, -1, -1, 3)
-        local_hand = torch.gather(hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
-        local_normals = torch.gather(hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
-        local_flow = torch.gather(hand_flow[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
-        local_valid = torch.gather(hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices)
+        local_hand = torch.gather(search_hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
+        local_normals = torch.gather(search_hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
+        local_flow = torch.gather(search_hand_flow[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
         relative = local_hand - object_points[:, :, None, :]
         normal_dot = (object_normals[:, :, None, :] * local_normals).sum(dim=-1, keepdim=True)
         # Invalid/padded neighbors have +inf distance for selection; replace

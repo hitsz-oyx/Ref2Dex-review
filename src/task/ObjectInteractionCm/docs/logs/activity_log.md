@@ -1,9 +1,222 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-03
+- last_updated: 2026-09-04
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
+
+## 2026-09-04 15:27:04 +0800 — HRDexDB MANO 配对与可适配数据集诊断
+
+- activity_id: `ACT-20260904-152704-OICM-HR-MANO-DATASET-SEARCH`
+- timestamp: 2026-09-04 15:27:04 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读数据与公开资料核查；未改变代码、配置、cache、split、GT 或既有运行）
+- approval: user-requested
+- approval_basis: 用户要求搜索可适配数据集，核对 HRDexDB 是否含 MANO 配对数据及其运动幅度
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `6ca6509ab1f8853767d11724877dd8aba5914b63`
+- worktree_dirty: true（保留既有用户改动）
+- scope: HRDexDB `episodes/pairings/objects` 元数据、human MANO OBJ/JSON、compact object pose、当前 Inspire-F1 选集连接、同一 object-pose/wrist-frame 的运动抽样，以及公开数据集的标注与许可证入口；未修改代码、配置、数据、cache、checkpoint 或运行目录
+- conclusion: SUPPORTED（HRDexDB 完整发布目录含 human MANO 与经验证 robot→human pairing；当前 ObjectInteractionCm index 只喂 Inspire-F1，未喂 human MANO；human MANO 增大手部运动但没有改变 HR 近静止的物体运动分布。候选数据集的最终收益仍需受控实验，故因果结论为 INCONCLUSIVE）
+
+**文件与证据**
+
+- [HRDexDB README](../../../../../dataset/HRDexDB/v0_nonvideo/README.md) — 官方元数据说明：`train` 是完整 catalog 而非 benchmark split，`pairings` 只收录显式验证的 robot-to-human 链接。
+- [episodes.parquet](../../../../../dataset/HRDexDB/v0_nonvideo/metadata/episodes.parquet)、[pairings.parquet](../../../../../dataset/HRDexDB/v0_nonvideo/metadata/pairings.parquet) — 本地目录统计：2104 条 episode、441 条 human episode、1335 条已验证 pairing；Inspire-F1 pairing 392 条。
+- [当前 ObjectInteractionCm index](../../../../../data/processed_data/object_interaction_cm_v1_1/index.json)、[Inspire-F1 选集](../../../../../data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/selection_all_object_disjoint_seed42.json) — 当前训练实际使用 576 条 Inspire-F1 episode；与 pairing 连接后有 378 条 robot episode、377 条 unique human episode，但 human 记录尚未进入当前 index。
+- [HRDexDB 全量 geometry manifest](../../../../../data/processed_data/cm_decoder/hrdexdb_all_v1/v4/selection_all_object_disjoint_seed42.json) — 仓库已有四手型 `cmdecoder_layered_v4` cache：2088 条有效 episode（含 human 441 条），但该旧 manifest 仍是独立 CmDecoder cache，不能替代当前 ObjectInteractionCm 的 `object_pose_t` index。
+- [HR cache builder](../../../../../src/task/CmDecoder/build_cache.py) — human 分支读取 `hand/mano/*.obj` 与 `mano_params/*.json`，以 1538 个 MANO face-center 保持 hand 点合同，并把 `q_semantics` 标记为 `unavailable_mano`；这说明 human MANO 可转成现有 surface/cache 表示，但不是可直接解释的机器人关节 q。
+- [model.py](../../model.py) — 工作区已有用户改动，本次诊断未修改。
+
+**原因**
+
+- 需要区分“HRDexDB 是否拥有可用的 paired MANO 证据”和“当前训练是否真的看到了 human source”；同时用与现有 object-pose/wrist-frame 一致的时间跨度比较 hand/object flow，避免把配对关系误当作逐帧同步或把近静止物体目标误判成高动态监督。
+
+**验证**
+
+- 使用 `fastwam` 环境的 `pyarrow` 读取 parquet：所有 HR 元数据 `split=train`；pairings 的 `source` 均为 `grasp_result.json:human_paired_episode` 且 `verified=True`。当前选中的 377 个 unique human episode 中，MANO OBJ 数、MANO 参数数、compact object-pose 帧数与 episode `num_frames` 均一致。
+- 对全部 440 个可连接 human episode 及当前选集对应的 377 个 episode 做只读抽样：解析 MANO face-center、object 4×4 pose、wrist（`joints[0]`/`global_orient[0]`），在当前 pipeline 的 object-pose/wrist frame 中按 30 Hz 计算 stride=2（约 66.7 ms）和 stride=10（约 333 ms）flow。数值是随机表面点诊断抽样，不是官方 benchmark。
+- 当前选集对应 human 的 stride=2：hand flow 中位数 `5.44 mm`、p95 `15.33 mm`；object flow 中位数 `1.07 mm`、p95 `10.44 mm`、`>20 mm` 约 `0.06%`。stride=10：hand 中位数 `26.44 mm`，object 中位数 `3.34 mm`、p90 `40.95 mm`。
+- 同口径既有诊断中，Inspire-F1 stride=2 的 hand/object 中位数约 `1.85/1.01 mm`，GRAB 约 `13.46/9.11 mm`；因此 human MANO 主要补手部 articulation/contact，object motion 仍接近 HR robot，远小于 GRAB。
+- 公开资料核查了 GigaHands（完整物体运动与 MANO-derived hand）、HOT3D（刚性物体 6DoF + MANO）、OakInk/OakInk2（MANO + object SE(3)）、DexYCB（MANO + object 6D）、ARCTIC（高动态双手但含 articulated object）、HOGraspNet（接触/抓取标注）等候选；没有据此启动训练或改变研究变量。
+
+**边界与回滚**
+
+- 配对是“同对象/同任务语义”的 human↔robot 关联，不应默认逐帧同步；官方采集协议允许机器人操作者观察人类动作后按自身形态重现。因此 human MANO 更适合作为独立 source 或 contact/hand 预训练信号，不能直接当作 robot flow 的逐帧 GT。
+- 仅新增本活动条目；删除本条即可回滚文档差异。代码、配置、数据、cache、checkpoint 和既有运行均未改动。
+
+## 2026-09-04 12:25:51 +0800 — GRAB 与 Inspire-F1（HRDexDB 子集）分布诊断
+
+- activity_id: `ACT-20260904-122551-OICM-DATA-DISTRIBUTION`
+- timestamp: 2026-09-04 12:25:51 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读分布核查；未改变代码、配置、cache、split、GT 或既有运行）
+- approval: user-requested
+- approval_basis: 用户要求探查 GRAB 与 HRDexDB 的分布差异及其对效果的可能影响
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `6ca6509ab1f8853767d11724877dd8aba5914b63`
+- worktree_dirty: true（保留既有用户改动）
+- scope: 读取当前 ObjectInteractionCm index、两套 cache/geometry manifest、scale manifest、HRDexDB episodes metadata 和既有验证结果；固定 stride=2 的接触/运动抽样，以及训练 stride policy 的对照。工作区已有的 [model.py](../../model.py) 未在本次诊断中修改。
+- conclusion: SUPPORTED（存在足以解释混合训练效果受限的显著域差，主差异在运动/接触/embodiment 与 split；“域差是唯一原因”仍为 INCONCLUSIVE）
+
+**文件与证据**
+
+- [index.json](../../../../../data/processed_data/object_interaction_cm_v1_1/index.json) — 当前实际混合合同：GRAB 1004/126/125 条序列，Inspire-F1 455/58/63 条序列；source probability 0.5/0.5，GRAB stride 1..10、Inspire-F1 stride 2..20，split 规则不同。
+- [GRAB cache meta.json](../../../../../data/processed_data/cm_object_v2_surface512_object_pose_20260830/meta.json)、[HRDexDB selection](../../../../../data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/selection_all_object_disjoint_seed42.json)、[HRDexDB metadata README](../../../../../dataset/HRDexDB/v0_nonvideo/README.md) — 当前 HRDexDB 不是全库 2104 条，而是 Inspire-F1 的 576 条 object-disjoint 子集。
+- [scales_train.json](../../../../../data/processed_data/object_interaction_cm_v1_2_1/scales_train.json) — 全局 flow scale 与 source/stride group RMS。
+- [当前 metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/metrics.jsonl) — epoch 52 source 指标及 interaction coverage；[旧 stride 诊断](../../../../../outputs/research/objectinteractioncm_stride_eval_20260903_104821/results.json) — 同 cache 合同下的 zero-flow 对照。
+
+**原因**
+
+- 需要把“物体侧表示更细”与“两个 source 是否提供同一种可学习信号”分开；只看混合 EPE 会把近静止 HR 目标、双手/单手输入和不同 split 难度混在一起。
+
+**验证**
+
+- 只读统计得到：固定 stride=2 的 object flow median 约 GRAB `9.11 mm`、Inspire-F1 `1.01 mm`；`>20 mm` 比例约 `33.5%` 对 `0.56%`。hand flow median 约 `13.46 mm` 对 `1.85 mm`。
+- 同一 active transition 抽样中，object 点 `<5 cm` 接触覆盖约 `73.1%` 对 `40.5%`，KNN 有效邻居约 `5.8` 对 `3.1`；当前全量 val 也显示 sampled active points `747.9` 对 `429.0`。
+- object bbox diagonal median 约 `172` 对 `217 mm`，geometry scale 差异中等；但 stride=2 group RMS flow 为 object `32.30` 对 `5.51 mm`、hand `35.87` 对 `4.63 mm`（约 5.9–7.8 倍）。
+- 当前全量 val source object EPE 为 GRAB `5.073 mm`、Inspire-F1 `2.225 mm`；旧同 cache stride=2 zero-flow 对照中 Inspire-F1 `2.338 mm`、模型 `2.356 mm`，说明 HR 的绝对指标本身已接近“保持不动”下限。
+- 本次未启动新训练、未运行测试集、未修改研究变量；统计结果用于诊断，不等同于因果实验。
+
+**回滚与边界**
+
+- 仅新增本活动条目；删除本条即可回滚文档差异。代码、配置、数据、cache、checkpoint 和既有运行均未改动。
+
+## 2026-09-04 11:27:03 +0800 — V1.2.1 前缀手点 KNN 邻域搜索优化
+
+- activity_id: `ACT-20260904-112703-OICM-KNN-PREFIX-OPT`
+- timestamp: 2026-09-04 11:27:03 +0800
+- modification_version: V1.2.1.4
+- type: code / diagnostic
+- change_level: L1（局部实现优化；不改参数、坐标系、GT、radius=5cm、K=8 或 checkpoint schema）
+- approval: user-requested
+- approval_basis: 用户明确要求先修改邻域搜索并在 GPU0/1/2 做吞吐短训
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `6ca6509ab1f8853767d11724877dd8aba5914b63`
+- worktree_dirty: true（保留既有用户改动）
+- scope: `LocalHandInteraction` 在前缀有效 mask（CmDecoder 的 1538/3076 contract）上改用 PyTorch3D `knn_points(K=8)`，再执行 5cm radius mask；非连续 mask 和全无效情况回退原 `cdist+topk`；未实现持久化邻域 cache
+- conclusion: SUPPORTED（数值 parity 与独立 kernel benchmark 通过；端到端短训吞吐已测，科研效果尚未评估）
+
+**原因**
+
+- 之前的 `cdist` 在 mask 之前对 3,076 个手点全部计算；CmDecoder 实际只有前 1,538 个有效点。先 compact 前缀再做 KNN 可减少显存和距离计算，同时保留 5cm/K=8 语义。
+
+**验证**
+
+- 随机 `[B=2,N_obj=32,N_hand=3076]` parity：新旧 `edge_indices` 和 `edge_valid_mask` 完全一致，交互输出最大绝对差 `1.49e-8`，距离最大差 `5.03e-8`。
+- GPU1 邻域 kernel（`B=16,N_obj=1024,N_hand=3076,K=8`）基准：旧 `cdist+topk=3.94 ms`，新 `knn_points=0.576 ms`，约 `6.84x` 加速；该结果只代表邻域子图，不等于完整训练加速。
+- 验证命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/model.py`；另以同一随机权重分别执行旧 `cdist+topk` 参考路径和新路径，比较上述输出/诊断张量。
+- 修改文件：[model.py](../../model.py)。回滚入口为恢复该文件本次 diff；没有改动 checkpoint、数据或公共 `src/base`。
+
+**运行关联**
+
+- 端到端短训见 CmDecoder 活动 `ACT-20260904-112703-CMDECODER-KNN-012-THROUGHPUT`；该运行使用本 Task 的 frozen best Cm，不改变 Cm 权重。
+
+## 2026-09-04 08:45:46 +0800 — V1.2.1 三卡训练完成与收敛性核查
+
+- activity_id: `ACT-20260904-084546-OBJECTINTERACTIONCM-V121-CONVERGENCE-FINAL`
+- timestamp: 2026-09-04 08:45:46 +0800
+- modification_version: V1.2.1.3
+- type: diagnostic / operation
+- change_level: L0（只读核对终态日志、metrics、checkpoint 与验证曲线）
+- approval: user-requested
+- approval_basis: 用户询问 Cm 训练是否收敛；本次不启动、停止或修改训练与评估口径
+- skills_used: research-experiment-workflow, research-change-control
+- branch: `oyx`
+- base_commit: `6ca6509ab1f8853767d11724877dd8aba5914b63`
+- worktree_dirty: true（保留既有用户改动）
+- scope: ObjectInteractionCm V1.2.1 三卡续训终态；不修改代码、配置、数据、cache 或 checkpoint
+- run_id: `object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806`（resume）
+- run_status: COMPLETED
+- last_step: `202300`
+- last_epoch: `52`
+- best_metric: `3.649306 mm`（`val/obj/flow_epe_mm`，epoch 52）
+- best_checkpoint: [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/best.pt)（step `202300` / epoch `52`）
+- latest_checkpoint: [latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/latest.pt)（step `202300` / epoch `52`）
+- practical_status: 基本收敛（object 指标已进入平台，最后 5 个 epoch 仅改善约 `0.066%`）
+- conclusion: INCONCLUSIVE（未做 held-out test，且单次训练不能证明统计意义上的最终收敛）
+
+**原因**
+
+- 用户要求确认 ObjectInteractionCm 是否收敛；本次只读检查完整训练终态和最后若干 epoch 的验证曲线，区分“训练完成”“实用平台”和“科研意义上的严格收敛”。
+
+**验证**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/)、[metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/metrics.jsonl)、[train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/train.log) — 日志末尾为 `Training finished at step 202300 in 08:11:05.`，epoch 52 validation 已写入。
+- 总体 `val/obj/flow_epe_mm`：epoch 44=`3.669525 mm`、epoch 48=`3.651703 mm`、epoch 52=`3.649306 mm`；最后 5 个 epoch 均值=`3.650447 mm`、标准差=`0.000969 mm`，首尾改善约 `0.066%`。
+- 总体 `val/loss` 最后 5 个 epoch 均值=`0.00307428`、标准差=`1.41e-6`；epoch 52 学习率=`3.30e-9`，优化步长已接近零。
+- source 分支：GRAB object EPE 最终=`5.073422 mm`（全程 best）；Inspire-F1 object EPE 最优为 epoch 15 的 `2.216799 mm`，末期稳定在约 `2.22–2.25 mm`，说明后者早已进入平台。
+- hand 3 cm EPE 最终=`2.404122 mm`，epoch 51 为 `2.404022 mm`，末期无实质变化；`train.log` 未发现 traceback、CUDA OOM、NCCL、NaN 或 Inf，训练进程已退出。
+- 本次只读检查未停止或修改其他 GPU 任务；`git diff --check` 与 `audit_diff.py --check-links` 通过。
+
+## 2026-09-04 00:06:29 +0800 — V1.2.1 各 source/stride 验证集快速评估
+
+- activity_id: ACT-20260904-000629-OBJECTINTERACTIONCM-V121-STRIDE-EVAL
+- timestamp: 2026-09-04 00:06:29 +0800
+- modification_version: V1.2.1.3
+- type: operation / diagnostic
+- change_level: L0（用户请求的只读评估；仅生成独立运行产物）
+- approval: user-requested
+- approval_basis: 用户要求先用其他 GPU 评估各 stride；不停止或修改 GPU0/1/2 上的训练，不抢占 GPU4–7 上的既有任务
+- skills_used: research-experiment-workflow, research-change-control
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true（保留既有 ObjectInteractionCm 实现、训练和治理改动）
+- scope: 使用训练运行的 `latest.pt`（step=129302、epoch=32）在验证集分别评估 GRAB stride `1..10` 与 Inspire-F1 stride `2..20`；每个 source/stride 均独立 forward，每组均匀抽取 512 个样本；不改代码、配置、cache、训练进程或其他 GPU 任务
+- run_id: objectinteractioncm_stride_eval_subset_20260904_000408
+- run_status: COMPLETED
+- conclusion: INCONCLUSIVE（这是每组 512 样本的快速诊断，不替代全验证集和最终 parity 结论）
+
+**文件与证据**
+
+- [运行 manifest](../../../../../outputs/research/objectinteractioncm_stride_eval_subset_20260904_000408/run_manifest.json)、[stride 结果](../../../../../outputs/research/objectinteractioncm_stride_eval_subset_20260904_000408/results.json) — 设备、checkpoint SHA256、采样合同、source/stride 的 object/hand EPE 和有效样本率。
+- [当前训练运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/)、[latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/latest.pt) — 评估输入及仍在运行的三卡训练。
+
+**原因**
+
+剩余 GPU 中 4–7 卡有高负载既有任务，3 卡有足球任务但显存余量足够，因此只在物理 GPU3 以小 batch 共存运行。先用每组 512 个均匀覆盖样本快速判断 stride 趋势；模型 interaction 分支使用 `hand_flow`，故每个 stride 必须独立 forward，不能复用其他 stride 的预测。
+
+**验证**
+
+- GPU3 评估期间总显存约 `11.4/24 GiB`，未发生 OOM；GPU0/1/2 训练进程和吞吐未被停止或改动。
+- GRAB object EPE 从 stride1 的 `2.788 mm` 增至 stride10 的 `24.124 mm`；Inspire-F1 从 stride2 的 `2.314 mm` 增至 stride20 的 `10.935 mm`。对应 hand 3 cm EPE 分别为 `1.710→14.763 mm` 与 `0.730→3.205 mm`。
+- stride2 的 source-mean object EPE 为 `3.799 mm`，与同 checkpoint 既有完整验证日志的 `3.776 mm` 接近，说明评估口径和 target 生成一致；快速子集结果仍不能视为最终全量指标。
+- `results.json`、`run_manifest.json` 已写入 `run_status=COMPLETED`；未运行测试集、未修改研究变量。
+
+**回滚**
+
+删除本条活动记录即可回滚文档差异；评估输出为独立、可保留的只读产物，训练和其他 GPU 任务未受影响。
+
+## 2026-09-03 23:54:32 +0800 — V1.2.1 首次 stride 复用评估作废
+
+- activity_id: ACT-20260903-235432-OBJECTINTERACTIONCM-V121-STRIDE-EVAL-INVALID
+- timestamp: 2026-09-03 23:54:32 +0800
+- modification_version: V1.2.1.3
+- type: operation / diagnostic
+- change_level: L0（失败的只读评估尝试）
+- approval: user-requested
+- approval_basis: 用户要求先评估各 stride；该尝试未改变训练、代码或配置
+- skills_used: research-experiment-workflow, research-change-control
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true
+- scope: 评估 `latest.pt` 的 all-stride 运行；在 GRAB 完成后发现错误地假设不同 stride 可复用 forward，随后在 Inspire-F1 阶段中断
+- run_id: objectinteractioncm_all_stride_eval_20260903_235432
+- run_status: FAILED
+- conclusion: INVALID_IMPLEMENTATION（模型显式读取 `hand_flow`，不同 stride 的输入不同；该次产生的 GRAB 数字不得引用）
+
+**文件与证据**
+
+- [失败运行 manifest](../../../../../outputs/research/objectinteractioncm_all_stride_eval_20260903_235432/run_manifest.json)、[残留结果](../../../../../outputs/research/objectinteractioncm_all_stride_eval_20260903_235432/results.json) — 已标记失败，仅作为审计证据。
+
+**原因与回滚**
+
+错误假设在继续运行前被发现并纠正；未修改训练进程。保留失败产物以避免把无效结果误当有效结果，后续有效评估见本活动上一条记录。
 
 ## 2026-09-03 21:59:31 +0800 — V1.2.1 三卡续训 epoch 进度核查
 
@@ -44,6 +257,87 @@
 **回滚**
 
 删除本条活动记录即可回滚文档差异；训练进程与运行产物未被修改。
+
+## 2026-09-03 22:05:52 +0800 — V1.2.1 三卡续训收敛性核查
+
+- activity_id: ACT-20260903-220552-OBJECTINTERACTIONCM-V121-CONVERGENCE-STATUS
+- timestamp: 2026-09-03 22:05:52 +0800
+- modification_version: V1.2.1.3
+- type: diagnostic / operation
+- change_level: L0（只读分析既有训练曲线，仅追加活动证据）
+- approval: user-requested
+- approval_basis: 用户询问当前训练是否收敛；本次不改变训练、配置、checkpoint 或评估口径
+- skills_used: research-experiment-workflow, research-change-control
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true（保留 ObjectInteractionCm 既有未提交实现、配置与文档）
+- scope: [ObjectInteractionCm Task](../../) 的 V1.2.1 三卡续训曲线和运行状态；不修改代码、数据、cache、模型状态或 GPU 进程
+- run_id: object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806（resume）
+- run_status: RUNNING
+- conclusion: INCONCLUSIVE（已进入较稳定的验证区间，但训练仍在进行，不能宣称最终收敛）
+
+**文件与证据**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/)、[metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/metrics.jsonl)、[train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/train.log) — 逐步、逐 epoch 训练/验证曲线及运行日志。
+- [checkpoints/latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/latest.pt)、[checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/best.pt) — 最近完整 epoch 和当前最佳 checkpoint。
+
+**原因**
+
+区分“训练损失还在下降”“验证指标进入平台”“最终收敛已被证明”三个层次，避免因单个 epoch 的改善过早停止三卡训练。
+
+**验证**
+
+- 22:05:52 时 epoch `21` 已完成训练和验证，当前已进入 epoch `22`（step `87600`）；torchrun 及 GPU0/1/2 仍正常运行。
+- epoch 15–21 的 `val/obj/flow_epe_mm` 为 `3.844–4.052 mm`，整体围绕约 `3.93 mm` 窄幅波动；epoch 21 为 `3.865 mm`，接近当前最佳 epoch 15 的 `3.844 mm`，说明 object 分支已接近平台，但尚未严格单调收敛。
+- epoch 15–21 的 `val/loss` 从 `0.0041135` 降至 `0.0036606`，epoch 21 为目前最低；`val/hand/flow_epe_3cm_mm` 从 `4.172 mm` 降至 `3.289 mm`，hand 分支仍有改善。
+- 最近 5 个 validation 的均值/标准差：loss `0.003855 / 0.000114`，object EPE `3.944 / 0.078 mm`，hand EPE `3.611 / 0.197 mm`；因此判断为“已进入稳定下降/平台区”，不是“完全收敛”。
+- `train.log` 未检出 traceback、CUDA OOM、NCCL error 或 NaN；未执行早停、重启或任何科研变量修改。
+
+**回滚**
+
+删除本条活动记录即可回滚文档差异；训练进程与运行产物未被修改。
+
+## 2026-09-03 22:16:22 +0800 — V1.2.1 与旧 hand-root Cm 的收敛速度对齐诊断
+
+- activity_id: ACT-20260903-221622-OBJECTINTERACTIONCM-V121-CONVERGENCE-COMPARE-CM
+- timestamp: 2026-09-03 22:16:22 +0800
+- modification_version: V1.2.1.3
+- type: diagnostic / experiment
+- change_level: L0（只读比较既有 run；不启动新评估、不修改运行）
+- approval: user-requested
+- approval_basis: 用户要求判断当前 ObjectInteractionCm 是否相较旧 `hand_root_t` Cm 收敛异常偏快
+- skills_used: research-experiment-workflow, research-change-control
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true（保留 ObjectInteractionCm 与 Cm 既有未提交改动）
+- scope: [ObjectInteractionCm Task](../../) 与历史 [Cm Task](../../../Cm/) 的训练日志、配置和指标；只读，不改变任何代码、配置、cache、checkpoint 或进程
+- run_id: object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806（当前 resume）；cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324（旧 hand-root）；cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401（旧 object-pose 近似对照）
+- run_status: RUNNING（当前 OI；旧 hand-root 已 STOPPED）
+- conclusion: INCONCLUSIVE（墙钟训练确实更快，且在同坐标/短 stride 近似对照下有一定优化优势，但 hand-root 数值不能直接比较）
+
+**文件与证据**
+
+- [当前 OI config](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/config.json)、[当前 OI metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/metrics.jsonl)、[当前 OI train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/train.log) — `object_pose_t`、eval stride 2、当前 epoch/step 和吞吐。
+- [旧 hand-root Cm config](../../../../../outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/config.json)、[旧 hand-root metrics](../../../../../outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260828_235324/metrics.jsonl)、[旧 Cm 实验记录](../../../Cm/docs/logs/experiment_log.md) — `hand_root_t`、多 stride mean-EPE 及资源竞争记录。
+- [旧 object-pose Cm config](../../../../../outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/config.json)、[旧 object-pose metrics](../../../../../outputs/cm/cm_grab_inspire_f1_hand_flow_cm64_additive_20260830_194401/metrics.jsonl) — 与当前同为 object-pose、stride 2 的近似架构对照。
+
+**原因**
+
+用户观察到当前 OI 在约 21 个 epoch 时已达到低 EPE，需要拆分墙钟吞吐、坐标/stride 指标口径、有效监督难度、架构差异和 optimizer batch 动力学，判断是否是真实的优化加速。
+
+**验证**
+
+- 墙钟：当前 OI epoch 1→21 validation 间隔约 `3.19 h`；旧 hand-root Cm epoch 1→21 约 `14.53 h`。旧 run 曾与 CmDecoder 争用 GPU1，记录吞吐约 `146–148 samples/s`；当前三卡恢复后约 `773 samples/s`，因此墙钟约 `4.5×` 更快主要是资源状态改变。
+- 优化预算：当前 OI epoch 21 为 step `87469`，旧 hand-root epoch 21 为 step `90090`；当前累计样本实例约 `7.67M`，旧 run 约 `8.65M`，当前不是因为看过更多样本才更低。
+- 指标口径：旧 hand-root 的 `val/mean_stride_epe_mm` 同时平均 stride 1/5/10；epoch 21 三个 stride 的 source-mean object EPE 约为 `2.274/8.014/14.989 mm`，其 mean=`8.426 mm`。当前 OI 只评估 stride 2，epoch 21 object EPE=`3.865 mm`；二者不能直接比较。
+- 坐标/幅度：旧 hand-root config 的 object-flow target RMS=`0.09319 m`，当前 object-pose train scale `s_obj_flow=0.05789 m`，后者约低 `38%`；object-pose frame 移除了 hand-root 运动带来的大幅相对位移，任务本身更容易。
+- 近似公平对照：旧 Cm 的同为 `object_pose_t`、stride 2 run 在 epoch 1/21 为 `4.673/4.367 mm`；当前 OI 为 `4.579/3.865 mm`。在更接近的口径下，当前确有一定优化优势，但旧 run 使用 C=64、不同 decoder/scale，不能归因于单一结构因素。
+- 额外混杂：当前 OI 首个有效 epoch 先以 global batch=`32` 单卡运行 `11409` steps，随后才切换 global batch=`96` 三卡；旧 hand-root 从头就是 global batch=`96`。因此 epoch 编号也不代表完全相同的 optimizer dynamics。
+- 未检出当前 OI 的 traceback、OOM、NCCL error 或 NaN；本次没有停止、重启或改动任何训练变量。
+
+**回滚**
+
+删除本条活动记录即可回滚文档差异；所有训练进程与既有产物保持不变。
 
 ## 2026-09-02 23:44:00 +0800 — V1.1 ObjectInteractionCm 架构首版实现与 smoke
 
