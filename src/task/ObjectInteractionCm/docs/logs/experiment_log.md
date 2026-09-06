@@ -3,6 +3,42 @@
 - scope: task:ObjectInteractionCm
 - related: [任务入口](../README.md)、[V1.1 执行计划](../plan/V1.1.md)、[V1.1 架构](../architecture/V1.1.md)、[活动记录](activity_log.md)
 
+## 2026-09-05 — V1.2.3 Dexplore RL/MANO right-hand Cm mixed training（已停止）
+
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `STOPPED`
+- modification_version: `V1.2.3`
+- operation_category: `experiment / operation / data`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- seed: `42`
+- initial_checkpoint: `null`（from scratch）
+- data index: `data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json`
+- scale manifest: `data/processed_data/object_interaction_cm_dexplore_rl_v1/scales_train_v1_2_3.json`
+- split: train `1004`（MANO 501 / RL-Inspire 503）、val `126`（64 / 62）、test `125` MANO-only；同一 parent sequence 不跨 variant。
+- stride: 两种 source 均为 30 Hz、stride `1..10`；val/test 固定 stride 2。
+- training: 右手 1538 点，object pool 4096 / sample 1024，`D=128,C=32,S=16,K=8`，source probability `0.5/0.5`，每卡 batch 32、global batch 96、最大 202300 steps，GPU 0/1/2。
+
+**假设与边界**
+
+新 Dexplore RL-Inspire 与 MANO variant 在不共享 parent sequence 的前提下混合训练，能够学习不依赖 source/手形态 ID 的 object-centric Cm。当前只证明训练工程链路；CmDecoderV2 和 test 可视化不在本 run 内，科研结论保持 `INCONCLUSIVE` 直到正式训练终态及后续 decoder 验证。
+
+**运行入口**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)
+- [配置快照](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json)
+- [运行清单](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)
+- [逐步指标](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)
+- [训练日志](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+- [最佳 checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt) — epoch 46 / step 81420，equal-source object EPE `9.470077 mm`。
+- [最近 checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt) — epoch 65 / step 115050，包含 optimizer/scheduler/scaler，可恢复。
+
+**结果与终态**
+
+- run 在 step 115900 / epoch 66 非正常停止，只完成 202300 计划 steps 的约 57.3%；最后完整 checkpoint/validation 为 step 115050 / epoch 65。
+- 最佳 validation 位于 epoch 46 / step 81420：equal-source object EPE `9.470077 mm`，MANO `6.301521 mm`，RL-Inspire `12.638633 mm`；对应 hand EPE 为 MANO `4.170636 mm`、RL-Inspire `3.261057 mm`。
+- 最后完整 validation 的 equal-source object EPE 为 `9.574271 mm`；训练到中断前 loss/gradient finite，未发现 NaN、Python traceback、CUDA OOM 或 kernel OOM 证据。
+- 进程在日志无终止标记的情况下消失，准确外部信号未知；因此 `run_status=STOPPED`，科研结论保持 `INCONCLUSIVE`。该中途 checkpoint 可用于恢复，但不能当作完成的 202300-step 正式结果。
+
 ## 2026-09-03 — ObjectInteractionCm best 的 GRAB/Inspire-F1 t-SNE
 
 - run_id: `objectinteractioncm_tsne_best_20260903`

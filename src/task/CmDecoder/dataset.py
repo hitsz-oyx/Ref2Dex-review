@@ -544,6 +544,16 @@ class RandomHorizonGeometryDataset(Dataset):
         )
         hand = np.asarray(a["hand_points_world"][frame], dtype=np.float32)
         hand_target = np.asarray(a["hand_points_world"][target], dtype=np.float32)
+        # Wrist supervision is always expressed in the current wrist frame,
+        # independent of the point/geometry frame used by the Cm input.
+        # Keeping this derived from the cached world poses avoids introducing
+        # a future wrist pose as a decoder input while preserving the exact
+        # SE(3) relative-motion semantics used by the q-fit utilities.
+        wrist_current = np.asarray(a["wrist_pose_world"][frame], dtype=np.float64)
+        wrist_target = np.asarray(a["wrist_pose_world"][target], dtype=np.float64)
+        wrist_relative = np.linalg.inv(wrist_current) @ wrist_target
+        wrist_delta_translation = wrist_relative[:3, 3].astype(np.float32)
+        wrist_delta_rotvec = Rotation.from_matrix(wrist_relative[:3, :3]).as_rotvec().astype(np.float32)
         if self.coordinate_frame == "object_pose_t" and self.num_obj_points != int(a["obj_points_world"].shape[1]):
             pool = np.asarray(a["obj_points_pool_world"][frame], dtype=np.float32)
             pool_normals = np.asarray(a["obj_normals_pool_world"][frame], dtype=np.float32)
@@ -570,6 +580,8 @@ class RandomHorizonGeometryDataset(Dataset):
             "obj_valid_mask": torch.ones(len(obj), dtype=torch.bool),
             "q_t": torch.from_numpy(np.array(q_t, dtype=np.float32, copy=True)),
             "q_next": torch.from_numpy(np.array(q_next, dtype=np.float32, copy=True)),
+            "wrist_delta_translation": torch.from_numpy(wrist_delta_translation),
+            "wrist_delta_rotvec": torch.from_numpy(wrist_delta_rotvec),
             "delta_time_s": torch.tensor(float(a["frame_time"][target] - a["frame_time"][frame]), dtype=torch.float32),
             "stride": torch.tensor(int(stride), dtype=torch.long),
         }

@@ -4,6 +4,38 @@
 - last_verified: 2026-08-30
 - related: [活动记录](activity_log.md)、[架构](architecture_log.md)、[接手记忆](repo_memory.md)
 
+## EXP-V1.2.13 — Cm-only q+wrist Decoder 三 epoch 基线
+
+### 日期与设置
+
+- 日期：2026-09-05
+- modification_version：V1.2.13
+- run_id：`cm_decoder_20260905_154719`
+- frozen Cm：`outputs/objectinteractioncm/object_interaction_cm_grab_inspire_f1_v1_2_1_20260903_182806/checkpoints/best.pt`
+- 数据：Inspire-F1 object-disjoint v4，`object_pose_t`，1538 手点，1024 物体点，stride `{2,4,6,8,10,12,14,16,18,20}`
+- Decoder：仅消费冻结 Cm tokens `[B,16,32]`，输出 `Δq` 与当前 wrist 坐标系下的平移/rotvec 增量；`q_t` 不进入网络输入
+- 训练：GPU0/1/2，global batch 48，3 epochs，140337 optimizer steps，AdamW，lr=`3e-4`
+
+### 结果
+
+| epoch | val loss | q MAE | identity q MAE | wrist 平移 EPE | wrist 旋转误差 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 0.290888 | 0.948545° | 0.940069° | 9.5318 mm | 2.1587° |
+| 2 | 0.291750 | 0.943621° | 0.940069° | 9.6084 mm | 2.1658° |
+| 3 | 0.293921 | 0.936211° | 0.940069° | 9.6777 mm | 2.1600° |
+
+### 结论
+
+`INCONCLUSIVE`：训练集 loss 继续下降，但 validation loss 在 epoch 1 后没有改善，epoch 3 的 q MAE 仅略低于 identity 基线，wrist 平移误差反而增加。当前结果说明该 Cm-only head 可运行并能学习部分 q 信号，但尚不足以证明 Cm 对 q+wrist 具有稳定、可泛化的低维解码能力。
+
+### 证据
+
+- [运行目录](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/)
+- [run_manifest.json](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/run_manifest.json)
+- [metrics.jsonl](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/train.log)
+- [best.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/checkpoints/best.pt)
+
 ## 当前状态
 
 已完成两次 overfit sanity check。旧版静止帧实验被判为 INCONCLUSIVE；active-motion 窗口已验证训练链路能超过 identity baseline。2026-08-24 启动 GRAB-trained MANO decoder，拟在 ARCTIC MANO 上做跨域泛化验证。EXP-018 已有中途验证记录；EXP-021 单卡试跑未完成 epoch 1 即停止，EXP-022 已改为三卡 global batch48、保持总 step 数的正式 run。

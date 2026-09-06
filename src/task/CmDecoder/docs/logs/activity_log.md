@@ -1,9 +1,198 @@
 # CmDecoder 活动记录
 
 - scope: task:CmDecoder
-- last_updated: 2026-09-04
+- last_updated: 2026-09-05
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [架构](architecture_log.md)、[实验](experiment_log.md)、[接手记忆](repo_memory.md)、[历史修改](modification_log.md)
+
+## 2026-09-05 20:19:52 +0800 — V1.2.13 q+wrist Decoder 三 epoch 训练完成
+
+- activity_id: `ACT-20260905-201952-CMDECODER-QWRIST-3EPOCH-COMPLETE`
+- timestamp: 2026-09-05 20:19:52 +0800
+- modification_version: V1.2.13
+- type: experiment / operation / diagnostic
+- change_level: L3（终止态确认长时三卡训练）+ L2（q/wrist 监督结果审计）
+- approval: user-requested
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（V1.2.13 代码、计划和记录未提交）
+- scope: 审计 `cm_decoder_20260905_154719` 的三 epoch q+wrist 训练终态；不改动旧点流 run、Cm checkpoint 或 cache
+- run_id: `cm_decoder_20260905_154719`
+- run_status: COMPLETED
+- last_step: `140337` / epoch `3`
+- best_metric: `0.290888` (`val/loss`，epoch 1)
+- latest_checkpoint: [latest.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/checkpoints/latest.pt)
+- best_checkpoint: [best.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/checkpoints/best.pt)
+- conclusion: INCONCLUSIVE（训练完成，但验证 loss 在 epoch 1 后平台并略升；q/wrist 尚未证明优于恒等基线）
+
+**文件**
+
+- [`src/task/CmDecoder/dataset.py`](../../dataset.py) — 已实现当前 wrist-frame 相对运动 GT 字段。
+- [`src/task/CmDecoder/object_interaction_cm_q_wrist_model.py`](../../object_interaction_cm_q_wrist_model.py) — Cm-only q+wrist head。
+- [`src/task/CmDecoder/current_object_interaction_cm_q_wrist_config.py`](../../current_object_interaction_cm_q_wrist_config.py) — 三 epoch 训练配置。
+- [`src/task/CmDecoder/docs/plan/V1.2.13.md`](../plan/V1.2.13.md) — 执行计划。
+- [`src/task/CmDecoder/docs/logs/experiment_log.md`](experiment_log.md) — 本次运行的实验结果摘要。
+
+**原因**
+
+- 用户询问新 CmDecoder 是否训练完成，需要给出进程终态、checkpoint 和验证曲线，而不是只依据最后一个 train step。
+
+**验证**
+
+- 训练进程已全部退出，日志记录 `Training finished at step 140337 in 01:53:56`。
+- 三次 validation：`val/loss=0.290888/0.291750/0.293921`；对应 q MAE=`0.948545°/0.943621°/0.936211°`，identity=`0.940069°`；wrist translation EPE=`9.5318/9.6084/9.6777 mm`，rotation error=`2.1587°/2.1658°/2.1600°`。
+- `best.pt` 为 epoch 1，`latest.pt` 和 `step_000140337_epoch_000003.pt` 已落盘；GPU0/1/2 已释放。
+
+## 2026-09-05 17:26:38 +0800 — V1.2.13 q+wrist Decoder 收敛状态检查
+
+- activity_id: `ACT-20260905-172638-CMDECODER-QWRIST-CONVERGENCE`
+- timestamp: 2026-09-05 17:26:38 +0800
+- modification_version: V1.2.13
+- type: diagnostic / operation
+- change_level: L0（只读检查既有训练进程、日志和 metrics）
+- approval: user-requested
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留 V1.2.13 实现和运行记录）
+- scope: 仅判断 `cm_decoder_20260905_154719` 的当前 loss/验证曲线；不停止、不恢复、不调参
+- run_id: `cm_decoder_20260905_154719`
+- run_status: RUNNING
+- last_step: `130000` / epoch `3`
+- conclusion: INCONCLUSIVE（epoch 3 最终验证尚未完成；当前 validation 已进入平台期）
+
+**证据入口**
+
+- [运行目录](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/)
+- [metrics.jsonl](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/train.log)
+- [当前 best.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/checkpoints/best.pt)
+
+**文件**
+
+- [`src/task/CmDecoder/dataset.py`](../../dataset.py) — 本次诊断未改动；该文件的 V1.2.13 wrist GT 派生改动继续保留在工作区。
+
+**原因**
+
+- 用户询问当前 loss 是否收敛，需要区分训练 loss 下降与 object-disjoint validation 是否继续改善。
+
+**验证**
+
+- train epoch loss 从 epoch 1 的 `0.236844` 降至 epoch 2 的 `0.200457`（约 `-15.4%`），说明训练集仍在拟合。
+- val loss 从 epoch 1 的 `0.290888` 变为 epoch 2 的 `0.291750`（约 `+0.30%`），未继续下降；q MAE `0.9485° → 0.9436°` 只有约 `0.5%` 改善，且仍略差于 identity `0.9401°`。
+- wrist translation EPE `9.5318 → 9.6084 mm`、rotation error `2.1587° → 2.1658°` 均略变差。当前最合理判断是 validation 已基本平台、存在轻微 train/val gap，尚不能称为稳定收敛到有效解。
+
+## 2026-09-05 15:37:09 +0800 — V1.2.13 q+wrist Decoder 三卡短训启动
+
+- activity_id: `ACT-20260905-153709-CMDECODER-QWRIST-DDP-SHORT`
+- timestamp: 2026-09-05 15:37:09 +0800
+- modification_version: V1.2.13
+- type: experiment / operation
+- change_level: L3（启动新的 GPU0/1/2 DDP 训练；不覆盖旧运行）+ L2（q/wrist 监督字段与模型合同）
+- approval: user-approved
+- approval_basis: 用户确认“直接根据 Cm 解码 q 和 wrist 坐标”，并同意当前 wrist 坐标系相对增量语义。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有停止记录及本次 V1.2.13 未提交代码）
+- scope: `ObjectInteractionCm best.pt` 冻结编码器 + Cm-only q/wrist head；数据使用 Inspire-F1 object-disjoint v4、object_pose_t、1538 手点、1024 物体点、十个 stride；首轮 200 global steps DDP 短训
+- run_id: `cm_decoder_20260905_153709`
+- run_status: COMPLETED
+- last_step: `200` / epoch `1`
+- best_metric: `0.319037` (`val/loss`)
+- latest_checkpoint: [latest.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/checkpoints/latest.pt)
+- best_checkpoint: [best.pt](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/checkpoints/best.pt)
+- command: `CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoder.train --config src.task.CmDecoder.current_object_interaction_cm_q_wrist_config:Config --set train.max_steps=200 --set train.epochs=1 --set train.distributed.enable=true --set train.description=V1.2.13_ddp_200step_smoke --set train.log_every_steps=100 --set train.eval_every_epochs=1 --set train.save_every_epochs=1 --set performance.warmup_steps=20`
+- conclusion: INCONCLUSIVE（短训仅作工程闸门；验证完成后再决定 3 epoch 短基线）
+
+**文件与证据（部分 PENDING）**
+
+- [V1.2.13 计划](../plan/V1.2.13.md)
+- [q+wrist 配置](../../current_object_interaction_cm_q_wrist_config.py)
+- [q+wrist 模型](../../object_interaction_cm_q_wrist_model.py)
+- [短训运行目录](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/)
+- [config.json](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/config.json)
+- [run_manifest.json](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/run_manifest.json)
+- [train.log](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/train.log)
+- [metrics.jsonl](../../../../../outputs/cmdecoder/cm_decoder_20260905_153709/metrics.jsonl)
+
+**原因**
+
+- 先用 200 global steps 检查新 head 的 forward/backward、DDP 同步、Cm 冻结状态和实际吞吐，避免直接进入多小时训练。
+
+**验证**
+
+- 单卡 8-step smoke 已通过：真实 cache shape、十个 stride、Cm strict load、q/wrist loss 与验证均无 NaN。
+- 三卡训练及默认全量 validation 已完成：`val/loss=0.319037`、`val/q/mae_deg=0.951904`、`val/wrist/translation_epe_mm=10.1776`、`val/wrist/rotation_error_deg=2.13803`。训练阶段吞吐约 `1,146–1,287 global samples/s`，单 step `37–42 ms`，GPU0/1/2 无 OOM/NCCL。
+- 该运行共耗时 `08:47`，短训只作工程 smoke/吞吐闸门，不作为科研收敛结论。
+
+## 2026-09-05 15:47:55 +0800 — V1.2.13 q+wrist Decoder 三 epoch 运行启动
+
+- activity_id: `ACT-20260905-154755-CMDECODER-QWRIST-3EPOCH-START`
+- timestamp: 2026-09-05 15:47:55 +0800
+- modification_version: V1.2.13
+- type: experiment / operation
+- change_level: L3（GPU0/1/2 三卡长时训练）
+- approval: user-approved
+- approval_basis: 用户确认新 Decoder 方案；200-step DDP 短训已通过工程闸门。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（本次 V1.2.13 代码、计划和活动记录尚未提交）
+- scope: 冻结 ObjectInteractionCm `best.pt`，Cm-only MLP 直接预测 Δq + 当前 wrist-frame 相对平移/rotvec；Inspire-F1 object-disjoint v4，十个 stride，global batch 48，3 epochs
+- run_id: `cm_decoder_20260905_154719`
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoder.train --config src.task.CmDecoder.current_object_interaction_cm_q_wrist_config:Config --set train.epochs=3 --set train.max_steps=None --set train.distributed.enable=true --set train.description=V1.2.13_q_wrist_3epoch --set train.log_every_steps=1000 --set train.eval_every_epochs=1 --set train.save_every_epochs=1 --set performance.warmup_steps=20`
+- total_steps: `140337`
+- conclusion: INCONCLUSIVE（运行中；终态需以 epoch/metrics/checkpoint 审计为准）
+
+**证据入口（PENDING）**
+
+- [V1.2.13 计划](../plan/V1.2.13.md)
+- [运行目录](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/)（PENDING）
+- [config.json](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/config.json)（PENDING）
+- [run_manifest.json](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/run_manifest.json)（PENDING）
+- [train.log](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/train.log)（PENDING）
+- [metrics.jsonl](../../../../../outputs/cmdecoder/cm_decoder_20260905_154719/metrics.jsonl)（PENDING）
+
+**原因**
+
+- 200-step DDP 短训验证 wiring 和吞吐后，进入与历史 q+wrist 直解码可比较的 3 epoch 短基线；不改变旧点流实验和 checkpoint。
+
+## 2026-09-05 12:55:06 +0800 — 停止 CmDecoder 点流长训以切换 q+wrist Decoder
+
+- activity_id: `ACT-20260905-125506-CMDECODER-POINTFLOW-STOP-FOR-QWRIST`
+- timestamp: 2026-09-05 12:55:06 +0800
+- modification_version: V1.2.12.5
+- type: operation / diagnostic
+- change_level: L3（按用户明确要求停止 GPU0/1/2 上的 Decoder 长训；保留所有产物）
+- approval: user-approved
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef`
+- worktree_dirty: true（保留本次停止前的工作区状态）
+- scope: 仅停止 `cm_decoder_20260904_114238` 的 torchrun 进程组及其 rank/DataLoader worker；不删除或覆盖 checkpoint、日志、cache 或运行目录
+- run_id: `cm_decoder_20260904_114238`
+- run_status: STOPPED
+- last_step: `1346400`（训练日志最后可见；未在该步产生新 checkpoint）
+- latest_checkpoint: [latest.pt](../../../../../outputs/cmdecoder/cm_decoder_20260904_114238/checkpoints/latest.pt)（epoch `28` / step `1309812`）
+- best_checkpoint: [best.pt](../../../../../outputs/cmdecoder/cm_decoder_20260904_114238/checkpoints/best.pt)（best_metric=`7.3811248`，`val/hand_flow/epe_mm`）
+- conclusion: INCONCLUSIVE（用户主动切换实验目标，未完成原计划最后阶段）
+
+**原因**
+
+- 用户明确要求停止当前点流 Decoder 长训，切换到“仅根据 Cm 直接解码 q 与 wrist 坐标”的新 Decoder 实验。
+
+**验证**
+
+- 停止前确认 parent PGID=`1668864`，3 个训练 rank 为 `1668948/1668949/1668950`；向 parent process group 发送 SIGTERM 后，匹配该 run 的训练进程、rank 和 worker 均已退出。
+- 停止后 GPU0/1/2 不再有该 CmDecoder 训练负载；既有输出目录仍存在，未执行删除、覆盖或 reset。
+- 点流长训最后完整验证为 epoch 28 / step `1309812`，`val/hand_flow/epe_mm=7.3811248`；停止不是模型结论，仅是实验切换操作。
+
+**边界**
+
+- 本条只记录停止操作。新的“Cm-only → q + wrist”训练需要单独确认 target 坐标合同、cache 派生字段、模型 adapter 和同后缀执行计划后再修改代码或启动训练。
 
 ## 2026-09-04 20:27:56 +0800 — GRAB 外部 Cm 在 Inspire Decoder 的首步偏移检查（纠正）
 

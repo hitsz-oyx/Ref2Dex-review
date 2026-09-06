@@ -1,9 +1,925 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-04
+- last_updated: 2026-09-06
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
+
+## 2026-09-06 12:01:31 +0800 — V1.2.3 核对 best.pt 的模型选择指标
+
+- activity_id: `ACT-20260906-120131-OBJECTINTERACTIONCM-BEST-METRIC-DIAGNOSTIC`
+- timestamp: `2026-09-06 12:01:31 +0800`
+- modification_version: `V1.2.3`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 ObjectInteractionCm 的 best checkpoint 是否按 loss 选择；只读检查配置、runner、BaseRunner 和冻结 checkpoint。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: `true`（保留用户已有改动，未修改代码、配置或 checkpoint）
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（确认 checkpoint 选择规则；不构成模型效果结论）
+- scope: `src/task/ObjectInteractionCm/`、`src/base/base_runner.py` 及冻结 OICM run 的 config/checkpoint 元数据
+
+**原因**
+
+需要确认当前送入 CmDecoderv2 的 OICM `best.pt` 是按总 loss 还是按 object-flow 验证指标保存，避免误解 checkpoint 的优化目标。
+
+**验证**
+
+- [OICM config](../../configs/active/dexplore_rl_v1_2_3.yaml) 与 [run config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json) 均显示 `metric_for_best: val/obj/flow_epe_mm`、`lower_is_better: true`。
+- [ObjectInteractionCm runner](../../runner.py) 的 `evaluate_all()` 将 `val/grab/obj/flow_epe_mm` 与 `val/inspire_f1/obj/flow_epe_mm` 做等权算术平均，写入 `val/obj/flow_epe_mm`；不按样本/帧数加权。
+- [BaseRunner best 保存逻辑](../../../../../src/base/base_runner.py) 在每次 validation 后按该指标取更小值保存 `best.pt`；`val/loss` 只记录，不作为当前 run 的 best 选择指标。
+- 冻结 best.pt 记录的 `best_metric=9.422408395136284`，对应 `val/obj/flow_epe_mm`。
+
+## 2026-09-06 11:55:07 +0800 — V1.2.3 按用户要求停止 OICM 续训并冻结 best.pt
+
+- activity_id: ACT-20260906-115507-OBJECTINTERACTIONCM-STOP-BEST-FREEZE
+- timestamp: 2026-09-06 11:55:07 +0800
+- modification_version: V1.2.3
+- type: operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求停止当前 OICM 续训，并使用 best.pt 启动 CmDecoderv2；仅停止该 run，不删除或覆盖已有产物
+- skills_used: research-experiment-workflow, research-change-control
+- branch: oyx
+- base_commit: 27316ef8e9552b7b335e53400453902d745b1ebc
+- worktree_dirty: true（保留用户已有工作区改动）
+- run_id: `object-interaction-cm-dexplore-rl-v1-2-3-20260905-234051`
+- run_status: STOPPED
+- scope: `src/task/ObjectInteractionCm/`；仅停止既有 OICM run 并冻结其 best checkpoint，不改变上游代码、数据 cache 或旧运行产物
+- last_step: 185850
+- last_epoch: 105
+- best_metric: `val/obj/flow_epe_mm=9.422408395136284`（best.pt step 122130 / epoch 69）
+- stop_reason: 用户要求切换到 CmDecoderv2 训练；向 torchrun 主进程 481539 发送 SIGTERM，并确认 OICM 训练进程及其子进程全部退出
+- frozen_checkpoint_sha256: `fde9984a79caff801ea06b566b1ee0f387944b4662909e4d5986c2e464b45b26`
+
+**原因**
+
+用户要求结束当前 OICM 续训并将 `best.pt` 直接作为 CmDecoderv2 的冻结上游；继续让 OICM 运行会改变 decoder 的输入版本，破坏 checkpoint provenance。
+
+**产物与证据**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)
+- [best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt)
+- [latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt)
+- [metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)
+- [train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+
+**验证**
+
+- `src/task/ObjectInteractionCm/` — 本 Task 的既有配置、缓存构建工具、文档和实验记录均保留；本次仅追加停止记录。
+- `ps` 复核 torchrun 主进程、3 个 rank 和 DataLoader 子进程均已退出；`sha256sum` 复核 best.pt 与 decoder 配置 gate 相同。
+- latest.pt 保留在停止时的 step 185850 / epoch 105，可作为后续恢复入口；此停止条目不宣称 OICM 已完全收敛。
+
+**验证与边界**
+
+- 进程核对：OICM torchrun、3 个 worker 及 DataLoader 子进程均已退出；未触碰 GPU 4–7 上的其他任务。
+- `sha256sum` 复核 best.pt 与配置 gate 一致；best.pt 未被续训覆盖（mtime 2026-09-06 09:52:45 +0800）。
+- `nvidia-smi`：GPU 0/1/2 仅有残留显存约 2.5/5/6 MiB，利用率为 0%，可用于后续三卡 decoder run。
+- 该条目记录停止操作和 checkpoint 冻结，不代表 OICM 或 decoder 的科研效果结论；旧 checkpoint、cache、数据和运行目录均保留，可从 latest.pt 恢复。
+
+## 2026-09-06 09:38:15 +0800 — V1.2.3 从 latest checkpoint 续训启动
+
+- activity_id: `ACT-20260906-093815-OICM-DEXPLORE-RL-FULL-RESUME-STARTED`
+- timestamp: 2026-09-06 09:38:15 +0800
+- modification_version: V1.2.3
+- type: experiment / operation
+- change_level: L1（沿用既有 final plan 和配置恢复正式训练；不改变科研变量）
+- approval: user-approved
+- approval_basis: 用户明确要求“先续训吧”。
+- skills_used: research-experiment-workflow, research-change-control
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: 同一 V1.2.3 run、同一 index/config/seed/batch/stride，GPU 0/1/2 从 `latest.pt` step 115050 恢复至绝对 stop step 202300。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `RUNNING`
+- resume_from: `outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt`（epoch 65 / step 115050）
+- conclusion: INCONCLUSIVE（续训刚启动；终态前不作科研效果结论）
+
+**文件**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)、[config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)、[metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)、[train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+- [resume config snapshot](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config_resume_20260906_093911.json)、[resume metadata](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metadata_resume_20260906_093911.json)、[resume run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest_resume_20260906_093911.json)
+- [resume checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt)、[best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt)
+- [V1.2.3 final plan](../plan/V1.2.3.md)、[formal config](../../configs/active/dexplore_rl_v1_2_3.yaml)、[smoke config](../../configs/active/dexplore_rl_v1_2_3_smoke.yaml)、[experiment log](experiment_log.md)
+- [scale calibrator](../../tools/data/calibrate_scales.py)、[Dexplore cache producer](../../tools/data/build_dexplore_rl_cache.py)、[Dexplore V1.2.2 plan](../plan/V1.2.2.md)
+
+**原因**
+
+原正式 run 在 step 115900 无终止标记地停止；latest checkpoint 含 model/optimizer/scheduler/scaler，用户要求先从该点继续完成既定 202300-step 预算。
+
+**验证**
+
+- `torch.load(latest.pt, map_location=cpu)` 通过，确认 step `115050`、epoch `65`、best metric `9.470077`，optimizer/scheduler/scaler 均存在。
+- 启动前 `ps` 无旧训练进程；GPU 0/1/2 分别约 2.55/0.005/0.006 GiB，占用可用。
+- 命令：`CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_3.yaml --set train.resume=outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt --distributed`
+- 恢复后 launcher/rank 正常运行并推进到 step `115600`；GPU 0/1/2 utilization 约 `86%/77%/82%`，恢复后的 `metrics.jsonl`、`train.log` 持续更新。
+
+## 2026-09-06 09:25:13 +0800 — V1.2.3 收敛性诊断
+
+- activity_id: `ACT-20260906-092513-OICM-DEXPLORE-RL-CONVERGENCE-DIAGNOSTIC`
+- timestamp: 2026-09-06 09:25:13 +0800
+- modification_version: V1.2.3
+- type: diagnostic
+- change_level: L0（只读分析既有 metrics/checkpoint，并记录证据；不启动续训）
+- approval: user-approved
+- approval_basis: 用户询问“目前收敛了吗”。
+- skills_used: research-experiment-workflow, research-change-control
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: 分析 V1.2.3 的 epoch-level train/validation 曲线、最佳/最后 checkpoint、source-specific EPE 和停止状态。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `STOPPED`（诊断不改变既有终态）
+- conclusion: INCONCLUSIVE（validation 已平台化，但训练未达到计划终点，不能宣称完全收敛或最终效果成立）
+
+**文件**
+
+- [metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)、[train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)、[best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt)、[latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt)
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)、[config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json)
+- [V1.2.3 final plan](../plan/V1.2.3.md)、[formal config](../../configs/active/dexplore_rl_v1_2_3.yaml)、[smoke config](../../configs/active/dexplore_rl_v1_2_3_smoke.yaml)、[experiment log](experiment_log.md)
+- [scale calibrator](../../tools/data/calibrate_scales.py)、[Dexplore cache producer](../../tools/data/build_dexplore_rl_cache.py)、[Dexplore V1.2.2 plan](../plan/V1.2.2.md)
+
+**原因**
+
+需要区分“validation 是否达到平台”和“训练是否完成/优化是否仍在变化”，避免把中断在 57.3% steps 的 run 误报为收敛。
+
+**验证**
+
+- 使用 Python 读取 `metrics.jsonl` 的 65 个 validation epoch，统计最佳点、最近窗口均值/斜率和 source-specific 曲线；未改动 metrics 或 checkpoint。
+- 最佳 epoch 46 / step 81420：equal-source object EPE `9.470077 mm`；最后完整 validation epoch 65 / step 115050：`9.574271 mm`。
+- 最后 10 个 validation 的 equal-source均值 `9.601506 mm`、首末 `9.631856→9.574271 mm`；最后 20 个均值 `9.644924 mm`，在 `9.47–9.89 mm` 间震荡。
+- train object EPE 从 epoch 1 的 `30.27025 mm` 降至 epoch 65 的 `18.32059 mm`，train loss 从 `0.03751` 降至 `0.02047`；说明优化曲线仍在下降，不能称完全收敛。
+- 最后 20 个 validation 的 MANO object EPE 均值 `6.466792 mm`、RL-Inspire `12.823055 mm`，差距约 `6.36 mm`，source/domain 差异仍稳定存在。
+
+## 2026-09-06 08:09:59 +0800 — V1.2.3 全量训练非正常停止终态核对
+
+- activity_id: `ACT-20260906-080959-OICM-DEXPLORE-RL-FULL-STOPPED`
+- timestamp: 2026-09-06 08:09:59 +0800
+- modification_version: V1.2.3
+- type: operation / diagnostic
+- change_level: L0（只读核对并记录已发生的运行终态；未恢复或改变训练）
+- approval: user-approved
+- approval_basis: 用户询问“现在怎么样了”；终态记录继承 V1.2.3 final plan。
+- skills_used: research-experiment-workflow, research-change-control
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: 核对 V1.2.3 正式 run 的进程、GPU、日志、metrics、checkpoint 和系统 OOM 线索；不自行续跑。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `STOPPED`
+- last_step: 115900 / 202300
+- last_epoch: 66（最后完整 validation/checkpoint 为 epoch 65）
+- best_metric: `val/obj/flow_epe_mm=9.470077`，epoch 46 / step 81420
+- best_checkpoint: `checkpoints/best.pt`
+- latest_checkpoint: `checkpoints/latest.pt`，epoch 65 / step 115050
+- exit_reason: 进程与三个 rank 均已消失，日志于 2026-09-06 03:16:50 +0800 无终止标记地停止；未发现 Python traceback、CUDA OOM 或对应时段 kernel/journal OOM，准确外部信号未知。
+- conclusion: INCONCLUSIVE（完成约 57.3% 计划 steps，存在可恢复 checkpoint，但正式训练未完成）
+
+**文件**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)、[config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json)、[metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)、[train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+- [best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt)、[latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt)
+- [V1.2.3 final plan](../plan/V1.2.3.md)、[formal config](../../configs/active/dexplore_rl_v1_2_3.yaml)、[smoke config](../../configs/active/dexplore_rl_v1_2_3_smoke.yaml)、[experiment log](experiment_log.md)
+- [scale calibrator](../../tools/data/calibrate_scales.py)、[Dexplore cache producer](../../tools/data/build_dexplore_rl_cache.py)、[Dexplore V1.2.2 plan](../plan/V1.2.2.md)
+
+**原因**
+
+旧 activity 仍标记 `RUNNING`，但用户查询时 GPU 已空闲且进程不存在；必须以实际日志和 checkpoint 更新唯一活动时间线，避免把中断 run 误报为完成。
+
+**验证**
+
+- `ps` 未找到 launcher/rank/DataLoader 进程；GPU 0/1/2 utilization 均为 0%，显存回到旧可视化进程占用约 2.55/0.005/0.006 GiB。
+- `train.log`/`metrics.jsonl` 最后更新时间均为 03:16:50，最后记录 step 115900 / epoch 66；没有 `Training finished`、`Training failed`、`Traceback` 或 OOM 标记。
+- 65 次完整 validation 中，最佳 equal-source object EPE 为 `9.470077 mm`（MANO `6.301521 mm`、RL-Inspire `12.638633 mm`）；最后完整 validation 为 `9.574271 mm`。
+- 本地 `best.pt` 和 `latest.pt` 均可读取且包含 model/optimizer/scheduler/scaler；latest 为 step 115050 / epoch 65，可作为后续同配置恢复入口。
+- 未恢复训练、未修改 config、数据、GT、split 或 checkpoint。
+
+## 2026-09-05 23:54:31 +0800 — V1.2.3 全量训练人工状态检查
+
+- activity_id: `ACT-20260905-235431-OICM-DEXPLORE-RL-FULL-PROGRESS`
+- timestamp: 2026-09-05 23:54:31 +0800
+- modification_version: V1.2.3
+- type: operation / diagnostic
+- change_level: L0（只读检查进程、日志、指标和 checkpoint，并更新运行记录）
+- approval: user-approved
+- approval_basis: 用户询问“现在还在训练吗”。
+- skills_used: research-experiment-workflow, research-change-control
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: 只读核对 V1.2.3 正式 run 的进程、GPU、实时日志、validation 指标和 checkpoint 状态；不改变训练。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `RUNNING`
+- last_step: 7100 / 202300
+- last_epoch: 5（epoch 4 validation 已完成）
+- best_metric: `val/obj/flow_epe_mm=10.283183`，epoch 4 / step 7080
+- conclusion: INCONCLUSIVE（训练仍在早期运行；当前 validation 只作进度证据）
+
+**文件**
+
+- [运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)、[metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)、[train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+- [best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt)、[latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/latest.pt)
+- [V1.2.3 final plan](../plan/V1.2.3.md)、[formal config](../../configs/active/dexplore_rl_v1_2_3.yaml)、[smoke config](../../configs/active/dexplore_rl_v1_2_3_smoke.yaml)、[experiment log](experiment_log.md)
+- [scale calibrator](../../tools/data/calibrate_scales.py)、[Dexplore cache producer](../../tools/data/build_dexplore_rl_cache.py)、[Dexplore V1.2.2 plan](../plan/V1.2.2.md)
+
+**原因**
+
+核对用户询问时训练是否真实存活，而不是只依据旧 activity 的 `RUNNING` 文本判断。
+
+**验证**
+
+- launcher PID 26636 和三个 rank PID 26747/26748/26749 均存活；rank 进程状态为 `Rsl`。
+- GPU 0/1/2 utilization 为 89%/85%/88%，显存约 8.98/6.43/6.43 GiB。
+- `metrics.jsonl` 与 `train.log` 在 23:54:21 继续更新；未发现 `Traceback`、OOM 或 training failed。
+- 最近 validation：MANO object EPE `7.151705 mm`，RL-Inspire object EPE `13.414660 mm`，equal-source `10.283183 mm`；sample valid ratio `0.997809`。
+- 当前吞吐约 `1026 samples/s`，runner ETA 约 `5.04 h`。
+
+## 2026-09-05 23:36:08 +0800 — V1.2.3 Dexplore RL/MANO scale 校准启动
+
+- activity_id: `ACT-20260905-233608-OICM-DEXPLORE-RL-SCALE-STARTED`
+- timestamp: 2026-09-05 23:36:08 +0800
+- modification_version: V1.2.3
+- type: data / operation
+- change_level: L1（只生成 train-only scale JSON，并修正 stride policy metadata；不改变 geometry、GT 或 split）
+- approval: user-approved
+- approval_basis: 用户确认按 V1.2.3 默认训练方案执行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有 CmDecoder 与 ObjectInteractionCm 用户改动）
+- scope: 新 index 的两 source 统一 30 Hz stride `[1..10]`；从 train split 重新校准 `s_geo/s_hand_flow/s_obj_flow`。
+- run_id: `oicm-dexplore-rl-scale-v1_2_3-20260905-233608`
+- run_status: `COMPLETED`
+- conclusion: SUPPORTED（train-only scale 统计和 20 个 source/stride group 产出通过；不构成 Cm 效果结论）
+
+**命令与 PENDING 产物**
+
+- 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.tools.data.calibrate_scales --index data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json --output data/processed_data/object_interaction_cm_dexplore_rl_v1/scales_train_v1_2_3.json --max-sequences-per-source 32 --frames-per-sequence-stride 4 --radius-m 0.05 --knn-k 8 --seed 42 --grab-strides 1 2 3 4 5 6 7 8 9 10 --inspire-strides 1 2 3 4 5 6 7 8 9 10`
+- [scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/scales_train_v1_2_3.json) — `s_geo=0.03182924`、`s_hand_flow=0.09928792`、`s_obj_flow=0.07794207`，20 个 group。
+- 验证：index `stride_policy` 与 scale sampling 均为两 source `[1..10]`；输出 JSON 可解析，输入仅为 train split。
+
+## 2026-09-05 23:38:44 +0800 — V1.2.3 三卡 smoke 启动
+
+- activity_id: `ACT-20260905-233844-OICM-DEXPLORE-RL-SMOKE-STARTED`
+- timestamp: 2026-09-05 23:38:44 +0800
+- modification_version: V1.2.3
+- type: experiment / operation
+- change_level: L1（Task-local 训练配置与运行；不修改模型科研语义或旧输出）
+- approval: user-approved
+- approval_basis: 用户确认按 V1.2.3 final plan 执行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: Dexplore RL/MANO right-hand mixed Cm；三卡 GPU 0/1/2；smoke 每卡 batch 2、global batch 6、2 steps；from scratch。
+- run_id: `oicm-dexplore-rl-smoke-20260905-233844`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（smoke 运行中；不构成科研效果结论）
+
+**命令与 PENDING 产物**
+
+- 命令：`CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_3_smoke.yaml --distributed`
+- [smoke output](../../../../../outputs/objectinteractioncm/) — PENDING，具体 timestamp run directory 待 runner 创建。
+
+## 2026-09-05 23:39:47 +0800 — V1.2.3 smoke 完成
+
+- activity_id: `ACT-20260905-233947-OICM-DEXPLORE-RL-SMOKE-COMPLETED`
+- timestamp: 2026-09-05 23:39:47 +0800
+- modification_version: V1.2.3
+- type: experiment / operation
+- change_level: L1
+- approval: user-approved
+- approval_basis: V1.2.3 final plan。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_smoke_20260905_233936`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（三卡工程链路通过；仅为 smoke，不代表 Cm 科研效果）
+
+**验证与产物**
+
+- 三卡命令使用 `CUDA_VISIBLE_DEVICES=0,1,2`、world size 3、每卡 batch 2、global batch 6；完成 2 steps，无 NaN/Inf。
+- `sample/valid_ratio=1`、`sample/sampling_miss_ratio=0`、slot effective count=16；loss、梯度和 metrics 均写出。
+- [smoke output](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_smoke_20260905_233936/) — 含配置、metadata、run manifest、metrics、train log。
+- [smoke metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_smoke_20260905_233936/metrics.jsonl)
+- [smoke train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_smoke_20260905_233936/train.log)
+- [smoke checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_smoke_20260905_233936/checkpoints/latest.pt)
+
+## 2026-09-05 23:40:15 +0800 — V1.2.3 全量 Cm 训练启动
+
+- activity_id: `ACT-20260905-234015-OICM-DEXPLORE-RL-FULL-STARTED`
+- timestamp: 2026-09-05 23:40:15 +0800
+- modification_version: V1.2.3
+- type: experiment / operation
+- change_level: L1（Task-local 正式训练）
+- approval: user-approved
+- approval_basis: smoke 已通过，用户确认按 V1.2.3 final plan 执行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有用户改动）
+- scope: Dexplore RL/MANO mixed right-hand Cm；from scratch；三卡 GPU 0/1/2；每卡 batch 32、global batch 96、202300 steps。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`
+- run_status: `RUNNING`
+- conclusion: INCONCLUSIVE（正式训练进行中；终态前不作科研效果结论）
+
+**命令与 PENDING 产物**
+
+- 命令：`CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_3.yaml --distributed`
+- [full output](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/) — 当前运行目录。
+- [full config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/config.json)
+- [full run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/run_manifest.json)
+- [full metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/metrics.jsonl)
+- [full train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/train.log)
+- 当前证据：step 500/202300，约 1091 samples/s，ETA 约 4.9 h；GPU 0/1/2 均约 87% utilization，显存分别约 8.98/6.43/6.43 GiB。
+
+**文件**
+
+- [V1.2.3 final plan](../plan/V1.2.3.md)、[formal config](../../configs/active/dexplore_rl_v1_2_3.yaml)、[smoke config](../../configs/active/dexplore_rl_v1_2_3_smoke.yaml)
+- [scale calibrator](../../tools/data/calibrate_scales.py)、[Dexplore cache producer](../../tools/data/build_dexplore_rl_cache.py)、[Dexplore V1.2.2 plan](../plan/V1.2.2.md)
+- [experiment log](experiment_log.md)
+- [scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/scales_train_v1_2_3.json)
+
+**原因**
+
+新 cache 的 MANO 与 RL-Inspire 都是 30 Hz；训练前需要把旧 Inspire 偶数 stride 口径替换为两 source 统一 `[1..10]`，并用 train-only 统计重新校准 scale，避免把旧数据跨度或统计量带入正式实验。
+
+**验证**
+
+- 配置加载、`py_compile`、index JSON 解析和 `git diff --check` 已通过。
+- 两 step 三卡 smoke 已 `SUPPORTED`；正式 run 当前 `RUNNING`，终态前不作科研效果结论。
+
+## 2026-09-05 23:38:59 +0800 — V1.2.3 smoke 首次启动失败（配置语法）
+
+- activity_id: `ACT-20260905-233859-OICM-DEXPLORE-RL-SMOKE-FAILED`
+- timestamp: 2026-09-05 23:38:59 +0800
+- modification_version: V1.2.3
+- type: operation
+- change_level: L1
+- approval: user-approved
+- approval_basis: 继承 V1.2.3 final plan。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- run_id: `oicm-dexplore-rl-smoke-20260905-233844`
+- run_status: `FAILED`
+- conclusion: `INVALID_IMPLEMENTATION`（YAML 未加引号的 `off` 被解析为布尔 `false`，runner 在 PerformanceMonitor 初始化阶段拒绝；未进入 forward/backward，无 checkpoint 或科研证据生成）
+- 保护边界：三 rank 已正常拉起并退出；旧 output、cache、checkpoint 和 GPU 0 可视化进程未修改。
+- 修复：smoke 配置改为 `performance.mode: "off"`，随后以同一三卡命令重跑。
+
+## 2026-09-05 21:40:32 +0800 — Dexplore RL-Inspire 右手数据转换启动
+
+- activity_id: `ACT-20260905-214032-OICM-DEXPLORE-RL-CONVERSION`
+- timestamp: 2026-09-05 21:40:32 +0800
+- modification_version: V1.2.2
+- type: data_change / operation
+- change_level: L2（sequence split、坐标系、GT geometry cache 与兼容 index）
+- approval: user-approved
+- approval_basis: 用户最新确认“按默认执行”；默认方案已冻结为右手、GRAB 母 split、train/val 近似 1:1 variant、test MANO、Dexplore RL source。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有 CmDecoder 用户改动）
+- scope: 新增 Dexplore RL-Inspire→1538 点几何转换脚本和 V1.2.2 final plan；先执行单序列 pilot，旧 cache/index/split 不覆盖。
+- run_id: `oicm-dexplore-rl-pilot-20260905-214032`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（pilot 产物、坐标与 candidate/contact 检查待生成；未据此作科研效果结论）
+
+**文件与计划**
+
+- [V1.2.2 执行计划](../plan/V1.2.2.md) — 冻结 split、坐标、surface sampling、pilot/full 验证和回滚边界。
+- [build_dexplore_rl_cache.py](../../tools/data/build_dexplore_rl_cache.py) — 新增 MANO/RL-Inspire 统一 geometry cache、assignment、index 与 run manifest 生成器。
+- [pilot output](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/) — PENDING，单序列 pilot 运行产物。
+
+**原因与验证**
+
+- 只使用 `inspire_rl` native q slice `[373:391]` 与 Dexplore right Inspire URDF；不读取 `inspire_geometric`。
+- 目标 schema 复用 loader 已支持的 `geometry/manifest.json`，hand 固定 1538 点，object pool 固定 4096，30 Hz，future flow 由 loader 按帧产生。
+- 已完成静态验证：`/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py` 通过。
+- 下一步命令（pilot）：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode pilot --sequence s1/airplane_fly_1 --output data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot`。
+
+## 2026-09-05 21:41:18 +0800 — pilot 首次运行失败并修复路径
+
+- activity_id: `ACT-20260905-214118-OICM-DEXPLORE-RL-PILOT-FAILED`
+- timestamp: 2026-09-05 21:41:18 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 继承 V1.2.2 计划与本轮“按默认执行”确认
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: pilot 运行后的 contact-check 路径修复；不改变数据语义、坐标、split 或旧 cache。
+- run_id: `oicm-dexplore-rl-pilot-20260905-214032`
+- run_status: `FAILED`
+- conclusion: `INVALID_IMPLEMENTATION`（转换阶段完成，末端 contact-check 将 sequence 根误传给 geometry 根；已定位并修正）
+
+**验证与回滚**
+
+- 失败命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode pilot --sequence s1/airplane_fly_1 --output data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot`。
+- 证据：异常为 `FileNotFoundError`，目标多拼/少拼一层 `geometry`；未进入坐标或数值结论。
+- 已用 `apply_patch` 将 pilot contact-check 输入修正为 `<sequence>/geometry`；失败生成的 37 MB pilot 目录将删除后重跑。
+
+## 2026-09-05 21:42:49 +0800 — Dexplore RL-Inspire pilot 完成
+
+- activity_id: `ACT-20260905-214249-OICM-DEXPLORE-RL-PILOT-COMPLETED`
+- timestamp: 2026-09-05 21:42:49 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.2.2 计划与用户“按默认执行”确认
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: 单序列 `s1/airplane_fly_1` 的 Dexplore RL-Inspire 右手转换、loader probe 与 candidate/contact 几何 sanity check。
+- run_id: `oicm-dexplore-rl-pilot-20260905-214249`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（仅表示 pilot 数据合同与转换 wiring 通过，不表示 Cm/解码科学效果成立）
+
+**产物与验证**
+
+- [pilot cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/) — 单序列 geometry、assignment、index、manifest。
+- [pilot run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/run_manifest.json) — 记录输入、q slice、URDF hash、seed、计数与 validation。
+- [pilot contact check](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/pilot_contact_check.json) — native contact active 212/279，实际 5 cm 几何 active 222/279，分歧 10/279（3.58%），因此 full 仍沿用已导出的 native contact 语义并保留该偏差证据。
+- [pilot validation summary](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/validation_summary.json) — object `[T,4096,3]`、hand `[T,1538,3]`、normals/pose/finite 检查通过。
+- loader probe：`_SequenceView` 识别 `kind=inspire`、`effective_fps=30`；固定 stride=2 的 sample 输出 object `[1024,3]`、hand `[1538,3]`、future hand flow `[1538,3]` 且 finite。
+- coordinate probe：object-frame 点到 Dexplore airplane mesh 顶点最近距离 median 0.415 mm、mean 0.417 mm；说明当前 object pose 转换使用 `native quaternion.T` 与 object-frame contract 一致。
+
+## 2026-09-05 21:43:20 +0800 — Dexplore RL-Inspire full conversion 启动
+
+- activity_id: `ACT-20260905-214320-OICM-DEXPLORE-RL-FULL-STARTED`
+- timestamp: 2026-09-05 21:43:20 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: pilot 已通过且用户确认“按默认执行”
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: 对 1255 条 GRAB/Dexplore RL 交集序列执行 assignment、MANO/RL geometry 转换、兼容 index 与 run manifest；test MANO-only，train/val variant 近似 1:1。
+- run_id: `oicm-dexplore-rl-full-20260905-214320`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（PENDING full conversion；运行中不作科研效果结论）
+
+**命令与 PENDING 产物**
+
+- 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode full --output data/processed_data/object_interaction_cm_dexplore_rl_v1`。
+- [full cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/) — PENDING。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — PENDING。
+
+## 2026-09-05 22:12:25 +0800 — Dexplore RL-Inspire full conversion 完成
+
+- activity_id: `ACT-20260905-221225-OICM-DEXPLORE-RL-FULL-COMPLETED`
+- timestamp: 2026-09-05 22:12:25 +0800
+- modification_version: V1.2.2
+- type: operation / data_change
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.2.2 final plan、pilot 通过、用户“按默认执行”确认
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留既有 CmDecoder 用户改动与未跟踪实验状态）
+- scope: 完成三方 intersection 的 1255 条右手 MANO/RL-Inspire geometry cache、assignment、兼容 index 和 loader 终态 probe；旧 cache/index/split 未覆盖。
+- run_id: `oicm-dexplore-rl-full-20260905-221207`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（数据合同、转换 wiring、split/loader 审计通过；不代表 Cm 训练效果或未来 CmDecoderV2 科研结论）
+
+**最终产物**
+
+- [full cache root](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/) — 1255 条 sequence geometry，约 49 GB，不纳入 Git。
+- [full index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json) — 兼容 `ref2dex_object_interaction_cm_index_v1_1`，train/val/test=1004/126/125，source=501/64/125 MANO 与 503/62/0 RL-Inspire。
+- [assignment](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/assignment.json) — seed=42、parent_seq_id/variant、三方 intersection、两条损坏 MANO 强制 RL 记录。
+- [run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — `run_status=COMPLETED`、`conclusion=SUPPORTED`、输入 hash、URDF、计数、1255 条 validation。
+- [validation summary](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/validation_summary.json) — 每条 sequence 的 shape/finite/pose 检查。
+
+**终态验证**
+
+- 三方 intersection：parent GRAB object cache、`dexplore_grab/sequences`、`inspire_rl` 均 1255 条，missing=0。
+- 无泄露：全局 `parent_seq_id` 唯一；train/val 不跨 variant；test 全部 MANO；train/val variant 近似 1:1。
+- schema：object pool `[T,4096,3]`、right hand `[T,1538,3]`、normals/pose/frame id/frame time 全部 finite；30 Hz；native q slice `[373:391]` 与 Dexplore native→URDF reorder 已写入 manifest。
+- loader probe：三 split 均可由现有 `ObjectInteractionCmDataset` 读取；rows=304343/39538/36365；抽样 object `[1024,3]`、hand `[1538,3]`、future flow `[1538,3]` finite。
+- 保护边界：未修改旧 `cm_object_v2_surface512_object_pose_20260830`、旧 `object_interaction_cm_v1_1/index.json`、共享 `src/base`、CmDecoder v2；未启动 Cm 训练。
+
+**文件、原因与验证入口**
+
+- [V1.2.2 执行计划](../plan/V1.2.2.md) — 固化本次数据 split、坐标、schema、pilot/full 顺序和回滚边界。
+- [build_dexplore_rl_cache.py](../../tools/data/build_dexplore_rl_cache.py) — 实现三方 intersection、variant assignment、Dexplore q→URDF surface FK、MANO object-frame 重投影、cache/index/run manifest 与 resume。
+
+**原因**
+
+- 需要在同一 GRAB parent split 上混合 MANO 与 Dexplore RL-Inspire，同时禁止同一 `parent_seq_id` 跨 variant 泄露；右手-only 口径要求不伪造损坏的旧 MANO 文件。
+- 保留 object_pose_t、4096 object pool、1538 hand surface、future hand flow 和 30 Hz，使后续 Cm 训练可以直接复用现有 loader 合同。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py` — PASS。
+- 三方 intersection/assignment/index 计数审计 — PASS，missing=0、parent id 全局唯一、test MANO-only。
+- `ObjectInteractionCmDataset` 三 split loader probe — PASS，rows `304343/39538/36365`，抽样 object/hand/future-flow finite。
+- [validation summary](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/validation_summary.json) — 1255/1255 sequence shape、pose、finite 检查通过。
+
+## 2026-09-05 22:15:44 +0800 — RL candidate mask 几何口径 refresh 启动
+
+- activity_id: `ACT-20260905-221544-OICM-DEXPLORE-RL-CANDIDATE-REFRESH-STARTED`
+- timestamp: 2026-09-05 22:15:44 +0800
+- modification_version: V1.2.2
+- type: data_change / operation
+- change_level: L2（只更新新 cache 的 RL candidate mask，不改变点云、split、pose 或旧 cache）
+- approval: user-approved
+- approval_basis: pilot 已量化 native-contact 与几何 5 cm mask 的 3.58% 分歧；为公平性采用同一几何规则。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: 对新 full/pilot cache 的 RL-Inspire entries，以 object-frame 生成 hand/object 近邻的 5 cm 规则重写 `obj_candidate_mask_5cm.npy`；MANO mask 不变。
+- run_id: `oicm-dexplore-rl-candidate-refresh-20260905-221544`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（PENDING mask refresh 与 loader 复核）
+
+**命令与产物**
+
+- full：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode full --resume --refresh-rl-candidates --output data/processed_data/object_interaction_cm_dexplore_rl_v1`。
+- pilot：PENDING，full 完成后对 pilot 同步 refresh。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — PENDING refresh 终态。
+
+## 2026-09-05 22:42:42 +0800 — RL candidate mask 几何口径 refresh 完成
+
+- activity_id: `ACT-20260905-224242-OICM-DEXPLORE-RL-CANDIDATE-REFRESH-COMPLETED`
+- timestamp: 2026-09-05 22:42:42 +0800
+- modification_version: V1.2.2
+- type: data_change / operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户已确认默认执行；pilot 分歧证据支持统一 5 cm geometry active 口径
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: full 565 条 RL-Inspire sequence 与 pilot 的 candidate mask 已按生成 hand/object geometry 的 object-frame 5 cm KD-tree 规则刷新；MANO mask、点云、pose、split 未改变。
+- run_id: `oicm-dexplore-rl-full-20260905-224017`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（mask/loader 数据合同通过；不代表 Cm/decoder 科研效果）
+
+**文件、原因与验证**
+
+- [V1.2.2 执行计划](../plan/V1.2.2.md) — 本次数据处理边界与回滚入口。
+- [build_dexplore_rl_cache.py](../../tools/data/build_dexplore_rl_cache.py) — 新增 `--refresh-rl-candidates` 几何 mask refresh。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — `run_status=COMPLETED`、`candidate_refresh.rl_sequences=565`、`SUPPORTED`。
+- [pilot contact check](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/pilot_contact_check.json) — refresh 后 native/geometry active 均 222/279，分歧 0。
+
+**原因**
+
+- MANO 与 RL 必须使用同一 `active_only` 5 cm 几何规则；native Dexplore contact 与生成表面几何存在 3.58% pilot 分歧，不能混用两种过滤语义。
+- 发现的 1 条旧 partial RL 目录 `s5/waterbottle_shake_1` 不属于最终 assignment，已移至 [recovery 目录](../../../../../data/processed_data/_recovery/object_interaction_cm_dexplore_rl_v1_stale_s5_waterbottle_shake_1_20260905/)，最终 geometry/index 均为 1255/1255，无额外 variant。
+
+**验证**
+
+- full index/geometry 审计：1255 entries、1255 geometry manifests、MANO 690、RL 565、extra ids=0。
+- active-only loader probe：train/val/test rows=`169860/21911/20612`；抽样 object `[1024,3]`、hand `[1538,3]`、future flow `[1538,3]` finite。
+- pilot/full manifest candidate semantics：`generated_rl_hand_to_object_surface_5cm`；刷新未改变 object/hand shape、pose、split 或旧 cache。
+
+## 2026-09-05 22:10:13 +0800 — full manifest intersection 约束补记并刷新
+
+- activity_id: `ACT-20260905-221013-OICM-DEXPLORE-RL-MANIFEST-REFRESH-STARTED`
+- timestamp: 2026-09-05 22:10:13 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.2.2 默认方案要求同时核对 `dexplore_grab`、旧 object cache 与 `inspire_rl`；只补充已验证的输入约束，不改变已生成 geometry。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: converter 现在显式检查三方 intersection；用 `--resume` 只复用 geometry 并刷新 index/run manifest。
+- run_id: `oicm-dexplore-rl-manifest-refresh-20260905-221013`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（PENDING metadata refresh）
+
+**命令与产物**
+
+- 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode full --resume --output data/processed_data/object_interaction_cm_dexplore_rl_v1`。
+- [full cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/) — PENDING（geometry 复用）。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — PENDING。
+
+## 2026-09-05 21:57:41 +0800 — full resume 遇到 parent 右手 MANO 损坏项
+
+- activity_id: `ACT-20260905-215741-OICM-DEXPLORE-RL-FULL-RESUME-FAILED`
+- timestamp: 2026-09-05 21:57:41 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 继承 V1.2.2 与用户“按默认执行”确认
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: resume 在约 700 条序列处发现 `s7/headphones_lift` 的旧 right MANO mmap 损坏；只读扫描确认共有 2 条 train 序列损坏（另一个 `s2/mug_drink_2` 已分到 RL）。
+- run_id: `oicm-dexplore-rl-full-resume-20260905-214854`
+- run_status: `FAILED`
+- conclusion: `INVALID_IMPLEMENTATION`（转换器原 assignment 将损坏 right MANO 分给 MANO；不生成伪 MANO，改为强制 RL variant）
+
+**证据与修正**
+
+- right-only 文件扫描：1255 条中仅 `s2/mug_drink_2`、`s7/headphones_lift` 的 `right/hand_points_world.npy` 无法 mmap，且缺 `hand_normals_world.npy`/candidate；两条均在 train，test 无损坏项。
+- 已通过 `apply_patch` 将 `mano_available` 写入 assignment：train/val 中不可用项强制 `inspire_rl`，test 若不可用则直接失败；不修改旧 cache。
+- full partial 目录继续保留，下一次使用 `--resume` 会复用已完成 geometry 并只转换剩余项。
+
+## 2026-09-05 21:58:08 +0800 — full conversion resume-2 启动
+
+- activity_id: `ACT-20260905-215808-OICM-DEXPLORE-RL-FULL-RESUME2-STARTED`
+- timestamp: 2026-09-05 21:58:08 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: parent right-hand 损坏项已证据化，按默认方案保留序列并强制其进入 RL variant
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: 以新 assignment 重建并继续 full cache；已完成 geometry 复用，RL 分支不依赖损坏 MANO 文件。
+- run_id: `oicm-dexplore-rl-full-resume2-20260905-215808`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（PENDING resume-2 终态）
+
+**命令与产物**
+
+- 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode full --resume --output data/processed_data/object_interaction_cm_dexplore_rl_v1`。
+- [full cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/) — PENDING。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — PENDING。
+
+## 2026-09-05 21:48:31 +0800 — full conversion 首次运行失败并切换安全 resume
+
+- activity_id: `ACT-20260905-214831-OICM-DEXPLORE-RL-FULL-FAILED`
+- timestamp: 2026-09-05 21:48:31 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.2.2 计划与 pilot 通过后的继续执行
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: full conversion 在已完成约 305 条序列后遇到旧 parent GRAB cache `s2/mug_drink_2/right/hand_points_world.npy` 的 mmap 文件损坏；修复脚本使 RL variant 不再读取无关 MANO hand，并加入不覆盖的 `--resume`。
+- run_id: `oicm-dexplore-rl-full-20260905-214320`
+- run_status: `FAILED`
+- conclusion: `INVALID_IMPLEMENTATION`（失败来自转换器对 RL 分支读取无关旧 hand 文件；不是新坐标/FK 证据）
+
+**证据与保护**
+
+- 失败异常：`ValueError: mmap length is greater than file size`，发生在旧 cache hand mmap；当时已生成约 13 GB、305 条 sequence geometry，未覆盖旧数据。
+- 已通过 `apply_patch`：RL variant 仅读取 object pool/pose；MANO variant 仍强校验右手 hand geometry；新增 `--resume` 只复用存在完整 `geometry/manifest.json` 的序列。
+- 原失败 pilot 临时目录仍位于 [recovery 目录](../../../../../data/processed_data/_recovery/object_interaction_cm_dexplore_rl_v1_pilot_failed_20260905_214118/)，可人工清理；本次 full partial 目录保留用于 resume。
+
+## 2026-09-05 21:48:54 +0800 — full conversion 安全 resume 启动
+
+- activity_id: `ACT-20260905-214854-OICM-DEXPLORE-RL-FULL-RESUME-STARTED`
+- timestamp: 2026-09-05 21:48:54 +0800
+- modification_version: V1.2.2
+- type: operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 继承 V1.2.2 与 pilot 结果；resume 不改变 split/坐标/schema
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true
+- scope: 在既有 full partial 目录上复用完整 sequence geometry，继续生成剩余序列并最终重建 assignment/index/run manifest。
+- run_id: `oicm-dexplore-rl-full-resume-20260905-214854`
+- run_status: `STARTED`
+- conclusion: INCONCLUSIVE（PENDING resume 终态）
+
+**命令与产物**
+
+- 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py --mode full --resume --output data/processed_data/object_interaction_cm_dexplore_rl_v1`。
+- [full cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/) — PENDING。
+- [full run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) — PENDING。
+
+## 2026-09-05 20:30:09 +0800 — RL-Inspire native q 与 OICM 几何接口诊断
+
+- activity_id: `ACT-20260905-203009-OICM-RL-NATIVE-Q-GEOMETRY-CONTRACT`
+- timestamp: 2026-09-05 20:30:09 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读接口与 native tensor schema 核查；未改变代码、配置、数据、cache、split、GT 或 checkpoint）
+- approval: user-requested
+- approval_basis: 用户确认主实验使用 Dexplore RL-Inspire variant，CmDecoderv2 延后单独建立，当前仅先训练 Cm
+- skills_used: research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留已有 CmDecoder 修改与未跟踪文件）
+- scope: 核对 `inspire_rl` 的 native tensor 布局与 ObjectInteractionCmDataset 当前支持的 hand geometry 布局，并将用户确认的 sequence-level embodiment 划分语义记录为后续 plan 输入。
+- conclusion: INCONCLUSIVE（实验定义已基本明确，但 RL q→固定 Inspire 表面点/flow 的数据桥接和无 paired target 的测试指标尚未实现/验证）
+
+**文件与证据**
+
+- [Dexplore RL export README](../../../../../data/processed_data/inspire_rl_before_full_coordinate_fix_20260905/EXPORT_INFO.txt) — 记录 RL checkpoint rollout、右手、30 Hz、1335 条序列、native `(T,598)`。
+- [Dexplore export schema](../../../../../data/processed_data/inspire_rl/) — 当前 RL 文件为 `interaction_hand_inspire.pt`；native tensor 的 Inspire 18-DOF slice 为 `373:391`，不能直接作为 OICM hand point cloud。
+- [ObjectInteractionCm dataset](../../dataset.py) — 当前 loader 要求 hand geometry、normals 和 5 cm candidate metadata，Inspire 路径要求 `geometry/manifest.json`、`hand_points_world.npy` 等文件。
+
+**原因**
+
+- 用户方案应解释为：原始 GRAB sequence 只选择一个 embodiment；MANO sequence 只进入 OICM source 混合训练，RL-Inspire sequence 进入 OICM，并作为未来 Inspire-q decoder 的训练数据；同一 parent sequence 不同时出现两种 variant。
+- 最终 held-out MANO → Cm → CmDecoderv2 是无 paired Inspire target 的跨 embodiment 泛化测试，不是逐帧 MANO→Inspire q 监督测试。
+- 因此 decoder 训练阶段可以只使用 RL-Inspire subset；若把 MANO subset 也送入 q decoder，必须另定义 target，不能默认为 Inspire supervision。
+
+**验证**
+
+- 读取 RL/几何 export 说明及样例 tensor，确认 `inspire_rl` 与 `inspire_geometric` 是独立产物，且 RL 版本来自 deterministic policy rollout。
+- 读取当前 OICM dataset loader，确认 q native tensor 不能直接满足 1538 点手几何合同；后续需用固定 Inspire URDF/mesh/FK 将 RL q 变成 surface points、normals 和 future flow。
+- 本次未生成转换 cache、未修改索引、未启动训练或评估。
+
+**边界、建议与回滚**
+
+- 本条仅记录诊断与用户澄清；删除本条活动记录即可回滚本次文档差异。
+- 后续 plan 需要单独冻结 embodiment assignment、sequence/object split、source-balanced sampling、RL q→geometry 的 manifest，以及无 paired target 时的 simulation/object-interaction 评价指标。
+
+## 2026-09-05 20:25:24 +0800 — Dexplore RL 与几何重定向数据口径复核
+
+- activity_id: `ACT-20260905-202524-OICM-DEXPLORE-RL-DATASET-CLARIFICATION`
+- timestamp: 2026-09-05 20:25:24 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读数据目录与导出说明复核；未改变代码、配置、数据、cache、split、GT 或 checkpoint）
+- approval: user-requested
+- approval_basis: 用户明确指定 Dexplore 的 RL 数据集，而不是几何重定向数据集，并补充 Cm/decoder 实验边界
+- skills_used: research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留已有 CmDecoder 修改与未跟踪文件）
+- scope: 只读核对本地 `dexplore_grab`、`inspire_rl`、`inspire_geometric`、RL/几何导出说明和当前 OICM/CmDecoder 接口；不启动生成、训练或评估运行。
+- conclusion: INCONCLUSIVE（已确认 RL 数据入口和用户实验语义，但 Cm 混合训练与后续 CmDecoderv2 尚未实现/验证）
+
+**文件与证据**
+
+- [Dexplore GRAB motion/object](../../../../../data/processed_data/dexplore_grab/) — 1335 条 GRAB 处理序列，包含 MANO motion 与 object。
+- [Dexplore Inspire RL](../../../../../data/processed_data/inspire_rl/) — 1335 个 `interaction_hand_inspire.pt`，每条 shape 为 `(T, 598)`，由 `/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth` 的 Isaac Gym deterministic policy rollout 生成，右手、18-DOF、30 Hz。
+- [Dexplore Inspire geometric](../../../../../data/processed_data/inspire_geometric/) — 同样 1335 条，但属于几何 retarget，不是本次目标数据。
+- [RL export info](../../../../../data/processed_data/inspire_rl_before_full_coordinate_fix_20260905/EXPORT_INFO.txt) — 明确记录 `Export: GRAB -> Inspire (RL checkpoint rollout)`、`Robot: Inspire right hand`、`Rate: 30 Hz`。
+- [几何 export info](../../../../../data/processed_data/inspire_geometric_before_full_coordinate_fix_20260905/EXPORT_INFO.txt) — 明确记录几何重定向及 30 Hz 下采样，作为排除项。
+
+**原因**
+
+- 用户的目标不是拿几何 retarget 结果充当 Inspire target，而是把 RL policy rollout 作为 Inspire variant 的 hand trajectory source，与原始 GRAB MANO variant 一起训练 Cm；未来再由独立的 `CmDecoderv2` 输出 Inspire q。
+- 为避免泄露，不能让同一原始 GRAB sequence 的 MANO 和 Inspire RL variant 跨 train/test 出现；更严格的做法是先按原始 sequence/object 划分，再为每个 split 选择 variant，保留 `parent_seq_id`。
+- 测试阶段只需要 held-out MANO 提取 Cm；不要求生成对应 Inspire 数据是合理的，但这样只能先验证 Cm 的跨 embodiment 表征/下游可解码性，不能在当前阶段得到 Inspire q 的定量测试结果。
+
+**验证**
+
+- 读取四个数据根目录的文件布局和 `EXPORT_INFO.txt`，确认 `inspire_rl` 与 `inspire_geometric` 是两套独立产物，且 RL 版本确实来自 checkpoint rollout。
+- 读取样例 RL/几何 tensor，二者均为 `(T, 598)` native tensor；RL 与几何不能仅按文件名区分，数据 manifest 必须显式写入 `source_type=rl`。
+- 当前仅做只读检查，未生成新数据、未改索引、未启动训练；后续代码实现仍需用户确认并定稿对应 plan。
+
+**边界、建议与回滚**
+
+- 本条只记录数据口径复核；删除本条活动记录即可回滚本次文档差异。
+- 后续 Cm 训练建议采用右手、30 Hz、同一 source frame/horizon，并把 MANO 与 RL-Inspire 作为 source variant；`CmDecoderv2` 单独建 Task，target 只定义为 Inspire q，不把几何版本混入主实验。
+
+## 2026-09-05 19:59:22 +0800 — Dexplore/GRAB MANO-Inspire 混合训练方案诊断
+
+- activity_id: `ACT-20260905-195922-OICM-DEXPLORE-PIPELINE-DIAGNOSTIC`
+- timestamp: 2026-09-05 19:59:22 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读仓库、数据布局、接口与实验语义核查；未改变代码、配置、数据、cache、split、GT 或 checkpoint）
+- approval: user-requested
+- approval_basis: 用户要求检查使用 Dexplore 将 GRAB MANO 与 Inspire 重定向数据混合训练 Cm/解码器的可行性与疑问
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留已有 CmDecoder 修改与未跟踪文件）
+- scope: 读取 ObjectInteractionCm/CmDecoder 当前数据合同、模型输入输出、索引与 split 约束；检查本地 `dexplore_grab` 处理数据的序列数量、字段和与当前 GRAB cache 的交集；核对 Dexplore 官方转换脚本和模型卡。未修改代码、配置、原始数据、cache、checkpoint 或运行目录。
+- conclusion: INCONCLUSIVE（工程上可构造该实验，但源/目标手、未来 hand-flow 条件、split、时间尺度、伪 GT 与采样权重仍需先固定，当前没有新的训练/评估证据支持方案效果）
+
+**文件与证据**
+
+- [Dexplore processed root](../../../../../data/processed_data/dexplore_grab/) — 本地 1335 个序列目录，每个当前只有 `motion.npz` 与 `object.npz`；未发现 Inspire q 或 1538 点几何输出。
+- [ObjectInteractionCm dataset](../../dataset.py)、[ObjectInteractionCm model](../../model.py) — 当前 OICM 将双 MANO 手或单 Inspire 手填充到最大 3076 点；forward 把 future `hand_flow` 作为输入条件，模型本身不消费 `stride/delta_time_s`。
+- [CmDecoder adapter](../../../CmDecoder/object_interaction_cm_model.py) — 当前适配器把同一个 1538 点手及其 flow 同时送入 OICM 和解码目标，尚无 MANO source → Inspire target 的分离字段。
+- [当前 OICM index](../../../../../data/processed_data/object_interaction_cm_v1_1/index.json) — 现有混合索引仍是 GRAB 与 HRDexDB Inspire；Dexplore 数据尚未接入。
+- [Dexplore conversion script](https://raw.githubusercontent.com/NVlabs/dexplore/main/data_processing/convert_grab.py) — 官方转换会对 GRAB 做 `::4` 采样、逐帧 retarget 到机器人 DOF，并写出 `interaction_hand_inspire.pt`；这不是本地 `dexplore_grab` 目录现有的完整输出。
+- [Dexplore model card](https://github.com/NVlabs/dexplore/blob/main/MODEL_CARD.md) — 发布模型使用约 1269 条 GRAB 中的 658 条，未提供专门的 held-out GRAB 测试 split。
+
+**原因**
+
+- 本地 Dexplore 处理序列归一化名称后与当前 GRAB object cache 有 1255 条交集、80 条缺失；处理帧数约为 raw 120 Hz 的四分之一，说明当前对象轨迹大致为 30 Hz，但仍需由 manifest 确认 frame mapping。
+- 同一原始序列生成 MANO 与 Inspire 两个 variant 时，split 必须在 variant 生成前按原始 sequence（必要时 object）划分；否则测试 MANO 与训练 Inspire 的同序列配对会泄漏。
+- 如果目标是 MANO Cm → Inspire 解码器，训练样本必须显式区分 `source_hand_*` 与 `target_hand_*`；不能把 MANO 和 Inspire 都作为无标签 target 混在同一个 decoder 监督池里。当前 decoder guidance/plan 仍是 Inspire-only。
+- Dexplore 的 Inspire q/几何是 retarget 产生的伪 GT，不是实测机器人轨迹；结果应命名为 retarget-label reconstruction/retarget consistency，并额外报告关节限位、平滑性和接触关系。
+- 若用未来 `hand_flow` 提取 Cm，评估属于 teacher-forced/offline 条件重建；不能直接宣称在线或未来预测。在线声明需要只用观测到的 flow/闭环 rollout 另测。
+- MANO 当前可双手，而 Dexplore Inspire 输出通常是单个机器人手；需固定右手/左手口径或明确双手拼接规则，否则 padding、接触和 embodiment 差异会成为 shortcut。
+
+**验证**
+
+- 只读统计确认本地 Dexplore 目录包含 1335 个序列，归一化名称后与当前 GRAB object cache 交集为 1255、缺失 80；样例 raw GRAB 为 120 Hz，Dexplore 处理帧数约为 raw 的四分之一。
+- 读取当前 ObjectInteractionCm 的 dataset/model、CmDecoder adapter、索引及 Task 指导/plan，确认现有 decoder 仍是 Inspire-only，同一 1538 点手/flow 同时承担 OICM 输入和 decoder target，尚未支持 MANO source → Inspire target。
+- 使用 `audit_diff.py --check-links` 做活动记录审计；首次检查提示本条缺少标准“原因/验证”段，已按仓库合同补齐后重新执行。
+
+**边界、建议与回滚**
+
+- 本次只产生诊断记录；代码、配置、数据、cache、checkpoint、split、GT 和既有运行均未改动，删除本条活动记录即可回滚本次文档差异。
+- 后续若实现该方案，需要先定稿与指导同版本的 plan，至少冻结：source/target 字段、手侧、sequence/object-disjoint split、共同物理 horizon、Dexplore converter/URDF/mesh/点采样 manifest、variant 采样权重，以及 teacher-forced 与 online 两类评估边界。
+
+## 2026-09-05 17:18:12 +0800 — GRAB 原始 120 Hz 与 HRDexDB 物理时间跨度对齐诊断
+
+- activity_id: `ACT-20260905-171812-OICM-GRAB-120HZ-HR-TIMESCALE`
+- timestamp: 2026-09-05 17:18:12 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读时间分辨率与运动幅度核查；未改变代码、配置、数据、cache、split、GT 或既有运行）
+- approval: user-requested
+- approval_basis: 用户要求比较 GRAB 原始 120 Hz 与 HRDexDB 的运动幅度，并判断时间采样是否造成表观差异
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留 CmDecoder 用户改动与未跟踪文件）
+- scope: 读取 GRAB 原始 `.npz` 的物体轴角/平移、当前 30 Hz GRAB object-pose cache、旧 cache 中的 5 cm candidate 点索引，以及当前 Inspire-F1 HRDexDB geometry；在 val 序列上按物理时间跨度重算 object-pose frame 的物体表面位移。未修改代码、配置、原始数据、cache、checkpoint 或运行目录。
+- conclusion: SUPPORTED（120 Hz 的单 raw frame 位移因时间间隔缩短而变小，但在相同物理时间跨度下 GRAB 仍比 Inspire-F1 HRDexDB 大约 8–11 倍；若只把 GRAB 改成 120 Hz 而保持整数 stride `1..10`，会把 GRAB horizon 错移到约 `8–83 ms`，进一步破坏与 HR `67–667 ms` 的时间语义匹配）
+
+**文件与证据**
+
+- [GRAB 原始样例](../../../../../data/raw_data/GRAB/grab/s1/airplane_fly_1.npz) — 原始字段声明 `framerate=120 Hz`，物体轨迹保留每个 raw frame 的 `global_orient` 与 `transl`。
+- [GRAB cache meta](../../../../../data/processed_data/cm_object_v2_surface512_object_pose_20260830/s1/airplane_lift/shared/meta.json) — 当前 cache 为 `source_fps=120`、`ds_rate=4`，有效频率为 30 Hz，物体池 4096 点。
+- [ObjectInteractionCm index](../../../../../data/processed_data/object_interaction_cm_v1_1/index.json) — 当前训练的 GRAB stride 为 `1..10`、Inspire-F1 stride 为偶数 `2..20`，两者都由各自 cache 的 frame index 解释。
+- [HRDexDB geometry manifest](../../../../../data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/episodes/78013e164ab75a34/geometry/manifest.json) — HR geometry 的 `delta_time_median_s≈30 ms`、最大约 `60.7 ms`，并提供 4096 点池与 5 cm object candidate mask。
+
+**原因**
+
+- 需要把“120 Hz 逐帧看起来位移更小”和“同一物理时间内实际运动更小”分开；如果不对齐 `Δt`，直接比较整数 stride 会把采样率差异误判成数据分布差异。
+
+**验证**
+
+- 统计口径：GRAB 使用当前 index 的 126 条 val 序列、原始 120 Hz 物体 pose；以旧 GRAB cache 的 candidate 点索引筛选当前有接触的 source frame，每行最多抽 256 个候选物体表面点。HR 使用当前 Inspire-F1 val 的 58 条序列、1024 个固定池点，并筛选 5 cm candidate 点。位移是在当前物体 pose 的坐标系中计算；这是分布诊断，不是模型 benchmark。
+- GRAB 原始 120 Hz（candidate object points，均值 / 中位数 / p95，mm）：stride 1（8.3 ms）=`2.60/1.26/9.85`；stride 4（33.3 ms）=`9.99/4.89/38.97`；stride 8（66.7 ms）=`19.67/9.61/76.44`；stride 40（333.3 ms）=`87.44/46.59/340.20`。
+- Inspire-F1 HRDexDB 30 Hz（同类 candidate object points，mm）：stride 1（约 33.3 ms）=`1.36/0.64/4.55`；stride 2（约 66.7 ms）=`2.37/1.11/8.13`；stride 10（约 333 ms）=`9.58/4.37/33.92`。
+- 物理时间对齐后：约 66.7 ms 的 GRAB stride 8 / HR stride 2，其均值、中位数、p95 比约为 `8.3×/8.6×/9.4×`；约 333 ms 的 GRAB stride 40 / HR stride 10，比约为 `9.1×/10.6×/10.0×`。这与既有 30 Hz active-flow 诊断（GRAB 中位数约 `9.1 mm`、HR 约 `1.0 mm`）一致，说明简单下采样没有消除域差。
+- 仅比较单整数 stride 会产生误导：GRAB raw stride 1 的间隔只有 8.3 ms；把它与 HR stride 2 的 66.7 ms 直接比较，会把较短 horizon 误认为较小运动。当前模型 forward 读取 object/hand 几何与 flow，但不读取 `stride` 或 `delta_time_s`，因此不同物理 horizon 会共享同一个预测函数。
+
+**边界、建议与回滚**
+
+- 本次只量化了物体表面位移；GRAB 120 Hz 的全手 MANO surface 未在全量上重建。既有同口径 66.7 ms 诊断仍显示 hand flow 中位数约 GRAB `13.5 mm`、Inspire-F1 `1.9 mm`（HR human MANO 约 `5.4 mm`），方向与 object 结论一致。
+- 若保留原始 120 Hz，建议先按物理 horizon 重定义 stride：GRAB raw `4..40` 才覆盖当前 30 Hz `33..333 ms`，与 HR stride 2/10 对齐分别约用 raw stride 8/40；或者先统一重采样到 30 Hz。任何 stride/采样合同变更都应单独建 plan 并做受控 ablation，不能把本诊断当作效果因果证据。
+- 仅新增本活动条目；删除本条即可回滚文档差异。代码、配置、数据、cache、checkpoint 和既有运行均未改动。
+
+## 2026-09-05 17:49:32 +0800 — 按位移幅度匹配 GRAB 原始 120 Hz 与 HRDexDB stride 诊断
+
+- activity_id: `ACT-20260905-174932-OICM-AMPLITUDE-STRIDE-MAP`
+- timestamp: 2026-09-05 17:49:32 +0800
+- modification_version: V1.2.1.4
+- type: diagnostic
+- change_level: L0（只读幅度分布与 stride 映射核查；未改变代码、配置、数据、cache、split、GT 或既有运行）
+- approval: user-requested
+- approval_basis: 用户要求在考虑运动幅度对齐时估计 GRAB 原始 120 Hz 与 HRDexDB stride 的对应关系
+- skills_used: research-change-control, research-experiment-workflow
+- branch: `oyx`
+- base_commit: `27316ef8e9552b7b335e53400453902d745b1ebc`
+- worktree_dirty: true（保留 CmDecoder 用户改动、未跟踪文件及本任务既有诊断记录）
+- run_status: NOT_STARTED（只读统计；未启动正式训练/评估 run）
+- conclusion: SUPPORTED（在当前 val 物体候选点口径下，中心位移幅度的经验映射约为 `GRAB raw stride ≈ ceil(HR stride / 3)`；这不是物理时间或速度语义的等价映射，映射用于训练尺度 ablation 的可行起点，收益因果仍为 INCONCLUSIVE）
+- scope: 使用当前 ObjectInteractionCm index 的 GRAB val 126 条序列和 Inspire-F1 HRDexDB val 58 条序列；GRAB 读取原始 120 Hz object pose，HR 使用约 30 Hz geometry，按 5 cm candidate object points 统计多个 stride 的位移均值/中位数/p95，并为每个 HR stride 选择分布距离最近的 GRAB raw stride。未修改代码、配置、原始数据、cache、checkpoint 或运行目录。
+
+**文件与证据**
+
+- [ObjectInteractionCm index](../../../../../data/processed_data/object_interaction_cm_v1_1/index.json) — 当前 HR stride 为偶数 `2..20`，GRAB cache stride 为 `1..10`。
+- [GRAB 原始样例](../../../../../data/raw_data/GRAB/grab/s1/airplane_fly_1.npz) — 原始 `framerate=120 Hz`。
+- [GRAB cache meta](../../../../../data/processed_data/cm_object_v2_surface512_object_pose_20260830/s1/airplane_lift/shared/meta.json) — 现有 GRAB cache 仍为 `source_fps=120`、`ds_rate=4`，即有效 30 Hz。
+- [HRDexDB geometry manifest](../../../../../data/processed_data/cm_decoder/hrdexdb_inspire_f1_surface512_object_pose_fast_20260830/v4/episodes/78013e164ab75a34/geometry/manifest.json) — HR 几何帧间隔中位数约 30 ms。
+
+**原因**
+
+- 物理时间对齐回答“相同时间内移动了多少”；本条额外回答“若只让监督位移的统计幅度相近，应取哪个 raw stride”。两者目标不同，不能把幅度映射解释成动力学等价。
+
+**验证**
+
+- 统计口径：GRAB 每个 active source frame 最多抽取 128 个 candidate object surface points，HR 每条序列从 4096 点池中使用 5 cm candidate mask 后统计；数值为 val 分布诊断，不是 benchmark。
+- GRAB raw120 的 candidate object displacement（均值/中位数/p95，mm）随 stride 近似为：`g1=2.59/1.26/9.84`、`g4=9.96/4.87/38.93`、`g8=19.62/9.56/76.37`、`g12=29.03/14.22/113.16`。
+- HRDexDB Inspire-F1 约 30 Hz 的对应统计为：`h2=2.37/1.11/8.13`、`h10=9.58/4.37/33.92`、`h20=17.65/8.36/61.58`。
+- 按均值/中位数/p95 的最近邻结果综合后，当前使用的 HR 偶数 stride 建议映射为：`h2→g1`、`h4→g2`、`h6→g2~3`、`h8→g3`、`h10→g4`、`h12→g4~5`、`h14→g5`、`h16→g5~6`、`h18→g6`、`h20→g7`；简化成单值即 `{1,2,2,3,4,4,5,6,6,7}`，可记作 `g≈ceil(h/3)`。
+- 该映射的时间跨度明显更短：例如 HR `h2` 约 60–67 ms，而幅度匹配的 GRAB `g1` 只有 8.3 ms；HR `h10` 约 300–333 ms，而幅度匹配的 GRAB `g4` 只有 33.3 ms。相同物理时间则仍是 `h2↔g8`、`h10↔g40`，且 GRAB 位移约大 8–11 倍。
+- 作为 hand-flow 边界检查，HR 当前 1538 点 MANO 在 `h2/h10/h20` 的中位数约为 `1.79/8.70/15.98 mm`；本次没有重建 GRAB raw120 全量 MANO surface，因此上述 stride 映射目前只对 object target 直接成立，不能宣称 hand 与 object 共用同一精确映射。
+- 现有 GRAB 30 Hz cache（raw `g4/g8/g40`）的全手点位移中位数约为 `5.68/11.28/52.22 mm`，与 HR `h2/h10/h20` 的 `1.79/8.70/15.98 mm` 对照，线性插值给出的 hand 幅度映射更接近 `g≈0.5~0.65h`；这进一步说明 object 的 `ceil(h/3)` 不能未经验证地同时用于 hand。
+
+**边界、建议与回滚**
+
+- 若目标是消除 loss 中 target magnitude 的主导差异，可把 `g≈ceil(h/3)` 作为受控 ablation 的初始配对，并同时记录真实 `Δt`/速度；现有 GRAB 30 Hz cache 的 stride `1` 已相当于 raw `g4`，无法表示 `g1~3` 的短幅度 horizon。
+- 若 object 与 hand loss 同时等权，建议先把这两种映射作为两个独立 ablation（或按 target RMS 做 loss reweight），不要假设存在一个同时精确对齐的 stride；hand 的 raw120 精确映射需另做 MANO 重建统计。
+- 若目标是相同动作时间或可解释的未来预测，应继续使用物理时间映射（raw `g≈4h`，例如 `h2↔g8`、`h10↔g40`），并考虑显式输入 `delta_time_s` 或预测速度。当前 model forward 未读取 stride/delta-time，故任一映射都应作为明确的训练变量记录。
+- 结论状态：幅度映射观察为 `SUPPORTED`；其能否改善最终效果尚未运行实验，科研结论为 `INCONCLUSIVE`。仅新增本活动条目；删除本条即可回滚文档差异，代码、配置、数据、cache、checkpoint 和既有运行均未改动。
+
 
 ## 2026-09-04 15:27:04 +0800 — HRDexDB MANO 配对与可适配数据集诊断
 

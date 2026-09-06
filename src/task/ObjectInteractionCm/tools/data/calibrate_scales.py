@@ -36,12 +36,23 @@ def _frames(view: _SequenceView, stride: int, count: int, seed: int) -> np.ndarr
     return np.sort(rng.choice(last, size=count, replace=False))
 
 
-def calibrate(index: Path, output: Path, *, max_sequences: int, frames_per_sequence_stride: int, radius: float, knn_k: int, seed: int) -> dict:
+def calibrate(
+    index: Path,
+    output: Path,
+    *,
+    max_sequences: int,
+    frames_per_sequence_stride: int,
+    radius: float,
+    knn_k: int,
+    seed: int,
+    grab_strides: tuple[int, ...] = tuple(range(1, 11)),
+    inspire_strides: tuple[int, ...] = tuple(range(1, 11)),
+) -> dict:
     entries = _resolve_index_entries(index, "train")
     by_source: dict[str, list[dict[str, str]]] = defaultdict(list)
     for entry in entries:
         by_source[str(entry["source"])].append(entry)
-    stride_map = {"grab": tuple(range(1, 11)), "inspire_f1": tuple(range(2, 21, 2))}
+    stride_map = {"grab": tuple(grab_strides), "inspire_f1": tuple(inspire_strides)}
     group_flow: dict[str, list[float]] = defaultdict(list)
     group_geo: dict[str, list[float]] = defaultdict(list)
     group_obj: dict[str, list[float]] = defaultdict(list)
@@ -88,7 +99,12 @@ def calibrate(index: Path, output: Path, *, max_sequences: int, frames_per_seque
         "schema_name": "ref2dex_object_interaction_cm_scales_v1_2_1",
         "split": "train",
         "radius_m": float(radius), "knn_k": int(knn_k),
-        "sampling": {"max_sequences_per_source": int(max_sequences), "frames_per_sequence_stride": int(frames_per_sequence_stride), "seed": int(seed)},
+        "sampling": {
+            "max_sequences_per_source": int(max_sequences),
+            "frames_per_sequence_stride": int(frames_per_sequence_stride),
+            "seed": int(seed),
+            "stride_policy": {"grab": list(grab_strides), "inspire_f1": list(inspire_strides)},
+        },
         "scales": {"s_geo": group_rms(group_geo), "s_hand_flow": group_rms(group_flow), "s_obj_flow": group_rms(group_obj)},
         "group_frame_counts": dict(sorted(group_counts.items())),
         "group_rms": {
@@ -111,8 +127,20 @@ def main() -> None:
     parser.add_argument("--radius-m", type=float, default=0.05)
     parser.add_argument("--knn-k", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--grab-strides", type=int, nargs="+", default=list(range(1, 11)))
+    parser.add_argument("--inspire-strides", type=int, nargs="+", default=list(range(1, 11)))
     args = parser.parse_args()
-    payload = calibrate(args.index.resolve(), args.output.resolve(), max_sequences=args.max_sequences_per_source, frames_per_sequence_stride=args.frames_per_sequence_stride, radius=args.radius_m, knn_k=args.knn_k, seed=args.seed)
+    payload = calibrate(
+        args.index.resolve(),
+        args.output.resolve(),
+        max_sequences=args.max_sequences_per_source,
+        frames_per_sequence_stride=args.frames_per_sequence_stride,
+        radius=args.radius_m,
+        knn_k=args.knn_k,
+        seed=args.seed,
+        grab_strides=tuple(args.grab_strides),
+        inspire_strides=tuple(args.inspire_strides),
+    )
     print(json.dumps({"output": str(args.output.resolve()), "scales": payload["scales"], "groups": len(payload["group_frame_counts"])}, ensure_ascii=False))
 
 
