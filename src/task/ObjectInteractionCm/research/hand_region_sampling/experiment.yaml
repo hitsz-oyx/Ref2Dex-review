@@ -1,0 +1,25 @@
+name: hand_region_sampling
+task: ObjectInteractionCm
+modification_version: V1.2.6
+importance: exploratory
+pinned: false
+tags: [mano, inspire, region-weighted-sampling, visualization]
+entrypoint: src.task.ObjectInteractionCm.research.hand_region_sampling.run
+default_output_root: src/task/ObjectInteractionCm/research/hand_region_sampling/output
+plan: src/task/ObjectInteractionCm/docs/plan/V1.2.6.md
+hypothesis: >-
+  A fixed 2048-point area-weighted sampler with explicit palm/body/tip Region quotas gives both MANO and
+  Inspire visible fingertip coverage without changing the final geometry representation to uniform FPS.
+contracts:
+  total_points: 2048
+  region_ids: 11
+  default_quota_profile: balanced
+  quota_profiles:
+    balanced: palm=0.25,body=0.50,tip=0.25
+    tip_heavy: palm=0.25,body=0.25,tip=0.50
+    link_stratified: hand_base=512,terminal_parent_links=1024,other_finger_links=512
+    uniform_surface: no_region_or_link_quota
+    uniform_surface_ratio: mano=2048,inspire=10135
+  within_region: area_weighted_triangle_barycentric
+  surface_seed: 2024
+  output_only: true

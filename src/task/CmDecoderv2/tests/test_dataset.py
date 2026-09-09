@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import torch
 
 from src.task.CmDecoderv2.dataset import CmDecoderV2Dataset
 
@@ -26,4 +27,9 @@ def test_pilot_view_window_contract_and_shapes() -> None:
     assert sample["target_q_delta"].shape == (4, 6)
     assert sample["target_wrist_translation"].shape == (4, 3)
     assert sample["target_wrist_rotation"].shape == (4, 3, 3)
+    assert sample["target_hand_points_object"].shape == (4, 1538, 3)
+    assert sample["current_wrist_pose_world"].shape == (4, 4)
+    assert sample["object_pose_world"].shape == (4, 4)
+    assert sample["active_mask"].shape == (4,)
+    assert sample["active_mask"].dtype == torch.bool
     assert np.all(np.diff(np.load(view["sequences"]["train"][0]["window_source_frame_ids"])[0]) == 4)

@@ -9,11 +9,13 @@ model:
   oicm_checkpoint: outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051/checkpoints/best.pt
   # Gate C: frozen terminal OICM best.pt SHA256 (续训按用户要求停止后锁定)。
   oicm_checkpoint_sha256: fde9984a79caff801ea06b566b1ee0f387944b4662909e4d5986c2e464b45b26
+  surface_urdf: src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf
 
 data:
   view_root: data/processed_data/cm_decoder_v2/dexplore_rl_v1_1
   index_path: data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json
   urdf_path: src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf
+  active_only: true
 
 train:
   distributed:

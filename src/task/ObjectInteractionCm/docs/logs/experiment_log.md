@@ -3,6 +3,46 @@
 - scope: task:ObjectInteractionCm
 - related: [任务入口](../README.md)、[V1.1 执行计划](../plan/V1.1.md)、[V1.1 架构](../architecture/V1.1.md)、[活动记录](activity_log.md)
 
+## 2026-09-07 — V1.2.5 修正 DExplore 实际物体轨迹、KNN=16 的 Cm 重训（已完成）
+
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606`
+- run_status: `COMPLETED`
+- modification_version: `V1.2.5`
+- operation_category: `experiment / operation / data`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- seed: `42`
+- initial_checkpoint: `null`（from scratch）
+- data index: `data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json`
+- scale manifest: `data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/scales_train_v1_2_5.json`
+- split: train `509`（MANO 254 / RL-Inspire 255）、val `58`（28 / 30）、test `63` MANO-only；630 个 parent sequence 全部互斥。
+- training: 实际 simulated object trajectory、右手 1538 点、object pool/sample `4096/1024`、`D=128,C=32,S=16,K=16`，global batch 96，GPU 0/1/2，最大 202300 steps。
+
+**假设与变量**
+
+修正后的 RL-Inspire hand/object 联合轨迹能够为 ObjectInteractionCm 提供一致的 object-flow GT；将局部
+KNN 从 8 改为 16 后，从随机初始化学习新的 object-centric Cm。其余 stride、source probability、loss、
+优化器和 checkpoint 选择规则沿用 V1.2.3。旧错误轨迹 checkpoint 不参与初始化或对照选择。
+
+**运行入口**
+
+- [V1.2.5 执行计划](../plan/V1.2.5.md)
+- [修正 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)、[index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json) 与 [KNN=16 scale](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/scales_train_v1_2_5.json)
+- [正式运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/)、[配置快照](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/config.json)、[运行清单](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/run_manifest.json)、[逐步指标](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/metrics.jsonl) 与 [训练日志](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/train.log)
+- [当前 best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/best.pt) 与 [latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/latest.pt)
+
+**结果与结论边界**
+
+- 三卡 2-step smoke 正常完成；正式 run 在 262 个 epoch 后达到 `202300/202300` steps，自然结束，耗时
+  `06:30:21`。全程 loss/gradient finite，未发现 traceback、NaN、OOM 或 NCCL failure。
+- 按两 source 等权 `val/obj/flow_epe_mm` 选择的 best 位于 epoch 143 / step 110682：总指标
+  `6.422504 mm`，MANO `7.243497 mm`，RL-Inspire `5.601512 mm`；对应 source hand-flow EPE 为
+  MANO `2.809946 mm`、RL-Inspire `1.776661 mm`。
+- 最终 epoch 262 / step 202300 的等权 object EPE 为 `6.706175 mm`（MANO `7.733837 mm`、RL-Inspire
+  `5.678513 mm`），略差于 best；后续消费必须显式使用 `best.pt`，不能把 `latest.pt` 当作最佳模型。
+- 结论 `SUPPORTED`：修正实际物体轨迹、KNN=16 的 Cm 训练链路稳定完成并生成有效 checkpoint。
+  该结论不证明 CmDecoderV2 或 rollout 已改善；下游效果仍为 `INCONCLUSIVE`，需使用本轮 best checkpoint
+  重新训练/评估 decoder。
+
 ## 2026-09-05 — V1.2.3 Dexplore RL/MANO right-hand Cm mixed training（已停止）
 
 - run_id: `object_interaction_cm_dexplore_rl_v1_2_3_20260905_234051`

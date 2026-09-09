@@ -30,6 +30,39 @@ def rotation_geodesic(prediction: torch.Tensor, target: torch.Tensor) -> torch.T
     return torch.atan2(sine, cosine)
 
 
+def _masked_horizon_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Mean over batch/feature axes for each horizon, ignoring invalid frames."""
+    if values.ndim < 2 or mask.shape != values.shape[:2]:
+        raise ValueError(f"Expected values [B,K,...] and mask [B,K], got {tuple(values.shape)} and {tuple(mask.shape)}")
+    expanded = mask.to(dtype=values.dtype)
+    for _ in range(values.ndim - 2):
+        expanded = expanded.unsqueeze(-1)
+    expanded = expanded.expand_as(values)
+    reduce_dims = (0, *range(2, values.ndim))
+    numerator = (values * expanded).sum(dim=reduce_dims)
+    denominator = expanded.sum(dim=reduce_dims)
+    zero = values.sum() * 0.0
+    return torch.where(denominator > 0, numerator / denominator.clamp_min(1.0), zero.expand_as(numerator))
+
+
+def _masked_weighted_horizon_loss(values: torch.Tensor, mask: torch.Tensor, weights: torch.Tensor) -> torch.Tensor:
+    """Weighted loss over valid [B,K] horizons, renormalized after masking."""
+    if values.ndim < 2 or mask.shape != values.shape[:2] or weights.shape != (values.shape[1],):
+        raise ValueError(
+            f"Expected values [B,K,...], mask [B,K], weights [K], got {tuple(values.shape)}, "
+            f"{tuple(mask.shape)}, {tuple(weights.shape)}"
+        )
+    if values.ndim > 2:
+        per_sample_horizon = values.mean(dim=tuple(range(2, values.ndim)))
+    else:
+        per_sample_horizon = values
+    weighted_mask = mask.to(dtype=values.dtype) * weights[None, :]
+    denominator = weighted_mask.sum()
+    numerator = (per_sample_horizon * weighted_mask).sum()
+    zero = values.sum() * 0.0
+    return torch.where(denominator > 0, numerator / denominator.clamp_min(1.0), zero)
+
+
 class CmDecoderV2Runner(BaseRunner):
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(data_cfg, seed, meta_cfg=self.cfg.meta, distributed=self.distributed)
@@ -75,38 +108,49 @@ class CmDecoderV2Runner(BaseRunner):
         target_q = batch["target_q_delta"].float()
         target_t = batch["target_wrist_translation"].float()
         target_r = batch["target_wrist_rotation"].float()
+        if "pred_hand_flow" not in output or "current_hand_points_object" not in output:
+            raise KeyError("CmDecoderv2 point-flow training requires differentiable FK outputs from the model")
+        target_hand_points = batch["target_hand_points_object"].float()
+        target_hand_flow = target_hand_points - output["current_hand_points_object"].detach()[:, None]
+        pred_hand_flow = output["pred_hand_flow"]
         weights = self._weights(pred_q.device, pred_q.dtype)
-        q_per_h = F.smooth_l1_loss(pred_q, target_q, beta=float(self.cfg.meta.q_smooth_l1_beta_rad), reduction="none").mean(dim=(0, 2))
-        translation_scale = float(self.cfg.meta.translation_scale)
-        translation_beta = float(self.cfg.meta.translation_smooth_l1_beta_m) * float(self.cfg.meta.translation_scale)
-        translation_per_h = F.smooth_l1_loss(
-            pred_t * translation_scale,
-            target_t * translation_scale,
-            beta=translation_beta,
+        cm_valid = output["cm_sample_valid"].bool()
+        if bool(getattr(self.cfg.data, "active_only", False)):
+            if "active_mask" not in batch:
+                raise KeyError("active_only=True requires the dataset to provide active_mask")
+            active_mask = batch["active_mask"].bool()
+            if active_mask.shape != cm_valid.shape:
+                raise ValueError(f"active_mask shape {active_mask.shape} != cm_sample_valid shape {cm_valid.shape}")
+            supervision_mask = active_mask & cm_valid
+        else:
+            active_mask = torch.ones_like(cm_valid)
+            supervision_mask = active_mask
+        flow_values = F.smooth_l1_loss(
+            pred_hand_flow,
+            target_hand_flow,
+            beta=float(self.cfg.meta.point_flow_smooth_l1_beta_m),
             reduction="none",
-        ).mean(dim=(0, 2))
-        rotation_values = rotation_geodesic(pred_r, target_r)
-        rotation_per_h = rotation_values.mean(dim=0)
-        q_loss = (weights * q_per_h).sum()
-        translation_loss = (weights * translation_per_h).sum()
-        rotation_loss = (weights * rotation_per_h).sum()
-        loss = (
-            float(self.cfg.meta.loss_q_weight) * q_loss
-            + float(self.cfg.meta.loss_translation_weight) * translation_loss
-            + float(self.cfg.meta.loss_rotation_weight) * rotation_loss
         )
-        q_mae = (pred_q - target_q).abs().mean(dim=(0, 2))
-        translation_mm = torch.linalg.vector_norm(pred_t - target_t, dim=-1).mean(dim=0) * 1000.0
-        rotation_deg = rotation_values.mean(dim=0) * (180.0 / math.pi)
-        identity_q = target_q.abs().mean(dim=(0, 2))
-        identity_translation = torch.linalg.vector_norm(target_t, dim=-1).mean(dim=0) * 1000.0
-        identity_rotation = rotation_geodesic(torch.eye(3, device=target_r.device, dtype=target_r.dtype).expand_as(target_r), target_r).mean(dim=0) * (180.0 / math.pi)
+        rotation_values = rotation_geodesic(pred_r, target_r)
+        point_flow_loss = _masked_weighted_horizon_loss(flow_values, supervision_mask, weights)
+        loss = float(self.cfg.meta.loss_point_flow_weight) * point_flow_loss
+        point_flow_epe = _masked_horizon_mean(torch.linalg.vector_norm(pred_hand_flow - target_hand_flow, dim=-1), supervision_mask) * 1000.0
+        q_mae = _masked_horizon_mean((pred_q - target_q).abs(), supervision_mask)
+        translation_mm = _masked_horizon_mean(torch.linalg.vector_norm(pred_t - target_t, dim=-1), supervision_mask) * 1000.0
+        rotation_deg = _masked_horizon_mean(rotation_values, supervision_mask) * (180.0 / math.pi)
+        identity_q = _masked_horizon_mean(target_q.abs(), supervision_mask)
+        identity_translation = _masked_horizon_mean(torch.linalg.vector_norm(target_t, dim=-1), supervision_mask) * 1000.0
+        identity_rotation = _masked_horizon_mean(
+            rotation_geodesic(torch.eye(3, device=target_r.device, dtype=target_r.dtype).expand_as(target_r), target_r),
+            supervision_mask,
+        ) * (180.0 / math.pi)
         metrics: dict[str, Any] = {
             "loss": loss,
-            "loss/q": q_loss,
-            "loss/wrist_translation": translation_loss,
-            "loss/wrist_rotation": rotation_loss,
-            "cm/valid_frame_ratio": output["cm_sample_valid"].float().mean(),
+            "loss/point_flow": point_flow_loss,
+            "cm/valid_frame_ratio": cm_valid.float().mean(),
+            "cm/active_frame_ratio": active_mask.float().mean(),
+            "cm/supervision_frame_ratio": supervision_mask.float().mean(),
+            "hand/point_flow_epe_mm": point_flow_epe.mean(),
             "q/mae_rad": q_mae.mean(),
             "wrist/translation_mm": translation_mm.mean(),
             "wrist/rotation_deg": rotation_deg.mean(),
@@ -116,6 +160,7 @@ class CmDecoderV2Runner(BaseRunner):
         }
         for horizon in range(pred_q.shape[1]):
             suffix = f"h{horizon + 1}"
+            metrics[f"hand/point_flow_epe_mm_{suffix}"] = point_flow_epe[horizon]
             metrics[f"q/mae_rad_{suffix}"] = q_mae[horizon]
             metrics[f"wrist/translation_mm_{suffix}"] = translation_mm[horizon]
             metrics[f"wrist/rotation_deg_{suffix}"] = rotation_deg[horizon]
@@ -125,5 +170,5 @@ class CmDecoderV2Runner(BaseRunner):
         return RunnerOutput(loss=loss, metrics=metrics, batch_size=int(pred_q.shape[0]))
 
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
-        keys = {"loss", "loss/q", "loss/wrist_translation", "loss/wrist_rotation", "q/mae_rad_h1", "wrist/translation_mm_h1", "wrist/rotation_deg_h1", "cm/valid_frame_ratio"}
+        keys = {"loss", "loss/point_flow", "hand/point_flow_epe_mm_h1", "q/mae_rad_h1", "wrist/translation_mm_h1", "wrist/rotation_deg_h1", "cm/valid_frame_ratio", "cm/active_frame_ratio", "cm/supervision_frame_ratio"}
         return {key: value for key, value in metrics.items() if key in keys}

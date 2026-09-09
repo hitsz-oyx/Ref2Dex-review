@@ -1,8 +1,751 @@
 # CmDecoderv2 活动记录
 
 - scope: `src/task/CmDecoderv2/`
-- last_updated: 2026-09-06
+- last_updated: 2026-09-08
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+## 2026-09-08 20:26:26 +0800 — V1.1.4 teacher-forced effect 误差归因诊断
+
+- activity_id: `cmdecoderv2-teacherforced-effect-attribution-20260908-202626`
+- timestamp: `2026-09-08 20:26:26 +0800`
+- modification_version: `V1.1.4`
+- type: `diagnostic / operation`
+- change_level: `L0`（只读逐帧诊断；不修改代码、checkpoint、cache、split 或 viewer 运行）
+- approval: `user-approved`
+- approval_basis: 用户询问 teacher-forced 下 GT effect 近零而预测 effect 约 6 mm 是否合理。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有工作区改动）
+- run_id: `cmdecoderv2-teacherforced-effect-attribution-20260908-202626`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（6 mm 现象主要由 teacher-forced decoder 单步手流误差解释；OICM GT-hand-flow 对照不支持 OICM 固有 6 mm 偏置）
+- scope: `s1/mouse_lift`、修正数据 decoder best、冻结 OICM；无持久化新输出目录，证据记录如下。
+
+**原因**
+
+确认 viewer 的“教师强制”语义：当前 Inspire state 使用 GT，但下一状态仍由 decoder 预测；它不是把 GT hand flow 原样送入 OICM。因此需要把 decoder teacher-forced 路径与 GT hand-flow→OICM 路径分开比较。
+
+**文件**
+
+- `src/task/CmDecoderv2/docs/logs/activity_log.md` — 记录 teacher-forced 与 GT hand-flow→OICM 归因证据。
+- `src/task/CmDecoderv2/docs/logs/experiment_log.md` — 追加本次诊断结果和结论边界。
+
+**运行与证据**
+
+- 使用 `EffectDiagnostic.teacher_record` 对 `s1/mouse_lift` 的 `367` 个 transition 逐帧 forward；另用同一 decoder checkpoint 中冻结的 OICM，将真实 GT Inspire hand flow 直接 forward，未写入文件。
+- teacher-forced 近物体（距离 `<=50 mm`）`275` 帧全部有效；其中 GT object effect `<=0.1 mm` 的 `126` 帧：GT effect RMS 均值 `0.048 mm`，预测 effect RMS 均值/中位数/最大值 `7.317/7.293/10.120 mm`，prediction-GT EPE 均值 `7.286 mm`。
+- 同一 `126` 帧中，teacher-forced decoder hand-flow EPE 均值 `3.850 mm`；GT hand-flow RMS 均值 `1.179 mm`。
+- 严格 GT hand-flow→OICM 对照的同一 `126` 帧：预测 object effect RMS 均值/中位数/最大值 `0.706/0.688/1.786 mm`，prediction-GT EPE 均值 `0.660 mm`。
+- 远距离帧的 raw 输出仍是无效 sample 的 dummy head path；不用于物理解释。
+- [完整 viewer 运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-195042/)，其中的 GT/pred effect 字段仍仅作显示和诊断。
+
+**验证**
+
+- 结论：GT object effect 为零而 teacher-forced prediction 约 `6–7 mm` 在当前实现和当前 checkpoint 下是可复现的，但不是“正确的物理预测”；它是 decoder 单步 hand-state/hand-flow 误差经接触敏感 OICM 放大的结果。
+- “教师强制”并未消除单步 decoder 误差；它只消除了前序 rollout 状态漂移。若要单独测 OICM，应使用 GT hand-flow→OICM 对照。
+- 现有测试仍为 `13 passed`，8104 viewer 保持 HTTP `200`；本次未改变任何运行代码或研究变量。
+
+**保护边界**
+
+- 未修改 decoder/OICM checkpoint、数据、cache、split、配置、模型代码或运行中的 8104/8102/8103 viewer。
+
+## 2026-09-08 19:53:57 +0800 — V1.1.4 中文 Inspire effect viewer 与修正数据完整重跑
+
+- activity_id: `cmdecoderv2-inspire-effect-v1.2.5-best-20260908-194900`
+- timestamp: `2026-09-08 19:53:57 +0800`
+- modification_version: `V1.1.4`
+- type: `code / diagnostic / experiment / operation / documentation`
+- change_level: `L1`（Task-local viewer 交互和 display-only GT 诊断字段；不改变 decoder/OICM、训练变量或正式 split）
+- approval: `user-approved`
+- approval_basis: 用户要求右侧注释中文化、允许任意帧启动递归 rollout、可切换 teacher-forcing/rollout，并同时显示预测 effect 与 GT effect。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有工作区改动；未覆盖其他 Task 或旧 viewer）
+- run_id: `cmdecoderv2-inspire-effect-20260908-195042`
+- run_status: `RUNNING`（effect 计算完成；中文 Viser 8104 保持运行）
+- conclusion: `INCONCLUSIVE`（支持 OICM 远距离 validity gate 子结论；单序列和跨 embodiment rollout 整体质量仍不能由此判定）
+- scope: `src/task/CmDecoderv2/research/inspire_rollout_effect/` 及其 Task 测试/说明
+
+**原因**
+
+将上次会话未完成的交互需求收口：右侧说明中文化，允许从任意合法帧重新 handoff，支持教师强制与递归
+Rollout 随时切换，并把真实 object flow 作为不进入模型的 GT effect 对照显示。
+
+**文件**
+
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/run.py` — 增加中文交互 viewer、任意帧 handoff、教师强制/递归 Rollout 切换、预测/GT effect 显示；GT flow 仅 display-only；Ctrl-C 收口 manifest。
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/README.md` — 更新中文控件、运行入口和 GT display-only 合同。
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/experiment.yaml` — 明确 future object flow 仅允许 display-only，禁止作为模型输入。
+- `src/task/CmDecoderv2/tests/test_inspire_effect.py` — 增加可选 GT 摘要字段回归。
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/run_manifest.json` — 将被超时终止的旧 viewer 如实标为 `STOPPED`。
+
+**运行与产物**
+
+- full command: `CUDA_VISIBLE_DEVICES=7 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_2_5.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v1.2.5-best-20260908-194900 --port 8104 --fps 8 --serve`
+- smoke command: 同一 checkpoint/config 加 `--max-steps 2`，run `cmdecoderv2-inspire-effect-20260908-194949`，`COMPLETED`。
+- decoder checkpoint: epoch `24` / step `36120`；SHA256 `596ae0ceba947115a3b35c65735b5537f7e5452e1159d644ac4c89f9a7b101dc`。
+- frozen OICM checkpoint SHA256: `a73b7dbf93cf4ca3b6de21e70c74acd22ba58d69ec8003d1c9fdae3f76180493`。
+- sequence: `s1/mouse_lift`，368 个 recursive rollout transition；GT object flow 仅用于显示和离线 EPE，不进入模型。
+- [完整运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-195042/)
+- [run manifest](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-195042/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-195042/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-195042/effect_summary.json)
+- Viser: `http://localhost:8104`，HTTP `200`；进程保持运行。
+
+**验证**
+
+- `py_compile`（run.py、visualize_inspire_test.py）：通过；`pytest -q src/task/CmDecoderv2/tests`：`13 passed`。
+- 2-step smoke 已生成 `gt_obj_flow_object/world`、`gt_effect_rms_mm` 和 `pred_gt_effect_epe_mm`，验证 display-only 字段合同。
+- 完整结果：远于 `50 mm` 的 12 帧全部 `sample_valid=false`，effective effect RMS 均值/最大值 `0 mm`；近距离 356 帧全部有效，effective effect RMS 均值 `4.528 mm`、中位数 `1.647 mm`、最大 `52.341 mm`。
+- 全局 raw/effective effect RMS 均值 `4.998/4.380 mm`，GT effect RMS 均值 `2.693 mm`，预测-GT EPE 均值 `2.512 mm`，OICM valid ratio `0.9674`。
+- 子结论 `SUPPORTED`：该 held-out 序列中远距离 hand flow 仍由 OICM validity gate 屏蔽；总体 decoder rollout/跨 embodiment 结论保持 `INCONCLUSIVE`。
+
+**保护边界与旧运行收口**
+
+- 未读取 GT flow 作为 decoder/OICM 输入，未改变 checkpoint、cache、split、训练配置或旧 8102/8103 viewer。
+- 旧 run `cmdecoderv2-inspire-effect-20260908-151014` 的 effect 已完成但 viewer 被执行会话超时终止，manifest 已更正为 `STOPPED`；旧产物保留可审计。
+
+## 2026-09-08 15:12:08 +0800 — V1.1.4 当前修正数据 best.pt 的 Inspire rollout self-effect 诊断
+
+- activity_id: `cmdecoderv2-inspire-effect-v1.2.5-best-20260908-125300`
+- timestamp: `2026-09-08 15:12:08 +0800`
+- modification_version: `V1.1.4`（复用既有 rollout self-effect 诊断协议；输入 decoder/OICM 为本次修正数据终态）
+- type: `diagnostic / experiment / operation`
+- change_level: `L0`（按既有诊断协议运行，不修改模型、数据、split、checkpoint 或指标合同）
+- approval: `user-approved`
+- approval_basis: 用户要求用当前 `best.pt`，将 Inspire rollout 每步产生的 Cm 送入 OICM 预测 object point flow。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有工作区改动；本次仅产生独立诊断输出并追加记录）
+- run_id: `cmdecoderv2-inspire-effect-20260908-151014`
+- run_status: `STOPPED`（368-step effect 已计算完成；端口 8104 的 Viser 后续被执行会话超时终止，产物保留）
+- conclusion: `INCONCLUSIVE`（远距离 validity gate 子结论成立；单序列 rollout 整体质量仍未判定）
+- scope: `src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/`
+
+**原因**
+
+需要使用修正数据训练后的当前 decoder `best.pt` 重做既有纯 Inspire self-effect 诊断，观察 decoder 递归
+rollout 产生的 Inspire hand flow 经冻结 OICM 后，对物体点流的预测是否仍遵守 5 cm interaction gate；
+不与 GT object flow 比较。
+
+**文件**
+
+- [实验记录](experiment_log.md) — 追加当前终态 `best.pt` 的 Inspire rollout effect 证据及正式训练终态。
+- [活动记录](activity_log.md) — 登记本次运行状态、命令、输入 checkpoint 和可视化入口。
+
+**运行与产物**
+
+- command: `CUDA_VISIBLE_DEVICES=7 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_2_5.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v1.2.5-best-20260908-125300 --port 8104 --fps 8 --serve`
+- decoder checkpoint: epoch `24` / step `36120`；SHA256 `596ae0ceba947115a3b35c65735b5537f7e5452e1159d644ac4c89f9a7b101dc`。
+- frozen OICM checkpoint SHA256: `a73b7dbf93cf4ca3b6de21e70c74acd22ba58d69ec8003d1c9fdae3f76180493`。
+- sequence: `s1/mouse_lift`，修正后 MANO-only test parent 中具备 DExplore Inspire tensor 的 held-out 序列；368 个 rollout transition。
+- Viser: `http://localhost:8104` 曾返回 HTTP `200`；进程已停止。
+- [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/)
+- [run manifest](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260908-151014/effect_summary.json)
+
+**验证**
+
+- 距离 `>50 mm`：12 帧全部 `sample_valid=false`，effective effect RMS 均值/最大值均为 `0 mm`；raw dummy head RMS 均值 `18.949 mm`，不作物理解释。
+- 距离 `<=50 mm`：356 帧全部有效，effective effect RMS 均值 `4.528 mm`、中位数 `1.647 mm`、最大值 `52.341 mm`。
+- 全局 effective effect RMS 均值 `4.380 mm`，OICM valid ratio `0.9674`；旧 manifest 未包含 display-only GT 字段，已由新完整重跑补齐。
+- 初次尝试的历史序列 `s1/camera_takepicture_3_Retake` 不属于修正后的 63 条 test split，loader 在生成输出前按预期拒绝；随后选择同一新 test split 内的 `s1/mouse_lift`，未绕过 split 闸门。
+
+**保护边界**
+
+- 未读取未来 object pose/flow 或 GT object flow；未修改正式 decoder/OICM checkpoint、数据 cache、split、训练配置或已有 viewer。
+
+## 2026-09-08 10:14:02 +0800 — V1.1.6 修正 DExplore RL 数据上的 CmDecoderv2 正式训练完成
+
+- activity_id: `cmdecoderv2-decoder-v1.2.5-20260908-101402`
+- timestamp: `2026-09-08 10:14:02 +0800`
+- modification_version: `V1.1.6`
+- type: `data / experiment / operation`
+- change_level: `L2`（切换到修正后的 RL 物体轨迹、OICM V1.2.5 终态 checkpoint 和对应 decoder view；模型结构、loss、split 合同保持不变）
+- approval: `user-approved`
+- approval_basis: 用户确认按修正后的 DExplore RL 数据和 OICM V1.2.5 best checkpoint 从头训练 decoder。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有工作区改动；本次只新增独立 decoder config/view/output 并追加记录）
+- run_id: `cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（正式训练和 checkpoint 选择按冻结合同完成；该结论不等于 MANO→Inspire rollout 质量成立）
+- scope: `src/task/CmDecoderv2/`、`data/processed_data/cm_decoder_v2/dexplore_rl_v1_2_5/`、`outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/`
+
+**原因**
+
+旧 decoder view 和 checkpoint 绑定旧版 OICM 及旧物体轨迹；本次需要在修正后的 DExplore RL 物体轨迹和
+OICM V1.2.5 终态 `best.pt` 上重新从头训练，以隔离数据修正对 decoder 的影响。
+
+**验证**
+
+- decoder view builder：`cmdecoderv2-view-full-20260908-100512`，train/val/test=`255/30/63`，RL
+  sidecars=`285`，windows=`63988/7807`，split contract 为 Inspire RL train/val + MANO qualitative-only test。
+- `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_2_5_smoke.yaml`：`last_step=2`，完成 train/val，OICM strict-load、point-flow loss 和反向传播通过。
+- `CUDA_VISIBLE_DEVICES='' PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests`：`12 passed`。
+- 2026-09-08 11:09:55 +0800 检查：正式 run 已完成约 `26600/75250` steps、进入 epoch 18，进程和三卡 worker 正常；当前最近验证为 step `25585` 的 `val/loss=0.0043540`、`val/hand/point_flow_epe_mm=13.3516`，历史最佳 `val/loss=0.0041447`（epoch 5 / step 7525）。这些仍是中途训练指标，不作为终态科研结论。
+- 2026-09-08 11:56:43 +0800 检查：正式 run 已完成约 `50200/75250` steps、进入 epoch 34，进程和三卡 worker 仍正常；最近验证为 step `49665` 的 `val/loss=0.00412665`、`val/hand/point_flow_epe_mm=12.6080`，历史最佳已改善为 `val/loss=0.00400710`（epoch 24 / step 36120）。预计剩余约 45–55 分钟；仍不作终态科研结论。
+- 终态：50 epochs / `75250` steps 正常完成，用时 `02:32:18`；best 为 epoch `24` / step `36120`，`val/loss=0.0040070958`、`val/hand/point_flow_epe_mm=12.4907`、h1=`9.0049 mm`；final epoch 50 的 `val/loss=0.0041402271`。
+
+**文件/输入**
+
+- [正式配置](../../configs/active/dexplore_rl_v1_2_5.yaml) — 指向 OICM V1.2.5 `best.pt` 和修正数据 view；从头训练。
+- [smoke 配置](../../configs/active/dexplore_rl_v1_2_5_smoke.yaml) — 同一输入合同，关闭扰动并限制 2 steps。
+- [decoder view](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_2_5/) — 基于修正 OICM index，train/val Inspire RL，test MANO qualitative-only。
+- OICM checkpoint SHA256: `a73b7dbf93cf4ca3b6de21e70c74acd22ba58d69ec8003d1c9fdae3f76180493`。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=4,5,6 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_2_5.yaml --distributed`
+- device: `cuda:0,1,2` within `CUDA_VISIBLE_DEVICES=4,5,6`；world size `3`；per-device batch `8`；global batch `24`。
+- total steps: `75250`；last epoch: `50`；best metric: `val/loss=0.0040070958`。
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/)（`COMPLETED`）
+- [run manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/run_manifest.json)
+- [配置快照](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/config.json)
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/train.log)
+- [best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/checkpoints/best.pt) — epoch `24` / step `36120`，SHA256 `596ae0ceba947115a3b35c65735b5537f7e5452e1159d644ac4c89f9a7b101dc`。
+- [latest checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/checkpoints/latest.pt) — epoch `50` / step `75250`，SHA256 `23c33e1022e970b659d0ae651df04620f9ec1894af98a1b8ae39881f0dfa6ac2`。
+
+**保护边界**
+
+- 旧 decoder view/checkpoint、旧 OICM cache/checkpoint、原始数据、MANO-only test 口径和已有可视化进程不修改。
+
+## 2026-09-07 21:39:30 +0800 — V1.1.6 MANO/Inspire Cm 来源分类诊断
+
+- activity_id: `cmdecoderv2-cm-source-classifier-final-20260907-214000`
+- timestamp: `2026-09-07 21:39:30 +0800`
+- modification_version: `V1.1.6`
+- type: `code / diagnostic / experiment / operation`
+- change_level: `L1`（Task-local 表征诊断脚本和小分类器；冻结 OICM、数据 cache、正式 split、decoder checkpoint 和训练变量）
+- approval: `user-approved`
+- approval_basis: 用户确认训练小分类器检验当前 Cm 是否包含可识别的 MANO/Inspire 手来源信息。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留前序 CmDecoderv2/ObjectInteractionCm 和 rollout 诊断工作区改动）
+- run_id: `cmdecoderv2-cm-source-classifier-20260907-213748`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（冻结 OICM 的 `cm_tokens` 含有明显可识别的 MANO/Inspire source/embodiment signal；纯静态手型归因仍需额外控制）
+- scope: `src/task/CmDecoderv2/research/cm_hand_source_classifier/`；不改变正式训练或数据合同
+
+**文件**
+
+- `src/task/CmDecoderv2/research/cm_hand_source_classifier/run.py` — 从 MANO/Inspire geometry cache 生成冻结 OICM `cm_tokens`，按 sequence split 训练小型 source classifier，并报告 anchor control。
+- `src/task/CmDecoderv2/research/cm_hand_source_classifier/README.md`、`experiment.yaml` — 记录标签、特征、共同 object 类别、split 和输出合同。
+- `src/task/CmDecoderv2/docs/plan/v1.1.md` — 记录用户批准的 Cm 来源分类诊断边界。
+- `src/task/CmDecoderv2/docs/README.md`、`docs/current_versions.yaml` — 增加分类诊断入口并更新 CmDecoderv2 指针为 `V1.1.6`。
+- `src/task/CmDecoderv2/`、`src/task/ObjectInteractionCm/docs/logs/activity_log.md` — 其他工作区差异保留，未由本实验覆盖。
+
+**原因**
+
+需要判断当前 Cm 是否保留了足够的 MANO/Inspire 手来源信息，使一个小型分类器能够在未见过的 sequence 上区分两类 source。
+
+**运行与产物**
+
+- command: `CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_hand_source_classifier.run --activity-id cmdecoderv2-cm-source-classifier-final-20260907-214000 --device cuda:0 --frames-per-sequence 8 --batch-size 8 --epochs 40`
+- OICM config: `src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_3.yaml`；checkpoint 为冻结 `best.pt`，SHA256 `fde9984a79caff801ea06b566b1ee0f387944b4662909e4d5986c2e464b45b26`。
+- split: train `226 MANO + 226 Inspire` sequences；val/test `36 MANO + 36 Inspire` sequences；仅使用两种 source 在 train/val 都共同出现的 23 个 object 类别；每条 sequence 抽取 8 个 transition。
+- [运行目录](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260907-213748/)
+- [run manifest](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260907-213748/run_manifest.json)
+- [features.npz](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260907-213748/features.npz)
+- [metrics.json](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260907-213748/metrics.json)
+
+**验证**
+
+- 主特征是 `cm_tokens` 的 mean/max/std pooling（96D），不输入 hand flow、object points、anchor 或 decoder 输出；anchor mean/max/std（9D）只作为 control。
+- 全部样本：Cm test accuracy `0.7448`、balanced accuracy `0.7448`、AUROC `0.8467`；anchor control test AUROC `0.6263`。
+- `sample_valid=true` 子集：Cm test accuracy `0.9752`、balanced accuracy `0.9752`、F1 `0.9752`、AUROC `0.9958`；anchor control accuracy `0.6281`、AUROC `0.6702`。
+- 特征提取和分类器训练共生成 `4192` 个样本；`PYTHONPATH=. pytest -q src/task/CmDecoderv2/tests`：`12 passed`；脚本 `py_compile` 和 `git diff --check` 通过。
+- activity 链接审计待本条写入后执行。
+
+**保护边界与解释限制**
+
+- 这是 source/embodiment 可分性证据，不是“纯静态手型”因果证明；Cm 可能同时编码 hand geometry、motion statistics 和 source-domain 差异。
+- 旧 smoke/中间输出保留但不作为最终证据；最终 run 使用小 manifest 和上述 metrics 作为入口。
+- 未修改 OICM/decoder checkpoint、正式 train/val/test split、geometry cache、训练配置或共享代码。
+
+## 2026-09-07 20:34:30 +0800 — V1.1.5 MANO rollout self-effect 348-step 对照诊断
+
+- activity_id: `cmdecoderv2-mano-effect-full-20260907-203300`
+- timestamp: `2026-09-07 20:34:30 +0800`
+- modification_version: `V1.1.5`
+- type: `code / diagnostic / experiment / operation`
+- change_level: `L1`（Task-local MANO rollout 旁路诊断与可视化；冻结 decoder/OICM、正式 MANO test source、split/cache 和既有 viewer）
+- approval: `user-approved`
+- approval_basis: 用户要求使用 MANO rollout 做同一 self-effect 诊断并可视化比较。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 CmDecoderv2、ObjectInteractionCm 和前序诊断工作区改动）
+- run_id: `cmdecoderv2-mano-effect-20260907-203231`
+- run_status: `RUNNING`（348 步 effect 计算完成；8103 Viser 仍运行）
+- conclusion: `SUPPORTED`（本序列中 MANO-source rollout 的远距离 hand flow 同样被 OICM 5 cm validity gate 屏蔽；decoder 整体跨 embodiment 动作质量仍不由此单独判定）
+- scope: `src/task/CmDecoderv2/research/mano_rollout_effect/`；不改变正式 test 或训练合同
+
+**文件**
+
+- `src/task/CmDecoderv2/research/mano_rollout_effect/run.py` — 使用正式 MANO source 递归 rollout，并将每步 Inspire hand flow 旁路 forward 冻结 OICM。
+- `src/task/CmDecoderv2/research/mano_rollout_effect/README.md`、`experiment.yaml` — 记录 MANO 对照实验合同和入口。
+- `src/task/CmDecoderv2/docs/plan/v1.1.md` — 记录用户批准的 MANO rollout self-effect 对照边界。
+- `src/task/CmDecoderv2/docs/README.md`、`docs/current_versions.yaml` — 增加诊断导航并更新 CmDecoderv2 指针为 `V1.1.5`。
+- `src/task/CmDecoderv2/`、`src/task/ObjectInteractionCm/docs/logs/activity_log.md` — 其他工作区差异保留，未由本运行覆盖。
+
+**原因**
+
+需要判断同一 OICM effect 诊断在正式 MANO-source rollout 下是否也把远离物体的 decoder 产生运动识别为无有效 object effect，并和纯 Inspire rollout 结果对照。
+
+**运行与产物**
+
+- command: `CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.mano_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_1_1.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/best.pt --device cuda:0 --sequence s1/camera_takepicture_3_Retake --activity-id cmdecoderv2-mano-effect-full-20260907-203300 --port 8103 --fps 8 --serve`
+- tmux session: `cmdecoderv2_mano_effect_20260907_2033`；Viser：`http://localhost:8103`。
+- [运行目录](../../research/mano_rollout_effect/output/cmdecoderv2-mano-effect-20260907-203231/)
+- [run manifest](../../research/mano_rollout_effect/output/cmdecoderv2-mano-effect-20260907-203231/run_manifest.json)
+- [effect.npz](../../research/mano_rollout_effect/output/cmdecoderv2-mano-effect-20260907-203231/effect.npz)
+- [effect_summary.json](../../research/mano_rollout_effect/output/cmdecoderv2-mano-effect-20260907-203231/effect_summary.json)
+
+**验证**
+
+- 2-step smoke：完成，MANO handoff 初始距离约 `1.27–1.31 m`，OICM 无效且 effective effect 为 `0`。
+- `PYTHONPATH=. pytest -q src/task/CmDecoderv2/tests`：`12 passed`；新脚本 `py_compile` 通过。
+- 348 个 MANO-source rollout transition 完成；输入使用当前 GRAB/MANO object geometry/pose 和当前 rollout Inspire geometry，不读取 paired Inspire GT、未来 object pose/flow 或 object-flow GT。
+- 距离 `>50 mm` 的 258 帧：`sample_valid=0/258`，raw effect RMS 均值 `12.535 mm`，effective effect RMS 均值 `0 mm`。
+- 距离 `<=50 mm` 的 90 帧：`89/90` 有效，effective effect RMS 均值 `9.194 mm`，最大 `41.302 mm`；唯一无效近距离帧为 frame `258`，距离约 `47.42 mm` 且 sampled active count 为 `0`。
+- 8103 HTTP `200`；`git diff --check` 通过；activity 链接审计待本条写入后执行。
+
+**保护边界**
+
+- raw effect 仅作为无效 OICM sample 的 dummy path 审计量；Viser 默认显示 effective effect，可切换 raw。
+- 未修改正式 MANO test index、split/cache、decoder/OICM checkpoint、训练配置、paired Inspire 数据或现有 8101/8102 viewer。
+
+## 2026-09-07 17:31:59 +0800 — V1.1.4 rollout self-effect 348-step OICM 旁路诊断
+
+- activity_id: `cmdecoderv2-inspire-effect-full-20260907-171315`
+- timestamp: `2026-09-07 17:31:59 +0800`
+- modification_version: `V1.1.4`
+- type: `code / diagnostic / experiment / operation`
+- change_level: `L1`（Task-local 诊断脚本、实验索引和可视化；冻结 decoder/OICM、数据 split、cache 和既有 viewer 不变）
+- approval: `user-approved`
+- approval_basis: 用户确认在 rollout 每一步用自身 Inspire point flow 重新 forward OICM effect，不与 GT object flow 比较。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 CmDecoderv2 point-flow/active-only 及其他 Task 工作区改动）
+- run_id: `cmdecoderv2-inspire-effect-20260907-171349`
+- run_status: `RUNNING`（effect 已完成；8102 Viser 仍运行）
+- conclusion: `SUPPORTED`（本序列中 OICM 的 5 cm validity gate 对 rollout hand flow 生效；decoder 的动作质量仍不由本诊断单独判定）
+- scope: `src/task/CmDecoderv2/research/inspire_rollout_effect/`；不改变正式训练或已有 viewer
+
+**文件**
+
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/run.py` — 生成 rollout hand flow，冻结 OICM forward，并提供 raw/effective effect viewer。
+- `src/task/CmDecoderv2/research/inspire_rollout_effect/README.md`、`experiment.yaml` — 记录实验合同和入口。
+- `src/task/CmDecoderv2/tests/test_inspire_effect.py` — raw/effective mask、分桶摘要和颜色映射测试。
+- `src/task/CmDecoderv2/docs/plan/v1.1.md` — 记录用户批准的 rollout self-effect 诊断边界。
+- `docs/current_versions.yaml` — CmDecoderv2 指针更新为 `V1.1.4`。
+- `src/task/CmDecoderv2/`、`src/task/ObjectInteractionCm/docs/logs/activity_log.md` — 本次之前已存在的工作区差异，仅作保护范围，未由本运行修改。
+
+**原因**
+
+需要判断“远离物体时的 rollout Inspire 运动是否被 Cm/OICM 识别为无 object effect”，同时避免把 GT object flow 或未来 object pose 引入诊断。
+
+**运行与产物**
+
+- command: `CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_1_1.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/best.pt --device cuda:0 --sequence s1/camera_takepicture_3_Retake --activity-id cmdecoderv2-inspire-effect-full-20260907-171315 --port 8102 --fps 8 --serve`
+- tmux session: `cmdecoderv2_inspire_effect_20260907_1713`；Viser：`http://localhost:8102`。
+- [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260907-171349/)
+- [run manifest](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260907-171349/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260907-171349/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-20260907-171349/effect_summary.json)
+
+**验证**
+
+- `py_compile` 和 `PYTHONPATH=. pytest -q src/task/CmDecoderv2/tests`：`12 passed`；包含本诊断新增的 3 个合同测试。
+- 348 个 rollout transition 完成；只使用当前 object geometry/pose 作为 `object_pose_t` 输入，没有读取未来 object pose/flow。
+- 距离 `>50 mm` 的 122 帧：`sample_valid=0/122`，raw effect RMS 均值 `12.533 mm`，但合同有效 effect 为 `0 mm`。
+- 距离 `<=50 mm` 的 226 帧：`225/226` 有效，effective effect RMS 均值 `7.959 mm`，最大 `39.277 mm`；唯一无效帧为 frame `127`，距离 `48.29 mm` 且 sampled active count 为 0，符合 1024 点采样未命中 candidate 的语义。
+- 8102 HTTP `200`；`git diff --check` 通过；`audit_diff.py --check-links` 通过（13 个变更路径、4 个本地链接）。
+
+**保护边界**
+
+- raw effect 仅作为 dummy computational path 审计量；不能解释为无效 Cm 的物理 effect。Viser 默认显示 effective effect，可切换 raw 观察该差异。
+- 未停止 8101 纯 Inspire viewer；未修改 decoder/OICM checkpoint、正式 split/cache、训练配置或既有输出。
+
+## 2026-09-07 15:45:00 +0800 — V1.1.1 best.pt 纯 Inspire 自回归 viewer 与跳帧控件运行核验
+
+- activity_id: `cmdecoderv2-inspire-best-jump-20260907_103836`
+- timestamp: `2026-09-07 15:45:00 +0800`
+- modification_version: `V1.1.1`
+- type: `diagnostic / operation`
+- change_level: `L0`（核验既有 viewer、trajectory 和运行清单；本次未修改模型、数据、配置或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户要求继续查看 point-flow `best.pt` 的 Inspire 自回归 rollout，并增加跳帧观察漂移；viewer 实现和启动范围已在前一轮确认。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留用户已有 CmDecoderv2 point-flow/active-only 改动及其他 Task 改动）
+- run_id: `cmdecoderv2-inspire-test-vis-20260907-103857`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（纯 Inspire viewer 工程运行正常；尚未据此形成 decoder 科研效果结论）
+- scope: `src/task/CmDecoderv2/`
+
+**运行与控件**
+
+- command: `CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.visualize_inspire_test --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_1_1.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/best.pt --device cuda:0 --sequence s1/camera_takepicture_3_Retake --port 8100 --fps 8 --activity-id cmdecoderv2-inspire-best-jump-20260907_103836`
+- tmux session: `cmdecoderv2_inspire_best_20260907_103836`；GPU3 进程仍在运行。
+- 实际 Viser 地址：`http://localhost:8101`。请求端口 `8100` 被 Viser 自动递增处理，命令行摘要和 manifest 中的请求端口仍为 8100；本次以监听端口 8101 为准。
+- 序列：`s1/camera_takepicture_3_Retake`，352 帧；使用 point-flow 正式训练的 `best.pt`（epoch 3 / step 10296）。
+- viewer 默认 `rollout`；支持 `teacherforced` / `rollout`、`GT` / `pred` / `both`、点大小滑块、`Jump size (frames)`（1–30）、`Previous jump` / `Next jump`、播放/停止和当前帧重启 rollout。
+
+**产物**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260907-103857/)
+- [run manifest](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260907-103857/run_manifest.json)
+- [trajectory.npz](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260907-103857/trajectory.npz)
+- [viewer 实现](../../visualize_inspire_test.py)
+
+**原因**
+
+本次继续的目的只是把上次会话中已经启动的 viewer 运行状态、实际监听端口和跳帧控件证据补齐；不重新训练，也不改变纯 Inspire 诊断与正式 MANO-only test 的边界。
+
+**验证**
+
+- `ps` / `tmux capture-pane`：viewer 主进程存活，Viser 已报告监听 8101。
+- `urllib.request http://127.0.0.1:8101/`：HTTP `200`；8097–8100 当前无监听。
+- trajectory 文件已存在且可读；运行清单记录 checkpoint、sequence、source contract 和 `run_status=RUNNING`。
+
+**保护边界**
+
+- 未停止或重启正式训练；未修改 best/latest checkpoint、数据 view/cache、split、配置或旧 viewer 输出。
+- 下列工作区差异在本次继续前已存在，本次未修改，仅作为交接保护范围：`src/task/CmDecoderv2/`、`src/task/ObjectInteractionCm/docs/logs/activity_log.md`。
+- 本次继续操作不改变 MANO→Inspire 科研结论；仍需人工通过 viewer 比较 teacherforced 与 rollout 的漂移。
+
+## 2026-09-07 10:21:16 +0800 — V1.1.3 point-flow 三卡正式训练终态与收敛诊断
+
+- activity_id: `cmdecoderv2-pointflow-train-final-20260907-102116`
+- timestamp: `2026-09-07 10:21:16 +0800`
+- modification_version: `V1.1.3`
+- type: `experiment / diagnostic / operation`
+- change_level: `L0`（只读解析既有训练产物并补记终态，不修改模型、数据或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户要求核对当前训练结果；原正式训练由用户明确批准。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 Task-local point-flow/active-only 实现和用户工作区改动）
+- run_id: `cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046`
+- run_status: `COMPLETED`
+- last_step: `171600`
+- last_epoch: `50`
+- best_metric: `val/loss=0.003370641680534728`（epoch `3`，step `10296`）
+- conclusion: `INCONCLUSIVE`（正式训练工程上完整结束且 point-flow validation 明显优于 epoch 1；但验证最优过早、后续回退，且 q/rotation 诊断劣于 identity baseline，跨 embodiment 效果需用 best.pt 可视化确认）
+- scope: `src/task/CmDecoderv2/`
+
+**终态产物**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/)
+- [run manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/run_manifest.json)
+- [配置快照](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/config.json)
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/train.log)
+- [best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/best.pt) — epoch `3` / step `10296`。
+- [latest checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/latest.pt) — epoch `50` / step `171600`。
+
+**原因**
+
+训练进程和 tmux session 均已退出，需要区分“训练完整结束”“优化收敛”和“跨 embodiment 方案成立”，并核对 best.pt 是否确实对应最低 validation loss。
+
+**验证**
+
+- 50 epochs / `171600` steps 正常完成，用时 `07:28:30`；`train.log` 末行明确报告结束，无残留 CmDecoderv2 train/torchrun 进程。
+- train loss 从 epoch 1 的 `0.0116015` 持续降到 epoch 50 的 `0.00296866`；val loss 从 `0.00757946` 降至 epoch 3 最佳 `0.00337064`，之后未再刷新，epoch 50 为 `0.00382680`。
+- best epoch 3：validation 全 horizon point-flow EPE `11.3794 mm`，h1 `6.8813 mm`；final epoch 50 为 `12.1087 / 9.1764 mm`。因此选模必须使用 best.pt，不应使用 latest.pt。
+- best epoch 3 的 h1 诊断：q MAE `0.04289 rad`、wrist translation `5.935 mm`、wrist rotation `2.570°`；对应 identity baseline 为 `0.01529 rad / 11.046 mm / 2.010°`。模型明显改善 wrist translation，但 q 与 wrist rotation 尚未超过 identity baseline。
+- validation `cm/supervision_frame_ratio=0.966668`，5 cm active-only 与 OICM valid gate 正常生效。
+
+**保护边界与下一证据**
+
+- 未修改或覆盖 best/latest checkpoint、数据 view/cache、split、旧 run 或可视化产物。
+- 下一步应固定使用 best.pt 做 teacher-forced 与 rollout 可视化；仅凭本次 loss 曲线不能把 MANO→Inspire 可行性写为 `SUPPORTED`。
+
+## 2026-09-06 20:31:18 +0800 — V1.1.3 启动 CmDecoderv2 point-flow 三卡正式训练
+
+- activity_id: `cmdecoderv2-pointflow-train-20260906-203118`
+- timestamp: `2026-09-06 20:31:18 +0800`
+- modification_version: `V1.1.3`
+- type: `operation / experiment`
+- change_level: `L3 + L2`（按已定稿 v1.1 plan 启动长任务；point-flow、active-only 和 RL-only 数据合同已由用户批准）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“现在开始训练”，沿用此前 GPU 0/1/2 三卡正式训练范围。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（沿用已批准的 Task-local point-flow/active-only 改动；不覆盖旧 run、OICM checkpoint 或 viewer）
+- run_id: `cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（已确认训练 wiring 正常；尚无收敛或 MANO→Inspire 效果结论）
+- scope: `src/task/CmDecoderv2/`
+
+**命令与运行状态**
+
+- command: `CUDA_VISIBLE_DEVICES=0,1,2 /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_1_1.yaml --distributed`
+- tmux session: `cmdecoderv2_pointflow_20260906_2030`
+- launcher/rank 已启动，world size `3`，global batch `24`，per-device batch `8`，训练上限 `171600` steps。
+- step `2000` 已写入 point-flow loss `0.0086414`，h1 点流 EPE `16.6742 mm`，active/supervision ratio `1.0`；最近 20 个记录点的 loss 均值约 `0.01177`、标准差约 `0.00206`，属于 batch-level 波动，不能据此判断收敛。
+
+**产物**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/)（`RUNNING`）
+- [run manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/run_manifest.json)
+- [配置快照](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/config.json)
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/train.log)
+- best/latest checkpoint：`outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_203046/checkpoints/`（尚未生成，`PENDING`）
+
+**原因**
+
+在 point-flow loss、可微 Inspire FK、5 cm active-only gate 和旧 OICM best checkpoint strict-load smoke 均通过后，开始新的独立三卡正式 run。旧 decoder run `cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701` 保持停止并保留。
+
+**验证**
+
+- OICM frozen best checkpoint SHA256 与配置一致：`fde9984a79caff801ea06b566b1ee0f387944b4662909e4d5986c2e464b45b26`。
+- 训练启动后已生成 run manifest/config/metadata/metrics/train.log，3 个 rank 正常运行；GPU 0/1/2 当前显存约 `5.6/3.1/3.1 GB`（总显存 24 GB），利用率随 rank 负载波动。
+- 早期 step 已产生 finite point-flow loss 和诊断指标；正式科研结论等待完整 validation 与最终 checkpoint。
+
+**保护边界与停止入口**
+
+- 未覆盖旧 checkpoint、旧输出、decoder view/cache、split 或 8098/8099 viewer。
+- 如需停止，使用 tmux session `cmdecoderv2_pointflow_20260906_2030` 发送安全中断，并在本条补记终态、last step/epoch、best metric 和 checkpoint。
+
+## 2026-09-06 20:22:37 +0800 — V1.1.3 将 CmDecoderv2 loss 改为可微 Inspire 点流监督
+
+- activity_id: `cmdecoderv2-pointflow-20260906-202237`
+- timestamp: `2026-09-06 20:22:37 +0800`
+- modification_version: `V1.1.3`
+- type: `architecture / code / experiment`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认纯 point-flow loss、q/wrist 输出保持不变、固定 1538 点/seed 2024、`object_pose_t` 坐标、可微 FK 和 active-only mask 全部按默认方案执行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810`
+- worktree_dirty: `true`（新增 Task-local point-flow FK/loss/测试/计划；不覆盖旧 checkpoint、split 或 cache）
+- run_id: `cmdecoderv2-pointflow-smoke-20260906-202237`
+- run_status: `COMPLETED`（仅完成静态、CPU smoke 和真实 checkpoint forward/loss smoke；未启动长训练）
+- conclusion: `SUPPORTED`（工程 point-flow wiring、FK parity、梯度和 active-only gate 通过；科研效果尚未重新训练，仍为 `INCONCLUSIVE`）
+- scope: `src/task/CmDecoderv2/`；旧 q/wrist-loss decoder run、旧 checkpoint 和 8098/8099 viewer 保持不变。
+
+**原因**
+
+用户要求保留 q/wrist 作为 decoder 输出，但将训练监督改为由 q/wrist 经 Inspire FK 生成的对应表面点流，避免直接 q/wrist loss 与最终几何目标不一致。
+
+**修改**
+
+- [pointflow.py](../../pointflow.py) — 使用同一 URDF、area-weighted surface sampling、seed `2024` 构造固定 1538 点，并实现可微 Inspire FK、SE(3) delta 和 `object_pose_t` 变换；surface buffers 不进入 checkpoint state dict。
+- [model.py](../../model.py) — 保留 q/wrist 输出，训练 batch 额外生成预测点和预测点流；可视化 batch 缺少 pose 字段时保持旧输出合同。
+- [dataset.py](../../dataset.py) — 提供扰动当前 wrist/object pose 及未来 GT hand points，GT 点流与扰动后的当前状态对齐。
+- [runner.py](../../runner.py)、[config.py](../../config.py) — 纯 point-flow Smooth-L1（beta `0.005 m`），q/wrist 只保留诊断指标；5 cm active mask 与 `cm_sample_valid` 继续 gating。
+- [test_pointflow.py](../../tests/test_pointflow.py) — 增加 cache parity、可微梯度和 horizon 点坐标变换测试。
+- [plan/v1.1.md](../plan/v1.1.md) — 记录 point-flow supervision 合同。
+
+**验证**
+
+- `py_compile`：通过。
+- `CUDA_VISIBLE_DEVICES='' ... pytest -q src/task/CmDecoderv2/tests`：`9 passed`。
+- differentiable FK 与现有 1538-point cache parity：最大误差约 `0.00014 mm`，梯度 finite。
+- 旧 decoder `best.pt` strict load：通过；固定 surface buffers 不破坏旧 checkpoint 兼容。
+- 真实 OICM checkpoint + pilot batch（1024 object points）forward/loss smoke：预测点流 `[1,4,1538,3]`、loss finite，active-only supervision ratio 正常。
+- 未启动新的长训练，因此没有新的 `metrics.jsonl`、`train.log` 或正式 checkpoint。
+
+**保护边界与回滚**
+
+- 未修改 decoder view/cache、正式 train/val/test split、OICM checkpoint、旧 decoder checkpoint 或 viewer 进程。
+- 回滚入口为恢复旧 runner q/wrist loss、移除 point-flow module/model 输出字段，并隔离本次未启动的新训练目录。
+
+## 2026-09-06 19:49:47 +0800 — V1.1.2 停止旧 decoder 训练并启用 5 cm active-only supervision
+
+- activity_id: `cmdecoderv2-active-only-20260906-194947`
+- timestamp: `2026-09-06 19:49:47 +0800`
+- modification_version: `V1.1.2`
+- type: `operation / code / experiment`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户要求停止训练并加入 `active_only`，确保进入 5 cm 范围后才开始 q/wrist 监督；该条沿用此前 5 cm diagnostic 的明确修正方向。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810`
+- worktree_dirty: `true`（Task-local active-only 代码/配置/测试/计划增补；不覆盖旧 checkpoint 或正式 split/cache）
+- run_id: `cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701`
+- run_status: `STOPPED`（进程核查时已不存在；未向训练进程发送 kill；旧 run 输出保留）
+- last_step: `255900`；last_epoch: `40`
+- best_metric: `val/loss=1.3800124928725293`（step `83213`，epoch `13`）
+- best_checkpoint: `outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701/checkpoints/best.pt`
+- latest_checkpoint: `outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701/checkpoints/latest.pt`
+- conclusion: `INCONCLUSIVE`（工程 mask smoke 通过；active-only 版本尚未重新长训，不能据此下科研效果结论）
+- scope: `src/task/CmDecoderv2/`；8098/8099 viewer 保持运行，正式 train/val/test split、decoder view/cache、OICM checkpoint 和旧 decoder checkpoint 保持不变。
+
+**原因**
+
+旧 decoder 训练的 `data.active_only=false`，且 q/wrist loss 未使用 `cm_sample_valid`；历史指标中约一半窗口帧可能来自无效 Cm。用户要求停止旧训练并只在 5 cm active frame 监督。
+
+**修改**
+
+- [config.py](../../config.py)、[dexplore_rl_v1_1_1.yaml](../../configs/active/dexplore_rl_v1_1_1.yaml)、[dexplore_rl_v1_1_1_smoke.yaml](../../configs/active/dexplore_rl_v1_1_1_smoke.yaml) — `data.active_only=true`。
+- [dataset.py](../../dataset.py) — 返回与 `C_t...C_{t+K-1}` 对齐的完整 object-pool 5 cm `active_mask`。
+- [runner.py](../../runner.py) — 将 `active_mask` 与冻结 OICM `cm_sample_valid` 相交，q/wrist 三项 loss 和 metrics 只使用有效 horizon，并对剩余 horizon 重新归一化。
+- [test_dataset.py](../../tests/test_dataset.py)、[test_model.py](../../tests/test_model.py) — 增加 active mask 和全无效 loss 的回归测试。
+- [plan/v1.1.md](../plan/v1.1.md) — 记录本次用户追加批准的 5 cm active-only 训练合同。
+
+**验证**
+
+- `py_compile`：通过。
+- `CUDA_VISIBLE_DEVICES='' ... pytest -q src/task/CmDecoderv2/tests`：`7 passed`。
+- CPU active-only dataset smoke：pilot windows `428 -> 359`，样本 `active_mask` 与窗口形状一致。
+- CPU runner smoke：active mask 与 `cm_sample_valid` 相交、全无效 batch 返回有限零 loss，反向梯度 finite。
+- [旧 metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701/metrics.jsonl)、[旧 train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_20260906_115701/train.log) — 旧无 active-only run 的证据保留。
+
+**保护边界与回滚**
+
+- 未删除或覆盖旧 decoder/OICM checkpoint，未修改 formal split、view/cache、原始数据和可视化进程。
+- 回滚入口为恢复 `active_only=false`、移除 `active_mask` loss gate，并隔离本次未启动的新训练 run；旧 run 仍可作为 baseline 使用。
+
+## 2026-09-06 19:31:01 +0800 — V1.1.1 修复 Inspire rollout restart 回调死锁并重启 viewer
+
+- activity_id: `cmdecoderv2-inspire-test-camera-20260906-192900`
+- timestamp: `2026-09-06 19:31:01 +0800`
+- modification_version: `V1.1.1`
+- type: `diagnostic / code / operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户报告 rollout 卡死；诊断确认 restart 回调中的同步 Viser property update 与普通锁重入造成 futex deadlock，修复后重启同一 camera test viewer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810`
+- worktree_dirty: `true`（新增 Task-local UI 修复和运行记录；不改正式 split/cache/checkpoint）
+- run_id: `cmdecoderv2-inspire-test-vis-20260906-193101`
+- run_status: `RUNNING`
+- conclusion: `SUPPORTED`（已定位并修复工程死锁；纯 Inspire teacher/rollout 科研效果仍为 `INCONCLUSIVE`）
+- scope: `src/task/CmDecoderv2/`；正式 MANO-only test index、训练和 checkpoint 选择保持不变。
+
+**文件**
+
+- [visualize_inspire_test.py](../../visualize_inspire_test.py) — 将 Viser 回调锁改为 `threading.RLock`，并避免 restart 回调重复触发 rollout 初始化。
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-193101/run_manifest.json) — 修复后 viewer 运行清单。
+- [trajectory.npz](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-193101/trajectory.npz) — 修复后 camera test 轨迹输出。
+
+**原因**
+
+旧进程停在 `futex_wait_queue_me`：`on_restart` 持有普通 `threading.Lock` 时设置 `mode.value`，Viser 同步触发 `on_mode_change`，后者再次获取同一把锁。该死锁与 decoder 推理或数据无关。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmDecoderv2/visualize_inspire_test.py`：通过。
+- `CUDA_VISIBLE_DEVICES='' /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests`：`6 passed`。
+- 修复后 viewer 已在 `http://localhost:8099` 重新启动，序列仍为 `s1/camera_takepicture_3_Retake`，Viser HTTP 200。
+- `git diff --check` 与 activity link audit：通过。
+
+**保护边界与回滚**
+
+- 旧死锁运行 `cmdecoderv2-inspire-test-vis-20260906-192300` 输出保留；未修改 raw data、正式 index、cache、checkpoint 或训练配置。
+- 回滚入口为停止 8099 viewer、隔离本次输出，或单独回退 RLock/restart 回调改动。
+
+**规范反馈**
+
+- 本次未遇到需要修改 AGENTS、Skill 或公共合同的阻碍。
+
+## 2026-09-06 19:23:00 +0800 — V1.1.1 切换纯 Inspire viewer 到右手接触轨迹并修复 teacher 尾帧边界
+
+- activity_id: `cmdecoderv2-inspire-test-camera-20260906-191200`
+- timestamp: `2026-09-06 19:23:00 +0800`
+- modification_version: `V1.1.1`
+- type: `code / operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户要求换一条轨迹可视化；根据右手几何接触诊断切换到 `s1/camera_takepicture_3_Retake`，并修复播放到不完整 Cm window 尾帧时的 teacher 边界错误。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810`
+- worktree_dirty: `true`（本次新增 viewer 边界修复和运行记录；不改正式 split/cache/checkpoint）
+- run_id: `cmdecoderv2-inspire-test-vis-20260906-192300`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（仅为右手接触轨迹的定性 viewer；不作 decoder 科研效果结论）
+- scope: `src/task/CmDecoderv2/`；正式 MANO-only test index、训练和 checkpoint 选择保持不变。
+
+**文件**
+
+- [visualize_inspire_test.py](../../visualize_inspire_test.py) — teacher 模式在最后不足 `K+1` 帧时停止预测、保留 GT playback，避免尾帧 `IndexError`。
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-192300/run_manifest.json) — 切换后的 camera test viewer 清单。
+- [trajectory.npz](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-192300/trajectory.npz) — `s1/camera_takepicture_3_Retake` 的 Inspire GT/object 和 teacher/rollout 槽位。
+
+**原因**
+
+`s1/alarmclock_offhand_1` 的右手 Inspire 几何距离中位数约 `217.7 mm`，仅 `33/271` 帧小于 `2 cm`，不适合评估右手抓取。`s1/camera_takepicture_3_Retake` 有 `253/352` 帧小于 `2 cm`（约 `71.9%`），因此作为本次可视化轨迹。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmDecoderv2/visualize_inspire_test.py`：通过。
+- `CUDA_VISIBLE_DEVICES='' /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests`：`6 passed`。
+- 新 viewer 已在 `http://localhost:8099` 启动，序列 `s1/camera_takepicture_3_Retake`、352 帧；Viser HTTP 200。
+- `git diff --check` 与 activity link audit：通过。
+
+**保护边界与回滚**
+
+- 旧 offhand run 输出保留，不覆盖；未修改正式 index、raw data、cache、checkpoint 或训练配置。
+- 回滚入口为停止当前 8099 viewer、恢复旧 run 目录；代码边界修复可单独回退。
+
+**规范反馈**
+
+- 本次未遇到需要修改 AGENTS、Skill 或公共合同的阻碍。
+
+## 2026-09-06 19:04:23 +0800 — V1.1.1 新增纯 Inspire held-out test teacher/rollout 诊断 viewer
+
+- activity_id: `cmdecoderv2-inspire-test-vis-20260906-implementation`
+- timestamp: `2026-09-06 19:04:23 +0800`
+- modification_version: `V1.1.1`
+- type: `architecture / code / data / experiment / operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认使用原 test parent 的 Dexplore RL-Inspire hand/object/q/wrist 完整轨迹，teacher 每帧 GT state，rollout 只在 handoff 使用一次 GT state 后递归；该分支仅作纯 Inspire 诊断。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810`
+- worktree_dirty: `true`（新增诊断 viewer 和 plan/activity 修改；不改正式 split/cache/checkpoint）
+- run_id: `cmdecoderv2-inspire-test-vis-20260906-190423`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（工程 wiring smoke 通过；该 viewer 不产生正式 test 科研结论）
+- scope: `src/task/CmDecoderv2/`；原正式 `dexplore_rl_v1_1/index.json` 的 `test=mano` 合同、训练和 checkpoint 选择均保持不变。
+
+**文件**
+
+- [visualize_inspire_test.py](../../visualize_inspire_test.py) — 新增独立 viewer，按需从 raw `interaction_hand_inspire.pt`、对应 Dexplore object pose、原 parent object surface 和 Inspire URDF FK 构造 held-out Inspire test source；支持 teacherforced/rollout、GT/pred/both 和点大小滑块。
+- [plan/v1.1.md](../plan/v1.1.md) — 记录用户追加批准的 Inspire-test diagnostic 分支及其不改变正式 split 的边界。
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-190423/run_manifest.json) — 当前 GPU3 诊断运行清单。
+- [trajectory.npz](../../../../../outputs/cmdecoderv2/cmdecoderv2-inspire-test-vis-20260906-190423/trajectory.npz) — 当前序列的 Inspire GT、Dexplore object 和 teacher/rollout 槽位。
+
+**原因**
+
+用户希望区分“纯 Inspire decoder 是否能学好”和 MANO→Inspire 跨 embodiment 效果。正式 decoder view 的 125 条 test entry 只标记 MANO，但每个 held-out parent 都存在对应 raw Dexplore RL-Inspire tensor；新 viewer 使用这些 raw test trajectories 在线构造 source，不把它们写回正式 index，也不用于训练或选 checkpoint。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmDecoderv2/visualize_inspire_test.py`：通过。
+- GPU3 real-checkpoint smoke：`s1/alarmclock_offhand_1` 的 q `[271,18]`、hand `[271,1538,3]`、object `[271,4096,3]`、wrist `[271,4,4]` 全部构造成功；teacher h=1 和 rollout h=1 均输出 finite Inspire points `[1538,3]`。
+- viewer 已在 `http://localhost:8099` 启动，HTTP/Viser server 正常；formal MANO viewer 8098 未改动。
+- `git diff --check`：通过；activity link audit：通过（5 个本地链接可导航）。
+
+**保护边界与回滚**
+
+- 未生成或修改新的全量 OICM/decoder cache；未修改训练数据 index、模型配置、checkpoint、原始 Dexplore/GRAB 数据。
+- 回滚入口为移除 [visualize_inspire_test.py](../../visualize_inspire_test.py)、诊断 plan 增补和本次输出目录；不影响正式 MANO viewer 和 decoder 训练。
+
+**规范反馈**
+
+- 本次未遇到需要修改 AGENTS、Skill 或公共合同的阻碍。
 
 ## 2026-09-06 17:28:42 +0800 — V1.1.1 修复 handoff 帧 Viser 回调崩溃并重启 GPU3 viewer
 

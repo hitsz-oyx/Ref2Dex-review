@@ -3,7 +3,12 @@ from __future__ import annotations
 import torch
 
 from src.task.CmDecoderv2.model import TemporalD2Core
-from src.task.CmDecoderv2.runner import axis_angle_to_matrix, rotation_geodesic
+from src.task.CmDecoderv2.runner import (
+    _masked_horizon_mean,
+    _masked_weighted_horizon_loss,
+    axis_angle_to_matrix,
+    rotation_geodesic,
+)
 
 
 def _inputs(batch: int = 2):
@@ -51,3 +56,15 @@ def test_rotation_geodesic_is_finite_at_identity() -> None:
     assert torch.isfinite(loss)
     loss.backward()
     assert torch.isfinite(rotvec.grad).all()
+
+
+def test_active_only_horizon_mask_excludes_noncontact_supervision() -> None:
+    values = torch.tensor([[[1.0, 3.0], [100.0, 100.0]], [[100.0, 100.0], [9.0, 11.0]]])
+    mask = torch.tensor([[True, False], [False, True]])
+    per_horizon = _masked_horizon_mean(values, mask)
+    torch.testing.assert_close(per_horizon, torch.tensor([2.0, 10.0]))
+    weighted = _masked_weighted_horizon_loss(values, mask, torch.tensor([0.8, 0.2]))
+    torch.testing.assert_close(weighted, torch.tensor(2.0 * 0.8 + 10.0 * 0.2))
+
+    all_invalid = _masked_weighted_horizon_loss(values, torch.zeros_like(mask), torch.tensor([0.8, 0.2]))
+    assert all_invalid.item() == 0.0

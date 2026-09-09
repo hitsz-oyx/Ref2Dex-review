@@ -1,0 +1,19 @@
+name: cm_hand_source_classifier
+task: CmDecoderv2
+modification_version: V1.1.6
+importance: exploratory
+pinned: false
+tags: [mano, inspire, cm, classifier, representation-diagnostic]
+entrypoint: src.task.CmDecoderv2.research.cm_hand_source_classifier.run
+default_output_root: src/task/CmDecoderv2/research/cm_hand_source_classifier/output
+guidance: src/task/CmDecoderv2/docs/指导/v1.1.md
+plan: src/task/CmDecoderv2/docs/plan/v1.1.md
+hypothesis: >-
+  A small classifier can distinguish MANO and Inspire source from frozen OICM cm_tokens if Cm retains
+  an identifiable hand-source or embodiment signal.
+contracts:
+  label: mano=0, inspire_rl=1
+  primary_feature: permutation-invariant cm_tokens mean/max/std pooling
+  split: existing ObjectInteractionCm train/val sequence split
+  invalid_samples: reported separately; dummy Cm has no physical semantics
+  control: anchor/object pooled feature classifier

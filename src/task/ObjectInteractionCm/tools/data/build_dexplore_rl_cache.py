@@ -571,7 +571,14 @@ def _write_assignment(path: Path, assignments: dict[str, list[dict[str, Any]]], 
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def _build_index(output_root: Path, entries: dict[str, list[dict[str, Any]]], *, missing: list[str], assignment_path: Path) -> None:
+def _build_index(
+    output_root: Path,
+    entries: dict[str, list[dict[str, Any]]],
+    *,
+    missing: list[str],
+    assignment_path: Path,
+    rl_root: Path,
+) -> None:
     counts = {}
     for split, values in entries.items():
         counts[split] = {
@@ -601,7 +608,7 @@ def _build_index(output_root: Path, entries: dict[str, list[dict[str, Any]]], *,
         "source_roots": {
             "grab_parent_cache": str((output_root.parent / "cm_object_v2_surface512_object_pose_20260830").resolve()),
             "dexplore_grab": str((output_root.parent / "dexplore_grab").resolve()),
-            "inspire_rl": str((output_root.parent / "inspire_rl").resolve()),
+            "inspire_rl": str(rl_root.resolve()),
         },
         "assignment_manifest": str(assignment_path.relative_to(output_root)),
         "missing_parent_sequences": sorted(missing),
@@ -739,6 +746,7 @@ def main() -> int:
     parser.add_argument("--surface-seed", type=int, default=2024)
     parser.add_argument("--resume", action="store_true", help="Resume a partially generated full output directory")
     parser.add_argument("--refresh-rl-candidates", action="store_true", help="Refresh RL masks using generated geometry and the 5 cm rule")
+    parser.add_argument("--modification-version", default="V1.2.5")
     args = parser.parse_args()
     repo_root = Path(__file__).resolve().parents[5]
     output_root = Path(args.output).resolve()
@@ -802,7 +810,7 @@ def main() -> int:
             converted.setdefault(split, []).append(entry)
             validation.append(_validate_sequence(output_root / entry["path"], item["variant"]))
 
-    _build_index(output_root, converted, missing=missing, assignment_path=assignment_path)
+    _build_index(output_root, converted, missing=missing, assignment_path=assignment_path, rl_root=rl_root)
     candidate_refresh = None
     if args.refresh_rl_candidates:
         candidate_refresh = _refresh_rl_candidates(output_root, converted)
@@ -810,7 +818,7 @@ def main() -> int:
     run_manifest = {
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "ObjectInteractionCm",
-        "modification_version": "V1.2.2",
+        "modification_version": str(args.modification_version),
         "operation": "dexplore_rl_right_hand_cache_conversion",
         "run_id": f"oicm-dexplore-rl-{args.mode}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         "run_status": "COMPLETED",

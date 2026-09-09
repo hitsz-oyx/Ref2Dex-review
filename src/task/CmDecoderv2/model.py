@@ -12,6 +12,8 @@ from torch import nn
 from src.base import load_config
 from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
 
+from .pointflow import DifferentiableInspireSurface, make_relative_transform, world_to_object
+
 
 def _mlp(input_dim: int, hidden_dim: int, output_dim: int) -> nn.Sequential:
     return nn.Sequential(nn.Linear(input_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, output_dim))
@@ -158,6 +160,11 @@ class CmDecoderV2(nn.Module):
             feedforward_dim=int(cfg.feedforward_dim),
             dropout=float(cfg.dropout),
         )
+        self.point_surface = DifferentiableInspireSurface(
+            getattr(cfg, "surface_urdf", "src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf"),
+            sample_count=int(meta.num_hand_points),
+            surface_seed=2024,
+        )
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -196,4 +203,33 @@ class CmDecoderV2(nn.Module):
             "cm_anchor_normal": anchor_normal,
             "cm_sample_valid": sample_valid,
         })
+        # Training batches provide the full current wrist/object pose so the
+        # q+wrist outputs can be converted into a differentiable point flow.
+        # Qualitative viewers may omit these fields and keep the original
+        # q/wrist-only output contract.
+        required = {"current_wrist_pose_world", "object_pose_world"}
+        if required.issubset(batch):
+            pred_q_delta = output["pred_q_delta"]
+            pred_wrist_translation = output["pred_wrist_translation"]
+            pred_wrist_rotvec = output["pred_wrist_rotvec"]
+            batch_size = pred_q_delta.shape[0]
+            window = pred_q_delta.shape[1]
+            current_finger = batch["current_finger_q"].float()
+            current_wrist = batch["current_wrist_pose_world"].float()
+            object_pose = batch["object_pose_world"].float()
+            current_points_world = self.point_surface(current_finger, current_wrist)
+            future_finger = current_finger[:, None, :] + pred_q_delta
+            wrist_delta = make_relative_transform(pred_wrist_rotvec, pred_wrist_translation)
+            future_wrist = current_wrist[:, None, :, :] @ wrist_delta
+            future_points_world = self.point_surface(
+                future_finger.reshape(batch_size * window, -1),
+                future_wrist.reshape(batch_size * window, 4, 4),
+            ).reshape(batch_size, window, -1, 3)
+            current_points_object = world_to_object(current_points_world, object_pose)
+            future_points_object = world_to_object(future_points_world, object_pose)
+            output.update({
+                "current_hand_points_object": current_points_object,
+                "pred_hand_points_object": future_points_object,
+                "pred_hand_flow": future_points_object - current_points_object[:, None],
+            })
         return output

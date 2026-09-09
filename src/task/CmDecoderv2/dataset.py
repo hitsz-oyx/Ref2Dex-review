@@ -150,14 +150,16 @@ class CmDecoderV2Dataset(Dataset):
         current_finger = extract_finger_q(current_native)
         current_wrist = np.asarray(sequence.wrist_pose[start], dtype=np.float64)
         object_pose_start = np.asarray(sequence.object_pose[start], dtype=np.float64)
+        active_mask = np.asarray(sequence.active[start:start + k], dtype=bool).copy()
         current_finger, current_wrist = self._perturb_state(current_finger, current_wrist, object_pose_start, rng)
-        target_q_delta, target_translation, target_rotation = [], [], []
+        target_q_delta, target_translation, target_rotation, target_hand_points = [], [], [], []
         for horizon in range(1, k + 1):
             future_finger = extract_finger_q(sequence.q_native[start + horizon])
             target_q_delta.append(future_finger - current_finger)
             relative = relative_pose(current_wrist, sequence.wrist_pose[start + horizon])
             target_translation.append(relative[:3, 3])
             target_rotation.append(relative[:3, :3])
+            target_hand_points.append(_points_world_to_frame(sequence.hand_points[start + horizon], object_pose_start))
         current_object = np.linalg.inv(object_pose_start) @ current_wrist
         return {
             "obj_points": torch.from_numpy(np.stack(object_points).astype(np.float32)),
@@ -168,12 +170,18 @@ class CmDecoderV2Dataset(Dataset):
             "hand_flow": torch.from_numpy(np.stack(hand_flow).astype(np.float32)),
             "hand_valid_mask": torch.ones((k, self.num_hand_points), dtype=torch.bool),
             "current_finger_q": torch.from_numpy(current_finger.astype(np.float32)),
+            "current_wrist_pose_world": torch.from_numpy(current_wrist.astype(np.float32)),
+            "object_pose_world": torch.from_numpy(object_pose_start.astype(np.float32)),
             "current_wrist_translation_object": torch.from_numpy(current_object[:3, 3].astype(np.float32)),
             "current_wrist_rotation_6d_object": torch.from_numpy(_rotation_6d(current_object[:3, :3])),
             "current_link_features": torch.from_numpy(self.kinematics.query_features(current_finger, current_wrist, object_pose_start)),
             "target_q_delta": torch.from_numpy(np.stack(target_q_delta).astype(np.float32)),
             "target_wrist_translation": torch.from_numpy(np.stack(target_translation).astype(np.float32)),
             "target_wrist_rotation": torch.from_numpy(np.stack(target_rotation).astype(np.float32)),
+            "target_hand_points_object": torch.from_numpy(np.stack(target_hand_points).astype(np.float32)),
+            # One mask entry per source frame/Cm horizon.  This is the exact
+            # full-object-pool 5 cm candidate mask, before OICM point sampling.
+            "active_mask": torch.from_numpy(active_mask),
             "sequence_id": sequence.id,
             "start_frame": torch.tensor(start, dtype=torch.int64),
             "source_frame_id": torch.tensor(int(sequence.source_frame[start]), dtype=torch.int64),

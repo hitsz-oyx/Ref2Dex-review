@@ -12,5 +12,8 @@ object-side Cm 解码右手 Inspire 的 6 个独立 finger q residual 与 wrist 
 - 架构事实：[logs/architecture_log.md](logs/architecture_log.md)
 - 实验记录：[logs/experiment_log.md](logs/experiment_log.md)
 - 可迁移事实：[logs/repo_memory.md](logs/repo_memory.md)
+- Rollout self-effect 诊断：[research/inspire_rollout_effect](../research/inspire_rollout_effect/README.md)
+- MANO rollout self-effect 对照：[research/mano_rollout_effect](../research/mano_rollout_effect/README.md)
+- MANO/Inspire Cm 来源分类：[research/cm_hand_source_classifier](../research/cm_hand_source_classifier/README.md)
 
 代码事实最终以 `model.py`、`dataset.py`、`kinematics.py`、`runner.py` 和实际运行产物为准。

@@ -1,9 +1,1082 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-06
+- last_updated: 2026-09-09
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
+
+## 2026-09-09 22:34:07 +0800 — V1.2.18 估算离线 KNN 构建耗时
+
+- activity_id: `ACT-20260909-223407-OBJECTINTERACTIONCM-OFFLINE-KNN-RUNTIME-DIAGNOSTIC`
+- timestamp: `2026-09-09 22:34:07 +0800`
+- modification_version: `V1.2.18`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问离线对每帧完整 4096 物体点计算 K=16 最近手点是否会很久；本次只读 benchmark 当前正式/预览 cache，不生成离线索引文件。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_id: `object_interaction_cm_offline_knn_runtime_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（耗时估算有效；正式离线索引生成仍需新的 cache/schema 变体和用户确认）
+- scope: 使用当前 V1.2.5 正式 1538 点 Inspire cache 与 V1.2.15 10135 点预览 cache，评估 `4096 object × K=16 hand` 离线 KNN 的 CPU/GPU 量级、active-only 节省和 IO 写入边界；未修改模型、配置、cache、GT、split 或 checkpoint。
+
+**结果**
+
+- CPU `scipy.spatial.cKDTree` 单进程实测：1538 点约 `13.6–14.0 ms/frame`；10135 点约 `17.9–20.8 ms/frame`。按当前 Inspire-RL `72935` 帧线性外推，10135 点约 `21.7–25.2 min`；按全量 `159476` 帧约 `47.5–55.2 min`。
+- GPU PyTorch3D batched 实测（RTX 3090，含 NumPy→GPU transfer，不含磁盘写索引）：1538 点约 `0.093 ms/frame`；10135 点约 `0.348 ms/frame`。纯计算外推 Inspire-RL 约 `0.42 min`，全量约 `0.93 min`。
+- 实际端到端 builder 还要读 geometry、转 `uint16`、写 `.npy` 和写 manifest。对于 10135 点 Inspire，若只写 `[T,4096,16] uint16` 索引，输出约 `8.90 GiB`；IO 通常会把端到端时间拉到数分钟级。
+- 当前 V1.2.5 `active_only=true`。Inspire-RL 共 `72935` 帧，其中 active `39554` 帧（`54.23%`）；GRAB 共 `86541` 帧，active `52278` 帧（`60.41%`）。若索引只为训练实际使用的 active 帧计算/保存，Inspire 输出约从 `8.90 GiB` 降到 `4.83 GiB`，计算时间也约降到 `54%`。
+- 因此粗略判断：GPU batched builder 做 Inspire-only active 帧，应是几分钟量级；CPU 单进程是十几分钟量级，CPU 多进程可压到几分钟到十分钟。全量 all-source 索引也不像训练那样要数小时，更可能是十几分钟到一小时内，取决于 IO 和并行策略。
+
+**实现建议**
+
+- 若只是给 10135 Inspire 加速，优先做 Inspire-only active-frame 索引 cache；MANO 1538 点 KNN 本身较小，可先不做。
+- builder 应按 sequence 分文件保存，便于 resume，不要一次写全局巨型数组；每个 geometry manifest 记录 `knn_index_file`、`knn_k`、`hand_point_count`、`object_pool_points`、`active_only` 和点集指纹。
+- 训练读取时必须保留当前 object 随机抽样语义：Dataset 从 4096 中抽 1024 个点后，再从离线 `[4096,16]` 中 gather 对应行。
+- 若后续想进一步提速，3 cm `hand_supervision_mask` 也应离线保存；否则 10135 点会把 Dataset 侧 CPU KDTree 成本放大。
+
+**原因**
+
+需要判断离线 KNN 是否会变成长时间预处理，并区分 compute、IO 写入和 active-only 策略的成本。该判断会影响后续是否值得为 10135 点 Inspire cache 新增 KNN 索引字段。
+
+**文件与证据**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)：更新 ObjectInteractionCm 当前指针为 `V1.2.18`。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)：记录本次离线 KNN 构建耗时诊断。
+- [V1.2.5 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json)
+- [V1.2.5 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)
+- [面积比例手点轨迹预览 index](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json)
+- [Dataset](../../dataset.py)
+- [ObjectInteractionCm model](../../model.py)
+
+**验证**
+
+- CPU benchmark：对正式 1538 点 Inspire sequence 与预览 10135 点 Inspire sequence 各取最多 48 帧，执行 `cKDTree(hand).query(object_pool, k=16)`。
+- GPU benchmark：对同两类 sequence 各取最多 96 帧，用 PyTorch3D `knn_points` batched 计算 `4096×K16`，chunk 分别为 16 和 8。
+- active frame 统计：只读扫描 V1.2.5 index 下所有 sequence 的 `obj_candidate_mask_5cm.npy`。
+- 未生成离线索引、未运行训练或评估；`git diff --check` 与本条 activity 的本地链接审计在交接前执行。
+
+**回滚入口**
+
+- 删除本条活动记录并将 [当前版本指针](../../../../../docs/current_versions.yaml) 恢复为 `V1.2.17`；正式 cache、模型、训练配置和既有预览不受影响。
+
+## 2026-09-09 22:15:21 +0800 — V1.2.17 评估离线 KNN 索引加速方案
+
+- activity_id: `ACT-20260909-221521-OBJECTINTERACTIONCM-OFFLINE-KNN-DIAGNOSTIC`
+- timestamp: `2026-09-09 22:15:21 +0800`
+- modification_version: `V1.2.17`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 KNN 是否可以加速以及是否可以离线预计算；本次只读检查当前 Dataset/模型语义、估算索引存储并在空闲 GPU 上进行小型 KNN/gather 基准，未修改代码、cache、配置或运行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_id: `object_interaction_cm_offline_knn_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（离线保存完整物体池的 KNN 索引在当前刚体坐标语义下可行；实际整步训练收益仍需 pilot parity/throughput 实验确认，不构成科研效果结论）
+- scope: 当前 V1.2.5 ObjectInteractionCm 的 `4096` 物体池、运行时随机抽取 `1024` 点、`K=16` KNN、`5 cm` edge mask、`3 cm` hand supervision mask、变长 Inspire 手点的离线索引设计和 GPU 微基准；正式 cache、模型、训练配置、GT、split 和 checkpoint 未修改。
+
+**结论与推荐方案**
+
+- 可以离线预计算。为保持当前每个 epoch 从 `4096` 个物体点随机抽取 `1024` 个的语义，应为每帧完整 `4096` 点物体池保存 `K=16` 个最近手点的索引，而不是只保存一次运行时抽到的 `1024` 点结果。
+- 推荐 cache 保存 `knn_indices`，形状 `[T,4096,16]`、`uint16`；`10135 < 65535`，索引类型足够。Dataset 在随机抽样后 gather 对应的 `[1024,16]` 索引，模型只对这 16 个邻居重新计算距离并施加 `distance <= 0.05 m`，因此不必保存距离或逐 edge mask。
+- 当前 object/hand 都经过同一个 `object_pose_t` 刚体变换；刚体变换不改变邻居索引和距离，所以索引可在 world 坐标或 object frame 离线计算。它只依赖当前帧几何，不依赖未来 stride 或 hand flow。
+- 若将 Inspire 改为 `10135` 点，必须用新手点集合重建索引；若改变 `K` 或 object/hand 点池，也必须重建。仅改变半径时，保留 top-16 索引并在运行时重算 16 个距离即可继续使用。
+
+**存储量**
+
+- 每帧完整索引为 `4096×16×2 = 131072 B`，约 `128 KiB`。
+- 当前 `72935` 个 Inspire-RL 帧需要约 `8.90 GiB`；当前全部 `159476` 帧都保存索引需要约 `19.47 GiB`。
+- 仅保存索引比同时保存 `float16` 距离或逐 edge bool 更省；若再保存每物体点的有效邻居数，额外只需约 `0.28 GiB`（Inspire）或 `0.61 GiB`（全量）。
+- 结合上一条 V1.2.16 估算，10135 Inspire 手点使当前 cache 约为 `34.11 GiB`；再加 Inspire-only KNN 索引约 `43.01 GiB`，全量 source 索引约 `53.58 GiB`。当前文件系统可用空间约 `815 GiB`，容量不是立即阻塞，但 `/home2` 已使用约 `97%`，应避免产生多份全量副本。
+
+**运行时与实现边界**
+
+- GPU 微基准（RTX 3090，`B=8`、`N_obj=1024`、`K=16`）中，PyTorch3D KNN 从 `1538` 手点的 `0.584 ms/batch` 增至 `10135` 手点的 `2.116 ms/batch`，约 `3.63x`。
+- 使用离线索引后，gather 16 个邻居并重算 16 个距离约 `0.068 ms/batch`；相对 `10135` 点 KNN，KNN 选择阶段约 `31.2x` 降低。该基准只覆盖邻居选择，不代表整个训练 step 同比例加速。
+- 离线 KNN 不会消除 `SharedHandFlowDecoder` 对全部手点和 `16` 个 slot 的计算；若手点变为 `10135`，该部分仍约按点数线性增大。若 hand decoder 只用于 `3 cm` mask 下的辅助 loss，可进一步考虑只在监督点上计算，但这属于额外的模型/损失实现变更，需要单独确认。
+- 变长 MANO/Inspire 混合 batch 仍需处理。当前不同 valid point count 会绕过 prefix fast path，退回 `cdist+topk`；应采用 source/point-count homogeneous batch，或实现按有效点数分组的 KNN 路径。
+- 当前 Dataset 每个样本还会用 CPU `cKDTree` 计算 `3 cm` hand supervision mask。若使用 `10135` 点，建议同时离线保存逐手点 bool mask；Inspire train/val 约增加 `0.69 GiB`，可移除该 CPU 重复计算。
+
+**文件与证据**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)：更新 ObjectInteractionCm 当前指针为 `V1.2.17`。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)：记录本次离线 KNN 方案诊断。
+- [V1.2.5 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json)
+- [V1.2.5 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)
+- [Dataset](../../dataset.py)
+- [ObjectInteractionCm model](../../model.py)
+- [ObjectInteractionCm decoder](../../decoder.py)
+- [面积比例手点预览 index](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json)
+
+**原因**
+
+需要区分“离线缓存能否消除全量手点搜索”和“10135 点仍会带来的 decoder/padding 成本”。完整物体池索引可以保留当前 object 随机采样，而只把每次前向的 KNN 搜索替换为固定邻居 gather。
+
+**验证**
+
+- 只读检查 [Dataset](../../dataset.py) 的随机 object sampling、刚体坐标转换、hand supervision mask 和 [model](../../model.py) 的 PyTorch3D/fallback KNN 分支。
+- 扫描 V1.2.5 index 得到当前 Inspire-RL `285` 条序列、`72935` 帧和全量 `159476` 帧，并计算 `uint16` 索引及可选 mask/count/distance 存储量。
+- 使用 `CUDA_VISIBLE_DEVICES=1` 在 NVIDIA GeForce RTX 3090 上完成 `B=8,N_obj=1024,K=16` 的 1538/10135 KNN 与 16-neighbor gather 微基准；未接触正在使用的 GPU 7 任务。
+- 使用 3 条 10135 点 Inspire 预览序列做稀疏性抽查：active object fraction 为 `0.4286–0.8160`，平均有效邻居为 `6.571–13.018`；样本量不足以据此替代全量存储设计。
+- `git diff --check` 与本条 activity 的本地链接审计在交接前执行。
+
+**回滚入口**
+
+- 删除本条活动记录并将 [当前版本指针](../../../../../docs/current_versions.yaml) 恢复为 `V1.2.16`；正式 cache、模型、训练配置和既有预览不受影响。
+
+## 2026-09-09 21:58:14 +0800 — V1.2.16 评估 Inspire 10135 手点 cache 存储开销
+
+- activity_id: `ACT-20260909-215814-OBJECTINTERACTIONCM-CACHE-STORAGE-10135-DIAGNOSTIC`
+- timestamp: `2026-09-09 21:58:14 +0800`
+- modification_version: `V1.2.16`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问将 Inspire 手点从 1538 增加到 10135 后的 cache 存储开销；本次只读统计现有 V1.2.5 cache 并估算线性存储/邻域搜索规模，不重建或覆盖 cache。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_id: `object_interaction_cm_cache_storage_10135_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（存储和张量规模估算有效；是否值得接入训练仍需单独实验，不构成效果结论）
+- scope: 当前 `object_interaction_cm_dexplore_rl_v1_2_5` cache 的 Inspire-RL train/val geometry、1538→10135 手点存储估算、混合 batch padding 和 `LocalHandInteraction` KNN 输入规模；正式 cache、训练配置、模型、GT、split 和 checkpoint 未修改。
+
+**结果**
+
+- 当前 Inspire-RL 为 `285` 条序列、`72935` 帧；完整 cache 约 `9.19 GiB`，其中 `hand_points_world.npy` 与 `hand_normals_world.npy` 合计约 `2.51 GiB`。
+- 每帧手部两份 `float32 [N,3]` 数组从 `36912 B`（1538 点）增至 `243240 B`（10135 点），手部部分增加 `6.59x`，每帧多约 `201.5 KiB`。
+- 仅替换 Inspire-RL 的手点数组，预计新增约 `14.02 GiB`；Inspire-RL 子 cache 约从 `9.19 GiB` 增至 `23.21 GiB`，整个当前 `20.09 GiB` cache 约增至 `34.11 GiB`，总量约 `1.70x`。
+- 若物体点池仍为 `4096` 点，单帧 object+hand 几何从约 `132.0 KiB` 增至 `333.5 KiB`，约 `2.53x`；这还未计入 loader 临时张量。
+- 当前 Dataset/模型使用统一的 `num_hand_points=1538` 和 `max_hand_points=3076`。若 Inspire 直接使用 `10135` 点，混合 GRAB/Inspire batch 需要扩大统一 padding 或实现变长 batch；否则会触发 shape/schema 不兼容。
+- 若前向也使用全部 `10135` 点，物体 `1024` 点对手点的邻域搜索候选量约为原来的 `6.59x`。混合不同有效点数时，当前前缀 mask 快路径还可能退回完整 `cdist` 路径，运行时成本会高于单纯的磁盘增长。
+
+**文件与证据**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)：更新 ObjectInteractionCm 当前指针为 `V1.2.16`。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)：记录本次只读存储/运行时开销诊断。
+- [V1.2.5 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json)
+- [V1.2.5 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)
+- [示例 Inspire geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/sequences/train/inspire_rl/s5_mouse_pass_1/geometry/manifest.json)
+- [Dataset](../../dataset.py)
+- [ObjectInteractionCm model](../../model.py)
+
+**原因**
+
+需要将“cache 多占多少磁盘”和“训练前向是否变重”分开判断。10135 点主要改变手点数组、统一 batch padding 和 KNN 搜索规模；它不会自动改变物体池 `4096` 点或运行时物体抽样 `1024` 点。
+
+**验证**
+
+- 只读扫描 `index.json` 中所有 train/val Inspire-RL sequence，并按实际 `.npy` 文件大小汇总当前 cache。
+- 按 `float32`、两份 `[T,N,3]` 手点/法线数组和 `1538→10135` 的点数比例估算新存储；当前 `.npy` header 对总量影响可忽略。
+- 对照 [Dataset](../../dataset.py) 的统一点数/padding 合同和 [model](../../model.py) 的 prefix fast path、KNN 输入；未运行训练、评估、数据重建或前向 benchmark。
+- `git diff --check` 与本条 activity 的本地链接审计在交接前执行。
+
+**回滚入口**
+
+- 删除本条活动记录并将 [当前版本指针](../../../../../docs/current_versions.yaml) 恢复为 `V1.2.15`；正式 cache、训练配置、模型和既有预览不受影响。
+
+## 2026-09-09 20:57:40 +0800 — V1.2.15 面积比例手点轨迹预览与 viewer 兼容
+
+- activity_id: `ACT-20260909-205740-OBJECTINTERACTIONCM-VARIABLE-HAND-TRAJECTORY-PREVIEW`
+- timestamp: `2026-09-09 20:57:40 +0800`
+- modification_version: `V1.2.15`
+- type: `code / diagnostic / data / operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认按最新完整 mesh 面积比例方案继续：MANO 2048 点、Inspire 10135 点，生成若干条数据集轨迹并使用 `visualize_grab.py` 可视化。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)（用户确认后追加轨迹预览扩展）
+- run_id: `variable_hand_trajectory_preview_20260909`
+- run_status: `COMPLETED`; viewer_run_id: `visualize_grab_8100_20260909`，viewer `run_status: RUNNING`，监听 `0.0.0.0:8100`
+- conclusion: `SUPPORTED`（工程预览合同、点数/法线/帧对齐和 viewer 读取均通过；是否解决局部视觉空带仍需用户在交互界面中判断，不构成训练效果结论）
+- scope: 从正式 V1.2.5 index 的 train split 确定性选择 MANO 和 Inspire-RL 各 3 条序列；沿用 4096 点物体池、物体姿态、帧号和 provenance，仅按 canonical triangle+barycentric 对应重建 MANO 2048 / Inspire 10135 手点，并逐帧重算 flat normal 与 5 cm activity mask。viewer 读取端允许 manifest 声明的变长手点数。
+- protection: 未修改正式 `data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/` cache、训练配置、GT、split 定义、坐标系、模型或 checkpoint。
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)
+- [轨迹预览构建脚本](../../research/hand_region_sampling/build_trajectory_preview.py)
+- [viewer 兼容修改](../../visualize_grab.py)
+- [预览 index](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json)
+- [assignment](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/assignment.json)
+- [run manifest](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/run_manifest.json)
+- [预览输出目录](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/)
+
+**选中的序列**
+
+- MANO：`s1/airplane_fly_1`（279 帧，2048 点，223 帧 5 cm active）、`s1/airplane_pass_1`（219 帧，2048 点，130 active）、`s1/alarmclock_lift`（510 帧，2048 点，450 active）。
+- Inspire-RL：`s1/airplane_lift`（432 帧，10135 点，358 active）、`s1/alarmclock_see_1`（254 帧，10135 点，135 active）、`s1/apple_pass_1`（177 帧，10135 点，109 active）。
+
+**原因**
+
+最新 PLY 采样合同只给出了 canonical 静态点云，无法直接观察手点在真实物体轨迹中的覆盖。此次用同一 face/barycentric 对应跨帧重建手点，并让 viewer 读取 manifest 中的手点数，从而在不重建正式 cache 的前提下检查 2048/10135 点采样的动态空间分布。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/build_trajectory_preview.py src/task/ObjectInteractionCm/visualize_grab.py`：通过。
+- 6 条序列数组检查：物体池均为 `[T,4096,3]`；MANO 手点为 `[T,2048,3]`；Inspire 手点为 `[T,10135,3]`；全部 finite；法线最大范数误差 MANO `1.79e-7`、Inspire `5.96e-8`。
+- viewer `--check-only`：MANO `s1/airplane_fly_1` 与 Inspire `s1/airplane_lift` 均通过，KNN 1/4/8/16/32/64 和 mesh provenance 可读。
+- 交互 viewer 已启动：`http://localhost:8100`（服务监听 `0.0.0.0:8100`，当前初始序列为 MANO `s1/airplane_fly_1`，界面可切换 6 条轨迹）。
+- 首次生成中发现 Inspire 极小三角面的法线下限设置问题，已修正为 `1e-12` 并用同一 seed 完整重跑；错误中间目录已移至 `/tmp/variable_hand_trajectory_preview_20260909_bad_normals`，未进入最终预览目录。
+- `git diff --check`：通过；针对本次 3 个变更路径执行 `audit_diff.py --worktree --check-links`：通过（10 个本地链接可导航）。完整 Task worktree 审计仍会包含此前用户遗留的其它未提交文件，故未将其误归入本条 activity；未运行训练或评估。
+
+**回滚入口**
+
+删除 [轨迹预览输出目录](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/)、[轨迹预览构建脚本](../../research/hand_region_sampling/build_trajectory_preview.py) 和 viewer 对变长手点的兼容改动，并将当前版本指针恢复到 `V1.2.14`；正式 cache 与既有 PLY 预览不受影响。
+
+## 2026-09-09 16:27:23 +0800 — V1.2.14 核对 cache 点存储与 KNN16 计算位置
+
+- activity_id: `ACT-20260909-162723-OBJECTINTERACTIONCM-CACHE-KNN-RUNTIME-DIAGNOSTIC`
+- timestamp: `2026-09-09 16:27:23 +0800`
+- modification_version: `V1.2.14`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前 cache 是保存点后前向计算 KNN16，还是 cache 预计算 KNN16/5 cm 阈值；本次只读检查 cache 文件、Dataset、模型和 V1.2.5 manifest。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（cache 保存每帧完整的 4096 点物体池、1538 点手表面及其法线；5 cm 只预计算了帧级 candidate active 标记，KNN16 与逐物体点的 5 cm edge mask 在前向动态计算）
+- scope: 只读核对 V1.2.5 cache 的 geometry 文件、cache builder、ObjectInteractionCm Dataset 和 LocalHandInteraction；未修改代码、配置、cache、split、GT、checkpoint 或训练产物。
+
+**文件与证据**
+
+- `docs/current_versions.yaml`：更新 ObjectInteractionCm 当前版本指针为 `V1.2.14`。
+- [V1.2.5 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)：记录 `surface_points=1538`、`surface_seed=2024` 和已完成 cache conversion。
+- [示例 Inspire geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/sequences/train/inspire_rl/s5_mouse_pass_1/geometry/manifest.json)：记录 `object_pool_points=4096`、`hand_points=1538`、`candidate_threshold_m=0.05`、`candidate_mask_shape=[167]`。
+- [ObjectInteractionCm Dataset](../../dataset.py)：读取 `obj_points_pool_world.npy [T,4096,3]`、`hand_points_world.npy [T,1538,3]`，在 `__getitem__` 中动态随机抽取 1024 个物体点，并由当前/未来帧点计算 flow；同时用 full 4096 物体池动态计算 3 cm hand supervision mask。
+- [ObjectInteractionCm model](../../model.py)：按配置的 `knn_k=16` 对运行时 1024 个物体点和全部有效手点做 KNN，再对 KNN 结果施加 `interaction_radius_m=0.05` 的逐 edge 阈值。
+- [V1.2.5 active config](../../configs/active/dexplore_rl_v1_2_5.yaml)：明确 `num_obj_pool=4096`、`num_obj_points=1024`、`num_hand_points=1538`、`knn_k=16`、`interaction_radius_m=0.05`。
+
+**原因**
+
+当前 cache 的目标是保存可复用的几何和轨迹基础数据，不绑定某一次运行时的物体子采样或 KNN 配置。因而 KNN16 没有写入 cache；训练前向可以根据配置改变 K 值，而不必重建几何 cache。
+
+**验证**
+
+- V1.2.5 示例 cache 文件形状核对：`obj_points_pool_world.npy=(T,4096,3)`、`obj_normals_pool_world.npy=(T,4096,3)`、`hand_points_world.npy=(T,1538,3)`、`hand_normals_world.npy=(T,1538,3)`、`obj_candidate_mask_5cm.npy=(T,)`。
+- Dataset `active_only=True` 只用一维 candidate 标记筛掉整帧；该标记不携带每个 object point 的 KNN 索引、距离或 16 邻居 mask。
+- Model V1.2.5 前向顺序是：运行时选 1024 object points → KNN `k=16` → `distance <= 0.05 m` edge mask → attention/Cm；因此不是 cache 预存 KNN16。
+- `git diff --check` 与 `audit_diff.py --check-links`：通过；未运行训练、评估或数据重建。
+
+## 2026-09-09 13:24:57 +0800 — V1.2.13 按 mesh 表面积比例生成 MANO/Inspire 预览
+
+- activity_id: `ACT-20260909-132457-OBJECTINTERACTIONCM-AREA-RATIO-UNIFORM-SAMPLING-PREVIEW`
+- timestamp: `2026-09-09 13:24:57 +0800`
+- modification_version: `V1.2.13`
+- type: `code / diagnostic / data`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认使用按 mesh 表面积换算的点数进行均匀采样；MANO 固定 2048 点，Inspire 使用 10135 点。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)
+- run_id: `uniform_surface_ratio_2048_10135_preview_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（MANO 2048 与 Inspire 10135 的完整 mesh 表面积均匀采样 PLY 已生成，实测点密度比为 `1.000055`；视觉适用性仍需用户检查，不构成训练效果结论）
+- scope: 新增 `uniform_surface_ratio` 预览 profile；MANO/Inspire 均无 Region/link quota，分别按完整 mesh 面积比例采样；不覆盖既有 2048/2048 预览。
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.13`。
+- [预览脚本](../../research/hand_region_sampling/run.py)：支持 MANO 2048、Inspire 10135 的独立均匀采样点数和 manifest 记录。
+- [实验 README](../../research/hand_region_sampling/README.md) 与 [实验定义](../../research/hand_region_sampling/experiment.yaml)：登记 `uniform_surface_ratio` profile。
+- [area-ratio 输出目录](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/)。
+- [MANO 2048 PLY](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/mano_uniform_2048.ply) 与 [Inspire 10135 PLY](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/inspire_uniform_10135.ply)。
+- [采样统计](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/sampling_summary.json) 与 [run manifest](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/run_manifest.json)。
+
+**原因**
+
+前一版两者都使用 2048 点，但完整 mesh 表面积相差约 4.94846 倍。为保持单位表面积点密度一致，本次固定 MANO 2048 点，并按 `2048 × A_Inspire/A_MANO = 10134.44` 向上取整为 Inspire 10135 点。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/run.py`：通过。
+- 预览命令：`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/hand_region_sampling/run.py --quota-profile uniform_surface_ratio --modification-version V1.2.13 --output src/task/ObjectInteractionCm/research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909`：完成。
+- MANO PLY 为 2048 点、Inspire PLY 为 10135 点；两者均 finite，统一灰色，最大单位法线误差分别约 `4.0e-8` 和 `4.4e-8`。
+- 实测点密度：MANO `50250.20 points/m²`，Inspire `50252.98 points/m²`，密度比 `1.000055`。
+- 同 seed 重跑后两份 PLY SHA-256 完全一致；未修改既有 2048/2048 PLY、正式 cache、训练配置、模型、GT、split、坐标系或 checkpoint。
+- `git diff --check` 与 `audit_diff.py --check-links`：通过；未运行训练和评估。
+- 回滚入口：删除 `uniform_surface_ratio` profile 的代码/文档改动、[area-ratio 输出目录](../../research/hand_region_sampling/output/uniform_surface_ratio_2048_10135_preview_20260909/) 及版本指针更新；既有预览不需回滚。
+
+## 2026-09-09 13:19:26 +0800 — V1.2.12 统计 MANO/Inspire mesh 表面积与等密度点数
+
+- activity_id: `ACT-20260909-131926-OBJECTINTERACTIONCM-MESH-AREA-RATIO-DIAGNOSTIC`
+- timestamp: `2026-09-09 13:19:26 +0800`
+- modification_version: `V1.2.12`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问两份 canonical mesh 的表面积比例，以及 MANO 2048 点对应的 Inspire 等表面密度点数；本次只读统计已有 uniform-surface sampling summary。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（按当前 canonical 坐标解释，两份 mesh 面积比约 4.94846；相同表面点密度下 MANO 2048 点对应 Inspire 约 10134 点，取不低于该密度可用 10135 点）
+- scope: 只读汇总 `uniform_surface_2048_preview_20260909/sampling_summary.json` 中 MANO/Inspire 的完整 mesh 三角面面积；未修改采样、PLY、cache 或训练数据。
+
+**文件与证据**
+
+- [uniform surface sampling summary](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/sampling_summary.json)：提供两种 canonical mesh 的总三角面面积和资产指纹。
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.12`。
+
+**原因**
+
+用户希望按 mesh 表面积比例保持 MANO/Inspire 的点密度一致。计算使用 `N_inspire = 2048 × A_inspire / A_mano`，不改变已有 2048 点 PLY。
+
+**验证**
+
+- MANO 总表面积 `0.0407560583 m² = 407.5606 cm²`。
+- Inspire 总表面积 `0.2016795812 m² = 2016.7958 cm²`。
+- 面积比 `A_inspire/A_mano = 4.94845649`；换算点数 `2048 × ratio = 10134.4389`，最近整数为 `10134`，向上取整为 `10135`。
+- 结果属于当前 canonical mesh/坐标口径的几何密度换算，不代表两种手的训练效果或跨形态泛化结论。
+
+## 2026-09-09 13:10:34 +0800 — V1.2.11 MANO/Inspire 完整 mesh 均匀表面采样预览
+
+- activity_id: `ACT-20260909-131034-OBJECTINTERACTIONCM-UNIFORM-SURFACE-SAMPLING-PREVIEW`
+- timestamp: `2026-09-09 13:10:34 +0800`
+- modification_version: `V1.2.11`
+- type: `code / diagnostic / data`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确要求重新在 MANO/Inspire 各自完整 mesh 上均匀采样 2048 点并生成 PLY；本次将“均匀”固定为单位表面积采样概率相同，不使用 Region、link、segment 或 tip quota。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)
+- run_id: `uniform_surface_2048_preview_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（两份完整 mesh 表面积均匀采样 PLY 已生成，点数、finite、法线、无配额和确定性检查通过；视觉适用性仍由用户检查，不构成正式训练效果结论）
+- scope: 在现有预览入口新增 `uniform_surface` profile；两种手各自全局按三角形面积选面并在面内作均匀 barycentric 采样，总数 2048，统一灰色显示；不覆盖旧预览。
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.11`。
+- [预览脚本](../../research/hand_region_sampling/run.py)：新增完整 mesh 表面积均匀采样、灰色 PLY 和 sampling method manifest 字段。
+- [实验 README](../../research/hand_region_sampling/README.md) 与 [实验定义](../../research/hand_region_sampling/experiment.yaml)：登记 `uniform_surface` profile 及无配额合同。
+- [uniform surface 输出目录](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/)。
+- [MANO uniform PLY](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/mano_uniform_2048.ply) 与 [Inspire uniform PLY](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/inspire_uniform_2048.ply)。
+- [采样统计](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/sampling_summary.json) 与 [run manifest](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/run_manifest.json)。
+
+**原因**
+
+前序 Region、tip-heavy 和 per-link 预览都显式改变了局部点密度，无法直接观察完整 mesh 在统一面积密度下的自然分布。本次取消所有语义配额，MANO 与 Inspire 各自在完整 canonical mesh 上独立生成 2048 点表面均匀基线。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/run.py`：通过。
+- 预览命令：`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/hand_region_sampling/run.py --quota-profile uniform_surface --modification-version V1.2.11 --output src/task/ObjectInteractionCm/research/hand_region_sampling/output/uniform_surface_2048_preview_20260909`：完成。
+- 两份 PLY 均为 2048 点、全字段 finite、RGB 全部为 `(190,190,190)`，最大单位法线误差小于 `4.4e-8`；summary 中 `region_quotas=null`、`stratum_quotas=null`。
+- Inspire 按 source visual ID 的自然计数为 `1491,14,68,44,37,61,34,57,52,67,40,56,27`；`hand_base_link` 占 1491 点来自其约 73.8% 的总表面积，是全局表面积均匀采样的预期结果，不是额外权重。
+- 同 seed 重跑后 MANO/Inspire PLY SHA-256 完全一致；balanced profile 重跑也与 V1.2.6 基线 PLY 哈希一致。
+- `git diff --check` 与 `audit_diff.py --check-links`：通过；未修改正式 cache、训练配置、模型、GT、split、坐标系或 checkpoint，未运行训练和评估。
+- 回滚入口：删除 `uniform_surface` profile 的代码/文档改动、[uniform surface 输出目录](../../research/hand_region_sampling/output/uniform_surface_2048_preview_20260909/) 及版本指针更新；既有 balanced/tip-heavy/link-stratified 输出不需回滚。
+
+## 2026-09-09 11:50:27 +0800 — V1.2.10 核对 MANO mesh 与空带来源
+
+- activity_id: `ACT-20260909-115027-OBJECTINTERACTIONCM-MANO-MESH-STRUCTURE-DIAGNOSTIC`
+- timestamp: `2026-09-09 11:50:27 +0800`
+- modification_version: `V1.2.10`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 MANO 是否存在对应 link mesh，以及 MANO PLY 空带是否由形态缺少 mesh 造成；本次只读检查模型资产字段和现有采样代码。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（MANO 每个形态由同一 778 顶点/1538 三角面拓扑经 `shapedirs` 和蒙皮权重变形得到整体 mesh；不存在 Inspire 式独立 link mesh。空带属于采样/分区覆盖问题，不是形态没有 mesh）
+- scope: 只读核对 `MANO_RIGHT.pkl` 的 `v_template`、`shapedirs`、`J_regressor`、`weights`、`f` 字段及 GRAB/MANO 当前 face-center 与预览采样路径；未修改代码、配置、cache 或产物。
+
+**文件与证据**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.10`。
+- [MANO 资产](../../../../../dataset/arctic/data/body_models/mano/MANO_RIGHT.pkl)：包含 `v_template (778,3)`、`shapedirs (778,3,10)`、`posedirs (778,3,135)`、`J_regressor (16,778)`、`weights (778,16)` 和 `f (1538,3)`；形状和姿态共享同一 mesh topology。
+- [GRAB MANO 预处理](../../../../../process/GRAB/raw.py)：正式手点以每帧 MANO 变形顶点和固定 `faces` 的 face center 生成，保留跨帧 face 对应。
+- [MANO 预览脚本](../../research/hand_region_sampling/run.py)：预览从同一 MANO faces 构造三角面池；`link_stratified` 对应的是 joint-segment 语义，不是 URDF link mesh。
+
+**原因**
+
+MANO 的 `β` 只改变同一模板 mesh 的顶点位置，不能提供 `thumb_distal`、`index_tip` 之类的独立刚体网格。当前 MANO 空带更可能来自面中心/有放回采样、按最近关节和 PCA 末端划分造成的空间覆盖不足；若要修复，应基于 MANO 关节位置、顶点 skinning weights 或 geodesic 邻域定义 joint-centered 区域，而不是寻找不存在的 link mesh。
+
+**验证**
+
+- 使用 NumPy 兼容 shim 成功读取 `MANO_RIGHT.pkl` 字段和形状；未发现独立 link mesh 字段。
+- 只读检查 `process/GRAB/raw.py` 与预览脚本的 face/triangle 采样路径；未运行训练、评估或数据重建。
+- 结论不代表新的采样方案已经验证，仅确认 MANO 几何表示和空带问题的来源类别。
+
+## 2026-09-09 11:43:35 +0800 — V1.2.9 严格 per-link mesh 采样预览
+
+- activity_id: `ACT-20260909-114335-OBJECTINTERACTIONCM-LINK-STRATIFIED-SAMPLING-PREVIEW`
+- timestamp: `2026-09-09 11:43:35 +0800`
+- modification_version: `V1.2.9`
+- type: `code / diagnostic / data`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认改为每个有 mesh 的 Inspire link 独立采样，并为 MANO 使用对应 joint-segment 分层；总点数保持 2048，不覆盖既有预览和正式 cache。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)
+- run_id: `link_stratified_v2_2048_preview_20260909`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（已验证 Inspire 每个非空 visual link 获得独立 quota 且点来自该 link 自己的 mesh；但按 URDF `*_tip` frame 统计，小指仍无 15 mm 内点，局部 tip 空带是否消失需用户查看 PLY，不能仅据此宣称已解决）
+- scope: 在 V1.2.6 预览入口新增严格 `link_stratified` profile；Inspire 按 13 个非空 visual link 分层，MANO 按 11 个 joint-segment 分层；不改变 balanced/tip_heavy 基线行为。
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.9`。
+- [预览脚本](../../research/hand_region_sampling/run.py)：新增 link/segment strata、独立面积加权采样和严格 link quota 映射。
+- [实验 README](../../research/hand_region_sampling/README.md)：记录 `link_stratified` profile 及其保护边界。
+- [实验定义](../../research/hand_region_sampling/experiment.yaml)：登记 link-stratified quota profile。
+- [link-stratified 输出目录](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/)。
+- [MANO link-stratified PLY](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/mano_weighted_2048.ply) 与 [Inspire link-stratified PLY](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/inspire_weighted_2048.ply)。
+- [采样统计](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/sampling_summary.json) 与 [run manifest](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/run_manifest.json)。
+
+**原因**
+
+之前的 Region/tip-heavy 方案虽然读取了 link mesh，但同一根手指的多个 link 仍共享 Region quota，不能保证每个 link 都有点。本次将 hand base 固定为 512 点；五个末端父 link（`thumb_distal`、`index_intermediate`、`middle_intermediate`、`ring_intermediate`、`pinky_intermediate`）合计 1024 点；其余七个 finger link 合计 512 点。每个 link 内仍按自身三角面面积加权并作 barycentric surface sampling。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/run.py`：通过。
+- 预览命令：`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/hand_region_sampling/run.py --quota-profile link_stratified --modification-version V1.2.9 --output src/task/ObjectInteractionCm/research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909`：完成。
+- MANO/Inspire PLY 均为 2048 点，点和法线 finite，最大单位法线误差约 `4.0e-8`。
+- Inspire `source_visual_id` 计数严格为 `512,74,73,73,205,73,205,73,205,73,205,73,204`，对应 13 个非空 visual link；所有点均由对应 link 的 mesh 三角面抽取。
+- MANO segment Region 计数为 `512,103,205,103,205,102,205,102,205,102,204`。
+- 基线 `balanced` profile 重新生成后 MANO/Inspire PLY SHA-256 与 V1.2.6 基线完全一致；未改变既有 profile。
+- Inspire tip frame 15 mm 内点数为 thumb `56`、index `73`、middle `17`、ring `68`、pinky `0`；说明 per-link quota 不等于 tip-frame 邻域覆盖，后续若仍有局部空带需另做 joint-centered/collar 规则。
+- `git diff --check` 与 `audit_diff.py --check-links`：通过；未修改正式 cache、训练配置、模型、GT、split、坐标系或 checkpoint，未运行训练和评估。
+- 回滚入口：删除 `link_stratified` 代码/文档改动、[link-stratified 输出目录](../../research/hand_region_sampling/output/link_stratified_v2_2048_preview_20260909/) 及版本指针更新，即可恢复既有 V1.2.6 预览行为；balanced/tip-heavy 输出不需回滚。
+
+## 2026-09-09 11:12:46 +0800 — V1.2.7 tip-heavy 2048 点预览对比
+
+- activity_id: `ACT-20260909-111246-OBJECTINTERACTIONCM-TIP-HEAVY-SAMPLING-PREVIEW`
+- timestamp: `2026-09-09 11:12:46 +0800`
+- modification_version: `V1.2.7`
+- type: `code / diagnostic / data`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认保持总点数 2048，只增加 tip 配额以检查指尖关节处空带是否由比例不足造成；不覆盖基线、不接入正式 cache。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的其它用户改动）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)
+- run_id: `tip_heavy_2048_preview_20260909`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（tip 配额翻倍后拇指/食指/中指/无名指 tip 关节附近覆盖明显增加，但小指因 `pinky_tip` frame 与末端 mesh 不对齐仍无 15 mm 内点；仅增加比例不能完全解决该问题）
+- scope: 在现有 V1.2.6 预览脚本中新增 tip-heavy 配额 profile；总点数、三角面采样、Region 几何划分、seed、姿态和正式 cache/训练合同保持不变。
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml)：将 ObjectInteractionCm 指针更新为 `V1.2.7`。
+- [预览脚本](../../research/hand_region_sampling/run.py)：新增 `balanced`/`tip_heavy` quota profile，并将 quota 显式传入采样与统计函数。
+- [实验 README](../../research/hand_region_sampling/README.md)：记录 tip-heavy 对照的变量和命令。
+- [实验定义](../../research/hand_region_sampling/experiment.yaml)：登记默认 profile 与 tip-heavy profile。
+- [tip-heavy 输出目录](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/)。
+- [MANO tip-heavy PLY](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/mano_weighted_2048.ply) 与 [Inspire tip-heavy PLY](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/inspire_weighted_2048.ply)。
+- [采样统计](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/sampling_summary.json) 与 [run manifest](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/run_manifest.json)。
+
+**原因**
+
+当前 balanced profile 每根手指约 102 个 tip 点，且这些点分散在末端 20% 表面。为隔离“tip 比例是否不足”这一变量，本次保持所有几何和采样规则不变，只将 `palm/body/tip` 从 `512/1024/512` 调整为 `512/512/1024`，即每根手指 tip 约 205 点。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/run.py`：通过。
+- 预览命令：`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/hand_region_sampling/run.py --quota-profile tip_heavy --output src/task/ObjectInteractionCm/research/hand_region_sampling/output/tip_heavy_2048_preview_20260909`：完成。
+- MANO/Inspire PLY 均为 2048 点，Region 计数为 `512,103,205,103,205,102,205,102,205,102,204`，点和法线 finite，最大单位法线误差约 `4.2e-8`。
+- 同 seed 重跑后两份 PLY 的 SHA-256 完全一致；统计 JSON 仅因输出目录绝对路径不同而不同。
+- Inspire tip frame 15 mm 邻域计数（balanced → tip-heavy）：thumb `55→119`、index `95→183`、middle `50→83`、ring `93→179`、pinky `0→0`；说明增加配额对前四指有效，但不能修复小指 frame/mesh 对齐问题。
+- `git diff --check`：通过；未修改正式 cache、训练配置、模型、GT、split、坐标系或 checkpoint，未运行训练和评估。
+- 回滚入口：删除新增 profile、文档改动和 [tip-heavy 输出目录](../../research/hand_region_sampling/output/tip_heavy_2048_preview_20260909/)，即可恢复 V1.2.6 预览行为；基线输出不受影响。
+
+## 2026-09-09 10:26:31 +0800 — V1.2.6 完成 MANO/Inspire 2048 点 Region 加权采样预览
+
+- activity_id: `ACT-20260909-102631-OBJECTINTERACTIONCM-REGION-SAMPLING-PREVIEW`
+- timestamp: `2026-09-09 10:26:31 +0800`
+- modification_version: `V1.2.6`
+- type: `code / diagnostic / data`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认按默认方案执行：MANO/Inspire 共用 11 Region、总点数 2048、`palm/body/tip=25%/50%/25%`，Region 内保留面积加权。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留工作树中已有的 ObjectInteractionCm 转换器/配置/查看器、CmDecoderv2 改动及其它用户修改）
+- final_plan: [V1.2.6 Region 加权手点预览计划](../plan/V1.2.6.md)
+- run_id: `region_weighted_2048_preview_20260909`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（预览脚本、两份 2048 点 PLY、Region 配额、法线和确定性检查通过；PLY 的视觉适用性等待用户人工确认，正式训练效果尚未评估）
+- scope: 新增 Task-local 研究预览脚本和定义，生成 MANO/Inspire canonical PLY；不修改 V1.2.5 正式 cache、训练配置、模型、GT、split、坐标系或 checkpoint。
+
+**文件与产物**
+
+- [V1.2.6 计划](../plan/V1.2.6.md)：锁定 11 Region、2048 配额、20% 末端 tip、Region 内面积加权和预览保护边界。
+- [Task 文档入口](../README.md) 与 [当前版本指针](../../../../../docs/current_versions.yaml)：加入/指向 V1.2.6 预览计划；未改其它 Task 版本。
+- [预览脚本](../../research/hand_region_sampling/run.py)：实现 MANO/Inspire canonical triangle pool、Region 划分、固定配额采样和 PLY/manifest 输出。
+- [实验定义](../../research/hand_region_sampling/experiment.yaml) 与 [实验 README](../../research/hand_region_sampling/README.md)：声明 exploratory、只输出预览、不接入正式 cache。
+- [MANO 2048 点 PLY](../../research/hand_region_sampling/output/region_weighted_2048_preview_20260909/mano_weighted_2048.ply)。
+- [Inspire 2048 点 PLY](../../research/hand_region_sampling/output/region_weighted_2048_preview_20260909/inspire_weighted_2048.ply)。
+- [采样统计](../../research/hand_region_sampling/output/region_weighted_2048_preview_20260909/sampling_summary.json) 与 [run manifest](../../research/hand_region_sampling/output/region_weighted_2048_preview_20260909/run_manifest.json)。
+
+**原因**
+
+现有 V1.2.5 的全局面积加权 1538 点使 Inspire 指尖覆盖不足。本次先用独立预览验证“固定 2048 点、显式 palm/body/tip 配额、Region 内仍按面积加权”的视觉分布，再决定是否改变正式数据语义。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/hand_region_sampling/run.py`：通过。
+- 预览命令：`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/hand_region_sampling/run.py --output src/task/ObjectInteractionCm/research/hand_region_sampling/output/region_weighted_2048_preview_20260909`：完成，生成 MANO/Inspire 两份 PLY、统计和 run manifest。
+- PLY 读取校验：两份均为 2048 vertices、11 Region 计数严格符合预设配额、点和法线 finite，最大单位法线误差小于 `4e-8`。
+- 采样确定性校验：同一 seed=2024 下 MANO/Inspire 两次生成的点数组逐元素一致。
+- 初次运行发现的 `smplx/chumpy` 与新 NumPy 别名兼容问题已通过预览入口本地 shim 解决；未改动生产模块。
+- `git diff --check` 与 `audit_diff.py --staged --check-links`：通过；未运行训练、评估或全量数据处理。
+- 回滚入口：删除新增的 [预览脚本](../../research/hand_region_sampling/run.py)、[实验定义](../../research/hand_region_sampling/experiment.yaml)、[计划](../plan/V1.2.6.md)、README 和对应 `output/region_weighted_2048_preview_20260909/`；V1.2.5 cache/config/checkpoint 不需回滚。
+
+## 2026-09-09 00:08:25 +0800 — V1.2.5 核对 Inspire 三角面中心点数量
+
+- activity_id: `ACT-20260909-000825-OBJECTINTERACTIONCM-INSPIRE-TRIANGLE-CENTER-COUNT`
+- timestamp: `2026-09-09 00:08:25 +0800`
+- modification_version: `V1.2.5`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问 1538 点总预算对指尖稀疏的影响，以及每个三角面中心作为点时的数量；本次只读复现正式 URDF mesh 的有效三角面计数。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅追加本诊断记录；保留工作树中已有改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（确认当前 1538 总预算显著压缩了三角面候选；“每面中心”会产生约 24.7 万点，但其三角剖分密度并不等于均匀几何采样）
+- scope: 只读统计当前 Inspire URDF 的 visual mesh 三角面、退化面和每 link 分布；未修改代码、配置、cache、split、GT、训练或评估产物。
+
+**文件与证据**
+
+- [cache builder](../../tools/data/build_dexplore_rl_cache.py)：验证当前实现将所有有效三角面合并后按面积有放回抽取固定 1538 点。
+- [V1.2.5 正式 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)：确认正式 cache 使用 `surface_points=1538`、`surface_seed=2024`。
+- [本活动记录](activity_log.md)：登记本次只读诊断和保护边界。
+
+**原因**
+
+13 个 visual mesh 共 247,412 个三角面，其中 8 个退化面被当前代码过滤，得到 247,404 个有效三角面。因此保留每个三角面中心会产生 `247,404×3` 的点坐标数组，约为当前 1538 点的 160.9 倍。全量中心点还会继承 STL 三角剖分密度，不能直接视为均匀表面采样。
+
+**验证**
+
+- 有效三角面按大区统计：`hand_base=68,832`、`thumb=38,624`、`index=35,248`、`middle=34,006`、`ring=35,248`、`pinky=35,446`。
+- 若保留所有面中心，五个末端 mesh 的点数分别为 `15,718/14,846/13,604/14,846/15,044`（拇/食/中/无名/小指），几何最末 10 mm 分别约有 `7,328/5,053/5,039/5,085/5,803` 个面中心；这说明全量中心点会显著改善末端覆盖，但也会带来约 2.97 MB 的单帧 float32 坐标，仅计算量和存储量就不再等同于当前训练合同。
+- 未运行训练、评估或数据处理，未生成或修改 cache；回滚入口仅为删除本条 activity。
+
+## 2026-09-08 23:58:38 +0800 — V1.2.5 为 Viser 查看器增加未来帧叠加
+
+- activity_id: `ACT-20260908-235838-OBJECTINTERACTIONCM-VISER-FUTURE-OVERLAY`
+- timestamp: `2026-09-08 23:58:38 +0800`
+- modification_version: `V1.2.5`
+- type: `code / diagnostic`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确确认未来步长 `delta` 范围为 0–10，0 表示不显示未来，其余按已协商方案叠加 `t+delta` 的手和物体；改动仅限 Task-local 只读可视化。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅修改 ObjectInteractionCm 查看器和本日志；保留用户已有训练、CmDecoderv2 及其他未提交改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py` 的鼠标 GUI、未来点云/mesh 场景节点及只读检查输出；不改变 cache、schema、GT、split、坐标系、采样、KNN、距离定义、训练或评估实现。
+- conclusion: `SUPPORTED`（未来帧索引、末帧夹取及 MANO/Inspire-RL 服务端渲染通过工程验证；未进行浏览器端人工点击与主观观感回归，不构成科研效果结论）
+
+**文件**
+
+- [Viser 查看器](../../visualize_grab.py)：在“播放”区域加入 `未来 Δ（cache 帧）` 鼠标滑块，范围为 0–10；0 隐藏未来层，1–10 叠加 `min(t+Δ,T-1)` 的手和物体。未来物体使用绿色、未来手使用紫色，不绘制连线；未来点云和 mesh 分别服从既有 `点云显示`、`Mesh 显示` 控件，当前帧的累计距离阈值、最近距离和物体→手 KNN 语义保持不变；新增 `--future-delta` 启动/检查参数。
+- [本活动记录](activity_log.md)：登记审批、边界、验证和回滚入口。
+- 工作树中此前已有、此次未修改但需保护的 Task 路径：`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml`、`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5_smoke.yaml`、`src/task/ObjectInteractionCm/docs/README.md`、`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`、`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py`。
+
+**原因**
+
+需要在同一视图对比当前状态和指定未来 cache 帧的整体手物运动。实现复用训练 index 中同一条轨迹的逐帧点云与 mesh pose，不插值、不连接轨迹、不计算未来层的距离/KNN；在序列尾部显式夹到最后一帧并在状态区提示，避免越界或循环到序列开头。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py` 与 `_future_frame`/parser 断言：通过；确认 `Δ=0/1/6/10`、末帧夹取及参数范围。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split train --sequence s1/airplane_fly_1 --frame 0 --future-delta 3`：通过；MANO 当前 cache 帧 0 映射未来 cache 帧 3、原始帧 12，未夹取。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split val --sequence s1/torussmall_lift --frame 488 --future-delta 10`：通过；Inspire-RL 的 489 帧序列在末帧正确夹到 cache 帧 488、原始帧 1952，并报告 `future_clamped=true`。
+- `timeout 12s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split train --sequence s1/airplane_fly_1 --frame 0 --future-delta 3 --point-display both --mesh-display both --host 127.0.0.1 --port 8134 --fps 1`：Viser 使用当前 V1.2.5 index 完成 MANO 当前/未来点云及双 mesh 初始渲染；timeout 主动退出，退出码 124。
+- `timeout 15s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split val --sequence s1/torussmall_lift --frame 0 --future-delta 10 --point-display both --mesh-display both --host 127.0.0.1 --port 8135 --fps 1`：Viser 完成 Inspire-RL 当前/未来点云及双 mesh 初始渲染；timeout 主动退出，退出码 124。
+- `timeout 7s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split train --sequence s1/airplane_fly_1 --future-delta 0 --point-display both --mesh-display both --host 127.0.0.1 --port 8136 --fps 1`：`Δ=0` 路径完成初始渲染，未来点云不可见且未来 mesh 不加载；timeout 主动退出，退出码 124。
+- `git diff --check -- src/task/ObjectInteractionCm` 与 `audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm --check-links`：通过；activity 与 7 个变更路径一致，4 个本地链接可导航。
+- 回滚入口：仅恢复 [查看器](../../visualize_grab.py) 中未来帧 helper、GUI、四个未来 scene group 和 `--future-delta` 参数，并删除本条 activity；数据/cache 无需回滚。
+
+## 2026-09-08 23:56:22 +0800 — V1.2.5 诊断 Inspire 指尖表面点稀疏
+
+- activity_id: `ACT-20260908-235622-OBJECTINTERACTIONCM-INSPIRE-TIP-SAMPLING-DIAGNOSTIC`
+- timestamp: `2026-09-08 23:56:22 +0800`
+- modification_version: `V1.2.5`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前训练数据中 Inspire 手点的采样方式，并反馈可视化中指尖手点很少；本次仅只读核对 cache builder、URDF visual mesh、正式 cache manifest，并复现固定采样的区域计数。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅追加本诊断记录；保留工作树中已有的 ObjectInteractionCm 转换器、配置、查看器、训练记录及 CmDecoderv2 改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（确认当前 Inspire 固定表面采样确实造成指尖低覆盖；尚未做重采样或性能消融，不能据此断言它对指标的因果影响）
+- scope: 只读检查 V1.2.5 Inspire 手点的 URDF visual surface sampling、固定点随 FK 变换的实现和 seed=2024 的逐 link/末端区域计数；未修改代码、配置、cache、split、GT、训练或评估产物。
+
+**文件与证据**
+
+- [cache builder](../../tools/data/build_dexplore_rl_cache.py)：从 13 个 URDF visual mesh 合并全部有效三角形，按三角形面积全局有放回抽取 1538 个三角形，再作重心采样；固定样本只在每帧随各 link FK 变换。
+- [V1.2.5 正式 cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json) 与 [示例 Inspire geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/sequences/train/inspire_rl/s1_airplane_lift/geometry/manifest.json)：确认 `surface_seed=2024`、`surface_points=1538`、`method=area_weighted_triangle_barycentric`。
+- [V1.2.5 训练配置](../../configs/active/dexplore_rl_v1_2_5.yaml)：确认运行时手点数 1538、物体→手 KNN=16、交互半径 5 cm。
+- [本活动记录](activity_log.md)：登记本次只读诊断、定量结果和保护边界。
+
+**原因**
+
+当前策略没有 per-link 最小配额、指尖加权或全局 FPS。`hand_base_link` visual mesh 的面积为 `1488.759 cm²`，占全部 visual surface 的 `73.818%`，因此固定 seed 实际将 1538 点中的 1109 点分配给掌/腕 base，五个含指尖表面的末端 mesh 合计只有 139 点。用户看到的指尖稀疏不是单帧渲染偶发，而是全部 Inspire 序列共享的固定采样布局。
+
+**验证**
+
+- 使用正式 builder 的 `InspireUrdfModel.surface_samples(1538, 2024)` 复现采样：掌/腕 base 1109 点；拇指各 link 合计 126 点（末端 28），食指 74（末端 27），中指 86（末端 40），无名指 78（末端 26），小指 65（末端 18），总计 1538。
+- 沿各末端 mesh 轴向统计几何最末 10 mm：拇/食/中/无名/小指分别仅 `4/5/9/5/4` 点；该计数支持“指尖覆盖稀疏”，但不是模型性能消融。
+- URDF 的五个 `*_tip` link 均为空 link、没有 visual mesh，采样器不会为 tip link 单独留点；另发现 `pinky_tip` fixed frame 与末端 mesh 的局部轴向明显不一致，但该 frame 未参与当前 surface sampling，因而不是本次稀疏的直接原因。
+- 未运行训练、评估或数据处理，未生成或修改 cache；回滚入口仅为删除本条 activity。
+
+## 2026-09-08 22:13:29 +0800 — V1.2.5 缩小点云 sprite 并改用 float32 圆点渲染
+
+- activity_id: `ACT-20260908-221329-OBJECTINTERACTIONCM-VISER-FINE-POINT-RENDERING`
+- timestamp: `2026-09-08 22:13:29 +0800`
+- modification_version: `V1.2.5`
+- type: `code / diagnostic`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 在只读诊断确认 Inspire 小物体的 4096 点密度、1 mm 最小 sprite 和 Viser 默认 float16 量化后，Agent 提议将滑块下限降至 0.1 mm 并使用 `float32/circle/flat`，用户明确回复“可以，你继续吧”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅修改 ObjectInteractionCm 查看器和本日志；保留用户已有训练、CmDecoderv2 及其他未提交改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py` 的 Viser 点云显示参数；不改变点云数组、采样数量、坐标系、KNN、距离、mesh、训练或评估合同。
+- conclusion: `SUPPORTED`（静态检查和 Inspire-RL 小物体服务端 smoke；未进行浏览器端主观观感回归，不构成科研效果结论）
+
+**文件**
+
+- [Viser 查看器](../../visualize_grab.py)：手点和物体点滑块由最小 `0.001 m`/步长 `0.001 m` 改为最小 `0.0001 m`/步长 `0.0001 m`；两类点云均显式使用 `precision="float32"`、`point_shape="circle"`、`point_shading="flat"`，避免世界坐标约 1 m 时的 float16 毫米级量化和方形渐变 sprite 造成视觉膨胀。
+- [本活动记录](activity_log.md)：登记审批、验证和回滚入口。
+- 工作树中此前已有、此次未修改但需保护的 Task 路径：`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml`、`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5_smoke.yaml`、`src/task/ObjectInteractionCm/docs/README.md`、`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`、`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py`。
+
+**原因**
+
+V1.2.5 的 Inspire 小物体可小至约 40 mm，而 4096 点的典型间距约 0.44 mm；旧的最小 1 mm sprite 会明显重叠。Viser 1.0.30 默认还会把点坐标转换为 float16，在当前约 1 m 的世界坐标处量化粒度接近 1 mm。此次只收细渲染参数，不通过缩放坐标或改写采样来掩盖显示问题。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py`：通过；静态核对两个 slider 均为 `min=0.0001, step=0.0001`，两个 `add_point_cloud` 均传入 `float32/circle/flat`。
+- `timeout 10s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split val --sequence s1/torussmall_lift --point-size 0.0001 --point-display both --mesh-display off --host 127.0.0.1 --port 8133 --fps 1`：当前 V1.2.5 index 的 Inspire-RL 小物体轨迹以 0.1 mm 点大小完成 Viser 初始渲染；timeout 主动退出，退出码 124。
+- `git diff --check -- src/task/ObjectInteractionCm` 与 `audit_diff.py --worktree --scope-prefix src/task/ObjectInteractionCm --check-links`：通过；未生成或修改数据/cache/运行产物。
+- 回滚入口：仅恢复 [查看器](../../visualize_grab.py) 的两个 slider 范围和两处 `add_point_cloud` 渲染参数；数据/cache 无需回滚。
+
+## 2026-09-08 22:02:49 +0800 — V1.2.5 诊断 Inspire 点云看起来偏大的原因
+
+- activity_id: `ACT-20260908-220249-OBJECTINTERACTIONCM-VISER-POINT-SIZE-DIAGNOSTIC`
+- timestamp: `2026-09-08 22:02:49 +0800`
+- modification_version: `V1.2.5`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问查看器物体点是否为采样点，并反馈 Inspire 视图在最小点大小下仍显得偏大；本条仅做只读数组、尺度和 Viser 渲染语义核对。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（只追加本诊断记录；保留工作树已有的训练、转换器、配置和查看器改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: 只读检查 [近期 V1.2.5 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json)、indexed geometry、缓存构建器和本地 Viser 1.0.30 的 `point_size` 实现；未修改数据、代码或渲染参数。
+- conclusion: `SUPPORTED`（采样来源和单位诊断得到工程证据；尚未实施点大小修正，不构成科研效果结论）
+
+**文件**
+
+- [Viser 查看器](../../visualize_grab.py)：只读核对其加载完整 `obj_points_pool_world.npy`、点数和 `point_size` 传递。
+- [V1.2.5 训练 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json) 与 [示例 geometry](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/sequences/train/inspire_rl/s1_airplane_lift/geometry/manifest.json)：核对采样点池 shape/dtype、来源 manifest 和坐标单位。
+- 工作树中此前已有、此次未修改但需保护的 Task 路径：`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml`、`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5_smoke.yaml`、`src/task/ObjectInteractionCm/docs/README.md`、`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`、`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py`。
+
+**原因**
+
+需要区分“数据点本身过大”和“渲染点 sprite/点密度相对物体尺寸显得过大”。本次检查同时对照 cache builder 的输入输出和 Viser 的本地渲染实现，避免未经证据就修改坐标或采样语义。
+
+**验证**
+
+- `obj_points_pool_world.npy` 在 MANO 和 Inspire-RL 序列均为 `[T,4096,3]`、`float32`，示例帧 4096 个点全部唯一；不是直接使用 mesh 顶点。近期 V1.2.5 index 的运行时模型点数为 1024，但查看器故意显示完整 4096 点池。
+- [cache builder](../../tools/data/build_dexplore_rl_cache.py) 先读取父 cache 的 `obj_points_world.npy [T,4096,3]`，再按当前物体姿态写出 `obj_points_pool_world.npy`；Inspire 手点则由 1538 个固定面积加权表面样本生成。两者均为采样点云，不是原始 mesh 顶点。
+- 对 V1.2.5 Inspire 示例核对：普通 `airplane` 物体尺寸约 `138×155×44 mm`；`cubesmall`/`torussmall` 等小物体约 `40 mm` 尺寸，4096 点的典型最近邻间距约 `0.44 mm`（torussmall）。因此查看器最小 `point_size=0.001 m` 仍是 1 mm，在小物体上会发生明显 sprite 重叠。
+- 本地 Viser 1.0.30 的 `add_point_cloud` 文档和客户端 shader 均按场景单位解释 `point_size`，查看器当前物体/手点 slider 下限为 `0.001 m`，且默认 `point_shape="square"`、`point_shading="gradient"`；这会使密集 Inspire 点云看起来比 MANO 大，但不表示坐标单位错误。
+- 未修改 `visualize_grab.py` 或任何 cache；若要改善观感，后续可在用户确认后把最小点大小降到 `0.0001 m`、改用 `circle/flat`，并可选择显示 1024 点可视化子集而保持 KNN 在完整池上计算。
+
+## 2026-09-08 21:37:48 +0800 — V1.2.5 为点云与 Mesh 增加独立鼠标显示切换
+
+- activity_id: `ACT-20260908-213748-OBJECTINTERACTIONCM-VISER-GEOMETRY-TOGGLES`
+- timestamp: `2026-09-08 21:37:48 +0800`
+- modification_version: `V1.2.5`
+- type: `code / diagnostic`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认采用两个独立鼠标下拉控件，分别切换点云和 Mesh 的关闭、仅物体、仅手、物体+手显示状态。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅修改 ObjectInteractionCm 查看器和本日志；保留用户已有训练、CmDecoderv2 及其他未提交改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py` 的显示 GUI 与点云 handle 可见性；不改变数据、KNN 定义、距离计算、mesh 几何、训练或评估实现。
+- conclusion: `SUPPORTED`（工程 smoke 证据；未进行浏览器端人工点击回归，不构成科研效果结论）
+
+**文件**
+
+- [Viser 查看器](../../visualize_grab.py)：在同一“点云与 Mesh 显示”区域加入独立的 `点云显示` 和 `Mesh 显示` 下拉框；二者均支持关闭、仅物体、仅手和物体+手。点云切换只更新既有 point-cloud handle 的 `visible`，Mesh 仍按需加载，不重建点云数据或改变着色结果；同时新增可选的 `--point-display off|object|hand|both` 启动参数。
+- [本活动记录](activity_log.md)：登记显示组合、验证和保护边界。
+- 工作树中此前已有、此次未修改但需保护的 Task 路径：`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml`、`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5_smoke.yaml`、`src/task/ObjectInteractionCm/docs/README.md`、`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`、`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py`。
+
+**原因**
+
+此前点云始终显示，只有 Mesh 可以切换，无法快速在纯点云、纯 Mesh 和叠加视图之间比较。两个独立鼠标控件让物体和手的点云/mesh 可自由组合，同时保持轨迹、播放、距离阈值和 KNN 控件不变。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py`：通过；`--help` 显示 `--point-display {off,object,hand,both}` 与既有 mesh 参数。
+- `timeout 10s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --split train --sequence s1/airplane_fly_1 --point-display off --mesh-display both --host 127.0.0.1 --port 8130 --fps 1`：Viser 启动并完成“关闭点云、显示物体+手 Mesh”的 MANO 初始渲染；timeout 主动退出，退出码 124。
+- `timeout 10s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --split val --sequence s1/banana_lift --point-display hand --mesh-display off --host 127.0.0.1 --port 8131 --fps 1`：Viser 启动并完成“仅手点、关闭 Mesh”的 Inspire-RL 初始渲染；timeout 主动退出，退出码 124。
+- `timeout 8s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json --split train --sequence s1/airplane_fly_1 --point-display off --mesh-display both --host 127.0.0.1 --port 8132 --fps 1`：使用当前 V1.2.5 正式训练 index（630 条序列）再次通过纯 Mesh 初始渲染；timeout 主动退出，退出码 124。
+- `git diff --check -- src/task/ObjectInteractionCm` 与 `audit_diff.py --worktree --scope-prefix src/task/ObjectInteractionCm --check-links`：通过；未生成或修改数据/cache/运行产物。
+
+## 2026-09-08 20:36:03 +0800 — V1.2.5 为 Viser 查看器增加物体→手 KNN 高亮
+
+- activity_id: `ACT-20260908-203603-OBJECTINTERACTIONCM-VISER-KNN-HIGHLIGHT`
+- timestamp: `2026-09-08 20:36:03 +0800`
+- modification_version: `V1.2.5`
+- type: `code / diagnostic`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确要求增加 KNN 显示，提供 `1/4/8/16/32/64` 档位；该改动只增加 task-local 可视化，不改变训练、GT、cache、split 或指标合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅修改 ObjectInteractionCm 查看器和本日志；保留用户已有的训练、CmDecoderv2 及其他未提交改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py` 的鼠标 GUI 和只读 KNN 诊断；不绘制连线、不写入数据/cache/output。
+- conclusion: `SUPPORTED`（工程与数据语义 smoke 证据；不构成科研效果结论）
+
+**文件**
+
+- [Viser 查看器](../../visualize_grab.py)：新增 `物体→手 KNN` 下拉控件，档位为关闭、`n=1`、`n=4`、`n=8`、`n=16`、`n=32`、`n=64`；每帧对完整 4096 点物体池查询最近 n 个右手点，并将被任一物体点选中的手点取并集后以黄色高亮。距离阈值仍为红色，KNN 黄色在重叠点上优先显示；不创建线段。
+- [本活动记录](activity_log.md)：登记 KNN 方向、颜色语义、验证和保护边界。
+- 工作树中此前已有、此次未修改但需保护的 Task 路径：`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml`、`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5_smoke.yaml`、`src/task/ObjectInteractionCm/docs/README.md`、`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`、`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_cache.py`。
+
+**原因**
+
+用户需要快速查看“物体附近的整体手点区域”，而不是逐条显示 KNN 连线。实现与当前 Cm 模型的 KNN 方向保持一致：物体点作为 query、手点作为候选邻居，对各物体点的最近 n 个手点取并集并着色；因此 n=1 表示每个物体点的第一近手点的并集，而非强行只保留一个手点。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --split train --sequence s1/airplane_fly_1`：通过；KNN 并集手点数依次为 `n=1:1`、`4:6`、`8:10`、`16:22`、`32:37`、`64:73`，随 n 单调增加。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --split val --sequence s1/banana_lift`：通过；KNN 并集手点数依次为 `n=1:1`、`4:4`、`8:9`、`16:18`、`32:33`、`64:70`，确认 Inspire-RL 轨迹同样使用物体→手方向。
+- `timeout 12s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --split train --sequence s1/airplane_fly_1 --host 127.0.0.1 --port 8129 --fps 1`：Viser HTTP/WebSocket 启动并完成初始点云渲染；timeout 主动退出，退出码 124。KNN 控件通过同一 GUI callback 接入，未绘制连线。
+- `git diff --check -- src/task/ObjectInteractionCm` 与 `audit_diff.py --worktree --scope-prefix src/task/ObjectInteractionCm --check-links`：通过；未生成或修改数据/cache/运行产物。
+
+## 2026-09-08 09:46:19 +0800 — V1.2.5 修正轨迹、KNN=16 的 Cm 正式训练完成
+
+- activity_id: `ACT-20260908-094619-OICM-CORRECTED-KNN16-TRAIN-COMPLETED`
+- timestamp: `2026-09-08 09:46:19 +0800`
+- modification_version: `V1.2.5`
+- type: `experiment / operation`
+- change_level: `L0`（既有已批准正式 run 的终态核对与记录，不改变科研变量或运行产物）
+- approval: `user-approved`
+- approval_basis: 用户已批准 V1.2.5 修正轨迹、KNN=16 的正式训练；本次用户询问当前状态，只读核对已结束的既有 run 并收口终态记录。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 CmDecoderv2、ObjectInteractionCm 查看器和 V1.2.5 未提交改动）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: 只读核对 V1.2.5 正式 run 的进程、metrics、train log 与 checkpoint 元数据，并更新 Task activity/experiment 终态；不修改任何运行产物。
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606`
+- run_status: `COMPLETED`
+- command: `CUDA_VISIBLE_DEVICES=0,1,2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_2_5.yaml --distributed`
+- last_step: `202300`
+- last_epoch: `262`
+- duration: `06:30:21`
+- best_metric: `val/obj/flow_epe_mm=6.4225044410`（epoch 143 / step 110682，MANO `7.2434972881 mm`，RL-Inspire `5.6015115938 mm`）
+- final_metric: `val/obj/flow_epe_mm=6.7061753591`（epoch 262 / step 202300，MANO `7.7338374220 mm`，RL-Inspire `5.6785132961 mm`）
+- conclusion: `SUPPORTED`（修正数据与 KNN=16 的正式训练稳定完成）；下游 CmDecoderV2/rollout 效果仍为 `INCONCLUSIVE`
+
+**产物与证据**
+
+- [正式运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/)、[config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/config.json)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/run_manifest.json)、[metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/metrics.jsonl) 与 [train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/train.log)
+- [best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/best.pt)：epoch 143 / step 110682，SHA256 `a73b7dbf93cf4ca3b6de21e70c74acd22ba58d69ec8003d1c9fdae3f76180493`。
+- [latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/latest.pt)：epoch 262 / step 202300，SHA256 `f8bcd466021eebf3b5ee9f10e0e36091eb38d60a4a469feb5b381f1ab1db1899`。
+- [实验记录](experiment_log.md) 与 [执行计划](../plan/V1.2.5.md)
+
+**原因**
+
+用户询问正式训练进展。进程已自然退出，需要区分 best 与 final validation，并将启动条目的运行中状态收口为唯一终态证据，避免后续 decoder 错误选择最后一轮 checkpoint。
+
+**验证**
+
+- `ps` 未发现该 run 的 torchrun、训练 rank 或 DataLoader 进程；GPU 0/1/2 利用率均为 0%。
+- `train.log` 末尾为 `Training finished at step 202300 in 06:30:21.`；未检出 traceback、exception、NaN、OOM、NCCL failure 或 killed 记录。
+- 解析 `metrics.jsonl` 共 262 次 validation：最小等权 source object EPE 位于 epoch 143 / step 110682；最终 validation 位于 epoch 262 / step 202300。
+- 直接读取 best/latest checkpoint 元数据，确认 step、epoch 和共同保存的 `best_metric=6.422504440981543`；SHA256 已记录。
+- 未修改 checkpoint、cache、配置或训练输出；旧错误轨迹 run 和所有既有用户改动均保留。
+
+## 2026-09-07 23:58:32 +0800 — V1.2.5 full cache、KNN=16 smoke 与正式重训启动
+
+- activity_id: `ACT-20260907-235832-OICM-CORRECTED-KNN16-FULL-TRAIN-START`
+- timestamp: `2026-09-07 23:58:32 +0800`
+- modification_version: `V1.2.5`
+- type: `data / code / experiment / operation / documentation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认使用 630 条修正相交集重新训练 Cm，并追加要求 `KNN=16`；此前已说明独立 cache、scale、smoke、正式三卡训练和旧产物保护边界。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 CmDecoderv2、ObjectInteractionCm 查看器及旧 cache/output/checkpoint）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: 新建修正轨迹 cache/index/scale、V1.2.5 配置和新训练 run；转换器只补充真实 RL root/version provenance；不修改旧训练变量之外的模型/loss、公共 `src/base`、旧数据或旧 checkpoint。
+- cache_run_id: `oicm-dexplore-rl-full-20260907-231239`
+- cache_run_status: `COMPLETED`
+- smoke_run_id: `object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511`
+- smoke_run_status: `COMPLETED`
+- run_id: `object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606`
+- run_status: `RUNNING`
+- process: torchrun PID `2889418`，GPU `0,1,2`，DDP world size 3
+- last_step: `4100`（人工检查于 2026-09-08 00:04:23 +0800；最近完整 checkpoint 为 step 3870 / epoch 5）
+- last_epoch: `6`（运行中）
+- best_metric: `val/obj/flow_epe_mm=7.9856659836`（epoch 4 / step 3096）
+- conclusion: `INCONCLUSIVE`（正式训练运行中；cache 和 smoke 工程证据为 `SUPPORTED`）
+
+**文件与产物**
+
+- [当前版本指针](../../../../../docs/current_versions.yaml) 与 [Task 入口](../README.md)
+- [执行计划](../plan/V1.2.5.md)、[正式配置](../../configs/active/dexplore_rl_v1_2_5.yaml)、[smoke 配置](../../configs/active/dexplore_rl_v1_2_5_smoke.yaml) 与 [cache 转换器](../../tools/data/build_dexplore_rl_cache.py)
+- [full cache 目录](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/)、[cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/run_manifest.json)、[index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json)、[validation summary](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/validation_summary.json) 与 [KNN=16 scale](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/scales_train_v1_2_5.json)
+- [smoke 运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511/)、[smoke run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511/run_manifest.json)、[smoke metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511/metrics.jsonl)、[smoke train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511/train.log) 与 [smoke latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_smoke_20260907_235511/checkpoints/latest.pt)
+- [正式运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/)、[config](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/config.json)、[run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/run_manifest.json)、[metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/metrics.jsonl)、[train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/train.log)、[best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/best.pt) 与 [latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606/checkpoints/latest.pt)
+- [实验记录](experiment_log.md)
+
+**原因**
+
+旧 OICM cache 使用 GRAB/reference object trajectory，不能监督 DExplore rollout 的实际物体运动。此次从修正后的 hand/object 联合轨迹重建全部 geometry 和 flow GT；`KNN=16` 同时进入 scale calibration 与模型局部 interaction，避免模型/统计口径不一致。
+
+**验证**
+
+- full cache `COMPLETED`：630 条互斥 parent sequence，train/val/test=`509/58/63`，train MANO/Inspire=`254/255`、val=`28/30`、test=`63/0`；index 与 run manifest 的 RL root 均为 `inspire_rl_object_dexplore`。
+- scale calibration：train-only、seed 42、两 source stride 1..10、`knn_k=16`；`s_geo=0.0296379011 m`、`s_hand_flow=0.1148334428 m`、`s_obj_flow=0.0911242272 m`。
+- Dataset probe：train/val/test frame samples=`74246/8232/9334`，batch object `[2,1024,3]`、hand `[2,1538,3]`，metadata/config 均为 KNN=16。
+- 三卡 2-step smoke `COMPLETED`：global batch 6，loss/gradient finite，sample valid ratio 1，产生 config、manifest、metrics、train log 和 checkpoint；属于工程 `SUPPORTED`。
+- 正式训练从随机初始化启动：global batch 96、202300 steps；截至 epoch 4 / step 3096，best equal-source object EPE `7.985666 mm`（MANO `8.277207`、RL-Inspire `7.694125`），best/latest checkpoint 已生成；运行未终止，科研结论保持 `INCONCLUSIVE`。
+- `PYTHONPATH=. CUDA_VISIBLE_DEVICES='' ... pytest -q tests/test_object_interaction_cm.py`：`3 passed`；属于 Task 现有 legacy 定向回归。
+- `git diff --check -- docs/current_versions.yaml src/task/ObjectInteractionCm`：通过。
+- `audit_diff.py --worktree --scope-prefix <本次 8 个受控路径> --check-links`：通过；审计 7 个相对 HEAD 的变更路径及最新 activity 的 25 个现有本地链接。
+- 回滚入口：停止该新 run 并移除 V1.2.5 新 cache/config/output；旧 cache、旧 checkpoint 和旧运行均未覆盖、可继续只读复核。
+
+## 2026-09-07 23:03:24 +0800 — V1.2.5 修正物体轨迹、KNN=16 方案与 pilot
+
+- activity_id: `ACT-20260907-230324-OICM-CORRECTED-TRAJECTORY-KNN16-PILOT`
+- timestamp: `2026-09-07 23:03:24 +0800`
+- modification_version: `V1.2.5`
+- type: `data / code / experiment`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认使用 630 条修正数据相交集重新训练 Cm，并明确要求 `KNN=16`。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留既有 CmDecoderv2、ObjectInteractionCm 查看器、旧 cache、旧 output 和旧 checkpoint）
+- final_plan: [V1.2.5 修正物体轨迹与 KNN=16 重训计划](../plan/V1.2.5.md)
+- scope: 新增 V1.2.5 cache/config/plan；转换器只增加实际 `rl_root` provenance 和 modification-version 参数；不修改旧 cache、旧配置、旧 checkpoint 或公共运行时。
+- run_id: `oicm-dexplore-rl-pilot-20260907-230232`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（pilot 数据合同和修正轨迹接入通过；full cache、scale 和正式训练尚未完成）
+
+**文件与产物**
+
+- [执行计划](../plan/V1.2.5.md)
+- [full 配置](../../configs/active/dexplore_rl_v1_2_5.yaml) 与 [smoke 配置](../../configs/active/dexplore_rl_v1_2_5_smoke.yaml)：新训练使用 `knn_k=16` 和新 index/scale 路径。
+- [cache 转换器](../../tools/data/build_dexplore_rl_cache.py)：index 的 `source_roots.inspire_rl` 改为记录实际 `--rl-root`；run manifest 的版本号由命令行锁定。
+- [pilot run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5_pilot/run_manifest.json)、[pilot contact check](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5_pilot/pilot_contact_check.json) 和 [pilot geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5_pilot/sequences/train/inspire_rl/s1_airplane_lift/geometry/manifest.json)。
+
+**原因与保护边界**
+
+旧 cache 使用旧参考物体轨迹；修正根的 actual object pose 必须重新进入 object geometry、flow GT 和后续 Cm。`KNN=16` 是本轮用户确认的新模型变量，因此同步用于模型与 train-only scale calibration。旧数据、旧运行和依赖旧 checkpoint 的结果均保留，可直接回滚到旧入口。
+
+**验证**
+
+- `py_compile`：转换器与 calibration 脚本通过。
+- pilot command：`build_dexplore_rl_cache.py --mode pilot --sequence s1/airplane_lift --variant inspire_rl --rl-root data/processed_data/inspire_rl_object_dexplore --refresh-rl-candidates`，通过；parent intersection `630`，pilot frames `432`，object pool `4096`，hand `1538`。
+- pilot contact check：export 与 geometry active frames 均 `358`，disagreement `0`。
+- pilot 数值核对：新 cache translation 与 corrected tensor 最大误差 `0`；与旧 tensor 最大序列平移差 `0.125691 m`。
+- 尚未启动 full cache 或训练；当前 Viser 进程和 GPU 上其他进程未停止。
+
+## 2026-09-07 22:37:40 +0800 — 核对修正后 DExplore RL 物体轨迹与旧 OICM cache provenance
+
+- activity_id: `ACT-20260907-223740-OICM-CORRECTED-OBJECT-TRAJECTORY-DIAGNOSTIC`
+- timestamp: `2026-09-07 22:37:40 +0800`
+- modification_version: `V1.2.4`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求只读浏览已更新的 DExplore RL 数据并确认重新训练 Cm 的语义；本事件不修改数据、代码、配置、split、GT、checkpoint 或运行状态。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留用户已有 CmDecoderv2、ObjectInteractionCm 查看器和日志改动）
+- scope: 修正后 `inspire_rl_object_dexplore`、旧 `inspire_rl`、现有 `object_interaction_cm_dexplore_rl_v1` cache/index 及转换脚本的只读 provenance 与数值核对。
+- conclusion: `SUPPORTED`（确认旧 OICM cache 使用旧参考物体轨迹，未使用修正后的实际模拟物体轨迹；尚未执行新 cache 构建或重新训练）
+
+**原因**
+
+用户说明旧 DExplore RL 导出遗漏实际模拟物体轨迹，并要求在重新训练 Cm 前核对更新数据。由于物体轨迹直接决定 object flow GT、cache 几何和 checkpoint 解释，先进行只读 provenance 与数值检查，避免从旧 cache 恢复或覆盖旧证据。
+
+**证据与发现**
+
+- [修正后 RL 数据 manifest](../../../../../data/processed_data/inspire_rl_object_dexplore/manifest.json) 记录 660 条 DExplore-compatible 序列；`object_pose[198:205]` 与 `inspire_qpos[373:391]` 均来自确定性策略的实际模拟状态，660 条序列的物体位姿均相对 geometric reference 发生变化。
+- [旧 OICM cache run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/run_manifest.json) 和 [旧 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json) 明确绑定 `data/processed_data/inspire_rl`，生成时间早于修正数据；旧转换脚本实际从 tensor `198:205` 构造 `obj_pose_world`。
+- 对旧 index 中同时存在于修正根的 273 条 Inspire-RL 序列逐条核对：旧 cache 的平移与旧 `inspire_rl[:,198:201]` 最大误差为 `0`；旧/新每序列最大平移差的 median / p95 / max 为 `0.099516 / 1.378110 / 3.827840 m`。因此旧训练输入不是修正后的实际物体轨迹。
+- 修正根共 660 条，其中与旧 parent index、GRAB geometry 和 DExplore geometry 同时相交 630 条；沿用当前 seed=42、parent split 和互斥 variant 分配算法时，预计 train/val/test 为 `509/58/63`，train MANO/Inspire=`254/255`、val=`28/30`、test=`63/0`。这与旧 `1004/126/125` split 数量不同，属于后续重建前必须确认的数据语义变化。
+- 旧 cache、旧 OICM checkpoint 以及依赖该 checkpoint 的 CmDecoderv2/rollout/classifier 结果均保留，仅能解释旧错误数据链路；本诊断没有删除或覆盖这些可回滚证据。
+
+**验证**
+
+- 只读检查两个 RL 根的 tensor shape、序列集合、有限值及新 manifest；旧根 1335 条，修正后的 DExplore-compatible 根 660 条，tensor 均为 `[T,598]`。
+- 只读运行现有 `_intersection` 与 `_assign_variants` 得到 630 条相交序列及上述预计 split/variant 计数；没有写出 assignment、cache 或 manifest。
+- `ps` 检查未发现 OICM 训练或 cache builder 进程；未启动训练。现有 ObjectInteractionCm Viser 进程保持不变。
+
+## 2026-09-07 20:35:48 +0800 — V1.2.4 将 Viser 查看器对齐近期训练索引与两类手 mesh
+
+- activity_id: `ACT-20260907-203548-OBJECTINTERACTIONCM-TRAINING-VISER-PROVENANCE`
+- timestamp: `2026-09-07 20:35:48 +0800`
+- modification_version: `V1.2.4`
+- type: `code`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户质疑查看器是否使用近期训练数据；Agent 说明旧实现默认读取旧 `cm_object_v2/grab` cache，并提出改为近期训练 `index.json`、按 index variant 加载 MANO/Inspire-RL mesh 的方案，用户回复“可以”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（仅修改 ObjectInteractionCm 查看器和本日志；保留用户已有 CmDecoderv2 改动及未跟踪文件）
+- final_plan: [V1.2.3 Dexplore RL 混合训练计划](../plan/V1.2.3.md)
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py`；只读消费近期训练 index、逐序列 geometry manifest/数组、GRAB canonical object mesh、MANO parent mesh 和 Inspire RL qpos/URDF，不写入或迁移数据。
+- conclusion: `SUPPORTED`（工程静态检查、几何 provenance 检查和服务端 smoke；未进行浏览器端人工点击回归，不构成科研效果结论）
+
+**文件与数据入口**
+
+- [Viser 查看器](../../visualize_grab.py)：默认入口改为 [近期训练 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json)，轨迹严格按 index 的 split/source/variant 枚举；点云直接 mmap 每条 indexed sequence 的训练 geometry。
+- [近期训练配置](../../configs/active/dexplore_rl_v1_2_3.yaml)：其 `data.index` 与查看器新默认值一致。
+- [MANO 检查序列 manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/sequences/train/mano/s1_airplane_fly_1/geometry/manifest.json) 与 [Inspire-RL 检查序列 manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1/sequences/val/inspire_rl/s1_banana_lift/geometry/manifest.json)：记录本次 smoke 的 split、source、variant、坐标系、parent cache 或 RL qpos 来源。
+- [本活动记录](activity_log.md)：登记语义修正、审批、验证和回滚入口。
+
+**原因**
+
+旧查看器默认读取历史 `data/processed_data/cm_object_v2/grab` 双手点云，与近期混合训练使用的 indexed MANO/Inspire-RL 单变体数据不是同一输入合同。此次修正让可视化证据与实际训练 index、逐序列 manifest 和坐标系一致，并在界面中显式暴露 provenance。
+
+**实现与保护边界**
+
+- GUI 仍全部使用鼠标，保留轨迹前后切换、split/轨迹下拉、播放/暂停、逐帧跳转、1–5 cm 累计阈值着色、最近手物点距离、点大小/FPS 和物体/手 mesh 选择控件。
+- 查看器显示每帧完整 4096 点物体 pool 与 1538 点右手；状态栏明确提示训练运行时从 4096 pool 确定性采样 1024 点。最近距离和阈值着色基于所显示的完整训练 cache 点云。
+- 物体 mesh 使用 GRAB canonical mesh 和该 indexed sequence 的 `obj_pose_world`。MANO 手 mesh 从 manifest 的 `input_parent_cache` 读取，并复现 cache builder 的旧物体系到新 Dexplore 物体姿态变换；Inspire-RL 手 mesh 从 manifest 的 `rl_q.tensor` 读取 native qpos，并复用 cache builder 的 `InspireUrdfModel`、joint reorder 与 FK。
+- mesh 依赖缺失时只在状态栏降级提示，点云查看不受影响。未修改 index、geometry 数组、cache/schema、split、GT、训练配置、checkpoint、output、公共 `src/base` 或 `src/task/CmDecoderv2/`。
+- 回滚入口：恢复本条目前的 `visualize_grab.py` 旧 root-based loader；所有消费的数据和 mesh 资产均为只读，无数据产物需要回滚。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --split train --sequence s1/airplane_fly_1`：通过；确认 `train/grab/mano`、279 帧、4096/1024 物体点合同、1538 右手点；物体 mesh 与点云 bbox 中心误差 `0.1184 mm`，MANO mesh 与点云误差 `0.8879 mm`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --split val --sequence s1/banana_lift`：通过；确认 `val/inspire_f1/inspire_rl`、578 帧、4096/1024 物体点合同、1538 右手点；物体 mesh 与点云 bbox 中心误差 `0.0978 mm`，13 个 Inspire visual mesh（742,236 顶点）与 cache 手点云误差 `2.0421 mm`。
+- `timeout 12s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --split train --sequence s1/airplane_fly_1 --mesh-display both --host 127.0.0.1 --port 8127 --fps 1`：Viser HTTP/WebSocket 启动并完成 MANO 点云及双 mesh 初始渲染；timeout 主动退出，退出码 124。
+- `timeout 15s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --split val --sequence s1/banana_lift --mesh-display both --host 127.0.0.1 --port 8128 --fps 1`：Viser HTTP/WebSocket 启动并完成 Inspire-RL 点云及双 mesh 初始渲染；timeout 主动退出，退出码 124。
+- `git diff --check -- src/task/ObjectInteractionCm`：通过；未生成或修改数据/cache/运行产物。
+
+## 2026-09-07 10:28:50 +0800 — V1.2.3 为 GRAB Viser 查看器增加物体/手 mesh 控件
+
+- activity_id: `ACT-20260907-102850-OBJECTINTERACTIONCM-GRAB-VISER-MESH`
+- timestamp: `2026-09-07 10:28:50 +0800`
+- modification_version: `V1.2.3`
+- type: `code`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续为现有查看器增加 mesh 控件，可选择加载物体或手 mesh；用户在确认仓库已有 mesh 来源后多次回复“继续”。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（只修改 ObjectInteractionCm 查看器及本日志，保留用户已有 CmDecoderv2 改动）
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py`；只读对齐现有 sampled-point cache、mesh/object-pose cache 与 GRAB canonical object mesh，不改变坐标系、cache/schema、GT、split、训练或评估实现。
+- conclusion: `SUPPORTED`（工程 smoke 证据；不构成科研效果结论）
+
+**文件**
+
+- [GRAB Viser 查看器](../../visualize_grab.py)：新增 `Mesh 显示` 鼠标控件（关闭/仅物体/仅手/物体+手）、透明度控件、raw frame 对齐、缺失 mesh 降级提示，以及 `--mesh-root`、`--object-mesh-root`、`--mesh-display`、`--mesh-opacity` 参数。
+- [本活动记录](activity_log.md)：登记 mesh 来源、坐标处理、验证和保护边界。
+
+**原因**
+
+现有点云 cache 不保存 mesh；仓库已有按序列保存的 [GRAB mesh/object-pose cache](../../../../../data/processed_data/cm_object_v2_mesh_object_pose_20260830/) 和 [GRAB canonical object meshes](../../../../../data/raw_data/GRAB/tools/object_meshes/contact_meshes/)。查看器按序列相对路径和 `raw_frame_id` 对齐两类 cache：手 mesh 直接读取世界系逐帧顶点，物体 canonical mesh 通过对应帧 `obj_pose_world` 放置到世界系。mesh cache 缺失时不阻止点云查看，只在状态栏报告不可用原因。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --root data/processed_data/cm_object_v2/grab --sequence s1/banana_lift`：通过；物体 banana mesh 为 48,370 顶点/96,736 面，左右手各 778 顶点/1,538 面，物体 mesh 与 sampled cloud 的首帧 bbox 中心误差为 `0.0977 mm`。
+- `timeout 10s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --root data/processed_data/cm_object_v2/grab --sequence s1/banana_lift --mesh-display both --host 127.0.0.1 --port 8127 --fps 1`：Viser HTTP/WebSocket 启动并完成物体+双手 mesh 初始渲染，timeout 主动退出（退出码 124）。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --sequence s1/doorknob_use_1`：无对应 mesh cache 时返回 `mesh.available=false` 和明确错误，点云数据仍正常加载。
+- Viser handle 定向 smoke 通过 mesh `vertices`、`opacity`、`visible`、`wxyz`、`position` 更新；`git diff --check` 通过。未进行浏览器端人工点击回归，未修改任何数据/cache 或生成运行产物。
+
+## 2026-09-06 20:29:23 +0800 — V1.2.3 新增 GRAB sampled point-cloud Viser 查看器
+
+- activity_id: `ACT-20260906-202923-OBJECTINTERACTIONCM-GRAB-VISER-VIEWER`
+- timestamp: `2026-09-06 20:29:23 +0800`
+- modification_version: `V1.2.3`
+- type: `code`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确要求脚本放入 ObjectInteractionCm、使用 Viser、全部通过鼠标 GUI 操作、采用累计距离阈值着色，并支持轨迹/帧播放控制。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `d550810d9c91aa7738ee5f2cc8f20c5503798189`
+- worktree_dirty: `true`（保留用户已有的 CmDecoderv2 修改和未跟踪文件，未触碰）
+- scope: `src/task/ObjectInteractionCm/visualize_grab.py`；只读消费现有 `data/processed_data/cm_object_v2/grab` 点云 cache，不改变 cache、schema、GT、split、坐标语义或训练代码。
+- conclusion: `SUPPORTED`（工程 smoke 证据；不构成科研效果结论）
+
+**文件**
+
+- [GRAB sampled point-cloud Viser 查看器](../../visualize_grab.py)：新增鼠标 GUI 轨迹切换、播放/暂停、逐帧前后跳转、左右手选择、1–5 cm 累计阈值高亮、点大小/FPS 控件和每帧左右手最近距离显示；提供 `--check-only` 只读检查入口。
+- [本活动记录](activity_log.md)：登记实现范围、审批、验证与保护边界。
+
+**原因**
+
+为便于检查 GRAB 双手与物体的采样点云关系，需要一个不依赖键盘快捷键的浏览器界面。训练用 `_SequenceView` 会强制要求 object pose，而当前 GRAB 点云 cache 已有世界系物体/手点云但没有 pose 文件；查看器因此使用只读轻量 loader，仅读取点云、raw frame 和 metadata，不扩展或改写 cache schema。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py` 通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --root data/processed_data/cm_object_v2/grab --sequence s1/banana_lift` 通过：578 帧、物体 4096 点、左右手各 1538 点；首帧最近距离左 `1370.14 mm`、右 `1359.92 mm`。
+- `timeout 5s /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --root data/processed_data/cm_object_v2/grab --sequence s1/banana_lift --host 127.0.0.1 --port 8124 --fps 1` 通过启动 Viser HTTP/WebSocket 服务并完成初始渲染（timeout 主动退出，退出码 124）；未进行浏览器端人工交互回归。
+- `git diff --check` 通过；未修改或生成数据/cache、checkpoint、训练输出和公共 `src/base` 文件。
 
 ## 2026-09-06 12:01:31 +0800 — V1.2.3 核对 best.pt 的模型选择指标
 

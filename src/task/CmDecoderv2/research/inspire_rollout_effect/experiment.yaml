@@ -1,0 +1,20 @@
+name: inspire_rollout_effect
+task: CmDecoderv2
+modification_version: V1.1.4
+importance: exploratory
+pinned: false
+tags: [inspire, rollout, object-effect, oicm, diagnostic]
+entrypoint: src.task.CmDecoderv2.research.inspire_rollout_effect.run
+default_output_root: src/task/CmDecoderv2/research/inspire_rollout_effect/output
+guidance: src/task/CmDecoderv2/docs/指导/v1.1.md
+plan: src/task/CmDecoderv2/docs/plan/v1.1.md
+hypothesis: >-
+  Rollout-generated Inspire motion farther than the 5 cm interaction radius is rejected by
+  ObjectInteractionCm sample_valid and therefore has zero effective object-flow effect.
+contracts:
+  object_frame: object_pose_t
+  hand_flow: rollout state_t to state_t_plus_1
+  object_effect: frozen OICM pred_obj_flow
+  future_object_gt_input: forbidden
+  future_object_flow_display: display_only
+  invalid_effect: raw output retained for audit; effective output masked to zero
