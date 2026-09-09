@@ -1,9 +1,201 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-09
+- last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
+
+## 2026-09-10 00:32:20 +0800 — V1.3 全量离线 KNN cache 启动
+
+- activity_id: `ACT-20260910-003220-OBJECTINTERACTIONCM-V13-FULL-CACHE-START`
+- timestamp: `2026-09-10 00:32:20 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[data, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认生成全部 630 条 sequence、159476 帧的 GPU-batched V1.3 cache，并指定物理 GPU `2,4,5,6`；V1.3 final plan 已定稿。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3af6758444304151c3cd30d9dfeda5d7a3923a3`
+- worktree_dirty: `true`（activity log 在启动前已写入本次 run 记录）
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `oicm-v1-3-cache-20260910-003220`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`
+- scope: 按 V1.2.5 source index 的确定性顺序分为 4 个 shard，在物理 GPU `2,4,5,6` 各启动一个 worker；输出新目录 [data/processed_data/object_interaction_cm_dexplore_rl_v1_3/](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/) — `PENDING`。保存固定 1538 点 decoder stream、MANO 2048/Inspire 10135 KNN stream、`uint16 [T,4096,32]` index、2 cm masks 和 validation manifest；不覆盖旧 cache。
+
+**文件**
+
+- [V1.3 执行计划](../plan/V1.3.md) — 长任务范围、资源、schema、验证和回滚入口。
+- [V1.3 cache producer](../../tools/data/build_dexplore_rl_v1_3_cache.py) — worker/finalize 实现。
+- [V1.2.5 source index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_2_5/index.json) — 630 条 sequence 的输入索引。
+- [V1.3 cache output](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/) — `PENDING`，待 worker/finalize 完成。
+
+**原因**
+
+为 V1.3 训练准备全量离线 KNN 资产。worker 只对当前 sequence 写入独立目录，最后由 finalize 校验
+覆盖、split/source/frame count 和 cache schema，避免并发写共享 index。
+
+**命令**
+
+```text
+CUDA_VISIBLE_DEVICES=2 ... --mode worker --shard-index 0 --num-shards 4 --device cuda:0
+CUDA_VISIBLE_DEVICES=4 ... --mode worker --shard-index 1 --num-shards 4 --device cuda:0
+CUDA_VISIBLE_DEVICES=5 ... --mode worker --shard-index 2 --num-shards 4 --device cuda:0
+CUDA_VISIBLE_DEVICES=6 ... --mode worker --shard-index 3 --num-shards 4 --device cuda:0
+```
+
+**验证**
+
+- 启动前确认目标 V1.3 输出目录不存在、无同名 producer 进程、V1.2.5 source index 可读。
+- 启动前 GPU 状态：物理 GPU `2/4/5/6` 空闲；避开已有任务所在的 `1/3/7`。
+- 启动前 Git 基线：`e3af6758444304151c3cd30d9dfeda5d7a3923a3`，工作树干净。
+- 终态待补：四个 worker report、finalize validation、run manifest、总 sequence/frame/source 计数和失败原因（如有）。
+
+**回滚入口**
+
+停止本 run 的四个 worker，保留失败现场并记录状态；确认无进程后删除仅由本 run 创建的
+`data/processed_data/object_interaction_cm_dexplore_rl_v1_3/`，V1.2.5 cache、配置、checkpoint 和输出不变。
+
+## 2026-09-10 00:46:30 +0800 — V1.3 全量离线 KNN cache 完成
+
+- activity_id: `ACT-20260910-004630-OBJECTINTERACTIONCM-V13-FULL-CACHE-COMPLETED`
+- timestamp: `2026-09-10 00:46:30 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[data, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续 V1.3 final plan 和用户批准的四 GPU 全量 cache 方案。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3af6758444304151c3cd30d9dfeda5d7a3923a3`
+- worktree_dirty: `true`（仅 activity log 有本次运行记录变更）
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `oicm-v1-3-cache-20260910-003220`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 四个 GPU worker 完成全部 V1.2.5 source entries；finalize 完成新 cache 的全量 shape、dtype、index range、finite geometry 和覆盖校验。未修改 V1.2.5 cache、配置、checkpoint、GT、split 或训练输出。
+
+**文件**
+
+- [V1.3 cache output](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/) — 全量 cache 目录，约 `81G`。
+- [V1.3 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — 新 index schema 与完整 sequence 列表。
+- [V1.3 assignment](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/assignment.json) — source/split assignment。
+- [V1.3 validation summary](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/validation_summary.json) — 630 条 sequence 的校验结果。
+- [V1.3 run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/run_manifest.json) — finalize 运行清单。
+- [V1.3 worker reports](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/workers/) — shard `00/01/02/03` 完成报告。
+
+**原因**
+
+为后续 V1.3 训练提供全量的固定 decoder/loss 1538 点、高分辨率 KNN hand stream、
+`uint16 [T,4096,32]` 邻居索引和 2 cm masks。
+
+**验证**
+
+- 四个 worker 均 `COMPLETED`：shard sequence 数为 `158/158/157/157`。
+- finalize 输出：`630` 条 sequence、`159476` 帧；train `254 grab + 255 inspire_f1`、val `28 + 30`、test `63 + 0`，与 V1.2.5 完全一致。
+- 每条 sequence 校验 `obj [T,4096,3]`、decoder hand `[T,1538,3]`、source-specific KNN hand `[T,2048/10135,3]`、index `[T,4096,32] uint16`、2 cm mask 和 finite geometry。
+- 工程结论：`SUPPORTED`；这只证明 cache/schema 生成完整，不代表模型效果或科研假设成立。
+
+**回滚入口**
+
+停止并确认无 V1.3 cache 相关进程后，删除 [V1.3 cache output](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/)；
+V1.2.5 cache、配置、checkpoint 和训练输出不受影响。
+
+## 2026-09-10 00:48:10 +0800 — V1.3 train-only scale 校准启动
+
+- activity_id: `ACT-20260910-004810-OBJECTINTERACTIONCM-V13-SCALE-CALIBRATION-START`
+- timestamp: `2026-09-10 00:48:10 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[data, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: V1.3 final plan 已明确 train-only scale，用户已确认新 cache 的 KNN/半径合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3af6758444304151c3cd30d9dfeda5d7a3923a3`
+- worktree_dirty: `true`
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `oicm-v1-3-scale-20260910-004810`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`
+- scope: 读取 V1.3 train split，按 source/stride 等权统计 `s_geo`、固定 1538 点 decoder `s_hand_flow`、KNN hand-flow `s_knn_hand_flow` 和 `s_obj_flow`；输出 [V1.3 scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json) — `PENDING`。不改写 cache geometry。
+
+**文件**
+
+- [V1.3 scale calibrator](../../tools/data/calibrate_v1_3_scales.py) — train-only 统计实现。
+- [V1.3 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — 校准输入。
+- [V1.3 scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json) — `PENDING`。
+
+**原因**
+
+为 KNN interaction 流和固定 decoder/loss hand 流分别提供归一化尺度，避免用 1538 点 decoder
+flow 统计替代 2048/10135 点 KNN flow 统计。
+
+**命令**
+
+```text
+/home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.calibrate_v1_3_scales
+  --index data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json
+  --output data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json
+  --max-sequences-per-source 32 --frames-per-sequence-stride 4 --radius-m 0.02 --knn-k 32 --seed 42
+  --grab-strides 1 2 3 4 5 6 7 8 9 10 --inspire-strides 1 2 3 4 5 6 7 8 9 10
+```
+
+**验证**
+
+- 启动前确认 V1.3 index 已完成且 `knn_k=32`；scale 输出不存在。
+- 终态待补：scale manifest、四项数值、命令退出状态和 smoke 引用。
+
+**回滚入口**
+
+停止本 run 后删除仅由校准命令创建的 `scales_train_v1_3.json`；cache geometry 和 V1.2.5 产物不变。
+
+## 2026-09-10 00:51:11 +0800 — V1.3 train-only scale 校准完成
+
+- activity_id: `ACT-20260910-005111-OBJECTINTERACTIONCM-V13-SCALE-CALIBRATION-COMPLETED`
+- timestamp: `2026-09-10 00:51:11 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[data, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 延续 V1.3 final plan 和已批准的 train-only scale 统计方案。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3af6758444304151c3cd30d9dfeda5d7a3923a3`
+- worktree_dirty: `true`（仅 activity log 有本次运行记录变更）
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `oicm-v1-3-scale-20260910-004810`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 读取 V1.3 train split，按 20 个 source/stride group 统计固定 1538 点 decoder hand-flow、KNN hand-flow、交互几何和 object-flow scale；未修改 cache geometry、split 或 GT。
+
+**文件**
+
+- [V1.3 scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json) — train-only 四项尺度和 group 统计。
+- [V1.3 scale calibrator](../../tools/data/calibrate_v1_3_scales.py) — 可复现命令入口。
+- [V1.3 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — 输入 index。
+
+**原因**
+
+为 KNN interaction 流与固定 decoder/loss hand 流分别提供归一化尺度，保持高分辨率 KNN 只影响邻域
+交互，不改变 1538 点 decoder/loss 合同。
+
+**验证**
+
+- 命令退出码为 `0`；`groups=20`。
+- `s_geo=0.0140709252`、`s_hand_flow=0.1166113303`、`s_knn_hand_flow=0.1167068417`、
+  `s_obj_flow=0.0919873854`，四项均为正且已写入 manifest。
+- 工程结论：`SUPPORTED`；scale 可读性已确认，不代表模型效果或科研假设成立。
+
+**回滚入口**
+
+删除 [V1.3 scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json)；
+cache geometry、V1.2.5 产物和代码不受影响。
 
 ## 2026-09-10 00:29:04 +0800 — V1.3 离线 KNN cache 代码合同与配置完成
 
@@ -54,6 +246,51 @@
 
 删除本条 V1.3 新增代码、配置、测试和文档，恢复 `docs/current_versions.yaml` 中 ObjectInteractionCm 指针；
 V1.2.5 cache、配置、checkpoint、训练输出和已有 pilot 不受影响。
+
+## 2026-09-10 00:53:36 +0800 — V1.3 全量 cache mixed forward/backward smoke 完成
+
+- activity_id: `ACT-20260910-005336-OBJECTINTERACTIONCM-V13-MIXED-SMOKE-COMPLETED`
+- timestamp: `2026-09-10 00:53:36 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[code, data, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: V1.3 final plan 要求在 full cache 完成后验证混合 MANO/Inspire loader 与 model forward/backward；用户已确认该配置边界。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3af6758444304151c3cd30d9dfeda5d7a3923a3`
+- worktree_dirty: `true`（仅 activity log 有运行记录变更）
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `oicm-v1-3-mixed-smoke-20260910-005336`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 从 full V1.3 train cache 取一条 GRAB/MANO 和一条 Inspire-RL sequence，构造混合 batch，运行 V1.3 model forward、2 cm hand loss 和 backward；不启动正式训练，不修改 cache、GT、split 或 checkpoint。
+
+**文件**
+
+- [V1.3 smoke config](../../configs/active/dexplore_rl_v1_3_smoke.yaml) — 运行配置。
+- [V1.3 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — 输入 index。
+- [V1.3 scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json) — model scale 输入。
+- [V1.3 cache output](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/) — full cache。
+
+**原因**
+
+验证高分辨率 KNN stream 只进入局部 interaction，固定 1538 点 hand stream 仍承担 decoder/loss，
+并确认混合 source batch 的 padding 和离线 index gather 合同可执行。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES=2 ...` full-cache mixed forward/backward 命令退出码为 `0`。
+- batch KNN valid points 为 `[2048, 10135]`；decoder hand output 为 `(2,1538,3)`；
+  offline edge index 为 `(2,1024,32)`。
+- monkeypatch `torch.cdist` 后 forward 仍通过，确认离线 KNN 路径没有构造完整距离矩阵。
+- loss backward 通过，loss 为 `0.0163753554`；工程结论：`SUPPORTED`。
+- 该 smoke 仅证明工程 wiring 和梯度路径，不代表模型效果或科研假设成立。
+
+**回滚入口**
+
+删除本次 smoke 的临时运行记录即可；V1.3 cache、scale、V1.2.5 产物和 checkpoint 不受影响。
 
 ## 2026-09-09 22:34:07 +0800 — V1.2.18 估算离线 KNN 构建耗时
 
