@@ -39,7 +39,7 @@
 - [metadata snapshot](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metadata.json)
 - [metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
 - [train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
-- [checkpoints/](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/) — `PENDING`，首个 epoch 尚未保存 checkpoint。
+- [checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt) 与 [checkpoints/latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/latest.pt) — 已生成；另有 epoch `1` 至 `4` 的阶段 checkpoint。
 
 **命令**
 
@@ -61,8 +61,8 @@ CUDA_VISIBLE_DEVICES=0,2,3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/
 
 - `run_manifest.json`：`modification_version=V1.3`、`base_commit=158e0f3`、`dirty=false`、
   `world_size=3`、`num_obj_points=1024`、`schema_name=ref2dex_object_interaction_cm_v1_3`。
-- `step=600` 已完成；当前日志无 OOM、NaN、NCCL failure 或 traceback。
-- 当前吞吐约 `662 samples/s`，初始 ETA 约 `8.1 h`；这是运行状态证据，不是科研效果结论。
+- `step=2944`、`epoch=4` 已完成；当前日志无 OOM、NaN、NCCL failure 或 traceback。
+- 当前吞吐约 `645 samples/s`，最新 ETA 约 `8.2 h`；这是运行状态证据，不是科研效果结论。
 
 **终态待补**
 

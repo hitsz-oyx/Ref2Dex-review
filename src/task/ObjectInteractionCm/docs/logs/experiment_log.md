@@ -32,11 +32,11 @@ interaction；将这些边中的 hand ID 去重后，每个 hand 点只进入一
 - [运行清单](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/run_manifest.json)
 - [逐步指标](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
 - [训练日志](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
-- [checkpoints/](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/) — `PENDING`，首个 epoch 尚未保存。
+- [最佳 checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt) 与 [最近 checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/latest.pt) — 已生成；epoch `1` 至 `4` 阶段 checkpoint 已生成。
 
 **当前状态与结论边界**
 
-- 已完成 `step=600`；训练进程仍为 `RUNNING`，初始吞吐约 `662 samples/s`，ETA 约 `8.1 h`。
+- 已完成 `step=2944`、`epoch=4`；训练进程仍为 `RUNNING`，最新吞吐约 `645 samples/s`，ETA 约 `8.2 h`。
 - 当前仅支持工程启动和 forward/backward 运行正常；正式科研结论保持 `INCONCLUSIVE`，待完整训练、
   validation 和 checkpoint 结果后再更新。
 
