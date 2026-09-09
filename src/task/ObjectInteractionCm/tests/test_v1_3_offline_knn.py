@@ -9,6 +9,7 @@ import torch
 
 from src.task.ObjectInteractionCm.dataset import (
     ObjectInteractionCmDataset,
+    _collate_object_interaction_cm,
     _resolve_index_entries,
 )
 from src.task.ObjectInteractionCm.model import LocalHandInteraction, ObjectInteractionCmModel
@@ -94,7 +95,7 @@ def _write_v1_3_sequence(root: Path) -> tuple[Path, Path]:
     return sequence, index
 
 
-def test_v1_3_dataset_reads_cached_indices_and_keeps_decoder_shape(tmp_path: Path) -> None:
+def test_v1_3_dataset_selects_unique_valid_knn_hand_points(tmp_path: Path) -> None:
     sequence, index = _write_v1_3_sequence(tmp_path)
     entries = _resolve_index_entries(index, "train")
     assert entries == [{"path": str(sequence.resolve()), "source": "grab"}]
@@ -105,16 +106,21 @@ def test_v1_3_dataset_reads_cached_indices_and_keeps_decoder_shape(tmp_path: Pat
         num_hand_points=1538,
         max_hand_points=1538,
         max_knn_hand_points=5,
+        hand_stream_mode="unique_knn_edges",
         fixed_stride=1,
         active_only=False,
     )
     sample = dataset[0]
-    assert sample["hand_points"].shape == (1538, 3)
-    assert sample["knn_hand_points"].shape == (5, 3)
+    assert sample["hand_points"].shape == (5, 3)
+    assert sample["hand_valid_points"].item() == 5
+    assert sample["hand_valid_mask"].all()
+    assert sample["hand_supervision_mask"].all()
+    assert torch.unique(sample["hand_point_ids"]).numel() == 5
     assert sample["knn_edge_indices"].shape == (4, 32)
+    assert sample["knn_edge_valid_mask"].shape == (4, 32)
+    assert sample["knn_edge_valid_mask"].all()
     assert sample["knn_edge_indices"].dtype == torch.int64
     assert sample["knn_hand_valid_points"].item() == 5
-    assert sample["hand_supervision_mask"].all()
     assert sample["min_hand_object_distance_mm"].item() == 10.0
     assert sample["full_active_count"].item() == 16
 
@@ -166,6 +172,50 @@ def test_offline_knn_path_does_not_construct_cdist(monkeypatch) -> None:
         expected_distances <= 0.02,
     )
     assert torch.isfinite(interaction).all()
+    edge_mask = torch.ones_like(indices, dtype=torch.bool)
+    edge_mask[0, 0] = False
+    _, masked_diagnostics = module(
+        object_features,
+        object_points,
+        object_normals,
+        hand_points,
+        hand_normals,
+        hand_flow,
+        hand_valid,
+        indices,
+        edge_mask,
+    )
+    assert not masked_diagnostics["edge_valid_mask"][0, 0, 0]
+
+
+def test_v1_3_collate_pads_only_to_batch_max(tmp_path: Path) -> None:
+    sequence, index = _write_v1_3_sequence(tmp_path)
+    entries = _resolve_index_entries(index, "train")
+    dataset = ObjectInteractionCmDataset(
+        Path("."),
+        sequence_entries=entries,
+        num_obj_points=4,
+        num_hand_points=1538,
+        max_hand_points=1538,
+        max_knn_hand_points=5,
+        hand_stream_mode="unique_knn_edges",
+        fixed_stride=1,
+        active_only=False,
+    )
+    first = dataset[0]
+    second = dict(first)
+    second["hand_points"] = first["hand_points"][:2]
+    second["hand_normals"] = first["hand_normals"][:2]
+    second["hand_flow"] = first["hand_flow"][:2]
+    second["hand_valid_mask"] = first["hand_valid_mask"][:2]
+    second["hand_supervision_mask"] = first["hand_supervision_mask"][:2]
+    second["hand_point_ids"] = first["hand_point_ids"][:2]
+    second["hand_valid_points"] = torch.tensor(2, dtype=torch.int64)
+    batch = _collate_object_interaction_cm([first, second])
+    assert batch["hand_points"].shape == (2, 5, 3)
+    assert batch["hand_valid_points"].tolist() == [5, 2]
+    assert batch["hand_valid_mask"][1].tolist() == [True, True, False, False, False]
+    assert batch["hand_point_ids"][1].tolist() == [0, 1, -1, -1, -1]
 
 
 def test_v1_3_scales_keep_decoder_and_knn_flow_separate(tmp_path: Path) -> None:

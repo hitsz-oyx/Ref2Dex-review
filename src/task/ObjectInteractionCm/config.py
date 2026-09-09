@@ -17,6 +17,7 @@ class Config(TaskConfig):
         num_hand_points = 1538
         max_hand_points = 3076
         knn_k = 8
+        hand_stream_mode = "decoder"
         interaction_radius_m = 0.05
         frame_filter_distance_m = 0.05
         hand_supervision_radius_m = 0.03

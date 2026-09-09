@@ -5,6 +5,213 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-10 01:15:19 +0800 — 核对 V1.3 高分辨率手点与 mask 语义
+
+- activity_id: `ACT-20260910-011519-OBJECTINTERACTIONCM-V13-CACHE-MASK-DIAGNOSTIC`
+- timestamp: `2026-09-10 01:15:19 +0800`
+- modification_version: `V1.3`
+- type: `diagnostic`
+- operation_category: `[diagnostic]`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前 V1.3 cache 是否已将高分辨率手点裁剪为接触子集；本次只读核对 cache 文件 shape、manifest、Dataset 和 producer，未修改代码、配置、数据或 cache
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `d970a7b9c042f12b1f21c669070656083b69a035`
+- worktree_dirty: `false`
+- run_id: `oicm-v1-3-cache-structure-diagnostic-20260910-011519`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（确认工程数据语义，不代表模型效果或科研假设）
+- scope: V1.3 cache 中 1538 点 decoder stream、MANO 2048/Inspire 10135 高分辨率 hand stream、2 cm object candidate mask、1538 点 hand supervision mask、`uint16` KNN index，以及当前 Dataset 的 padding 行为
+
+**文件**
+
+- [V1.3 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — 记录 `decoder_hand_points_per_stream=1538` 和 source-specific `knn_hand_points_per_stream`。
+- [MANO geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/sequences/train/mano/s1_airplane_fly_1/geometry/manifest.json) — 记录 `[T,1538,3]`、`[T,2048,3]`、`[T,4096,32]` 和两个 mask shape。
+- [Inspire geometry manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/sequences/train/inspire_rl/s1_airplane_lift/geometry/manifest.json) — 记录 `[T,1538,3]`、`[T,10135,3]`、`[T,4096,32]` 和两个 mask shape。
+- [ObjectInteractionCm Dataset](../../dataset.py) — 当前分别加载旧 1538 hand stream 和高分辨率 KNN stream；KNN stream 按 Dataset 全局 `max_knn_hand_points=10135` 补零并提供 valid mask。
+- [V1.3 cache producer](../../tools/data/build_dexplore_rl_v1_3_cache.py) — 当前只生成 `[T,1538]` hand supervision mask，高分辨率 hand stream 保持全量点数组。
+
+**原因**
+
+需要先确认“高分辨率 hand 点是否已按 2 cm 接触区域裁剪”以及“现有 mask 是否可以直接作为高分辨率 hand supervision”；
+这决定后续是采用 batch 内动态最大长度，还是需要新增高分辨率监督 mask/压缩点集。
+
+**验证**
+
+- MANO representative sequence：`hand_points_world [279,1538,3]`、`knn_hand_points_world [279,2048,3]`、`obj_knn_indices [279,4096,32] uint16`、`obj_candidate_mask_2cm [279,4096] bool`、`hand_supervision_mask_2cm [279,1538] bool`。
+- Inspire representative sequence：`hand_points_world [432,1538,3]`、`knn_hand_points_world [432,10135,3]`、`obj_knn_indices [432,4096,32] uint16`、`obj_candidate_mask_2cm [432,4096] bool`、`hand_supervision_mask_2cm [432,1538] bool`。
+- `obj_candidate_mask_2cm` 是完整 4096 个 object pool 点的候选 mask；`hand_supervision_mask_2cm` 是独立的旧 1538 点 hand mask；二者都不会从 `.npy` 点数组中删除点。
+- `obj_knn_indices` 是每个 object pool 点对应的 32 个高分辨率 hand 点 ID，指向完整的 2048/10135 点数组，不是全局接触 hand 点列表。
+- 现有 cache 没有 `[T,2048]` 或 `[T,10135]` 的高分辨率 hand supervision mask；若切换到高分辨率 hand loss，需要新增该 mask 或重新计算。
+- 本次未修改代码、配置、GT、split、cache、checkpoint 或训练输出；未运行训练和评估。
+
+## 2026-09-10 01:59:31 +0800 — V1.3 unique-KNN-hand 训练语义实现完成
+
+- activity_id: `ACT-20260910-015931-OBJECTINTERACTIONCM-V13-UNIQUE-KNN-HAND-IMPLEMENTATION`
+- timestamp: `2026-09-10 01:59:31 +0800`
+- modification_version: `V1.3.1`
+- type: `code_change`
+- operation_category: `[architecture, code, data, documentation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求只使用采样 object 点的有效 KNN 边、对有效边中的 hand ID 去重后每个 hand 点只监督一次，并要求随后启动全量训练
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d970a7b9c042f12b1f21c669070656083b69a035`
+- worktree_dirty: `true`
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- scope: 将 V1.3 hand stream 从固定 1538 点改为有效 KNN 边中的 unique hand ID；Dataset 运行时重算采样 1024 个 object 点对应的 32 条边、生成局部边索引和边 mask；自定义 collate 按 batch 最大 unique hand count 动态 padding；model 保持离线 index gather 和 32 距离重算；runner 对 unique hand point 做一次 hand-flow loss；保留旧 1538 stream 兼容路径
+
+**文件**
+
+- [V1.3 指导](../指导/V1.3.md) — 更新高分辨率 hand 点、有效边和去重监督合同。
+- [V1.3 执行计划](../plan/V1.3.md) — 更新 Dataset/model/config/scale/训练执行与验证范围。
+- [Dataset](../../dataset.py) — 新增 unique KNN hand selection、局部 edge index、edge mask 和 batch-max dynamic collate。
+- [Model](../../model.py) — 接收 edge mask，防止 padding edge 参与 interaction。
+- [Runner](../../runner.py) — hand loss/metric 改为 unique KNN hand point 语义。
+- [Config](../../config.py)、[V1.3 full config](../../configs/active/dexplore_rl_v1_3.yaml)、[V1.3 smoke config](../../configs/active/dexplore_rl_v1_3_smoke.yaml) — 增加 `hand_stream_mode=unique_knn_edges` 和新的 scale manifest 入口。
+- [Scale calibrator](../../tools/data/calibrate_v1_3_scales.py) — 按训练 object sampling 统计有效 edge flow 与 unique hand flow。
+- [V1.3 tests](../../tests/test_v1_3_offline_knn.py) — 增加 unique hand 去重、edge mask 和动态 padding 验证。
+
+**原因**
+
+当前 full cache 已经包含完整的 MANO 2048/Inspire 10135 hand points 和
+`obj_knn_indices [T,4096,32] uint16`，无需新增 high-resolution supervision mask。训练时将
+采样 object 点对应的有效 KNN edge 映射到局部 unique hand stream，使同一 hand ID 可在 interaction
+中被多条边引用，但 hand decoder/loss 只保留一个该 hand 点。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_v1_3_offline_knn.py`：`4 passed`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_object_interaction_cm.py`：`3 passed`，仅有已有 NumPy legacy warning。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile ...`：Dataset、Model、Runner、scale calibrator 和测试通过。
+- 真实 full cache 混合样本检查：MANO/Inspire 均能输出 unique hand IDs；batch hand 维度按 batch 最大值动态补齐。
+- [V1.3 2-step smoke](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_smoke_20260910_015521/)：`COMPLETED`，forward/backward 和 unique hand loss 通过。
+- [V1.3 batch=32 smoke](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_015641/)：`COMPLETED`，单卡未出现 OOM。
+- 工程结论：`SUPPORTED`；尚未代表正式训练效果或科研假设成立。
+
+**回滚入口**
+
+恢复本条涉及的 Git 文件到 `d970a7b9c042f12b1f21c669070656083b69a035`，删除
+[unique-KNN scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3_unique_knn.json)
+和两个 smoke output；不删除或修改 V1.2.5 cache、V1.3 full cache、旧 checkpoint 或旧训练输出。
+
+## 2026-09-10 01:56:53 +0800 — V1.3 batch=32 dynamic hand smoke 完成
+
+- activity_id: `ACT-20260910-015653-OBJECTINTERACTIONCM-V13-BATCH32-SMOKE-COMPLETED`
+- timestamp: `2026-09-10 01:56:53 +0800`
+- modification_version: `V1.3.1`
+- type: `operation`
+- operation_category: `[diagnostic, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: V1.3 unique-KNN-hand 语义已确认；正式训练前验证每卡 batch=32 的显存和反向路径
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d970a7b9c042f12b1f21c669070656083b69a035`
+- worktree_dirty: `true`
+- run_id: `oicm-v1-3-batch32-smoke-20260910-015641`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 使用正式 V1.3 配置、真实 full cache、单卡 batch=32、单 step、跳过 eval，验证动态 hand batch、forward/backward 和显存
+
+**文件**
+
+- [batch=32 smoke output](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_015641/) — `PENDING` 已改为终态可读目录。
+- [batch=32 smoke run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_015641/run_manifest.json) — 输入 cache/config 和运行 provenance。
+- [batch=32 smoke train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_015641/train.log) — 单步训练日志。
+
+**原因**
+
+确认按 batch 最大 unique hand count padding 后，正式 per-device batch=32 能够执行，不会因为
+Inspire 全量 10135 点被固定带入每个 batch 而触发 OOM。
+
+**验证**
+
+```text
+CUDA_VISIBLE_DEVICES=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -u
+src/task/ObjectInteractionCm/train.py --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml
+--set train.max_steps=1 --set train.epochs=1 --set train.skip_eval=true
+--set data.batch_size=32 --set data.val_batch_size=32 --set data.num_workers=0
+--set data.persistent_workers=false --set performance.mode=off
+```
+
+- `step=1` 完成，`hand_valid_points=532.156`，`hand/loss_knn_unique=0.0751868`，未出现 OOM/NaN/traceback。
+- 工程结论：`SUPPORTED`；这是 wiring/capacity smoke，不是科研效果结论。
+
+## 2026-09-10 01:55:36 +0800 — V1.3 unique-KNN-hand 2-step smoke 完成
+
+- activity_id: `ACT-20260910-015536-OBJECTINTERACTIONCM-V13-UNIQUE-KNN-SMOKE-COMPLETED`
+- timestamp: `2026-09-10 01:55:36 +0800`
+- modification_version: `V1.3.1`
+- type: `operation`
+- operation_category: `[diagnostic, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: V1.3 unique-KNN-hand 语义实现后的真实 cache wiring 验证
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d970a7b9c042f12b1f21c669070656083b69a035`
+- worktree_dirty: `true`
+- run_id: `oicm-v1-3-unique-knn-smoke-20260910-015521`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 真实 V1.3 full cache 的混合 MANO/Inspire loader、unique hand selection、局部 edge mask、model forward/backward
+
+**文件**
+
+- [unique-KNN 2-step smoke output](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_smoke_20260910_015521/) — `PENDING` 已改为终态可读目录。
+- [unique-KNN smoke run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_smoke_20260910_015521/run_manifest.json) — 输入 cache/config 和运行 provenance。
+- [unique-KNN smoke train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_smoke_20260910_015521/train.log) — 两步训练日志。
+
+**原因**
+
+确认 interaction 使用有效 KNN 边，hand decoder/loss 使用 valid edge hand ID 的 unique 子集，且
+动态 collate 与 edge mask 在真实混合 cache 上可运行。
+
+**验证**
+
+- 两步训练完成；`hand/loss_knn_unique`、`hand/flow_epe_knn_unique_mm` 和
+  `data/hand_valid_points` 正常记录。
+- 真实 mixed batch 的 hand dimension 为 batch 内最大 unique hand count，而不是 10135。
+- 工程结论：`SUPPORTED`；不代表科研效果或最终训练结论。
+
+## 2026-09-10 01:54:48 +0800 — V1.3 unique-KNN-hand scale 校准完成
+
+- activity_id: `ACT-20260910-015448-OBJECTINTERACTIONCM-V13-UNIQUE-KNN-SCALE-COMPLETED`
+- timestamp: `2026-09-10 01:54:48 +0800`
+- modification_version: `V1.3.1`
+- type: `operation`
+- operation_category: `[data, operation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认 unique valid-KNN-hand supervision 语义；训练前需要匹配新 hand stream 的 train-only scale
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d970a7b9c042f12b1f21c669070656083b69a035`
+- worktree_dirty: `true`
+- run_id: `oicm-v1-3-unique-knn-scale-20260910-015448`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`
+- scope: 读取 V1.3 train split，按 1024 object sampling、2 cm valid KNN edge 和 unique hand ID 统计四项 scale
+
+**文件**
+
+- [unique-KNN scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3_unique_knn.json) — `s_geo=0.0140784203`、`s_hand_flow=0.1165185915`、`s_knn_hand_flow=0.1166939775`、`s_obj_flow=0.0919974885`。
+- [V1.3 index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json) — train-only scale input。
+
+**原因**
+
+旧 scale 的 `s_hand_flow` 基于固定 1538 点 decoder mask，不再匹配新的 unique KNN hand supervision；
+新 manifest 将 `s_hand_flow` 改为有效 KNN 边去重 hand flow，`s_knn_hand_flow` 保持有效边 flow。
+
+**验证**
+
+- 命令退出码 `0`，20 个 source/stride groups 均完成，四项 scale 均为正。
+- 未修改 full cache geometry、GT、split 或旧 scale manifest。
+- 工程结论：`SUPPORTED`；scale 统计有效不代表科研效果成立。
+
 ## 2026-09-10 00:32:20 +0800 — V1.3 全量离线 KNN cache 启动
 
 - activity_id: `ACT-20260910-003220-OBJECTINTERACTIONCM-V13-FULL-CACHE-START`

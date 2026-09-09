@@ -180,6 +180,7 @@ class ObjectInteractionCmModel(nn.Module):
         interaction_flow = batch.get("knn_hand_flow", hand_flow).float()
         interaction_valid_mask = batch.get("knn_hand_valid_mask", hand_valid_mask)
         offline_knn_indices = batch.get("knn_edge_indices")
+        offline_knn_edge_mask = batch.get("knn_edge_valid_mask")
         object_features = self.object_encoder(torch.cat([object_points, object_normals], dim=-1))
         if self.legacy:
             interaction, diag = self.local_interaction(
@@ -201,7 +202,7 @@ class ObjectInteractionCmModel(nn.Module):
         interaction, diag = self.local_interaction(
             object_features, object_points, object_normals,
             interaction_points, interaction_normals, interaction_flow,
-            interaction_valid_mask, offline_knn_indices,
+            interaction_valid_mask, offline_knn_indices, offline_knn_edge_mask,
         )
         fused = self.fusion(torch.cat([object_features, diag["interaction_geo"], diag["interaction_flow"], diag["flow_mean"], diag["flow_magnitude"]], dim=-1))
         object_tokens = self.fusion_norm(object_features + fused)
@@ -257,6 +258,7 @@ class LocalHandInteraction(nn.Module):
         hand_flow,
         hand_valid_mask=None,
         offline_knn_indices=None,
+        offline_knn_edge_mask=None,
     ):
         bsz, num_obj, _ = object_points.shape
         num_hand = hand_points.shape[1]
@@ -275,6 +277,19 @@ class LocalHandInteraction(nn.Module):
                     f"offline KNN index range [{int(indices.min())},{int(indices.max())}] "
                     f"is outside hand dimension {num_hand}"
                 )
+            if offline_knn_edge_mask is None:
+                edge_slot_valid = torch.ones_like(indices, dtype=torch.bool)
+            else:
+                edge_slot_valid = torch.as_tensor(
+                    offline_knn_edge_mask,
+                    device=hand_points.device,
+                    dtype=torch.bool,
+                )
+                if edge_slot_valid.shape != indices.shape:
+                    raise ValueError(
+                        f"offline_knn_edge_mask must match indices {tuple(indices.shape)}, "
+                        f"got {tuple(edge_slot_valid.shape)}"
+                    )
             gather_idx = indices[..., None].expand(-1, -1, -1, 3)
             search_hand_points = hand_points
             search_hand_normals = hand_normals
@@ -319,6 +334,7 @@ class LocalHandInteraction(nn.Module):
                 edge_distances = knn_result.dists.clamp_min(0.0).sqrt()
                 indices = knn_result.idx
                 local_valid = torch.ones_like(indices, dtype=torch.bool)
+                edge_slot_valid = torch.ones_like(indices, dtype=torch.bool)
             else:
                 # Preserve the original semantics for arbitrary masks and
                 # all-invalid rows.
@@ -328,6 +344,7 @@ class LocalHandInteraction(nn.Module):
                 edge_distances, indices = torch.topk(distances, k=k, largest=False, dim=-1)
                 search_hand_points, search_hand_normals, search_hand_flow = hand_points, hand_normals, hand_flow
                 local_valid = torch.gather(hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices)
+                edge_slot_valid = torch.ones_like(indices, dtype=torch.bool)
             gather_idx = indices[..., None].expand(-1, -1, -1, 3)
             local_hand = torch.gather(search_hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
             local_normals = torch.gather(search_hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
@@ -343,7 +360,7 @@ class LocalHandInteraction(nn.Module):
         edge_geo, edge_flow = self.edge_geo_encoder(geo_input), self.edge_flow_encoder(flow_scaled)
         keys = self.key(self.key_norm(edge_geo + edge_flow))
         logits = (self.query(object_features)[:, :, None, :] * keys).sum(dim=-1) * self.scale
-        valid = (edge_distances <= self.radius_m) & local_valid
+        valid = (edge_distances <= self.radius_m) & local_valid & edge_slot_valid
         weights = torch.softmax(logits.masked_fill(~valid, -torch.finfo(logits.dtype).max), dim=-1) * valid.to(logits.dtype)
         normalizer = weights.sum(dim=-1, keepdim=True)
         weights = torch.where(normalizer > 0.0, weights / normalizer.clamp_min(1e-8), torch.zeros_like(weights))

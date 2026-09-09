@@ -10,6 +10,7 @@ meta:
   num_hand_points: 1538
   max_hand_points: 1538
   max_knn_hand_points: 10135
+  hand_stream_mode: unique_knn_edges
   processing_dim: 128
   cm_dim: 32
   num_cm_tokens: 16
@@ -19,7 +20,7 @@ meta:
   frame_filter_distance_m: 0.02
   hand_supervision_radius_m: 0.02
   knn_hand_flow_input_scale: 1.0
-  scale_manifest_path: data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3.json
+  scale_manifest_path: data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3_unique_knn.json
   sample_loss_mask: true
   dummy_token_policy: zero
   sampling_retry_attempts: 0
@@ -57,7 +58,7 @@ train:
   log_every_steps: 100
   metric_for_best: val/obj/flow_epe_mm
   lower_is_better: true
-  description: "V1.3 corrected DExplore RL/MANO mixed right-hand ObjectInteractionCm; offline KNN=32; 2 cm interaction and hand supervision."
+  description: "V1.3 DExplore RL/MANO mixed right-hand ObjectInteractionCm; offline KNN=32; valid KNN edges with unique hand supervision and batch-max dynamic padding."
 
 performance:
   mode: light

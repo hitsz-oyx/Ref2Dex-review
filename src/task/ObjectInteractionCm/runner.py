@@ -71,6 +71,7 @@ class ObjectInteractionCmRunner(BaseRunner):
             "num_hand_points": int(self.cfg.meta.num_hand_points),
             "max_hand_points": int(getattr(self.cfg.meta, "max_hand_points", int(self.cfg.meta.num_hand_points) * 2)),
             "max_knn_hand_points": int(getattr(self.cfg.meta, "max_knn_hand_points", 0) or 0),
+            "hand_stream_mode": str(getattr(self.cfg.meta, "hand_stream_mode", "decoder")),
         }
         for key, value in expected.items():
             if key in metadata and (str(metadata[key]) if isinstance(value, str) else int(metadata[key])) != value:
@@ -136,7 +137,10 @@ class ObjectInteractionCmRunner(BaseRunner):
             valid = batch.get("hand_valid_mask")
             if valid is None:
                 valid = torch.ones(batch["hand_flow"].shape[:2], dtype=torch.bool, device=batch["hand_flow"].device)
-            return batch["hand_flow"].float(), batch["hand_supervision_mask"].bool() & valid.bool()
+            mask = batch.get("hand_supervision_mask")
+            if mask is None:
+                raise KeyError("Batch must contain hand_supervision_mask for hand-flow loss")
+            return batch["hand_flow"].float(), mask.bool() & valid.bool()
         flow = torch.cat([batch["left_hand_flow"], batch["right_hand_flow"]], dim=1).float()
         mask = batch.get("hand_supervision_mask")
         if mask is None:
@@ -180,15 +184,22 @@ class ObjectInteractionCmRunner(BaseRunner):
             return torch.where(valid_count > 0, (per * scalar_sample_mask).sum() / valid_count.clamp_min(1.0), value.sum() * 0.0)
         attention = prediction["interaction/attention_weights"]
         valid_edges = prediction["interaction/edge_valid_mask"]
+        hand_valid_mask = batch["hand_valid_mask"].bool()
+        hand_valid_count = hand_valid_mask.sum(dim=1)
+        hand_active_ratio = torch.where(
+            hand_valid_count > 0,
+            hand_mask.sum(dim=1).float() / hand_valid_count.float().clamp_min(1.0),
+            torch.zeros_like(hand_valid_count, dtype=torch.float32),
+        )
         metrics: dict[str, Any] = {
             "loss": total_loss,
             "obj/loss": obj_loss,
-            "hand/loss_3cm": hand_loss,
+            "hand/loss_knn_unique": hand_loss,
             "obj/flow_epe_mm": MetricStat(float((obj_epe * valid_obj_mask.float() * 1000.0).sum().detach()), obj_count),
-            "hand/flow_epe_3cm_mm": MetricStat(float((hand_epe * valid_hand_mask.float() * 1000.0).sum().detach()), hand_count),
+            "hand/flow_epe_knn_unique_mm": MetricStat(float((hand_epe * valid_hand_mask.float() * 1000.0).sum().detach()), hand_count),
             "hand/active_points": sample_mean(hand_mask.float().sum(dim=1)),
-            "hand/active_ratio": sample_mean(hand_mask.float().mean(dim=1)),
-            "data/hand_valid_points": batch["hand_valid_mask"].float().sum(dim=-1).mean(),
+            "hand/active_ratio": sample_mean(hand_active_ratio),
+            "data/hand_valid_points": hand_valid_count.float().mean(),
             "data/min_hand_object_distance_mm": batch["min_hand_object_distance_mm"].float().mean(),
             "interaction/object_points_with_hand_neighbor": sample_mean(prediction["interaction/has_interaction"].float().sum(dim=-1)),
             "interaction/mean_valid_neighbors": sample_mean(valid_edges.float().sum(dim=-1)),
@@ -212,7 +223,7 @@ class ObjectInteractionCmRunner(BaseRunner):
     def select_step_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
         keep = {
             key: value for key, value in metrics.items()
-            if key in {"loss", "obj/loss", "hand/loss_3cm", "obj/flow_epe_mm", "hand/flow_epe_3cm_mm", "hand/active_ratio", "data/hand_valid_points", "data/min_hand_object_distance_mm", "interaction/attention_max", "slot/effective_count"}
+            if key in {"loss", "obj/loss", "hand/loss_knn_unique", "obj/flow_epe_mm", "hand/flow_epe_knn_unique_mm", "hand/active_ratio", "data/hand_valid_points", "data/min_hand_object_distance_mm", "interaction/attention_max", "slot/effective_count"}
         }
         return keep
 
