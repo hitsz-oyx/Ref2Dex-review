@@ -26,6 +26,14 @@ def _load_scales(meta) -> dict[str, float]:
     values = {
         "s_geo": float(getattr(meta, "geometry_scale_m", 0.05) or 0.05),
         "s_hand_flow": float(getattr(meta, "hand_flow_input_scale", 1.0) or 1.0),
+        "s_knn_hand_flow": float(
+            getattr(
+                meta,
+                "knn_hand_flow_input_scale",
+                getattr(meta, "hand_flow_input_scale", 1.0),
+            )
+            or 1.0
+        ),
         "s_obj_flow": float(getattr(meta, "object_flow_target_scale", 1.0) or 1.0),
     }
     path_value = str(getattr(meta, "scale_manifest_path", "") or "").strip()
@@ -56,7 +64,18 @@ class LegacyLocalHandInteraction(nn.Module):
         self.value = nn.Linear(self.dim, self.dim, bias=False)
         self.scale = self.dim ** -0.5
 
-    def forward(self, object_features, object_points, object_normals, hand_points, hand_normals, hand_flow, hand_valid_mask=None):
+    def forward(
+        self,
+        object_features,
+        object_points,
+        object_normals,
+        hand_points,
+        hand_normals,
+        hand_flow,
+        hand_valid_mask=None,
+        offline_knn_indices=None,
+    ):
+        del offline_knn_indices
         bsz, num_obj, _ = object_points.shape
         num_hand = hand_points.shape[1]
         k = min(self.knn_k, num_hand)
@@ -110,7 +129,8 @@ class ObjectInteractionCmModel(nn.Module):
         self.local_interaction = LocalHandInteraction(
             dim=processing_dim, knn_k=int(getattr(meta, "knn_k", 8)),
             radius_m=float(getattr(meta, "interaction_radius_m", 0.05)),
-            geometry_scale=self.scale_values["s_geo"], hand_flow_scale=self.scale_values["s_hand_flow"],
+            geometry_scale=self.scale_values["s_geo"],
+            hand_flow_scale=self.scale_values["s_knn_hand_flow"],
         )
         self.fusion = _mlp(processing_dim * 3 + 4, 128, processing_dim)
         self.fusion_norm = nn.LayerNorm(processing_dim)
@@ -154,9 +174,19 @@ class ObjectInteractionCmModel(nn.Module):
         if hand_valid_mask is None:
             hand_valid_mask = torch.ones(hand_points.shape[:2], dtype=torch.bool, device=hand_points.device)
         hand_points, hand_normals, hand_flow = hand_points.float(), F.normalize(hand_normals.float(), dim=-1, eps=1e-6), hand_flow.float()
+        interaction_points = batch.get("knn_hand_points", hand_points).float()
+        interaction_normals = batch.get("knn_hand_normals", hand_normals)
+        interaction_normals = F.normalize(interaction_normals.float(), dim=-1, eps=1e-6)
+        interaction_flow = batch.get("knn_hand_flow", hand_flow).float()
+        interaction_valid_mask = batch.get("knn_hand_valid_mask", hand_valid_mask)
+        offline_knn_indices = batch.get("knn_edge_indices")
         object_features = self.object_encoder(torch.cat([object_points, object_normals], dim=-1))
         if self.legacy:
-            interaction, diag = self.local_interaction(object_features, object_points, object_normals, hand_points, hand_normals, hand_flow, hand_valid_mask)
+            interaction, diag = self.local_interaction(
+                object_features, object_points, object_normals,
+                interaction_points, interaction_normals, interaction_flow,
+                interaction_valid_mask, offline_knn_indices,
+            )
             object_tokens = self.fusion(torch.cat([object_features, interaction], dim=-1))
             cm_result = self.slot_attention(object_tokens)
             cm_tokens, assignment, slot_weights = cm_result[:3]
@@ -168,7 +198,11 @@ class ObjectInteractionCmModel(nn.Module):
             output.update({f"interaction/{key}": value for key, value in diag.items()})
             return output
 
-        interaction, diag = self.local_interaction(object_features, object_points, object_normals, hand_points, hand_normals, hand_flow, hand_valid_mask)
+        interaction, diag = self.local_interaction(
+            object_features, object_points, object_normals,
+            interaction_points, interaction_normals, interaction_flow,
+            interaction_valid_mask, offline_knn_indices,
+        )
         fused = self.fusion(torch.cat([object_features, diag["interaction_geo"], diag["interaction_flow"], diag["flow_mean"], diag["flow_magnitude"]], dim=-1))
         object_tokens = self.fusion_norm(object_features + fused)
         object_valid = batch.get("obj_valid_mask", torch.ones(object_points.shape[:2], dtype=torch.bool, device=object_points.device)).bool()
@@ -213,54 +247,91 @@ class LocalHandInteraction(nn.Module):
         self.key_norm = nn.LayerNorm(self.dim)
         self.scale = self.dim ** -0.5
 
-    def forward(self, object_features, object_points, object_normals, hand_points, hand_normals, hand_flow, hand_valid_mask=None):
+    def forward(
+        self,
+        object_features,
+        object_points,
+        object_normals,
+        hand_points,
+        hand_normals,
+        hand_flow,
+        hand_valid_mask=None,
+        offline_knn_indices=None,
+    ):
         bsz, num_obj, _ = object_points.shape
         num_hand = hand_points.shape[1]
         if hand_valid_mask is None:
             hand_valid_mask = torch.ones((bsz, num_hand), dtype=torch.bool, device=hand_points.device)
         hand_valid_mask = hand_valid_mask.bool()
 
-        # CmDecoder pads 1,538 real hand points to 3,076 and supplies a
-        # prefix mask. Compact this prefix before KNN so we do not construct
-        # an object-by-3,076 distance matrix. Global nearest-K followed by the
-        # radius mask below is equivalent to radius-first nearest-K (up to
-        # exact distance ties) for the fixed K=8 interaction contract.
-        valid_counts = hand_valid_mask.sum(dim=-1)
-        prefix_fast_path = False
-        if valid_counts.numel() > 0 and torch.all(valid_counts == valid_counts[0]) and int(valid_counts[0]) > 0:
-            expected_prefix = torch.arange(num_hand, device=hand_valid_mask.device)[None, :] < valid_counts[:, None]
-            prefix_fast_path = bool(torch.equal(hand_valid_mask, expected_prefix))
-
-        if prefix_fast_path:
-            compact_count = int(valid_counts[0])
-            search_hand_points = hand_points[:, :compact_count]
-            search_hand_normals = hand_normals[:, :compact_count]
-            search_hand_flow = hand_flow[:, :compact_count]
-            k = min(self.knn_k, compact_count)
-            knn_result = knn_points(
-                object_points,
-                search_hand_points,
-                K=k,
-                return_nn=False,
-                return_sorted=True,
+        if offline_knn_indices is not None:
+            indices = torch.as_tensor(offline_knn_indices, device=hand_points.device).long()
+            if indices.ndim != 3 or indices.shape[:2] != (bsz, num_obj) or indices.shape[2] != self.knn_k:
+                raise ValueError(
+                    f"offline_knn_indices must be [B,{num_obj},{self.knn_k}], got {tuple(indices.shape)}"
+                )
+            if indices.numel() and (indices.min() < 0 or indices.max() >= num_hand):
+                raise ValueError(
+                    f"offline KNN index range [{int(indices.min())},{int(indices.max())}] "
+                    f"is outside hand dimension {num_hand}"
+                )
+            gather_idx = indices[..., None].expand(-1, -1, -1, 3)
+            search_hand_points = hand_points
+            search_hand_normals = hand_normals
+            search_hand_flow = hand_flow
+            local_hand = torch.gather(
+                search_hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx
             )
-            edge_distances = knn_result.dists.clamp_min(0.0).sqrt()
-            indices = knn_result.idx
-            local_valid = torch.ones_like(indices, dtype=torch.bool)
+            local_normals = torch.gather(
+                search_hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx
+            )
+            local_flow = torch.gather(
+                search_hand_flow[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx
+            )
+            local_valid = torch.gather(
+                hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices
+            )
+            edge_distances = torch.linalg.vector_norm(
+                local_hand - object_points[:, :, None, :], dim=-1
+            )
         else:
-            # Preserve the original semantics for arbitrary masks (where
-            # valid points are not contiguous) and all-invalid rows.
-            distances = torch.cdist(object_points, hand_points)
-            distances = distances.masked_fill(~hand_valid_mask[:, None, :], float("inf"))
-            k = min(self.knn_k, num_hand)
-            edge_distances, indices = torch.topk(distances, k=k, largest=False, dim=-1)
-            search_hand_points, search_hand_normals, search_hand_flow = hand_points, hand_normals, hand_flow
-            local_valid = torch.gather(hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices)
+            # CmDecoder may pad a fixed hand stream. Compact a common prefix
+            # before KNN; arbitrary masks retain the original cdist fallback.
+            valid_counts = hand_valid_mask.sum(dim=-1)
+            prefix_fast_path = False
+            if valid_counts.numel() > 0 and torch.all(valid_counts == valid_counts[0]) and int(valid_counts[0]) > 0:
+                expected_prefix = torch.arange(num_hand, device=hand_valid_mask.device)[None, :] < valid_counts[:, None]
+                prefix_fast_path = bool(torch.equal(hand_valid_mask, expected_prefix))
 
-        gather_idx = indices[..., None].expand(-1, -1, -1, 3)
-        local_hand = torch.gather(search_hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
-        local_normals = torch.gather(search_hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
-        local_flow = torch.gather(search_hand_flow[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
+            if prefix_fast_path:
+                compact_count = int(valid_counts[0])
+                search_hand_points = hand_points[:, :compact_count]
+                search_hand_normals = hand_normals[:, :compact_count]
+                search_hand_flow = hand_flow[:, :compact_count]
+                k = min(self.knn_k, compact_count)
+                knn_result = knn_points(
+                    object_points,
+                    search_hand_points,
+                    K=k,
+                    return_nn=False,
+                    return_sorted=True,
+                )
+                edge_distances = knn_result.dists.clamp_min(0.0).sqrt()
+                indices = knn_result.idx
+                local_valid = torch.ones_like(indices, dtype=torch.bool)
+            else:
+                # Preserve the original semantics for arbitrary masks and
+                # all-invalid rows.
+                distances = torch.cdist(object_points, hand_points)
+                distances = distances.masked_fill(~hand_valid_mask[:, None, :], float("inf"))
+                k = min(self.knn_k, num_hand)
+                edge_distances, indices = torch.topk(distances, k=k, largest=False, dim=-1)
+                search_hand_points, search_hand_normals, search_hand_flow = hand_points, hand_normals, hand_flow
+                local_valid = torch.gather(hand_valid_mask[:, None].expand(-1, num_obj, -1), 2, indices)
+            gather_idx = indices[..., None].expand(-1, -1, -1, 3)
+            local_hand = torch.gather(search_hand_points[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
+            local_normals = torch.gather(search_hand_normals[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
+            local_flow = torch.gather(search_hand_flow[:, None].expand(-1, num_obj, -1, -1), 2, gather_idx)
         relative = local_hand - object_points[:, :, None, :]
         normal_dot = (object_normals[:, :, None, :] * local_normals).sum(dim=-1, keepdim=True)
         # Invalid/padded neighbors have +inf distance for selection; replace

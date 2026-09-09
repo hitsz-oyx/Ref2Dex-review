@@ -31,6 +31,7 @@ class Config(TaskConfig):
         loss_hand_flow_weight = 1.0
         geometry_scale_m = 0.05
         hand_flow_input_scale = 1.0
+        knn_hand_flow_input_scale = 1.0
         object_flow_target_scale = 1.0
         hand_flow_target_scale = 1.0
         scale_manifest_path = "data/processed_data/object_interaction_cm_v1_2_1/scales_train.json"

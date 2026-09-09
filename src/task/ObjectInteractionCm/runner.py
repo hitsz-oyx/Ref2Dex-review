@@ -70,6 +70,7 @@ class ObjectInteractionCmRunner(BaseRunner):
             "num_obj_points": int(self.cfg.meta.num_obj_points),
             "num_hand_points": int(self.cfg.meta.num_hand_points),
             "max_hand_points": int(getattr(self.cfg.meta, "max_hand_points", int(self.cfg.meta.num_hand_points) * 2)),
+            "max_knn_hand_points": int(getattr(self.cfg.meta, "max_knn_hand_points", 0) or 0),
         }
         for key, value in expected.items():
             if key in metadata and (str(metadata[key]) if isinstance(value, str) else int(metadata[key])) != value:

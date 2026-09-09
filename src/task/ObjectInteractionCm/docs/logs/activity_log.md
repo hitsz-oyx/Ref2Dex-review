@@ -5,6 +5,56 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-10 00:29:04 +0800 — V1.3 离线 KNN cache 代码合同与配置完成
+
+- activity_id: `ACT-20260910-002904-OBJECTINTERACTIONCM-V13-OFFLINE-KNN-IMPLEMENTATION`
+- timestamp: `2026-09-10 00:29:04 +0800`
+- modification_version: `V1.3`
+- type: `code_change`
+- operation_category: `[code, data, documentation]`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认 K=32、interaction 与 hand supervision 半径均为 2 cm、MANO KNN=2048、Inspire KNN=10135、固定 decoder/loss hand=1538、全量 cache、uint16 离线索引且运行时只重算 32 个距离，并批准 GPU batched 方案。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `2e52ff22c3fb81fcaf820f31d1d4d25a7ed712a8`
+- worktree_dirty: `true`
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- scope: 新增 V1.3 离线 KNN cache producer、train-only scale calibrator、配置和 Task 测试；扩展 Dataset/Model/Runner 读取新 schema。保留 V1.2.5 cache、配置、checkpoint、GT、split、旧 decoder/loss 1538 点合同和 `src/task/CmDecoderv2/` 不变。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 将 ObjectInteractionCm 当前指针推进到 `V1.3`。
+- [src/task/ObjectInteractionCm/config.py](../../config.py) — 增加 KNN hand-flow scale 的兼容默认值。
+- [src/task/ObjectInteractionCm/dataset.py](../../dataset.py) — 接入 V1.3 index、KNN geometry/index、2 cm mask 和固定 decoder/KNN 双流。
+- [src/task/ObjectInteractionCm/model.py](../../model.py) — 离线 index gather + 32 距离重算；保留 runtime fallback；区分 decoder/KNN hand-flow scale。
+- [src/task/ObjectInteractionCm/runner.py](../../runner.py) — 校验 `max_knn_hand_points` 数据合同。
+- [src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_v1_3_cache.py](../../tools/data/build_dexplore_rl_v1_3_cache.py) — 新增 worker/finalize/pilot GPU batched cache producer。
+- [src/task/ObjectInteractionCm/tools/data/calibrate_v1_3_scales.py](../../tools/data/calibrate_v1_3_scales.py) — 新增 train-only 四项 scale 校准。
+- [src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml](../../configs/active/dexplore_rl_v1_3.yaml) — V1.3 正式配置。
+- [src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3_smoke.yaml](../../configs/active/dexplore_rl_v1_3_smoke.yaml) — V1.3 工程 smoke 配置。
+- [src/task/ObjectInteractionCm/docs/README.md](../README.md)、[V1.3 指导](../指导/V1.3.md)、[V1.3 执行计划](../plan/V1.3.md) — 补充版本导航和 cache schema 记录。
+- [src/task/ObjectInteractionCm/tests/test_v1_3_offline_knn.py](../../tests/test_v1_3_offline_knn.py) — 新增 index/loader、无 `cdist` 离线路径和 scale 分离测试。
+
+**原因**
+
+将高分辨率 MANO/Inspire hand stream 限定在 KNN，同时保持 1538 点 decoder/loss 输入，消除训练时对
+4096 object pool 与全部高分辨率 hand 点的重复邻居搜索；通过独立 index schema 和配置避免污染 V1.2.5。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile ...`：V1.3 producer、calibrator、Dataset、Model、Runner、config 和测试均通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_v1_3_offline_knn.py`：`3 passed`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q tests/test_object_interaction_cm.py`：`3 passed`，3 个 NumPy legacy warning。
+- V1.3 smoke 配置加载通过；使用 [MANO pilot manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3_pilot_mano/run_manifest.json) 和 [Inspire pilot manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3_pilot_inspire/run_manifest.json) 构造混合 batch，decoder 输出 `(2,1538,3)`、离线 edge index `(2,1024,32)`，forward/backward 通过。
+- 已有 pilot 的 exact GPU parity：MANO/Inspire 随机抽帧的邻居集合、2 cm candidate mask 和 decoder supervision mask 均无不一致；距离重算最大误差分别为 `1.19e-7 m`、`2.38e-7 m`。
+- 工程结论：`SUPPORTED`；尚未执行全量 cache、正式训练或效果评估，不构成科研效果结论。
+
+**回滚入口**
+
+删除本条 V1.3 新增代码、配置、测试和文档，恢复 `docs/current_versions.yaml` 中 ObjectInteractionCm 指针；
+V1.2.5 cache、配置、checkpoint、训练输出和已有 pilot 不受影响。
+
 ## 2026-09-09 22:34:07 +0800 — V1.2.18 估算离线 KNN 构建耗时
 
 - activity_id: `ACT-20260909-223407-OBJECTINTERACTIONCM-OFFLINE-KNN-RUNTIME-DIAGNOSTIC`
