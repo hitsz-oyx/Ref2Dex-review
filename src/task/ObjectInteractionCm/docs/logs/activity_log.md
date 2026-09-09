@@ -5,6 +5,70 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-10 02:11:08 +0800 — V1.3 全量训练启动（物理 GPU 0/2/3）
+
+- activity_id: `ACT-20260910-021108-OBJECTINTERACTIONCM-V13-FULL-TRAIN-START`
+- timestamp: `2026-09-10 02:11:08 +0800`
+- modification_version: `V1.3`
+- type: `experiment_run`
+- operation_category: `[experiment, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求实现完成后立即使用物理 GPU `0,2,3` 启动 V1.3 全量训练；V1.3 final plan 已定稿。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `158e0f34068e260d7077a94b4457799b7fca2f31`
+- worktree_dirty_at_launch: `false`
+- final_plan: [V1.3 执行计划](../plan/V1.3.md)
+- run_id: `object_interaction_cm_dexplore_rl_v1_3_20260910_020856`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（运行尚未完成；当前证据只用于工程启动确认）
+- scope: 使用 V1.3 full config、全量 V1.3 cache、`hand_stream_mode=unique_knn_edges`、KNN `K=32`、两个半径均为 2 cm、MANO 2048/Inspire 10135 高分辨率 hand stream；有效 KNN 边中的 hand ID 去重后监督，每卡 batch=32、global batch=96、目标 202300 steps。
+
+**文件**
+
+- [V1.3 指导](../指导/V1.3.md)
+- [V1.3 执行计划](../plan/V1.3.md)
+- [实验记录](experiment_log.md)
+- [V1.3 full config](../../configs/active/dexplore_rl_v1_3.yaml)
+- [V1.3 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json)
+- [V1.3 unique-KNN scale manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3_unique_knn.json)
+- [正式训练输出目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/)
+- [run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/run_manifest.json)
+- [config snapshot](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/config.json)
+- [metadata snapshot](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metadata.json)
+- [metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
+- [train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
+- [checkpoints/](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/) — `PENDING`，首个 epoch 尚未保存 checkpoint。
+
+**命令**
+
+```text
+CUDA_VISIBLE_DEVICES=0,2,3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun
+  --standalone --nproc_per_node=3
+  src/task/ObjectInteractionCm/train.py
+  --config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml
+  --distributed
+```
+
+**原因**
+
+通过 V1.3 unique-KNN-hand 的静态检查、专项测试、legacy 回归测试、真实 cache mixed-batch smoke 和
+每卡 batch=32 smoke 后，开始用户批准的正式全量训练。训练只读取已生成 cache 和 train-only scale，
+不改写 cache、GT、split 或旧 output。
+
+**验证**
+
+- `run_manifest.json`：`modification_version=V1.3`、`base_commit=158e0f3`、`dirty=false`、
+  `world_size=3`、`num_obj_points=1024`、`schema_name=ref2dex_object_interaction_cm_v1_3`。
+- `step=600` 已完成；当前日志无 OOM、NaN、NCCL failure 或 traceback。
+- 当前吞吐约 `662 samples/s`，初始 ETA 约 `8.1 h`；这是运行状态证据，不是科研效果结论。
+
+**终态待补**
+
+- `run_status`、`last_step`/`last_epoch`、`best_metric`、最佳/最近 checkpoint、完整
+  `metrics.jsonl`/`train.log` 入口和终态原因。
+
 ## 2026-09-10 01:15:19 +0800 — 核对 V1.3 高分辨率手点与 mask 语义
 
 - activity_id: `ACT-20260910-011519-OBJECTINTERACTIONCM-V13-CACHE-MASK-DIAGNOSTIC`

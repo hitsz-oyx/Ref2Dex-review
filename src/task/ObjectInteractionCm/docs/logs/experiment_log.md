@@ -3,6 +3,43 @@
 - scope: task:ObjectInteractionCm
 - related: [任务入口](../README.md)、[V1.1 执行计划](../plan/V1.1.md)、[V1.1 架构](../architecture/V1.1.md)、[活动记录](activity_log.md)
 
+## 2026-09-10 — V1.3 unique-KNN-hand 全量训练（进行中）
+
+- run_id: `object_interaction_cm_dexplore_rl_v1_3_20260910_020856`
+- run_status: `RUNNING`
+- modification_version: `V1.3`
+- operation_category: `experiment / operation`
+- base_commit: `158e0f34068e260d7077a94b4457799b7fca2f31`
+- seed: `42`
+- initial_checkpoint: `null`（from scratch）
+- data index: [V1.3 cache index](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json)
+- scale manifest: [V1.3 unique-KNN scale](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/scales_train_v1_3_unique_knn.json)
+- split: train `509`（MANO `254` / Inspire-F1 `255`）、val `58`（`28` / `30`）、test `63` MANO-only；沿用 V1.2.5 assignment。
+- training: 右手、`object_pose_t`、30 Hz、object pool/sample `4096/1024`、KNN `K=32`、interaction/hand supervision radius `2 cm`、MANO/Inspire KNN hand `2048/10135`、unique valid-edge hand supervision、batch-max dynamic padding、每卡 batch `32`、global batch `96`、目标 `202300` steps、物理 GPU `0,2,3`。
+
+**假设与变量**
+
+在不改变 split、GT、坐标系和 object sampling 语义的前提下，使用采样 object 点的有效 KNN 边构造
+interaction；将这些边中的 hand ID 去重后，每个 hand 点只进入一次 hand decoder/loss。动态 padding
+只到当前 batch 的最大 unique hand count，不将完整 Inspire `10135` 点固定送入每个 batch。
+
+**运行入口**
+
+- [V1.3 指导](../指导/V1.3.md)
+- [V1.3 执行计划](../plan/V1.3.md)
+- [正式运行目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/)
+- [配置快照](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/config.json)
+- [运行清单](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/run_manifest.json)
+- [逐步指标](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
+- [训练日志](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
+- [checkpoints/](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/) — `PENDING`，首个 epoch 尚未保存。
+
+**当前状态与结论边界**
+
+- 已完成 `step=600`；训练进程仍为 `RUNNING`，初始吞吐约 `662 samples/s`，ETA 约 `8.1 h`。
+- 当前仅支持工程启动和 forward/backward 运行正常；正式科研结论保持 `INCONCLUSIVE`，待完整训练、
+  validation 和 checkpoint 结果后再更新。
+
 ## 2026-09-07 — V1.2.5 修正 DExplore 实际物体轨迹、KNN=16 的 Cm 重训（已完成）
 
 - run_id: `object_interaction_cm_dexplore_rl_v1_2_5_20260907_235606`
