@@ -1,5 +1,51 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-10 — V1.3 full10135 纯 Inspire recursive rollout/effect 诊断
+
+- experiment_id: `cmdecoderv2-inspire-rollout-effect-v13-full10135-v1.1.7`
+- activity_id: [`cmdecoderv2-inspire-effect-v13-full-20260910-175216`](activity_log.md)
+- run_id: `cmdecoderv2-inspire-effect-v13-full-20260910-175216`
+- run_status: `COMPLETED`
+- modification_version: `V1.1.7`
+- operation_category: `diagnostic / experiment / operation`
+- importance: `diagnostic`
+- pinned: `false`
+
+**假设与固定合同**
+
+复现纯 Inspire `s1/mouse_lift` 递归 rollout self-effect 诊断，但换用 V1.3 full10135 decoder `best.pt` 和冻结 OICM V1.3 `best.pt`。初始 frame 0 用 GT Inspire state handoff，之后递归反馈 decoder 预测 state；真实 object flow 仅作为逐步 `t -> t+1` display-only 对照，不输入 decoder/OICM，也不反馈 rollout。V1.3 `unique_knn_edges` 使用 run 目录内临时 source KNN32；effect path 每步对预测 hand `10135` 点重算 selected object KNN32，并按 2 cm validity 交给 OICM。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-full-20260910-175216 --run-id cmdecoderv2-inspire-effect-v13-full-20260910-175216 --knn-batch-size 4`
+- base_commit: `6aa2c13b53b4748b9d8205edc459e61463ddeeb1`；run 启动时 `worktree_dirty=false`。
+- decoder checkpoint: [best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)，SHA256 `e60f0e954c062d15e7c2fa217e1bebcb0a4b0be8795d1b5729771ee1f8f5fef7`。
+- frozen OICM checkpoint: [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+
+**结果**
+
+- 368 个 transition 全部完成；2 cm 阈值下 rollout predicted hand 到 object 最近距离 min/median/max=`298.091/480.982/1245.904 mm`，368/368 均远于 2 cm。
+- OICM `sample_valid` 全为 false，`oicm_valid_ratio=0.0`，有效 object-flow RMS mean/max=`0/0 mm`；raw dummy path effect RMS mean=`27.709 mm`，但无物理语义。
+- 递归 self-rollout hand EPE mean/median/max=`640.851/580.975/1192.516 mm`；future hand EPE mean=`643.875 mm`；hand-flow EPE mean/median/max=`14.610/4.927/89.366 mm`。
+- display-only GT object effect RMS mean/max=`2.693/55.968 mm`；零有效 prediction 对 display-only GT 的 EPE mean=`2.672 mm`。
+- 同一 V1.3 `10135` surface sampling 的 GT Inspire hand-object 距离审计：`273/371` 帧 `<=20mm`，首个 `<=20mm` step 为 `46`，GT 距离 min/median/max=`0.040/0.341/1245.904 mm`。
+
+**结论边界**
+
+- `REFUTED`：该 V1.3 full10135 decoder `best.pt` 在 `s1/mouse_lift` 的递归 Inspire rollout 中，没有复现 GT 轨迹的接触段；hand state 漂移主导结果。
+- `SUPPORTED`（工程协议）：V1.3 临时 source KNN、per-step predicted-hand KNN、2 cm OICM validity gate 和 display-only object flow 对照均按计划完成。
+- `INCONCLUSIVE`（object-effect 预测质量）：因为 predicted hand 全程不进入 2 cm 有效区，本 run 无法评价接触时 Cm/OICM 对实际 object flow 的预测质量；`2.672 mm` EPE 主要是零有效输出与 display-only GT flow 的差异。
+
+**证据**
+
+- [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/)
+- [run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/effect_summary.json)
+- [source_knn_indices.npy](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/source_knn_indices.npy)
+- [diagnostic_tables.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/diagnostic_tables.json)
+- [最终计划](../plan/v1.1.md)
+
 ## 2026-09-10 — V1.3 OICM + Inspire 全点监督 decoder 正式训练
 
 - experiment_id: `cmdecoderv2-temporal-d2-oicm-v1.3-full10135-v1.1.7`

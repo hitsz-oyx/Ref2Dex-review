@@ -4,6 +4,50 @@
 - last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-10 17:57:08 +0800 — V1.1.7 纯 Inspire V1.3 rollout/effect 完整诊断
+
+- activity_id: `cmdecoderv2-inspire-effect-v13-full-20260910-175216`
+- timestamp: `2026-09-10 17:57:08 +0800`
+- modification_version: `V1.1.7`
+- type: `diagnostic / experiment / operation / documentation`
+- change_level: `L2`（按已批准 Task-local 诊断协议运行 V1.3 `unique_knn_edges`、10135 点、K=32 和 2 cm validity；只更新运行记录，不修改正式 cache/schema、split、模型或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户确认按 V1.3 decoder `best.pt`、冻结 OICM V1.3、纯 Inspire `s1/mouse_lift`、逐步 `t -> t+1` display-only object flow 对照和临时 Inspire KNN 运行完整诊断。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `6aa2c13b53b4748b9d8205edc459e61463ddeeb1`
+- worktree_dirty: `false`（run 启动时；本条为终态记录）
+- run_id: `cmdecoderv2-inspire-effect-v13-full-20260910-175216`
+- run_status: `COMPLETED`
+- last_step: `368 transitions`
+- best_metric: `not_applicable`
+- conclusion: `REFUTED`（该 V1.3 decoder `best.pt` 在 `s1/mouse_lift` 递归 rollout 中未能进入 GT 接触段；OICM 有效 object-flow 预测因全程 `sample_valid=false` 只能判为 `INCONCLUSIVE`）
+- scope: `src/task/CmDecoderv2/research/inspire_rollout_effect/` 完整 368-step 诊断输出与 Task 级实验记录；正式 V1.3 cache、split、训练配置、decoder/OICM checkpoint 和 `src/base/` 均未修改。
+
+**文件**
+
+- [activity_log.md](activity_log.md) — 记录本次完整 run 的终态、命令、证据、结论边界和保护范围。
+- [experiment_log.md](experiment_log.md) — 新增 V1.3 full10135 纯 Inspire recursive rollout/effect 诊断结果。
+
+**原因**
+
+用户要求测试 Inspire 自身 rollout 效果，并查看 rollout 若干步对应的 Cm/OICM 对实际 object flow 的预测效果。
+此前仅完成 V1.3 wiring smoke，需要在实现提交后以干净 HEAD 对 `s1/mouse_lift` 跑满 368 个 transition。
+
+**验证**
+
+- full command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-full-20260910-175216 --run-id cmdecoderv2-inspire-effect-v13-full-20260910-175216 --knn-batch-size 4`。
+- full evidence: [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/)、[run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/run_manifest.json)、[effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/effect.npz)、[effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/effect_summary.json)、[source_knn_indices.npy](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/source_knn_indices.npy)、[diagnostic_tables.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/diagnostic_tables.json)。
+- full result: 368 个 transition，`distance_threshold_mm=20.0`；rollout predicted hand 到 object 最近距离 min/median/max=`298.091/480.982/1245.904 mm`，368/368 均为 `>20mm`，`oicm_valid_ratio=0.0`，有效 object-flow RMS 均值/最大值=`0/0 mm`。
+- self-rollout result: hand EPE mean/median/max=`640.851/580.975/1192.516 mm`；future hand EPE mean=`643.875 mm`；hand-flow EPE mean/median/max=`14.610/4.927/89.366 mm`。
+- display-only object flow: GT effect RMS mean/max=`2.693/55.968 mm`，effective prediction-vs-GT EPE mean=`2.672 mm`；该 EPE 主要是零有效预测对 display-only GT 的差异，不代表接触区预测质量。
+- GT distance audit: 同一 V1.3 `10135` surface sampling 的真实 Inspire 轨迹有 `273/371` 帧 `<=20mm`，首个 `<=20mm` step 为 `46`；因此全程 invalid 来自递归 rollout 未进入接触区，而不是序列本身无接触。
+
+**保护边界与回滚**
+
+- 未写入 `data/processed_data/`，未修改正式 V1.3 view/cache/split、训练配置、decoder/OICM checkpoint 或 `src/base/`；临时 KNN 和诊断表仅在本次 ignored output 目录内。
+- 回滚入口：删除或隔离 [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-full-20260910-175216/) 并回退本条 activity/experiment 记录；实现代码回滚入口为提交 `6aa2c13b53b4748b9d8205edc459e61463ddeeb1`。
+
 ## 2026-09-10 17:48:24 +0800 — V1.1.7 纯 Inspire rollout/effect 诊断接入 V1.3 KNN
 
 - activity_id: `cmdecoderv2-inspire-effect-v13-impl-20260910-174824`
