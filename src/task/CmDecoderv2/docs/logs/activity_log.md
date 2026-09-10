@@ -4,6 +4,49 @@
 - last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-10 18:02:00 +0800 — V1.1.7 训练窗口起点与 rollout 语义核查
+
+- activity_id: `cmdecoderv2-training-window-rollout-audit-20260910-180200`
+- timestamp: `2026-09-10 18:02:00 +0800`
+- modification_version: `V1.1.7`
+- type: `diagnostic / documentation`
+- change_level: `L0`（只读代码、配置和既有 cache 诊断；不改变训练变量、数据、模型或科研结论）
+- approval: `auto`
+- approval_basis: 仓库规则允许对只读诊断结果追加 activity 记录。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `4528ed9`
+- worktree_dirty: `false`（核查开始时）
+- run_id: `not_applicable`
+- run_status: `not_applicable`
+- conclusion: `SUPPORTED`（训练不是递归 rollout；窗口选择接触感知但不要求窗口起点本身接触）
+- scope: `src/task/CmDecoderv2/dataset.py`、`model.py`、`runner.py`、V1.3 配置和既有 V1.3 view/cache；无运行产物变更。
+
+**文件**
+
+- [dataset.py](../../dataset.py) — 核查完整窗口起点枚举、2 cm active mask 筛选、horizon mask 和 dynamic padding。
+- [model.py](../../model.py) — 核查 4 个 future horizon 是一次并行解码，没有把前一 horizon 的预测反馈给后一 horizon。
+- [runner.py](../../runner.py) — 核查 loss 使用 `active_mask & cm_sample_valid`，只对接触且采样后有效的 horizon 监督。
+- [dexplore_rl_v1_3_full10135.yaml](../../configs/active/dexplore_rl_v1_3_full10135.yaml) — 核查正式训练配置 `active_only=true`、`window_size=4` 和 2 cm 合同。
+
+**原因**
+
+需要解释 V1.3 训练是否从接触位置开始，以及它与此前从 frame 0 开始的递归 rollout 诊断之间的分布差异。
+
+**验证**
+
+- `dataset.py` 的窗口起点为 `start=0..T-window_size-1`；`active_only=true` 时保留 `active[start:start+4].any()` 的窗口，因此首个接触帧为 `f` 时最早可保留 `max(0,f-3)`，并非必须从 `f` 开始。
+- V1.3 view 每个 train/val sequence 使用 `obj_candidate_mask_2cm.npy`；active 是完整 object pool 上“存在 2 cm 内 KNN hand 邻居”的逐帧 any-mask。
+- 既有正式 run metadata 为 train/val windows=`34746/4254`；不是所有完整窗口都进入训练。
+- 代表性 cache 核查：`s1/airplane_lift` 首个 active frame=`56`，首个保留 window start=`53`。
+- model/runner 核查：同一窗口的 h1..h4 以 frame `start` 的 current state 为基准并行预测；监督 mask=`active_mask & cm_sample_valid`。
+- 此前 V1.3 full Inspire rollout 诊断显式从 frame `0` 开始递归，因此该诊断不是“从训练接触窗口起点启动”。
+
+**保护边界与回滚**
+
+- 未修改代码、配置、正式 cache、checkpoint、split 或已有实验结果；仅新增本 activity 记录。
+- 回滚入口：移除本条 activity 记录即可，不涉及任何模型或数据产物。
+
 ## 2026-09-10 17:57:08 +0800 — V1.1.7 纯 Inspire V1.3 rollout/effect 完整诊断
 
 - activity_id: `cmdecoderv2-inspire-effect-v13-full-20260910-175216`
