@@ -29,7 +29,7 @@
 
 - frozen OICM checkpoint: [V1.3 best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
 - decoder view: [dexplore_rl_v1_3_full10135](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/)，`K=32`、2 cm 仅用于 edge validity/active-only、运行时重算 32 条边距离、全局 hand id 去重、batch-max 动态 padding、point-flow target 全部 `10135` 点。
-- view evidence: [view manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/manifest.json)、[view run manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/run_manifest.json)；train/val/test sequence=`255/30/63`，train/val windows=`63988/7807`，test 仍为 MANO qualitative-only。
+- view evidence: [view manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/manifest.json)、[view run manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/run_manifest.json)；train/val/test sequence=`255/30/63`，view train/val windows=`63988/7807`，启用 `active_only` 后实际 train/val windows=`34746/4254`，test 仍为 MANO qualitative-only。
 - command: `CUDA_VISIBLE_DEVICES=0,2,3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --distributed`
 - device: physical GPU `0,2,3`；per-device batch `8`；global batch `24`；seed `42`；decoder 从头训练；50 epochs / `72400` steps；耗时约 `03:52:52`。
 

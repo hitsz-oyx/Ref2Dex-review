@@ -16,7 +16,7 @@
 验证最终 OICM V1.3 的 `K=32`、2 cm unique-KNN edge stream 能否在不回退到 1538 点 hand stream 的情况下，接入 Temporal-D2 decoder，并使用完整 Inspire-F1 surface `10135` 点进行 point-flow supervision。2 cm 只用于 KNN edge validity 和 `active_only` frame gating；point-flow loss 对全部 `10135` 点计算，不使用旧的 point-level 2 cm mask。
 
 - frozen OICM: [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
-- data view: [dexplore_rl_v1_3_full10135](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/)，train/val/test=`255/30/63` sequences，train/val windows=`63988/7807`。
+- data view: [dexplore_rl_v1_3_full10135](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/)，train/val/test=`255/30/63` sequences，view train/val windows=`63988/7807`；启用 `active_only` 后实际 train/val windows=`34746/4254`。
 - supervision: target `knn_hand_points_world.npy`，`10135` points，all points=`true`，point mask=`none`；hand stream=`unique_knn_edges`，`K=32`，radius=`0.02 m`，distance runtime recompute，batch-max dynamic padding。
 - split: `inspire_rl` train/val only；MANO test 保持 qualitative-only，不参与训练或正式定量 test。
 - decoder: Temporal-D2，`K=4`，30 Hz，active-only，state perturbation，50 epochs，从头训练；frozen OICM 保持 eval/no-grad。
