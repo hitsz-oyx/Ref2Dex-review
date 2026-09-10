@@ -1,5 +1,56 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-10 — V1.3 OICM + Inspire 全点监督 decoder 正式训练
+
+- experiment_id: `cmdecoderv2-temporal-d2-oicm-v1.3-full10135-v1.1.7`
+- activity_id: [`cmdecoderv2-v1.1.7-formal-20260910-163524`](activity_log.md)
+- run_id: `cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812`
+- run_status: `COMPLETED`
+- modification_version: `V1.1.7`
+- operation_category: `architecture / code / data / experiment / operation`
+- importance: `primary`
+- pinned: `true`
+
+**假设与固定合同**
+
+验证最终 OICM V1.3 的 `K=32`、2 cm unique-KNN edge stream 能否在不回退到 1538 点 hand stream 的情况下，接入 Temporal-D2 decoder，并使用完整 Inspire-F1 surface `10135` 点进行 point-flow supervision。2 cm 只用于 KNN edge validity 和 `active_only` frame gating；point-flow loss 对全部 `10135` 点计算，不使用旧的 point-level 2 cm mask。
+
+- frozen OICM: [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+- data view: [dexplore_rl_v1_3_full10135](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/)，train/val/test=`255/30/63` sequences，train/val windows=`63988/7807`。
+- supervision: target `knn_hand_points_world.npy`，`10135` points，all points=`true`，point mask=`none`；hand stream=`unique_knn_edges`，`K=32`，radius=`0.02 m`，distance runtime recompute，batch-max dynamic padding。
+- split: `inspire_rl` train/val only；MANO test 保持 qualitative-only，不参与训练或正式定量 test。
+- decoder: Temporal-D2，`K=4`，30 Hz，active-only，state perturbation，50 epochs，从头训练；frozen OICM 保持 eval/no-grad。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=0,2,3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --distributed`
+- device: physical GPU `0,2,3`；world size `3`；per-device batch `8`；global batch `24`；seed `42`。
+- total: `72400` steps / `50` epochs / approximately `03:52:52`。
+
+**结果**
+
+- 首个 validation：`val/loss=0.0093770677`，point-flow EPE=`26.4114 mm`。
+- checkpoint selection best：epoch `5` / step `7240`，`val/loss=0.0039939559`，point-flow EPE=`12.8782 mm`，h1=`7.1633 mm`。
+- total point-flow EPE 最好：epoch `27` / step `39096`，`12.6071 mm`；这不是当前 best checkpoint 的选择指标。
+- final epoch `50` / step `72400`：`val/loss=0.0041478906`，point-flow EPE=`12.7156 mm`，h1=`9.4626 mm`，wrist translation=`11.8189 mm`，wrist rotation=`6.1306 deg`。
+- train final epoch：loss=`0.0019386694`，point-flow EPE=`7.6044 mm`。
+
+**结论边界**
+
+- `SUPPORTED`（工程协议）：V1.3 frozen OICM、unique KNN edge input、dynamic padding、完整 `10135` 点 point-flow target、frozen OICM no-grad 和 50-epoch train/val 均已正常完成；`metrics.jsonl` 共记录 50 个 train epoch 和 50 个 val epoch，全部数值 finite。
+- `INCONCLUSIVE`（科研效果）：validation 在 epoch 5 取得 checkpoint selection 的最低 loss，后续在约 `0.00415` 附近平台化；该 run 只包含 Inspire RL train/val，没有 MANO→Inspire 定量 test，因此不能仅凭这次训练宣称跨 embodiment decoder 效果成立。
+
+**证据**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/)
+- [run manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/run_manifest.json)
+- [config.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/config.json)
+- [metadata.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/metadata.json)
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/train.log)
+- [best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)
+- [latest checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/latest.pt)
+- [最终计划](../plan/v1.1.md)
 ## 2026-09-08 — teacher-forced effect 误差归因诊断
 
 - experiment_id: `cmdecoderv2-teacherforced-effect-attribution-v1.1.4`

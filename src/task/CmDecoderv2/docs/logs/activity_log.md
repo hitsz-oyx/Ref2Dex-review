@@ -4,6 +4,64 @@
 - last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-10 16:35:24 +0800 — V1.1.7 Inspire 全点监督 decoder 正式训练完成
+
+- activity_id: `cmdecoderv2-v1.1.7-formal-20260910-163524`
+- timestamp: `2026-09-10 16:35:24 +0800`
+- modification_version: `V1.1.7`
+- type: `experiment / operation`
+- change_level: `L3 + L2`（按已定稿 [V1.1 plan](../plan/v1.1.md) 执行 V1.3 OICM、KNN hand stream、GT/point-flow 点数和三卡正式长训练）
+- approval: `user-approved`
+- approval_basis: 用户确认使用最终 OICM V1.3 `best.pt`，Inspire 使用完整 `10135` 点监督，并回复“是的，就按你的来”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `cb4161cab47678a46b69ec440d3dd06334e5645f`
+- worktree_dirty: `false`（正式 run 启动和完成时；本条为终态补记）
+- run_id: `cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812`
+- run_status: `COMPLETED`
+- last_step: `72400`
+- last_epoch: `50`
+- best_metric: `val/loss=0.003993955866854461`（epoch 5 / step 7240）
+- conclusion: `INCONCLUSIVE`（工程训练协议 `SUPPORTED`；validation 在早期达到最好，且该 run 不包含 MANO→Inspire 定量 test，因此不单独宣称跨 embodiment 效果成立）
+- scope: `src/task/CmDecoderv2/` 的 V1.3 decoder view、冻结 OICM 接入、unique KNN edge stream、动态 hand padding、Inspire `10135` 点 point-flow supervision 和正式训练输出；不改旧 cache、checkpoint、split 或 `src/base/`
+
+**固定输入与运行**
+
+- frozen OICM checkpoint: [V1.3 best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+- decoder view: [dexplore_rl_v1_3_full10135](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/)，`K=32`、2 cm 仅用于 edge validity/active-only、运行时重算 32 条边距离、全局 hand id 去重、batch-max 动态 padding、point-flow target 全部 `10135` 点。
+- view evidence: [view manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/manifest.json)、[view run manifest](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/run_manifest.json)；train/val/test sequence=`255/30/63`，train/val windows=`63988/7807`，test 仍为 MANO qualitative-only。
+- command: `CUDA_VISIBLE_DEVICES=0,2,3 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/torchrun --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --distributed`
+- device: physical GPU `0,2,3`；per-device batch `8`；global batch `24`；seed `42`；decoder 从头训练；50 epochs / `72400` steps；耗时约 `03:52:52`。
+
+**结果与证据**
+
+- validation 首个 epoch：`val/loss=0.0093770677`，point-flow EPE=`26.4114 mm`。
+- best `val/loss`：epoch `5` / step `7240`，`0.0039939559`；point-flow EPE=`12.8782 mm`，h1=`7.1633 mm`；[best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)。
+- best total point-flow EPE：epoch `27` / step `39096`，`12.6071 mm`；该指标不是当前 checkpoint 选择指标。
+- final epoch `50` / step `72400`：`val/loss=0.0041478906`，point-flow EPE=`12.7156 mm`，h1=`9.4626 mm`，wrist translation=`11.8189 mm`，wrist rotation=`6.1306 deg`；[latest checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/latest.pt)。
+- [正式运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/)、[config.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/config.json)、[metadata.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/metadata.json)、[run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/run_manifest.json)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/train.log)。
+
+**原因**
+
+用户已批准在最终 OICM V1.3 上重新从头训练 decoder；本次终态核对用于确认完整 `10135` 点 point-flow supervision、V1.3 unique-KNN 输入和三卡长任务均按最终 plan 执行，并确定可供后续诊断使用的 best checkpoint。
+
+**验证**
+
+- `py_compile`、`pytest -q src/task/CmDecoderv2/tests`：实现前已通过，Task tests=`15 passed`。
+- 正式 `metrics.jsonl`：`824` 条记录，train/val epoch 各 `50`；最终 step/epoch=`72400/50`；所有数值 finite，未发现 `Traceback`、`NaN`、`Inf`、`OOM` 或数据加载错误。
+- `torch.load` 核对：`best.pt` 对应 epoch `5` / step `7240`，`latest.pt` 对应 epoch `50` / step `72400`；best metric 与 metrics 一致。
+- 训练终止后 torchrun 和 3 个 worker 均已退出；其他 GPU 上的既有任务未停止。
+- [V1.1.7 最终计划](../plan/v1.1.md) 与当前配置、view manifest、metadata 的 KNN/10135-point contract 一致。
+
+**保护边界与回滚**
+
+- 未修改既有 V1.2.5 decoder view、V1.3 OICM cache/checkpoint、原始数据、正式 split、旧 decoder output、`src/base/` 或其他 GPU 任务。
+- 回滚入口：隔离本次 V1.1.7 的 Task-local 代码/config、`dexplore_rl_v1_3_full10135` view 和本 run output；不删除旧 cache、checkpoint 或运行。
+
+**规范反馈**
+
+- 本次没有审批或目录阻碍。当前 BaseRunner 的 `run_manifest.json` 记录启动时 provenance，训练终态按 Skill 规范登记在本条 activity；manifest 中通用路径扫描器会把 OICM SHA256 字符串额外显示为一个 `missing` 路径，但实际 checkpoint 路径、大小和 SHA256 均已在 metadata/activity 中核验，不影响本次 run 可复现性。
+
 ## 2026-09-10 11:09:19 +0800 — V1.3 中间 best.pt 的 MANO/Inspire Cm 来源分类诊断完成
 
 - activity_id: `cmdecoderv2-cm-source-classifier-v13-20260910-110919`
