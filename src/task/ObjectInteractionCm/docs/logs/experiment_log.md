@@ -36,7 +36,12 @@ interaction；将这些边中的 hand ID 去重后，每个 hand 点只进入一
 
 **当前状态与结论边界**
 
-- 已完成 `step=2944`、`epoch=4`；训练进程仍为 `RUNNING`，最新吞吐约 `645 samples/s`，ETA 约 `8.2 h`。
+- 已完成 `step=144000`、`epoch=196`；训练进程仍为 `RUNNING`，最新吞吐约 `653.63 samples/s`，ETA 约 `2.38 h`。
+- equal-source object validation 最佳为 `6.516671 mm`（epoch 180 / step 132480）；最近验证为
+  `6.714598 mm`（epoch 195 / step 143520）。最佳之后连续 15 次验证未刷新 best，最近窗口均值
+  `6.700502 mm`，当前判断为 object 指标进入平台期，但正式训练尚未完成。
+- GRAB 最近/最佳 object EPE 为 `7.658820 / 7.239350 mm`；Inspire-F1 为
+  `5.770376 / 5.701175 mm`；unique-KNN hand 最近为 `1.921042 mm`（当前最佳）。
 - 当前仅支持工程启动和 forward/backward 运行正常；正式科研结论保持 `INCONCLUSIVE`，待完整训练、
   validation 和 checkpoint 结果后再更新。
 

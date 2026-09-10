@@ -5,6 +5,62 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-10 08:34:42 +0800 — V1.3 全量训练收敛状态检查
+
+- activity_id: `ACT-20260910-083442-OBJECTINTERACTIONCM-V13-FULL-TRAIN-CONVERGENCE`
+- timestamp: `2026-09-10 08:34:42 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[operation, diagnostic]`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 V1.3 全量训练是否收敛；本次只读检查训练进程、metrics、验证曲线、checkpoint 和日志，未修改代码、配置、数据、cache 或 checkpoint
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `caf3f4fb70a710047c0bb1a418e49f23ca8646a0`
+- worktree: `false`
+- run_id: `object_interaction_cm_dexplore_rl_v1_3_20260910_020856`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（工程上已进入验证平台期，但训练尚未完成，不能据此宣称最终收敛或科研假设成立）
+- scope: 判断 V1.3 full training 的 object validation plateau、GRAB/Inspire-F1 分源趋势、unique-KNN hand validation 和剩余训练进度。
+
+**文件**
+
+- [活动记录](activity_log.md)
+- [实验记录](experiment_log.md)
+- [正式训练输出目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/)
+- [metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
+- [train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
+- [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)
+- [latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/latest.pt)
+
+**原因**
+
+区分“验证指标已经基本不再持续下降”和“正式训练已达到终态”。当前训练计划仍为
+`202300 steps`，需要结合最近验证窗口和分源指标判断是否已经进入平台期。
+
+**验证**
+
+- 检查时间：`2026-09-10 08:34:42 +0800`；主 `torchrun` PID `1771994` 和三个 rank
+  `1772101/1772102/1772103` 仍在运行。
+- 最新训练进度：`step=144000`、`epoch=196`，约完成 `71.2%`；最新 ETA 约 `2.38 h`，吞吐约
+  `653.63 samples/s`。
+- equal-source object validation 最佳为 `6.516671 mm`，位于 `epoch=180 / step=132480`；
+  最近验证为 `6.714598 mm`，位于 `epoch=195 / step=143520`。
+- 最佳之后的 15 次验证中，equal-source 指标范围为 `6.574918–6.805946 mm`，均未超过
+  `6.516671 mm` 的历史最佳；最近 15 次均值 `6.700502 mm`、标准差 `0.063896 mm`，
+  表明 object 指标已在约 `0.1 mm` 量级内波动，属于明显平台期。
+- 分源最近/最佳：GRAB 最近 `7.658820 mm`、最佳 `7.239350 mm`（epoch 146）；Inspire-F1
+  最近 `5.770376 mm`、最佳 `5.701175 mm`（epoch 179）。两源都没有在最近阶段形成持续下降。
+- unique-KNN hand validation 最近为 `1.921042 mm`，为当前全程最佳，说明 hand 支路仍有局部改善，
+  但 object 主指标尚未继续刷新 best。
+- 训练进程、显存和日志检查未发现 `traceback`、OOM、NaN、NCCL 或其他错误。
+
+**判断**
+
+当前应标记为“object 指标基本收敛/进入平台期，正式 run 尚未完成”，继续保留训练到计划的
+`202300 steps`；最终是否采用 `best.pt` 仍以完整训练后的最终验证结果和下游评估为准。
+
 ## 2026-09-10 08:30:16 +0800 — V1.3 全量训练运行中状态检查
 
 - activity_id: `ACT-20260910-083016-OBJECTINTERACTIONCM-V13-FULL-TRAIN-STATUS`
