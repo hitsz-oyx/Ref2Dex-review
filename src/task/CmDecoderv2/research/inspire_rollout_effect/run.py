@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -21,23 +22,25 @@ from typing import Any
 
 import numpy as np
 import torch
+from numpy.lib.format import open_memmap
+from pytorch3d.ops import knn_points
 from scipy.spatial import cKDTree
 
 from src.base import load_config
-from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import InspireUrdfModel
+from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import InspireUrdfModel, _fk_surface
 
+from ...pointflow import _v13_surface_samples
 from ...visualize_inspire_test import (
     InspireRolloutEngine,
     InspireTestSequence,
     _load_model,
-    _load_sequence,
     _normals_world_to_frame,
     _points_world_to_frame,
     _resolve,
 )
 
 
-MODIFICATION_VERSION = "V1.1.4"
+MODIFICATION_VERSION = "V1.1.7"
 
 
 def _now() -> str:
@@ -52,6 +55,48 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _load_effect_sequence(
+    cfg: Any,
+    sequence: str,
+    sequence_index: int,
+    *,
+    rl_root: Path,
+    parent_root: Path,
+) -> InspireTestSequence:
+    view_root = _resolve(str(cfg.data.view_root))
+    index = json.loads((view_root / "index.json").read_text(encoding="utf-8"))
+    entries = list(index["sequences"]["test"])
+    if any(item.get("variant") != "mano" for item in entries):
+        raise ValueError("Inspire diagnostic expects the held-out parent ids from the MANO-only test index")
+    if sequence:
+        matches = [item for item in entries if str(item["id"]) == sequence]
+        if not matches:
+            raise ValueError(f"Unknown held-out test sequence {sequence!r}")
+        entry = dict(matches[0])
+    else:
+        if sequence_index < 0 or sequence_index >= len(entries):
+            raise IndexError(f"sequence-index must lie in [0, {len(entries) - 1}]")
+        entry = dict(entries[sequence_index])
+
+    geometry_root = _resolve(str(entry["geometry_root"]))
+    manifest_path = geometry_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    parent_value = manifest.get("input_parent_cache")
+    if parent_value:
+        candidate = _resolve(str(parent_value))
+        if not (candidate / "shared" / "obj_points_world.npy").is_file():
+            nested_geometry = candidate / "geometry"
+            if (nested_geometry / "manifest.json").is_file():
+                entry["geometry_root"] = str(nested_geometry)
+    return InspireTestSequence(
+        entry,
+        urdf_path=_resolve(str(cfg.data.urdf_path)),
+        rl_root=rl_root,
+        parent_root=parent_root,
+        num_hand_points=int(cfg.meta.num_hand_points),
+    )
+
+
 def _surface_state(
     *,
     urdf_model: InspireUrdfModel,
@@ -62,7 +107,7 @@ def _surface_state(
     sampled_normals: np.ndarray,
     sampled_visual_ids: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """FK the same 1538 sampled surface points used by the Inspire cache."""
+    """FK the sampled surface points used by the active Inspire contract."""
     links = kinematics.link_transforms_from_state(finger_q, wrist_pose)
     points = np.empty_like(sampled_points, dtype=np.float32)
     normals = np.empty_like(sampled_points, dtype=np.float32)
@@ -97,6 +142,312 @@ def _effective_object_flow(raw_flow: np.ndarray, sample_valid: bool) -> np.ndarr
     return raw_flow.copy() if bool(sample_valid) else np.zeros_like(raw_flow)
 
 
+def _surface_samples_for_cfg(
+    urdf_model: InspireUrdfModel,
+    cfg: Any,
+    *,
+    count: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, str]:
+    sampling = str(getattr(getattr(cfg, "model", None), "surface_sampling", "legacy_urdf") or "legacy_urdf").strip().lower()
+    if sampling == "v1_3_cache":
+        points, normals, visual_ids = _v13_surface_samples(urdf_model, int(count), int(seed))
+    elif sampling == "legacy_urdf":
+        points, normals, visual_ids = urdf_model.surface_samples(int(count), int(seed))
+    else:
+        raise ValueError(f"Unsupported Inspire surface_sampling={sampling!r}")
+    return points, normals, visual_ids, sampling
+
+
+def _compact_knn_edge_stream(
+    *,
+    object_points: np.ndarray,
+    full_hand_points: np.ndarray,
+    full_hand_normals: np.ndarray,
+    full_hand_flow: np.ndarray,
+    edge_global_ids: np.ndarray,
+    radius_m: float,
+) -> dict[str, np.ndarray]:
+    object_points = np.asarray(object_points, dtype=np.float32)
+    full_hand_points = np.asarray(full_hand_points, dtype=np.float32)
+    full_hand_normals = np.asarray(full_hand_normals, dtype=np.float32)
+    full_hand_flow = np.asarray(full_hand_flow, dtype=np.float32)
+    edge_global_ids = np.asarray(edge_global_ids, dtype=np.int64)
+    if object_points.ndim != 2 or object_points.shape[1:] != (3,):
+        raise ValueError(f"object_points must be [N,3], got {object_points.shape}")
+    if full_hand_points.ndim != 2 or full_hand_points.shape[1:] != (3,):
+        raise ValueError(f"full_hand_points must be [H,3], got {full_hand_points.shape}")
+    if full_hand_normals.shape != full_hand_points.shape or full_hand_flow.shape != full_hand_points.shape:
+        raise ValueError("full hand points/normals/flow shapes must match")
+    if edge_global_ids.ndim != 2 or edge_global_ids.shape[0] != object_points.shape[0]:
+        raise ValueError(f"edge_global_ids must be [N,K], got {edge_global_ids.shape}")
+    if edge_global_ids.size and (edge_global_ids.min() < 0 or edge_global_ids.max() >= full_hand_points.shape[0]):
+        raise ValueError("edge_global_ids contains an out-of-range hand index")
+
+    edge_points = full_hand_points[edge_global_ids]
+    edge_distances = np.linalg.norm(edge_points - object_points[:, None, :], axis=-1)
+    edge_valid = edge_distances <= float(radius_m)
+    valid_global_ids = edge_global_ids[edge_valid]
+    unique_global_ids = (
+        np.unique(valid_global_ids)
+        if valid_global_ids.size
+        else np.empty((0,), dtype=np.int64)
+    )
+    if unique_global_ids.size:
+        global_ids = unique_global_ids.astype(np.int64, copy=False)
+        hand_valid_mask = np.ones((len(global_ids),), dtype=bool)
+    else:
+        global_ids = np.zeros((1,), dtype=np.int64)
+        hand_valid_mask = np.zeros((1,), dtype=bool)
+
+    lookup = np.full((full_hand_points.shape[0],), -1, dtype=np.int64)
+    lookup[global_ids] = np.arange(len(global_ids), dtype=np.int64)
+    local_edges = lookup[edge_global_ids]
+    if np.any(edge_valid & (local_edges < 0)):
+        raise RuntimeError("valid KNN edge was not mapped into the compact hand stream")
+    local_edges = np.where(edge_valid, local_edges, 0).astype(np.int64, copy=False)
+    return {
+        "hand_points": full_hand_points[global_ids].astype(np.float32, copy=False),
+        "hand_normals": full_hand_normals[global_ids].astype(np.float32, copy=False),
+        "hand_flow": full_hand_flow[global_ids].astype(np.float32, copy=False),
+        "hand_valid_mask": hand_valid_mask,
+        "knn_edge_indices": local_edges,
+        "knn_edge_valid_mask": edge_valid.astype(bool, copy=False),
+        "global_hand_ids": global_ids,
+    }
+
+
+class _V13KnnEdgeAdapter:
+    """Build the V1.3 unique-KNN edge stream for the pure-Inspire diagnostic."""
+
+    def __init__(
+        self,
+        *,
+        sequence: InspireTestSequence,
+        hand_points_world: np.ndarray,
+        hand_normals_world: np.ndarray,
+        device: torch.device,
+        knn_k: int,
+        radius_m: float,
+    ) -> None:
+        self.sequence = sequence
+        self.hand_points_world = np.asarray(hand_points_world, dtype=np.float32)
+        self.hand_normals_world = np.asarray(hand_normals_world, dtype=np.float32)
+        self.device = device
+        self.knn_k = int(knn_k)
+        self.radius_m = float(radius_m)
+        if self.knn_k <= 0 or self.radius_m <= 0.0:
+            raise ValueError("V1.3 KNN adapter requires positive knn_k and radius")
+        if self.hand_points_world.shape != self.hand_normals_world.shape:
+            raise ValueError("V1.3 hand point/normal arrays must match")
+        if self.hand_points_world.shape[:1] != (sequence.frame_count,):
+            raise ValueError("V1.3 hand point array frame count mismatch")
+        if self.hand_points_world.shape[1] > np.iinfo(np.uint16).max:
+            raise ValueError("V1.3 uint16 KNN index cannot address this hand stream")
+        self.source_knn_indices: np.ndarray | None = None
+        self.source_knn_path: Path | None = None
+
+    def build_source_cache(self, output: Path, *, batch_size: int, frame_count: int | None = None) -> Path:
+        """Precompute object-pool to GT-Inspire KNN for decoder Cm windows."""
+        frame_count = int(self.sequence.frame_count if frame_count is None else frame_count)
+        frame_count = max(1, min(frame_count, int(self.sequence.frame_count)))
+        object_pool = int(self.sequence.object_points.shape[1])
+        path = output / "source_knn_indices.npy"
+        indices = open_memmap(
+            str(path),
+            mode="w+",
+            dtype=np.uint16,
+            shape=(frame_count, object_pool, self.knn_k),
+        )
+        batch_size = max(1, int(batch_size))
+        try:
+            for start in range(0, frame_count, batch_size):
+                stop = min(frame_count, start + batch_size)
+                object_local: list[np.ndarray] = []
+                hand_local: list[np.ndarray] = []
+                for frame in range(start, stop):
+                    pose = np.asarray(self.sequence.object_pose[frame], dtype=np.float32)
+                    object_local.append(_points_world_to_frame(self.sequence.object_points[frame], pose))
+                    hand_local.append(_points_world_to_frame(self.hand_points_world[frame], pose))
+                object_tensor = torch.as_tensor(np.stack(object_local), dtype=torch.float32, device=self.device)
+                hand_tensor = torch.as_tensor(np.stack(hand_local), dtype=torch.float32, device=self.device)
+                with torch.inference_mode():
+                    result = knn_points(
+                        object_tensor,
+                        hand_tensor,
+                        K=self.knn_k,
+                        return_nn=False,
+                        return_sorted=True,
+                    )
+                indices[start:stop] = result.idx.detach().cpu().numpy().astype(np.uint16, copy=False)
+        finally:
+            indices.flush()
+            del indices
+        self.source_knn_indices = np.load(path, mmap_mode="r")
+        self.source_knn_path = path
+        return path
+
+    def _selected_object_ids(self, start: int, offset: int, num_obj_points: int) -> np.ndarray:
+        rng = np.random.default_rng(2024 + int(start) * 131 + int(offset))
+        return rng.choice(self.sequence.object_points.shape[1], size=int(num_obj_points), replace=False)
+
+    @staticmethod
+    def _pack_window(
+        *,
+        object_points: list[np.ndarray],
+        object_normals: list[np.ndarray],
+        compact: list[dict[str, np.ndarray]],
+        window_size: int,
+        num_obj_points: int,
+    ) -> dict[str, torch.Tensor]:
+        max_hand_points = max(int(item["hand_points"].shape[0]) for item in compact)
+        hand_points = np.zeros((window_size, max_hand_points, 3), dtype=np.float32)
+        hand_normals = np.zeros_like(hand_points)
+        hand_flow = np.zeros_like(hand_points)
+        hand_valid = np.zeros((window_size, max_hand_points), dtype=bool)
+        edge_indices: list[np.ndarray] = []
+        edge_valid: list[np.ndarray] = []
+        valid_counts: list[int] = []
+        for offset, item in enumerate(compact):
+            count = int(item["hand_points"].shape[0])
+            hand_points[offset, :count] = item["hand_points"]
+            hand_normals[offset, :count] = item["hand_normals"]
+            hand_flow[offset, :count] = item["hand_flow"]
+            hand_valid[offset, :count] = item["hand_valid_mask"]
+            edge_indices.append(item["knn_edge_indices"])
+            edge_valid.append(item["knn_edge_valid_mask"])
+            valid_counts.append(int(np.asarray(item["hand_valid_mask"], dtype=bool).sum()))
+        return {
+            "obj_points": torch.from_numpy(np.stack(object_points).astype(np.float32)).unsqueeze(0),
+            "obj_normals": torch.from_numpy(np.stack(object_normals).astype(np.float32)).unsqueeze(0),
+            "obj_valid_mask": torch.ones((1, window_size, int(num_obj_points)), dtype=torch.bool),
+            "hand_points": torch.from_numpy(hand_points).unsqueeze(0),
+            "hand_normals": torch.from_numpy(hand_normals).unsqueeze(0),
+            "hand_flow": torch.from_numpy(hand_flow).unsqueeze(0),
+            "hand_valid_mask": torch.from_numpy(hand_valid).unsqueeze(0),
+            "knn_edge_indices": torch.from_numpy(np.stack(edge_indices).astype(np.int64)).unsqueeze(0),
+            "knn_edge_valid_mask": torch.from_numpy(np.stack(edge_valid).astype(bool)).unsqueeze(0),
+            "cm_hand_valid_points": torch.tensor([valid_counts], dtype=torch.int64),
+        }
+
+    def source_window(
+        self,
+        start: int,
+        window_size: int,
+        num_obj_points: int,
+    ) -> tuple[dict[str, torch.Tensor], np.ndarray]:
+        if self.source_knn_indices is None:
+            raise RuntimeError("V1.3 source KNN cache has not been built")
+        start = int(start)
+        window_size = int(window_size)
+        if start < 0 or start + window_size >= self.sequence.frame_count:
+            raise IndexError(f"Cm window start {start} exceeds sequence {self.sequence.frame_count} with K={window_size}")
+        object_points: list[np.ndarray] = []
+        object_normals: list[np.ndarray] = []
+        compact: list[dict[str, np.ndarray]] = []
+        for offset in range(window_size):
+            frame = start + offset
+            pose = np.asarray(self.sequence.object_pose[frame], dtype=np.float32)
+            selected = self._selected_object_ids(start, offset, int(num_obj_points))
+            current_hand = _points_world_to_frame(self.hand_points_world[frame], pose)
+            future_hand = _points_world_to_frame(self.hand_points_world[frame + 1], pose)
+            current_normals = _normals_world_to_frame(self.hand_normals_world[frame], pose)
+            obj = _points_world_to_frame(self.sequence.object_points[frame, selected], pose)
+            object_points.append(obj)
+            object_normals.append(_normals_world_to_frame(self.sequence.object_normals[frame, selected], pose))
+            compact.append(
+                _compact_knn_edge_stream(
+                    object_points=obj,
+                    full_hand_points=current_hand,
+                    full_hand_normals=current_normals,
+                    full_hand_flow=future_hand - current_hand,
+                    edge_global_ids=np.asarray(self.source_knn_indices[frame, selected], dtype=np.int64),
+                    radius_m=self.radius_m,
+                )
+            )
+        return (
+            self._pack_window(
+                object_points=object_points,
+                object_normals=object_normals,
+                compact=compact,
+                window_size=window_size,
+                num_obj_points=int(num_obj_points),
+            ),
+            np.asarray(self.sequence.object_pose[start], dtype=np.float64),
+        )
+
+    def effect_batch_fields(
+        self,
+        *,
+        object_points: np.ndarray,
+        full_hand_points: np.ndarray,
+        full_hand_normals: np.ndarray,
+        full_hand_flow: np.ndarray,
+    ) -> dict[str, torch.Tensor]:
+        object_tensor = torch.as_tensor(
+            np.asarray(object_points, dtype=np.float32)[None],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        hand_tensor = torch.as_tensor(
+            np.asarray(full_hand_points, dtype=np.float32)[None],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        with torch.inference_mode():
+            result = knn_points(
+                object_tensor,
+                hand_tensor,
+                K=self.knn_k,
+                return_nn=False,
+                return_sorted=True,
+            )
+        compact = _compact_knn_edge_stream(
+            object_points=np.asarray(object_points, dtype=np.float32),
+            full_hand_points=np.asarray(full_hand_points, dtype=np.float32),
+            full_hand_normals=np.asarray(full_hand_normals, dtype=np.float32),
+            full_hand_flow=np.asarray(full_hand_flow, dtype=np.float32),
+            edge_global_ids=result.idx[0].detach().cpu().numpy().astype(np.int64, copy=False),
+            radius_m=self.radius_m,
+        )
+        return {
+            "hand_points": torch.from_numpy(compact["hand_points"]).unsqueeze(0).to(self.device),
+            "hand_normals": torch.from_numpy(compact["hand_normals"]).unsqueeze(0).to(self.device),
+            "hand_flow": torch.from_numpy(compact["hand_flow"]).unsqueeze(0).to(self.device),
+            "hand_valid_mask": torch.from_numpy(compact["hand_valid_mask"]).unsqueeze(0).to(self.device),
+            "knn_edge_indices": torch.from_numpy(compact["knn_edge_indices"]).unsqueeze(0).to(self.device),
+            "knn_edge_valid_mask": torch.from_numpy(compact["knn_edge_valid_mask"]).unsqueeze(0).to(self.device),
+        }
+
+
+class _SequenceWithKnnSource:
+    """Proxy an Inspire test sequence while replacing its Cm source window."""
+
+    def __init__(
+        self,
+        base: InspireTestSequence,
+        *,
+        hand_points_world: np.ndarray,
+        hand_normals_world: np.ndarray,
+        adapter: _V13KnnEdgeAdapter,
+    ) -> None:
+        self._base = base
+        self.hand_points = np.asarray(hand_points_world, dtype=np.float32)
+        self.hand_normals = np.asarray(hand_normals_world, dtype=np.float32)
+        self._adapter = adapter
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._base, name)
+
+    def source_window(
+        self,
+        start: int,
+        window_size: int,
+        num_obj_points: int,
+    ) -> tuple[dict[str, torch.Tensor], np.ndarray]:
+        return self._adapter.source_window(start, window_size, num_obj_points)
+
+
 class EffectDiagnostic:
     """Roll out CmDecoderv2 and run its generated hand flow through OICM."""
 
@@ -109,20 +460,66 @@ class EffectDiagnostic:
         render_surface: Any,
         device: torch.device,
         cfg: Any,
+        output: Path,
+        knn_batch_size: int,
+        source_knn_frame_count: int | None = None,
     ) -> None:
-        self.sequence = sequence
         self.decoder = decoder
         self.oicm = decoder.oicm
         self.kinematics = kinematics
         self.device = device
         self.window_size = int(cfg.meta.window_size)
         self.num_obj_points = int(cfg.meta.num_obj_points)
+        self.knn_k = int(getattr(cfg.meta, "knn_k", 0) or 0)
+        self.interaction_radius_m = float(getattr(cfg.meta, "interaction_radius_m", 0.05))
+        self.hand_stream_mode = str(getattr(cfg.meta, "hand_stream_mode", "decoder") or "decoder").strip().lower()
         self.surface_model = InspireUrdfModel(_resolve(str(cfg.data.urdf_path)))
-        self.sampled_points, self.sampled_normals, self.sampled_visual_ids = self.surface_model.surface_samples(
-            int(cfg.meta.num_hand_points), 2024
+        (
+            self.sampled_points,
+            self.sampled_normals,
+            self.sampled_visual_ids,
+            self.surface_sampling,
+        ) = _surface_samples_for_cfg(
+            self.surface_model,
+            cfg,
+            count=int(cfg.meta.num_hand_points),
+            seed=2024,
         )
+        self.edge_adapter: _V13KnnEdgeAdapter | None = None
+        self.source_knn_path: Path | None = None
+        rollout_sequence: Any = sequence
+        if self.hand_stream_mode == "unique_knn_edges":
+            if self.knn_k <= 0:
+                raise ValueError("unique_knn_edges requires cfg.meta.knn_k")
+            hand_points_world, hand_normals_world = _fk_surface(
+                self.surface_model,
+                np.asarray(sequence.q_native, dtype=np.float64),
+                self.sampled_points,
+                self.sampled_normals,
+                self.sampled_visual_ids,
+            )
+            self.edge_adapter = _V13KnnEdgeAdapter(
+                sequence=sequence,
+                hand_points_world=hand_points_world,
+                hand_normals_world=hand_normals_world,
+                device=device,
+                knn_k=self.knn_k,
+                radius_m=self.interaction_radius_m,
+            )
+            self.source_knn_path = self.edge_adapter.build_source_cache(
+                output,
+                batch_size=int(knn_batch_size),
+                frame_count=source_knn_frame_count,
+            )
+            rollout_sequence = _SequenceWithKnnSource(
+                sequence,
+                hand_points_world=hand_points_world,
+                hand_normals_world=hand_normals_world,
+                adapter=self.edge_adapter,
+            )
+        self.sequence = rollout_sequence
         self.rollout = InspireRolloutEngine(
-            sequence=sequence,
+            sequence=rollout_sequence,
             model=decoder,
             kinematics=kinematics,
             surface=render_surface,
@@ -192,11 +589,23 @@ class EffectDiagnostic:
             "obj_points": torch.from_numpy(object_points).unsqueeze(0).to(self.device),
             "obj_normals": torch.from_numpy(object_normals).unsqueeze(0).to(self.device),
             "obj_valid_mask": torch.ones((1, self.num_obj_points), dtype=torch.bool, device=self.device),
-            "hand_points": torch.from_numpy(hand_points).unsqueeze(0).to(self.device),
-            "hand_normals": torch.from_numpy(hand_normals).unsqueeze(0).to(self.device),
-            "hand_flow": torch.from_numpy(hand_flow).unsqueeze(0).to(self.device),
-            "hand_valid_mask": torch.ones((1, hand_points.shape[0]), dtype=torch.bool, device=self.device),
         }
+        if self.edge_adapter is None:
+            batch.update({
+                "hand_points": torch.from_numpy(hand_points).unsqueeze(0).to(self.device),
+                "hand_normals": torch.from_numpy(hand_normals).unsqueeze(0).to(self.device),
+                "hand_flow": torch.from_numpy(hand_flow).unsqueeze(0).to(self.device),
+                "hand_valid_mask": torch.ones((1, hand_points.shape[0]), dtype=torch.bool, device=self.device),
+            })
+        else:
+            batch.update(
+                self.edge_adapter.effect_batch_fields(
+                    object_points=object_points,
+                    full_hand_points=hand_points,
+                    full_hand_normals=hand_normals,
+                    full_hand_flow=hand_flow,
+                )
+            )
         with torch.inference_mode():
             output = self.oicm(batch)
         predicted_object_flow_object = output["pred_obj_flow"][0].detach().cpu().numpy().astype(np.float32)
@@ -209,6 +618,10 @@ class EffectDiagnostic:
         effective_magnitude_mm = np.linalg.norm(effective_object_flow_object, axis=-1) * 1000.0
         nearest_mm = float(cKDTree(np.asarray(self.sequence.object_points[frame], dtype=np.float32)).query(current_points_world, k=1)[0].min() * 1000.0)
         hand_flow_magnitude_mm = np.linalg.norm(hand_flow, axis=-1) * 1000.0
+        gt_current = np.asarray(self.sequence.hand_points[frame], dtype=np.float32)
+        gt_future = np.asarray(self.sequence.hand_points[frame + 1], dtype=np.float32)
+        gt_hand_flow_world = gt_future - gt_current
+        pred_hand_flow_world = future_points_world - current_points_world
         decoder_valid = current.get("cm_valid")
         return {
             "object_points_world": object_world,
@@ -227,6 +640,9 @@ class EffectDiagnostic:
             "oicm_sampled_active_count": int(output["sampled_active_count"][0].item()),
             "min_hand_object_distance_mm": nearest_mm,
             "hand_flow_rms_mm": float(np.sqrt(np.mean(hand_flow_magnitude_mm ** 2))),
+            "rollout_hand_epe_mm": float(np.mean(np.linalg.norm(current_points_world - gt_current, axis=-1)) * 1000.0),
+            "rollout_future_hand_epe_mm": float(np.mean(np.linalg.norm(future_points_world - gt_future, axis=-1)) * 1000.0),
+            "rollout_hand_flow_epe_mm": float(np.mean(np.linalg.norm(pred_hand_flow_world - gt_hand_flow_world, axis=-1)) * 1000.0),
             "effect_rms_mm": float(np.sqrt(np.mean(effect_magnitude_mm ** 2))),
             "effect_mean_mm": float(np.mean(effect_magnitude_mm)),
             "effect_max_mm": float(np.max(effect_magnitude_mm)),
@@ -234,6 +650,8 @@ class EffectDiagnostic:
             "gt_effect_rms_mm": float(np.sqrt(np.mean(np.linalg.norm(gt_object_flow_object, axis=-1) ** 2)) * 1000.0),
             "pred_gt_effect_epe_mm": float(np.mean(np.linalg.norm(effective_object_flow_object - gt_object_flow_object, axis=-1)) * 1000.0),
             "decoder_cm_valid": np.asarray(decoder_valid if decoder_valid is not None else np.zeros(self.window_size), dtype=bool),
+            "rollout_finger_q": np.asarray(current["finger_q"], dtype=np.float32),
+            "rollout_wrist_pose_world": np.asarray(current["wrist"], dtype=np.float32),
         }
 
     def run(self, max_steps: int | None = None) -> dict[str, np.ndarray]:
@@ -270,6 +688,9 @@ class EffectDiagnostic:
             "oicm_sampled_active_count": np.asarray([r["oicm_sampled_active_count"] for r in records], dtype=np.int32),
             "min_hand_object_distance_mm": np.asarray([r["min_hand_object_distance_mm"] for r in records], dtype=np.float32),
             "hand_flow_rms_mm": np.asarray([r["hand_flow_rms_mm"] for r in records], dtype=np.float32),
+            "rollout_hand_epe_mm": np.asarray([r["rollout_hand_epe_mm"] for r in records], dtype=np.float32),
+            "rollout_future_hand_epe_mm": np.asarray([r["rollout_future_hand_epe_mm"] for r in records], dtype=np.float32),
+            "rollout_hand_flow_epe_mm": np.asarray([r["rollout_hand_flow_epe_mm"] for r in records], dtype=np.float32),
             "effect_rms_mm": np.asarray([r["effect_rms_mm"] for r in records], dtype=np.float32),
             "effect_mean_mm": np.asarray([r["effect_mean_mm"] for r in records], dtype=np.float32),
             "effect_max_mm": np.asarray([r["effect_max_mm"] for r in records], dtype=np.float32),
@@ -277,6 +698,8 @@ class EffectDiagnostic:
             "gt_effect_rms_mm": np.asarray([r["gt_effect_rms_mm"] for r in records], dtype=np.float32),
             "pred_gt_effect_epe_mm": np.asarray([r["pred_gt_effect_epe_mm"] for r in records], dtype=np.float32),
             "decoder_cm_valid": np.stack([r["decoder_cm_valid"] for r in records]),
+            "rollout_finger_q": np.stack([r["rollout_finger_q"] for r in records]),
+            "rollout_wrist_pose_world": np.stack([r["rollout_wrist_pose_world"] for r in records]),
         }
 
     def start_rollout(self, frame: int) -> None:
@@ -321,15 +744,24 @@ class EffectDiagnostic:
         return self.rollout_record(frame)
 
 
-def _summary(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
+def _threshold_key(threshold_mm: float) -> str:
+    threshold_mm = float(threshold_mm)
+    if abs(threshold_mm - round(threshold_mm)) < 1e-6:
+        return str(int(round(threshold_mm)))
+    return f"{threshold_mm:.3f}".rstrip("0").rstrip(".").replace(".", "p")
+
+
+def _summary(arrays: dict[str, np.ndarray], *, threshold_mm: float = 50.0) -> dict[str, Any]:
     distance = arrays["min_hand_object_distance_mm"]
     effect = arrays["effect_rms_mm"]
     effective = arrays["effective_effect_rms_mm"]
     valid = arrays["oicm_sample_valid"]
     gt_effect = arrays.get("gt_effect_rms_mm")
     pred_gt_epe = arrays.get("pred_gt_effect_epe_mm")
-    far = distance > 50.0
+    threshold_mm = float(threshold_mm)
+    far = distance > threshold_mm
     near = ~far
+    label = _threshold_key(threshold_mm)
 
     def group(mask: np.ndarray) -> dict[str, Any]:
         values = effect[mask]
@@ -348,8 +780,9 @@ def _summary(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
 
     summary = {
         "frames": int(len(effect)),
-        "far_gt_50mm": group(far),
-        "near_le_50mm": group(near),
+        "distance_threshold_mm": threshold_mm,
+        f"far_gt_{label}mm": group(far),
+        f"near_le_{label}mm": group(near),
         "overall_effect_rms_mean_mm": float(effect.mean()),
         "overall_effect_rms_median_mm": float(np.median(effect)),
         "overall_effect_rms_max_mm": float(effect.max()),
@@ -357,6 +790,16 @@ def _summary(arrays: dict[str, np.ndarray]) -> dict[str, Any]:
         "overall_effective_effect_rms_max_mm": float(effective.max()),
         "oicm_valid_ratio": float(valid.mean()),
     }
+    for key in (
+        "rollout_hand_epe_mm",
+        "rollout_future_hand_epe_mm",
+        "rollout_hand_flow_epe_mm",
+    ):
+        if key in arrays:
+            values = np.asarray(arrays[key], dtype=np.float32)
+            summary[f"overall_{key}_mean"] = float(values.mean())
+            summary[f"overall_{key}_median"] = float(np.median(values))
+            summary[f"overall_{key}_max"] = float(values.max())
     if gt_effect is not None:
         summary.update({
             "overall_gt_effect_rms_mean_mm": float(gt_effect.mean()),
@@ -637,6 +1080,8 @@ def main() -> None:
     )
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--run-id", default="")
+    parser.add_argument("--knn-batch-size", type=int, default=4)
     parser.add_argument("--port", type=int, default=8102)
     parser.add_argument("--fps", type=float, default=8.0)
     parser.add_argument("--serve", action="store_true")
@@ -644,7 +1089,7 @@ def main() -> None:
 
     cfg = load_config(args.config)
     device = torch.device(args.device)
-    sequence = _load_sequence(
+    sequence = _load_effect_sequence(
         cfg,
         args.sequence,
         int(args.sequence_index),
@@ -653,44 +1098,52 @@ def main() -> None:
     )
     checkpoint_path = _resolve(args.checkpoint)
     decoder, kinematics, render_surface = _load_model(cfg, checkpoint_path, device)
-    diagnostic = EffectDiagnostic(
-        sequence=sequence,
-        decoder=decoder,
-        kinematics=kinematics,
-        render_surface=render_surface,
-        device=device,
-        cfg=cfg,
-    )
-    arrays = diagnostic.run(max_steps=args.max_steps)
-
-    run_id = f"cmdecoderv2-inspire-effect-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    run_id = str(args.run_id).strip() or f"cmdecoderv2-inspire-effect-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     output = _resolve(args.output_root) / run_id
     output.mkdir(parents=True, exist_ok=False)
-    np.savez_compressed(output / "effect.npz", **arrays)
-    summary = _summary(arrays)
-    (output / "effect_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest = {
         "schema_name": "ref2dex_cmdecoderv2_inspire_rollout_effect_v1",
         "task": "CmDecoderv2",
         "activity_id": args.activity_id,
         "run_id": run_id,
-        "run_status": "RUNNING" if args.serve else "COMPLETED",
+        "run_status": "STARTED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "rollout/teacher-forced Inspire hand flow forwarded through frozen OICM; GT object flow is display-only",
         "modification_version": MODIFICATION_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()),
+        "command": [sys.executable, *sys.argv],
+        "config": str(_resolve(args.config)),
+        "rl_root": str(_resolve(args.rl_root)),
+        "parent_root": str(_resolve(args.parent_root)),
         "checkpoint": str(checkpoint_path),
         "checkpoint_sha256": _sha256(checkpoint_path),
         "frozen_oicm_checkpoint": str(decoder.oicm_checkpoint),
         "frozen_oicm_checkpoint_sha256": str(decoder.oicm_checkpoint_sha256),
         "sequence_id": sequence.id,
-        "frame_count": int(len(arrays["frame"])),
+        "frame_count": None,
         "window_size": int(cfg.meta.window_size),
         "coordinate_frame": "object_pose_t",
         "effect_definition": "raw=OICM pred_obj_flow from decoder-generated Inspire hand flow; effective=raw masked to zero when OICM sample_valid=false; gt=actual corresponding object point flow from t to t+1, display-only",
         "gt_object_flow_display_only": True,
+        "hand_stream_mode": str(getattr(cfg.meta, "hand_stream_mode", "decoder")),
+        "surface_sampling": str(getattr(cfg.model, "surface_sampling", "legacy_urdf")),
+        "knn_k": int(getattr(cfg.meta, "knn_k", 0) or 0),
+        "interaction_radius_m": float(getattr(cfg.meta, "interaction_radius_m", 0.05)),
+        "max_steps": None if args.max_steps is None else int(args.max_steps),
+        "knn_batch_size": int(args.knn_batch_size),
+        "source_knn_contract": (
+            "temporary per-run GT Inspire object-pool to hand KNN cache for decoder Cm source windows"
+            if str(getattr(cfg.meta, "hand_stream_mode", "decoder")) == "unique_knn_edges"
+            else "not_used"
+        ),
+        "rollout_effect_knn_contract": (
+            "per-step exact selected-object to predicted-rollout-hand KNN before OICM edge-distance recompute"
+            if str(getattr(cfg.meta, "hand_stream_mode", "decoder")) == "unique_knn_edges"
+            else "runtime_oicm_full_hand_knn"
+        ),
         "outputs": {
             "effect": str(output / "effect.npz"),
             "summary": str(output / "effect_summary.json"),
@@ -698,21 +1151,61 @@ def main() -> None:
         },
     }
     (output / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(json.dumps({"run_id": run_id, "run_status": manifest["run_status"], "output": str(output), "summary": summary}, ensure_ascii=False), flush=True)
-    if args.serve:
-        try:
-            _serve_interactive(diagnostic, port=int(args.port), fps=float(args.fps))
-        except KeyboardInterrupt:
-            # Keep the manifest truthful when the user stops the interactive
-            # viewer with Ctrl-C.  External hard kills cannot run this block,
-            # so callers should reconcile those runs as STOPPED separately.
-            manifest["run_status"] = "STOPPED"
-            manifest["stopped_at"] = _now()
-            manifest["stop_reason"] = "KeyboardInterrupt"
+    try:
+        diagnostic = EffectDiagnostic(
+            sequence=sequence,
+            decoder=decoder,
+            kinematics=kinematics,
+            render_surface=render_surface,
+            device=device,
+            cfg=cfg,
+            output=output,
+            knn_batch_size=int(args.knn_batch_size),
+            source_knn_frame_count=(
+                None
+                if args.max_steps is None or args.serve
+                else int(args.max_steps) + int(cfg.meta.window_size) + 1
+            ),
+        )
+        arrays = diagnostic.run(max_steps=args.max_steps)
+        np.savez_compressed(output / "effect.npz", **arrays)
+        summary = _summary(arrays, threshold_mm=float(getattr(cfg.meta, "interaction_radius_m", 0.05)) * 1000.0)
+        (output / "effect_summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if diagnostic.source_knn_path is not None:
+            manifest["outputs"]["source_knn_indices"] = str(diagnostic.source_knn_path)
+        manifest.update({
+            "run_status": "RUNNING" if args.serve else "COMPLETED",
+            "completed_effect_at": _now(),
+            "frame_count": int(len(arrays["frame"])),
+            "summary": summary,
+        })
+        (output / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        print(json.dumps({"run_id": run_id, "run_status": manifest["run_status"], "output": str(output), "summary": summary}, ensure_ascii=False), flush=True)
+        if args.serve:
+            try:
+                _serve_interactive(diagnostic, port=int(args.port), fps=float(args.fps))
+            except KeyboardInterrupt:
+                # Keep the manifest truthful when the user stops the interactive
+                # viewer with Ctrl-C.  External hard kills cannot run this block,
+                # so callers should reconcile those runs as STOPPED separately.
+                manifest["run_status"] = "STOPPED"
+                manifest["stopped_at"] = _now()
+                manifest["stop_reason"] = "KeyboardInterrupt"
+                (output / "run_manifest.json").write_text(
+                    json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                )
+                raise
+    except BaseException as error:
+        if manifest.get("run_status") not in {"COMPLETED", "RUNNING", "STOPPED"}:
+            manifest["run_status"] = "FAILED"
+            manifest["failed_at"] = _now()
+            manifest["failure_type"] = type(error).__name__
+            manifest["failure_message"] = str(error)
             (output / "run_manifest.json").write_text(
-                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
             )
-            raise
+        raise
 
 
 if __name__ == "__main__":

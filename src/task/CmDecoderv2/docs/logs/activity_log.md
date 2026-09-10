@@ -4,6 +4,52 @@
 - last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-10 17:48:24 +0800 — V1.1.7 纯 Inspire rollout/effect 诊断接入 V1.3 KNN
+
+- activity_id: `cmdecoderv2-inspire-effect-v13-impl-20260910-174824`
+- timestamp: `2026-09-10 17:48:24 +0800`
+- modification_version: `V1.1.7`
+- type: `code / diagnostic / documentation / operation`
+- change_level: `L2`（Task-local 诊断输入合同从旧 full-hand stream 适配到 V1.3 `unique_knn_edges`、10135 点、K=32 和 2 cm validity；不改变正式 cache/schema、split、模型或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户确认按 `s1/mouse_lift`、V1.3 decoder `best.pt`、冻结 OICM V1.3、逐步 `t -> t+1` display-only object flow 对照和临时 Inspire KNN 执行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `59f1d809a910041f888e68565f6e3c6bc9dac229`
+- worktree_dirty: `true`（本条记录随实现一同提交前）
+- run_id: `cmdecoderv2-inspire-effect-v13-smoke-20260910-174418`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（仅支持 V1.3 诊断 wiring 和 2-step smoke；完整 368-step 科研结果待后续独立 run）
+- scope: `src/task/CmDecoderv2/research/inspire_rollout_effect/`、对应 Task test 和 [V1.1 plan](../plan/v1.1.md) 第 15 节；正式 V1.3 cache、split、训练配置、decoder/OICM checkpoint 和 `src/base/` 均未修改。
+
+**文件**
+
+- [plan/v1.1.md](../plan/v1.1.md) — 追加用户批准的 V1.3 纯 Inspire rollout/effect 诊断边界：单序列 `s1/mouse_lift`、368 个逐步 transition、临时 source KNN、真实 object flow 只作 display-only。
+- [research/inspire_rollout_effect/run.py](../../research/inspire_rollout_effect/run.py) — 对 V1.3 `unique_knn_edges` 添加临时 GT Inspire source KNN、V1.3 surface sampling、compact unique hand stream、per-step predicted-hand KNN effect path、20 mm 动态分桶和 rollout hand/flow EPE。
+- [research/inspire_rollout_effect/README.md](../../research/inspire_rollout_effect/README.md) — 更新 V1.3 运行命令、10135/K=32/2 cm 合同和临时 KNN 产物说明。
+- [research/inspire_rollout_effect/experiment.yaml](../../research/inspire_rollout_effect/experiment.yaml) — 将实验元数据更新到 V1.1.7/V1.3 诊断口径。
+- [tests/test_inspire_effect.py](../../tests/test_inspire_effect.py) — 增加 20 mm summary 分桶和 compact KNN edge stream 回归。
+
+**原因**
+
+V1.3 decoder/OICM 已改为 `unique_knn_edges`，旧诊断脚本会用 full hand stream 或误用 MANO test KNN，
+不能无歧义评估纯 Inspire `10135` 点 rollout effect。需要为诊断单独生成临时 Inspire KNN，并保持真实
+object flow 只作为 display-only 对照。
+
+**验证**
+
+- py_compile: `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmDecoderv2/research/inspire_rollout_effect/run.py`，通过。
+- Task tests: `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests`，`18 passed`。
+- `git diff --check`：通过。
+- smoke command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-smoke-20260910-174418 --run-id cmdecoderv2-inspire-effect-v13-smoke-20260910-174418 --max-steps 2 --knn-batch-size 4`。
+- smoke evidence: [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-smoke-20260910-174418/)、[run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-smoke-20260910-174418/run_manifest.json)、[effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-smoke-20260910-174418/effect.npz)、[effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-smoke-20260910-174418/effect_summary.json)、[source_knn_indices.npy](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-smoke-20260910-174418/source_knn_indices.npy)。
+- smoke result: 2 个 transition 完成；`distance_threshold_mm=20.0`，2/2 为远距离无效 sample，effective object-flow RMS 为 `0 mm`；真实 object flow 为 display-only，`overall_pred_gt_effect_epe_mm=1.58898`。
+
+**保护边界与回滚**
+
+- 未复用 MANO test cache 的 `obj_knn_indices` 作为纯 Inspire KNN；未写入 `data/processed_data/`，未修改正式 V1.3 decoder view、OICM cache/checkpoint、训练配置、正式 split 或旧输出。
+- 回滚入口：移除本次 Task-local 诊断代码/文档改动，隔离 smoke 输出目录；不删除原始数据、正式 cache 或 checkpoint。
+
 ## 2026-09-10 16:35:24 +0800 — V1.1.7 Inspire 全点监督 decoder 正式训练完成
 
 - activity_id: `cmdecoderv2-v1.1.7-formal-20260910-163524`
