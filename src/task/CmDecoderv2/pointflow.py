@@ -8,25 +8,80 @@ import torch
 from pytorch3d.transforms import axis_angle_to_matrix
 from torch import nn
 
+from src.task.ObjectInteractionCm.research.hand_region_sampling.build_trajectory_preview import (
+    _sample_correspondence,
+)
+from src.task.ObjectInteractionCm.research.hand_region_sampling.run import _build_inspire_pool
 from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import InspireUrdfModel
 
 from .kinematics import InspireKinematics
 
 
+def _v13_surface_samples(
+    helper: InspireUrdfModel,
+    count: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Rebuild the V1.3 area-uniform correspondence in cache order."""
+    pool, _ = _build_inspire_pool(Path(helper.urdf_path), 0.20)
+    correspondence = _sample_correspondence(pool, int(count), int(seed))
+    points = np.empty((int(count), 3), dtype=np.float32)
+    normals = np.empty_like(points)
+    visual_ids = np.asarray(correspondence["visual_ids"], dtype=np.int64)
+    face_ids = np.asarray(correspondence["face_ids"], dtype=np.int64)
+    barycentric = np.asarray(correspondence["barycentric"], dtype=np.float32)
+    for visual_id in sorted(set(int(value) for value in visual_ids)):
+        mask = visual_ids == visual_id
+        visual = helper.visuals[visual_id]
+        triangles = visual.vertices[visual.faces[face_ids[mask]]]
+        points[mask] = np.einsum("pj,pjd->pd", barycentric[mask], triangles, optimize=True)
+        cross = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+        normals[mask] = cross / np.clip(
+            np.linalg.norm(cross, axis=-1, keepdims=True),
+            1e-12,
+            None,
+        )
+    return points, normals, visual_ids
+
+
 class DifferentiableInspireSurface(nn.Module):
-    """Generate the cache's fixed 1538-point Inspire surface with torch gradients.
+    """Generate a deterministic Inspire surface with torch gradients.
 
     The mesh sampling and URDF ordering are delegated to the same deterministic
     builder used by the ObjectInteractionCm geometry cache.  FK itself is
     implemented with torch operations so point-flow loss gradients reach q and
-    wrist outputs.
+    wrist outputs. ``legacy_urdf`` preserves the original 1538-point contract;
+    ``v1_3_cache`` reproduces the V1.3 area-uniform correspondence.
     """
 
-    def __init__(self, urdf_path: str | Path, *, sample_count: int = 1538, surface_seed: int = 2024) -> None:
+    def __init__(
+        self,
+        urdf_path: str | Path,
+        *,
+        sample_count: int = 1538,
+        surface_seed: int = 2024,
+        surface_sampling: str = "legacy_urdf",
+    ) -> None:
         super().__init__()
         helper = InspireUrdfModel(Path(urdf_path).resolve())
         limits = InspireKinematics(urdf_path)
-        sampled_points, _, sampled_visual_ids = helper.surface_samples(int(sample_count), int(surface_seed))
+        sampling = str(surface_sampling or "legacy_urdf").strip().lower()
+        if sampling == "legacy_urdf":
+            sampled_points, _, sampled_visual_ids = helper.surface_samples(
+                int(sample_count),
+                int(surface_seed),
+            )
+        elif sampling == "v1_3_cache":
+            sampled_points, _, sampled_visual_ids = _v13_surface_samples(
+                helper,
+                int(sample_count),
+                int(surface_seed),
+            )
+        else:
+            raise ValueError(
+                "surface_sampling must be 'legacy_urdf' or 'v1_3_cache', "
+                f"got {surface_sampling!r}"
+            )
         link_names = tuple(helper.link_names)
         link_index = {name: index for index, name in enumerate(link_names)}
         visual_link_indices = np.asarray([link_index[visual.link] for visual in helper.visuals], dtype=np.int64)

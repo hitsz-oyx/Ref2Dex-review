@@ -80,6 +80,23 @@ class CmDecoderV2Runner(BaseRunner):
                 raise ValueError(f"CmDecoderv2 metadata {key}={metadata.get(key)!r} != {value!r}")
         if metadata.get("split_contract") != {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"}:
             raise ValueError("CmDecoderv2 must train/validate on RL-Inspire and reserve MANO test for visualization")
+        expected_hand_stream = str(getattr(self.cfg.meta, "hand_stream_mode", "decoder"))
+        if metadata.get("hand_stream_mode") != expected_hand_stream:
+            raise ValueError(
+                f"CmDecoderv2 hand_stream_mode={metadata.get('hand_stream_mode')!r} "
+                f"!= {expected_hand_stream!r}"
+            )
+        expected_hand_points = int(self.cfg.meta.num_hand_points)
+        if metadata.get("point_flow_hand_points") != expected_hand_points:
+            raise ValueError(
+                f"CmDecoderv2 point-flow hand points={metadata.get('point_flow_hand_points')!r} "
+                f"!= {expected_hand_points}"
+            )
+        expected_knn_k = int(getattr(self.cfg.meta, "knn_k", 8))
+        if metadata.get("knn_k") != expected_knn_k:
+            raise ValueError(
+                f"CmDecoderv2 KNN K={metadata.get('knn_k')!r} != {expected_knn_k}"
+            )
         checkpoint = Path(str(self.cfg.model.oicm_checkpoint))
         if not checkpoint.is_absolute():
             checkpoint = (Path.cwd() / checkpoint).resolve()

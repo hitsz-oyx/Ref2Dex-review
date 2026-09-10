@@ -164,6 +164,7 @@ class CmDecoderV2(nn.Module):
             getattr(cfg, "surface_urdf", "src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf"),
             sample_count=int(meta.num_hand_points),
             surface_seed=2024,
+            surface_sampling=str(getattr(cfg, "surface_sampling", "legacy_urdf")),
         )
 
     def train(self, mode: bool = True):
@@ -176,7 +177,20 @@ class CmDecoderV2(nn.Module):
         if window != self.window_size:
             raise ValueError(f"Expected K={self.window_size}, got K={window}")
         flattened: dict[str, torch.Tensor] = {}
-        for key in ("obj_points", "obj_normals", "obj_valid_mask", "hand_points", "hand_normals", "hand_flow", "hand_valid_mask"):
+        keys = (
+            "obj_points",
+            "obj_normals",
+            "obj_valid_mask",
+            "hand_points",
+            "hand_normals",
+            "hand_flow",
+            "hand_valid_mask",
+            "knn_edge_indices",
+            "knn_edge_valid_mask",
+        )
+        for key in keys:
+            if key not in batch:
+                continue
             value = batch[key]
             flattened[key] = value.reshape(batch_size * window, *value.shape[2:])
         with torch.no_grad():

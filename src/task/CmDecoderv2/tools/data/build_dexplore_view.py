@@ -30,7 +30,7 @@ from src.task.CmDecoderv2.kinematics import (
 
 
 SCHEMA_NAME = "ref2dex_cm_decoder_v2_dexplore_view_v1"
-MODIFICATION_VERSION = "V1.1.1"
+DEFAULT_MODIFICATION_VERSION = "V1.1.1"
 
 
 def _now() -> str:
@@ -94,9 +94,14 @@ def build(args: argparse.Namespace) -> Path:
     source_index = _resolve(repo, args.index)
     output_root = _resolve(repo, args.output)
     urdf_path = _resolve(repo, args.urdf)
+    modification_version = str(args.modification_version)
     _prepare_output(output_root, args.resume)
     source = json.loads(source_index.read_text(encoding="utf-8"))
-    if source.get("schema_name") != "ref2dex_object_interaction_cm_index_v1_1":
+    source_schema = source.get("schema_name")
+    if source_schema not in {
+        "ref2dex_object_interaction_cm_index_v1_1",
+        "ref2dex_object_interaction_cm_index_v1_2",
+    }:
         raise ValueError(f"Unsupported source index schema {source.get('schema_name')!r}")
     selected = _select_entries(source, args.mode, args.max_sequences)
     kinematics = InspireKinematics(urdf_path)
@@ -116,7 +121,9 @@ def build(args: argparse.Namespace) -> Path:
                 "geometry_manifest_sha256": _sha256(geometry_manifest_path),
             }
             if split in {"train", "val"}:
-                if item.get("variant") != "inspire_rl" or geometry_manifest.get("source_type") != "dexplore_rl_native_q":
+                if item.get("variant") != "inspire_rl" or not str(
+                    geometry_manifest.get("source_type", "")
+                ).startswith("dexplore_rl_native_q"):
                     raise ValueError(f"Decoder supervision must be Dexplore RL: {item}")
                 q_path = Path(geometry_manifest["rl_q"]["tensor"]).resolve()
                 q_native = _load_native_q(q_path)
@@ -157,7 +164,7 @@ def build(args: argparse.Namespace) -> Path:
                     raise ValueError(f"Invalid existing sidecar for {item['id']}")
                 sequence_manifest = {
                     "schema_name": SCHEMA_NAME,
-                    "modification_version": MODIFICATION_VERSION,
+                    "modification_version": modification_version,
                     "sequence_id": item["id"],
                     "split": split,
                     "variant": "inspire_rl",
@@ -178,6 +185,18 @@ def build(args: argparse.Namespace) -> Path:
                     "source_q_tensor_sha256": _sha256(q_path),
                     "geometry_root": str(geometry_root),
                     "geometry_manifest_sha256": result["geometry_manifest_sha256"],
+                    "source_cache_schema": geometry_manifest.get("schema_name"),
+                    "point_flow_target_file": (
+                        "knn_hand_points_world.npy"
+                        if (geometry_root / "knn_hand_points_world.npy").is_file()
+                        else "hand_points_world.npy"
+                    ),
+                    "point_flow_hand_points": int(
+                        geometry_manifest.get("knn_hand_points", geometry_manifest.get("decoder_hand_points", 1538))
+                    ),
+                    "point_flow_sampling": (
+                        geometry_manifest.get("surface_sampling", {}).get("method", "legacy_cache")
+                    ),
                     "urdf": str(urdf_path),
                     "urdf_sha256": _sha256(urdf_path),
                     "native_q_slice": [NATIVE_Q_START, NATIVE_Q_START + NUM_NATIVE_DOFS],
@@ -210,10 +229,12 @@ def build(args: argparse.Namespace) -> Path:
     index_payload = {
         "schema_name": SCHEMA_NAME,
         "schema_version": "1.0.0",
-        "modification_version": MODIFICATION_VERSION,
+        "modification_version": modification_version,
         "created_at": _now(),
         "source_index": str(source_index),
         "source_index_sha256": _sha256(source_index),
+        "source_index_schema": source_schema,
+        "source_cache_schema": source.get("experiment_schema", source_schema),
         "urdf": str(urdf_path),
         "urdf_sha256": _sha256(urdf_path),
         "window_size": int(args.window_size),
@@ -232,6 +253,31 @@ def build(args: argparse.Namespace) -> Path:
         },
         "implementation_sha256": {"builder": _sha256(implementation_path), "kinematics": _sha256(kinematics_path)},
         "split_contract": {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"},
+        "cm_input_contract": {
+            "hand_stream_mode": "unique_knn_edges" if source_schema.endswith("v1_2") else "decoder",
+            "knn_k": int(source.get("knn_k", 8)),
+            "interaction_radius_m": float(source.get("interaction_radius_m", 0.05)),
+            "hand_supervision_radius_m": float(source.get("hand_supervision_radius_m", 0.03)),
+            "distance_storage": source.get("distance_storage", "runtime"),
+        },
+        "point_flow_supervision": {
+            "target_file": "knn_hand_points_world.npy"
+            if source_schema.endswith("v1_2")
+            else "hand_points_world.npy",
+            "hand_points": int(
+                source.get(
+                    "knn_hand_points_per_stream",
+                    source.get("decoder_hand_points_per_stream", 1538),
+                )
+                if isinstance(source.get("knn_hand_points_per_stream"), int)
+                else source.get("knn_hand_points_per_stream", {}).get("inspire_f1", 1538)
+                if isinstance(source.get("knn_hand_points_per_stream"), dict)
+                else 1538
+            ),
+            "all_points": True,
+            "mask": "none",
+            "coordinate_frame": "object_pose_t",
+        },
         "sequences": output_entries,
         "counts": {split: len(values) for split, values in output_entries.items()},
     }
@@ -244,7 +290,7 @@ def build(args: argparse.Namespace) -> Path:
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "CmDecoderv2",
         "activity_id": args.activity_id,
-        "modification_version": MODIFICATION_VERSION,
+        "modification_version": modification_version,
         "operation_category": ["data", "operation"],
         "operation": "build_dexplore_rl_decoder_view",
         "run_id": run_id,
@@ -254,7 +300,7 @@ def build(args: argparse.Namespace) -> Path:
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
         "inputs": {"source_index": str(source_index), "source_index_sha256": _sha256(source_index), "urdf": str(urdf_path), "urdf_sha256": _sha256(urdf_path)},
-        "parameters": {"mode": args.mode, "max_sequences": args.max_sequences, "window_size": args.window_size, "cache_stride": 1, "right_hand_only": True, "effective_fps": 30.0, "resume": args.resume},
+        "parameters": {"mode": args.mode, "max_sequences": args.max_sequences, "window_size": args.window_size, "cache_stride": 1, "right_hand_only": True, "effective_fps": 30.0, "resume": args.resume, "modification_version": modification_version},
         "counts": {**index_payload["counts"], "rl_sidecars": converted, "windows": {split: sum(int(item.get("window_count", 0)) for item in output_entries[split]) for split in ("train", "val")}, "discarded_tail_frames": {split: len(output_entries[split]) * int(args.window_size) for split in ("train", "val")}},
         "outputs": {"root": str(output_root), "manifest": str(cache_manifest_out), "index": str(index_out)},
         "conclusion": "SUPPORTED",
@@ -273,6 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-sequences", type=int, default=None)
     parser.add_argument("--window-size", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--modification-version", default=DEFAULT_MODIFICATION_VERSION)
     parser.add_argument("--activity-id", required=True)
     return parser.parse_args()
 

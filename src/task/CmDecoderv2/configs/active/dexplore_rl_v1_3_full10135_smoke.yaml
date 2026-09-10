@@ -1,0 +1,49 @@
+_base_: src.task.CmDecoderv2.config:Config
+
+name: cm_decoder_v2_dexplore_rl_v1_3_full10135_smoke
+modification_version: V1.1.7
+operation_category: [architecture, code, data, experiment, operation]
+
+meta:
+  num_hand_points: 10135
+  hand_stream_mode: unique_knn_edges
+  knn_k: 32
+  interaction_radius_m: 0.02
+  hand_supervision_radius_m: 0.02
+
+model:
+  oicm_config: src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml
+  oicm_checkpoint: outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt
+  oicm_checkpoint_sha256: 3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283
+  surface_urdf: src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf
+  surface_sampling: v1_3_cache
+
+data:
+  view_root: data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135_pilot
+  index_path: data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json
+  urdf_path: src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf
+  active_only: true
+  batch_size: 1
+  val_batch_size: 1
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+  perturb_train: false
+
+train:
+  device: cuda
+  epochs: 1
+  max_steps: 2
+  distributed:
+    enable: false
+  compile: false
+  eval_every_epochs: null
+  save_every_epochs: null
+  save_every_steps: null
+  log_every_steps: 1
+
+performance:
+  mode: "off"
+
+wandb:
+  enable: false
