@@ -6,6 +6,7 @@ from src.task.CmDecoderv2.research.inspire_rollout_effect.run import (
     _compact_knn_edge_stream,
     _effect_colors,
     _effective_object_flow,
+    _first_gt_contact_frame,
     _summary,
 )
 
@@ -56,6 +57,21 @@ def test_summary_uses_configured_distance_threshold_key() -> None:
     assert summary["distance_threshold_mm"] == 20.0
     assert summary["far_gt_20mm"]["frames"] == 1
     assert summary["near_le_20mm"]["frames"] == 1
+
+
+def test_first_gt_contact_frame_reserves_complete_decoder_window() -> None:
+    distances_mm = np.asarray([40.0, 25.0, 20.0, 10.0, 30.0, 15.0, 15.0], dtype=np.float32)
+    assert _first_gt_contact_frame(distances_mm, radius_m=0.02, window_size=2) == 2
+
+
+def test_first_gt_contact_frame_rejects_contact_after_rollout_capacity() -> None:
+    distances_mm = np.asarray([40.0, 30.0, 20.0, 10.0], dtype=np.float32)
+    try:
+        _first_gt_contact_frame(distances_mm, radius_m=0.02, window_size=2)
+    except ValueError as error:
+        assert "never enters" in str(error)
+    else:
+        raise AssertionError("Expected late-only contact to be rejected")
 
 
 def test_compact_knn_edge_stream_keeps_only_valid_unique_edges() -> None:

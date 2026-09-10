@@ -19,7 +19,8 @@ rollout。由于 OICM 的 hard interaction contract 不定义语义 null-Cm，�
 `--serve` 启动中文交互界面，右侧控件支持：
 
 - `教师强制`：每一帧用该帧真实 Inspire 状态预测下一步；
-- `递归Rollout`：点击“从当前帧开始 Rollout”后，从选定 handoff 帧开始递归反馈预测状态；
+- `递归Rollout`：默认从 GT Inspire 10135 点首次进入配置接触半径的帧开始，点击“从当前帧开始 Rollout”
+  后从选定 handoff 帧开始递归反馈预测状态；
 - 从任意合法帧开始 rollout、前后跳帧、播放/停止；
 - 切换 `预测+GT`、`仅预测`、`仅GT`，并查看当前帧预测 effect、GT effect、OICM validity 和
   prediction-GT EPE。GT 仅作显示，不参与模型计算。
@@ -39,6 +40,11 @@ CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python \
   --serve
 ```
 
+非交互完整诊断省略 `--rollout-start-frame` 时，自动使用 GT Inspire `10135` 点到完整 object pool
+的首个 `<=2 cm` 帧；本序列解析为 0-based `frame 45`，从该帧开始递归，后续不再输入 GT hand state。
+如需做其他起点的单独诊断，可显式传入 `--rollout-start-frame <frame>`，manifest 会记录实际起点。
+
 运行产物写入本目录 `output/<run_id>/`，包括 `effect.npz`、`effect_summary.json` 和
 `run_manifest.json`；V1.3 run 另包含临时 `source_knn_indices.npy`。`effect.npz` 中的
-`gt_obj_flow_*`、`gt_effect_rms_mm` 和 `pred_gt_effect_epe_mm` 均为 display-only 字段。
+`sequence_frame`、`gt_hand_object_distance_mm` 和起点信息用于复核接触起点；`gt_obj_flow_*`、
+`gt_effect_rms_mm` 和 `pred_gt_effect_epe_mm` 均为 display-only 字段。

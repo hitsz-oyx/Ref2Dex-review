@@ -159,6 +159,57 @@ def _surface_samples_for_cfg(
     return points, normals, visual_ids, sampling
 
 
+def _gt_hand_object_distances_mm(
+    object_points_world: np.ndarray,
+    hand_points_world: np.ndarray,
+    *,
+    max_frame: int,
+) -> np.ndarray:
+    """Compute GT hand-to-object-pool distance for contact-start selection."""
+    object_points_world = np.asarray(object_points_world, dtype=np.float32)
+    hand_points_world = np.asarray(hand_points_world, dtype=np.float32)
+    if object_points_world.ndim != 3 or object_points_world.shape[-1] != 3:
+        raise ValueError(f"object_points_world must be [T,N,3], got {object_points_world.shape}")
+    if hand_points_world.ndim != 3 or hand_points_world.shape[-1] != 3:
+        raise ValueError(f"hand_points_world must be [T,H,3], got {hand_points_world.shape}")
+    if object_points_world.shape[0] != hand_points_world.shape[0]:
+        raise ValueError("GT hand/object frame counts must match")
+    max_frame = min(int(max_frame), object_points_world.shape[0] - 1)
+    if max_frame < 0:
+        raise ValueError("No frame is available for GT contact distance computation")
+    distances_mm = np.full((object_points_world.shape[0],), np.nan, dtype=np.float32)
+    for frame in range(max_frame + 1):
+        tree = cKDTree(object_points_world[frame])
+        nearest, _ = tree.query(hand_points_world[frame], k=1)
+        distances_mm[frame] = float(np.min(nearest) * 1000.0)
+    return distances_mm
+
+
+def _first_gt_contact_frame(
+    distances_mm: np.ndarray,
+    *,
+    radius_m: float,
+    window_size: int,
+) -> int:
+    """Return the first GT contact frame that can support one decoder window."""
+    distances_mm = np.asarray(distances_mm, dtype=np.float32)
+    if distances_mm.ndim != 1:
+        raise ValueError(f"distances_mm must be [T], got {distances_mm.shape}")
+    last_start = len(distances_mm) - int(window_size) - 1
+    if last_start < 0:
+        raise ValueError("Sequence is too short for one rollout window")
+    candidates = np.flatnonzero(
+        np.isfinite(distances_mm[:last_start + 1])
+        & (distances_mm[:last_start + 1] <= float(radius_m) * 1000.0)
+    )
+    if not len(candidates):
+        raise ValueError(
+            f"GT Inspire hand never enters the {float(radius_m) * 1000.0:g} mm contact radius "
+            f"within rollout-valid frames [0, {last_start}]"
+        )
+    return int(candidates[0])
+
+
 def _compact_knn_edge_stream(
     *,
     object_points: np.ndarray,
@@ -462,6 +513,7 @@ class EffectDiagnostic:
         cfg: Any,
         output: Path,
         knn_batch_size: int,
+        rollout_start_frame: int | None = None,
         source_knn_frame_count: int | None = None,
     ) -> None:
         self.decoder = decoder
@@ -506,11 +558,6 @@ class EffectDiagnostic:
                 knn_k=self.knn_k,
                 radius_m=self.interaction_radius_m,
             )
-            self.source_knn_path = self.edge_adapter.build_source_cache(
-                output,
-                batch_size=int(knn_batch_size),
-                frame_count=source_knn_frame_count,
-            )
             rollout_sequence = _SequenceWithKnnSource(
                 sequence,
                 hand_points_world=hand_points_world,
@@ -518,6 +565,38 @@ class EffectDiagnostic:
                 adapter=self.edge_adapter,
             )
         self.sequence = rollout_sequence
+        gt_hand_points_world = np.asarray(self.sequence.hand_points, dtype=np.float32)
+        self.gt_hand_object_distance_mm = _gt_hand_object_distances_mm(
+            self.sequence.object_points,
+            gt_hand_points_world,
+            max_frame=self.sequence.frame_count - self.window_size - 1,
+        )
+        max_rollout_start = self.sequence.frame_count - self.window_size - 1
+        if rollout_start_frame is None:
+            self.rollout_start_frame = _first_gt_contact_frame(
+                self.gt_hand_object_distance_mm,
+                radius_m=self.interaction_radius_m,
+                window_size=self.window_size,
+            )
+        else:
+            self.rollout_start_frame = int(rollout_start_frame)
+            if self.rollout_start_frame < 0 or self.rollout_start_frame > max_rollout_start:
+                raise ValueError(
+                    f"rollout-start-frame must lie in [0, {max_rollout_start}], "
+                    f"got {self.rollout_start_frame}"
+                )
+        if self.edge_adapter is not None:
+            source_frame_count = source_knn_frame_count
+            if source_frame_count is not None:
+                source_frame_count = min(
+                    self.sequence.frame_count,
+                    self.rollout_start_frame + int(source_frame_count),
+                )
+            self.source_knn_path = self.edge_adapter.build_source_cache(
+                output,
+                batch_size=int(knn_batch_size),
+                frame_count=source_frame_count,
+            )
         self.rollout = InspireRolloutEngine(
             sequence=rollout_sequence,
             model=decoder,
@@ -639,6 +718,7 @@ class EffectDiagnostic:
             "oicm_sample_valid": oicm_sample_valid,
             "oicm_sampled_active_count": int(output["sampled_active_count"][0].item()),
             "min_hand_object_distance_mm": nearest_mm,
+            "gt_hand_object_distance_mm": float(self.gt_hand_object_distance_mm[frame]),
             "hand_flow_rms_mm": float(np.sqrt(np.mean(hand_flow_magnitude_mm ** 2))),
             "rollout_hand_epe_mm": float(np.mean(np.linalg.norm(current_points_world - gt_current, axis=-1)) * 1000.0),
             "rollout_future_hand_epe_mm": float(np.mean(np.linalg.norm(future_points_world - gt_future, axis=-1)) * 1000.0),
@@ -655,23 +735,27 @@ class EffectDiagnostic:
         }
 
     def run(self, max_steps: int | None = None) -> dict[str, np.ndarray]:
-        max_frame = self.sequence.frame_count - self.window_size
-        step_count = max(0, max_frame)
+        last_transition_frame = self.sequence.frame_count - self.window_size - 1
+        start_frame = int(self.rollout_start_frame)
+        step_count = max(0, last_transition_frame - start_frame + 1)
         if max_steps is not None:
             step_count = min(step_count, int(max_steps))
-        self.rollout.start(0)
+        self.rollout.start(start_frame)
         records: list[dict[str, Any]] = []
-        for frame in range(step_count):
+        sequence_frames: list[int] = []
+        for frame in range(start_frame, start_frame + step_count):
             current = self.rollout.ensure(frame)
             future = self.rollout.ensure(frame + 1)
             if current is None or future is None:
                 break
             records.append(self._forward_effect(frame, current, future))
+            sequence_frames.append(frame)
         if not records:
             raise RuntimeError("No rollout transitions were generated")
         return {
             "frame": np.asarray(list(range(len(records))), dtype=np.int32),
-            "source_frame_id": np.asarray([self.sequence.source_frame[index] for index in range(len(records))], dtype=np.int64),
+            "sequence_frame": np.asarray(sequence_frames, dtype=np.int32),
+            "source_frame_id": np.asarray([self.sequence.source_frame[index] for index in sequence_frames], dtype=np.int64),
             "object_points_world": np.stack([r["object_points_world"] for r in records]),
             "object_pose_world": np.stack([r["object_pose_world"] for r in records]),
             "hand_points_world": np.stack([r["hand_points_world"] for r in records]),
@@ -687,6 +771,7 @@ class EffectDiagnostic:
             "oicm_sample_valid": np.asarray([r["oicm_sample_valid"] for r in records], dtype=bool),
             "oicm_sampled_active_count": np.asarray([r["oicm_sampled_active_count"] for r in records], dtype=np.int32),
             "min_hand_object_distance_mm": np.asarray([r["min_hand_object_distance_mm"] for r in records], dtype=np.float32),
+            "gt_hand_object_distance_mm": np.asarray([r["gt_hand_object_distance_mm"] for r in records], dtype=np.float32),
             "hand_flow_rms_mm": np.asarray([r["hand_flow_rms_mm"] for r in records], dtype=np.float32),
             "rollout_hand_epe_mm": np.asarray([r["rollout_hand_epe_mm"] for r in records], dtype=np.float32),
             "rollout_future_hand_epe_mm": np.asarray([r["rollout_future_hand_epe_mm"] for r in records], dtype=np.float32),
@@ -917,7 +1002,13 @@ def _serve_interactive(diagnostic: EffectDiagnostic, *, port: int, fps: float) -
     mode = server.gui.add_dropdown("执行模式", options=("教师强制", "递归Rollout"), initial_value="递归Rollout")
     effect_display = server.gui.add_dropdown("Effect显示", options=("预测+GT", "仅预测", "仅GT"), initial_value="预测+GT")
     prediction_type = server.gui.add_dropdown("预测类型", options=("合同有效预测", "Raw预测"), initial_value="合同有效预测")
-    frame = server.gui.add_slider("帧", min=0, max=max_frame, step=1, initial_value=0)
+    frame = server.gui.add_slider(
+        "帧",
+        min=0,
+        max=max_frame,
+        step=1,
+        initial_value=diagnostic.rollout_start_frame,
+    )
     frame_step = server.gui.add_slider("跳帧步长", min=1, max=30, step=1, initial_value=1)
     point_size = server.gui.add_slider("点大小（米）", min=0.001, max=0.020, step=0.001, initial_value=0.004)
     effect_scale = server.gui.add_slider("颜色上限（毫米）", min=1.0, max=100.0, step=1.0, initial_value=10.0)
@@ -1052,7 +1143,7 @@ def _serve_interactive(diagnostic: EffectDiagnostic, *, port: int, fps: float) -
     following.on_click(lambda _: on_jump(1))
     play.on_click(lambda _: state.update(playing=True))
     stop.on_click(lambda _: state.update(playing=False))
-    diagnostic.start_rollout(0)
+    diagnostic.start_rollout(diagnostic.rollout_start_frame)
     render_locked()
     print(f"Viser Inspire effect viewer: http://localhost:{port}", flush=True)
     try:
@@ -1082,6 +1173,12 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--run-id", default="")
     parser.add_argument("--knn-batch-size", type=int, default=4)
+    parser.add_argument(
+        "--rollout-start-frame",
+        type=int,
+        default=None,
+        help="递归起始帧；省略时自动使用 GT Inspire 首个 2 cm 接触帧",
+    )
     parser.add_argument("--port", type=int, default=8102)
     parser.add_argument("--fps", type=float, default=8.0)
     parser.add_argument("--serve", action="store_true")
@@ -1161,11 +1258,31 @@ def main() -> None:
             cfg=cfg,
             output=output,
             knn_batch_size=int(args.knn_batch_size),
+            rollout_start_frame=args.rollout_start_frame,
             source_knn_frame_count=(
                 None
                 if args.max_steps is None or args.serve
                 else int(args.max_steps) + int(cfg.meta.window_size) + 1
             ),
+        )
+        manifest.update({
+            "rollout_start_policy": (
+                "explicit_frame"
+                if args.rollout_start_frame is not None
+                else "first_gt_inspire_contact_within_interaction_radius"
+            ),
+            "rollout_start_frame": int(diagnostic.rollout_start_frame),
+            "rollout_start_source_frame_id": int(
+                diagnostic.sequence.source_frame[diagnostic.rollout_start_frame]
+            ),
+            "rollout_start_gt_hand_object_distance_mm": float(
+                diagnostic.gt_hand_object_distance_mm[diagnostic.rollout_start_frame]
+            ),
+            "rollout_start_radius_mm": float(diagnostic.interaction_radius_m * 1000.0),
+        })
+        (output / "run_manifest.json").write_text(
+            json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
         )
         arrays = diagnostic.run(max_steps=args.max_steps)
         np.savez_compressed(output / "effect.npz", **arrays)

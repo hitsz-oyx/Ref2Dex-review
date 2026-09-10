@@ -1,8 +1,52 @@
 # CmDecoderv2 活动记录
 
 - scope: `src/task/CmDecoderv2/`
-- last_updated: 2026-09-10
+- last_updated: 2026-09-11
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+## 2026-09-11 00:06:30 +0800 — V1.1.7 recursive rollout 改为 GT 接触起点
+
+- activity_id: `cmdecoderv2-inspire-effect-contact-start-impl-20260911-000630`
+- timestamp: `2026-09-11 00:06:30 +0800`
+- modification_version: `V1.1.7`
+- type: `code / diagnostic / documentation / operation`
+- change_level: `L2`（改变诊断 rollout 起点和结果帧索引合同；不改变训练、正式 cache/schema、split、模型或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户确认递归测试从 GT Inspire 10135 点首次进入 2 cm 接触半径的合法帧开始，本序列使用 0-based frame 45，之后只递归反馈预测状态。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7e30a987e5965de47d0e0e5428091fe4b0d36916`
+- worktree_dirty: `true`（本条记录随实现一同提交前）
+- run_id: `cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（接触起点自动解析、真实 sequence frame 映射和接触区 2-step smoke 均符合合同；完整科研结果待独立 full run）
+- scope: [V1.1 plan](../plan/v1.1.md) 第 16 节、[inspire_rollout_effect](../../research/inspire_rollout_effect/) 诊断脚本/说明/元数据和对应 Task tests；正式训练与数据产物未修改。
+
+**文件**
+
+- [plan/v1.1.md](../plan/v1.1.md) — 追加用户批准的 GT 接触起点 recursive rollout 合同，覆盖原 frame 0 正式复测口径。
+- [research/inspire_rollout_effect/run.py](../../research/inspire_rollout_effect/run.py) — 自动计算 GT Inspire 10135 点到完整 object pool 的首个 `<=20 mm` 帧；full run 从该帧启动，保存 `sequence_frame`、GT 距离和 manifest 起点字段。
+- [research/inspire_rollout_effect/README.md](../../research/inspire_rollout_effect/README.md) — 说明默认接触起点和显式起点参数。
+- [research/inspire_rollout_effect/experiment.yaml](../../research/inspire_rollout_effect/experiment.yaml) — 增加 rollout 起点合同。
+- [tests/test_inspire_effect.py](../../tests/test_inspire_effect.py) — 增加接触起点与窗口容量回归测试。
+
+**原因**
+
+此前完整 V1.3 recursive run 从 frame 0 启动，属于训练分布外的远距离起点；用户确认递归测试应从 GT 已接触帧启动，以评估接触段内的 Inspire rollout 和 Cm/OICM effect。
+
+**验证**
+
+- py_compile: `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmDecoderv2/research/inspire_rollout_effect/run.py`，通过。
+- Task tests: `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests`，`20 passed`。
+- `git diff --check`：通过。
+- contact-start smoke: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533 --run-id cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533 --max-steps 2 --knn-batch-size 4`。
+- smoke evidence: [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533/)、[run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533/run_manifest.json)、[effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-smoke-20260911-000533/effect.npz)。
+- smoke result: `rollout_start_frame=45`、`rollout_start_source_frame_id=180`、GT 起点距离 `0.564 mm`；输出 `sequence_frame=[45,46]`，两步 `oicm_sample_valid=true`，接触区 effect RMS 均值 `10.661 mm`。
+
+**保护边界与回滚**
+
+- 未修改训练配置、训练运行、正式 view/cache、split、checkpoint 或 `src/base/`；未覆盖旧的 frame 0 输出。
+- 回滚入口：回退本次实现提交并隔离 smoke 输出目录；旧 frame 0 运行和其日志保持不变。
 
 ## 2026-09-10 18:02:00 +0800 — V1.1.7 训练窗口起点与 rollout 语义核查
 

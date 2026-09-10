@@ -19,6 +19,7 @@ contracts:
   v1_3_knn_k: 32
   v1_3_source_knn: temporary per-run GT Inspire object-pool to hand KNN cache
   v1_3_effect_knn: per-step selected-object to predicted-rollout-hand KNN
+  rollout_start: first GT Inspire 10135-point frame within configured interaction radius
   hand_flow: rollout state_t to state_t_plus_1
   object_effect: frozen OICM pred_obj_flow
   future_object_gt_input: forbidden
