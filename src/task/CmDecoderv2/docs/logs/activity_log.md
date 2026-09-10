@@ -1,8 +1,57 @@
 # CmDecoderv2 活动记录
 
 - scope: `src/task/CmDecoderv2/`
-- last_updated: 2026-09-08
+- last_updated: 2026-09-10
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+## 2026-09-10 11:09:19 +0800 — V1.3 中间 best.pt 的 MANO/Inspire Cm 来源分类诊断完成
+
+- activity_id: `cmdecoderv2-cm-source-classifier-v13-20260910-110919`
+- timestamp: `2026-09-10 11:09:19 +0800`
+- modification_version: `V1.1.6`（分类诊断 Task）；上游冻结 OICM 为 `V1.3`
+- type: `code / diagnostic / experiment / operation`
+- change_level: `L1`（Task-local 分类诊断输入适配；不改变 OICM、cache、正式 split 或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户确认使用 V1.3 训练中的中间 `best.pt`，按 train 训练、val-held-out 评估，并只修改分类诊断脚本输入适配。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d5711026a6bd6687a8e7835785108034f21389a9`
+- worktree_dirty: `true`（本条启动记录尚未提交）
+- run_id: `cmdecoderv2-cm-source-classifier-20260910-111037`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（Cm 来源信号子结论为 `SUPPORTED`；纯静态手型归因仍不充分）
+- scope: `src/task/CmDecoderv2/research/cm_hand_source_classifier/run.py`；使用 V1.3 unique-KNN cache 和当前中间 OICM `best.pt`，保持旧分类协议
+
+**文件**
+
+- `src/task/CmDecoderv2/research/cm_hand_source_classifier/run.py` — 接受 V1.3 index/cache，按有效 `K=32` 边去重构造动态 hand stream，并将 held-out 结果明确标记为 `val_held_out`。
+- `src/task/CmDecoderv2/docs/logs/experiment_log.md` — 记录本次 V1.3 中间 checkpoint 分类结果、证据和结论边界。
+
+**原因**
+
+复现实验“只用冻结 Cm 区分 MANO/Inspire”，检验 V1.3 Cm 是否仍包含可识别的手来源/embodiment 信息；主特征为 `cm_tokens` mean/max/std pooling，anchor pooling 继续作为 object-side control。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_hand_source_classifier.run --index data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json --oicm-config src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml --oicm-checkpoint outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt --device cuda:0 --activity-id cmdecoderv2-cm-source-classifier-v13-20260910-110919 --frames-per-sequence 8 --batch-size 8 --epochs 40`
+- device: physical GPU `1`（进程内 `cuda:0`）；当前 OICM V1.3 训练继续使用物理 GPU `0,2,3`
+- split: ObjectInteractionCm `train` 训练分类器，`val` 作为 `val-held-out`；正式 `test` 不使用
+- output: [运行目录](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/)
+- completed_at: `2026-09-10 11:10:39 +0800`
+
+**验证**
+
+- 代码提交前已通过 `py_compile`、`git diff --check` 和单序列 CUDA smoke；完整运行 `COMPLETED`。
+- 共同 object 类别 `11` 个；train `60 MANO + 60 Inspire`，val-held-out `11 MANO + 11 Inspire`；抽取 `1136` 个 transition。
+- 全部样本 Cm：val-held-out accuracy/balanced accuracy `0.5795`，F1 `0.4714`，AUROC `0.6475`；anchor control AUROC `0.6058`。
+- `sample_valid=true`：Cm val-held-out accuracy/balanced accuracy `0.7386`，F1 `0.7473`，AUROC `0.7531`；anchor control accuracy `0.6250`，AUROC `0.6689`。
+- 证据：[metrics.json](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json)、[features.npz](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/features.npz)、[run_manifest.json](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json)。
+
+**保护边界与解释限制**
+
+- 使用的中间 OICM `best.pt` SHA256：`3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`；未使用随后完成训练产生的最终状态重新运行。
+- 未修改 V1.3 cache、OICM 训练配置/模型、正式 train/val/test split 或 checkpoint；只提交了分类诊断脚本适配。
+- 结果支持 Cm 仍有弱到中等的可识别 MANO/Inspire source/embodiment 信号，但不能单独证明 Cm 编码纯静态手型；运动、接触状态和 source-domain 统计仍可能贡献分类结果。
 
 ## 2026-09-08 20:26:26 +0800 — V1.1.4 teacher-forced effect 误差归因诊断
 

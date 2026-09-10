@@ -119,6 +119,40 @@ viewer 的 `教师强制` 是“GT 当前 Inspire state → decoder 预测下一
 - [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/train.log)
 - [best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_2_5_20260908_101402/checkpoints/best.pt)
 
+## 2026-09-10 — V1.3 中间 best.pt MANO/Inspire Cm 来源分类诊断
+
+- experiment_id: `cmdecoderv2-cm-source-classifier-v13-v1.1.6`
+- activity_id: [`cmdecoderv2-cm-source-classifier-v13-20260910-110919`](activity_log.md)
+- run_id: `cmdecoderv2-cm-source-classifier-20260910-111037`
+- run_status: `COMPLETED`
+- modification_version: `V1.1.6`（分类诊断 Task）；上游冻结 OICM 为 `V1.3`
+- operation_category: `diagnostic / experiment / operation`
+- hypothesis: 若 V1.3 Cm 保留明显的手来源/embodiment 信息，只用 `cm_tokens` pooling 的小分类器也能在未见 sequence 上区分 MANO 与 Inspire。
+- source: 冻结 OICM V1.3 训练过程中的中间 `best.pt`；标签 `mano=0`、`inspire_rl=1`。
+- split: 使用 V1.3 现有 train sequence 训练分类器，val sequence 作为 `val-held-out`；正式 test 不使用；不做 frame-level train/test mixing。
+- feature: 主输入为 V1.3 `unique_knn_edges` 路径输出的 `cm_tokens` permutation-invariant mean/max/std pooling；anchor pooling 为 object-side control。
+- input: V1.3 cache 的 `K=32`、2 cm 半径、MANO `2048` 点、Inspire-F1 `10135` 点；有效 KNN 边去重后按 batch max 动态 padding。
+
+**结果**
+
+- 共同 object 类别 `11` 个；train `60 MANO + 60 Inspire` sequences，val-held-out `11 MANO + 11 Inspire` sequences；每条 sequence 抽取 `8` 个 transition，共 `1136` 个样本。
+- 全部样本（train `960`，val-held-out `176`，两类各 `88`）：Cm val-held-out accuracy/balanced accuracy `57.95%`，F1 `0.4714`，AUROC `0.6475`；anchor control accuracy `57.39%`，AUROC `0.6058`。
+- `sample_valid=true` 子集（train 可用 `443`、val-held-out 可用 `90`；平衡后训练 `208+208`、held-out `44+44`）：Cm val-held-out accuracy/balanced accuracy `73.86%`，F1 `0.7473`，AUROC `0.7531`；confusion matrix `[[31, 13], [10, 34]]`。
+- 同一有效子集的 anchor control accuracy `62.50%`、AUROC `0.6689`，Cm 高于 anchor control。
+
+**结论边界**
+
+- `SUPPORTED`：在当前中间 OICM V1.3 checkpoint 和 `val-held-out` 口径下，Cm 保留了弱到中等的可识别 MANO/Inspire source/embodiment 信号。
+- `INCONCLUSIVE`：该结果弱于旧 V1.2.1 分类实验，且不能单独证明是纯静态手型信息；运动幅度、接触状态和 source-domain 差异仍可能造成可分性。
+
+**证据**
+
+- [运行目录](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/)
+- [run manifest](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json)
+- [features.npz](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/features.npz)
+- [metrics.json](../../research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json)
+- 中间 OICM checkpoint SHA256：`3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+
 ## 2026-09-07 — V1.1.6 MANO/Inspire Cm 来源分类诊断
 
 - experiment_id: `cmdecoderv2-cm-source-classifier-v1.1.6`
