@@ -1,5 +1,63 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-11 — V1.3 full10135 从 GT 接触帧开始的纯 Inspire recursive rollout/effect 诊断
+
+- experiment_id: `cmdecoderv2-inspire-rollout-effect-v13-contact-start-v1.1.7`
+- activity_id: [`cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021`](activity_log.md)
+- run_id: `cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021`
+- run_status: `COMPLETED`
+- modification_version: `V1.1.7`
+- operation_category: `diagnostic / experiment / operation`
+- importance: `diagnostic`
+- pinned: `false`
+
+**假设与固定合同**
+
+针对此前从 frame 0 启动导致的分布外问题，改用 GT Inspire `10135` 点到完整 object pool 的首个
+`<=20 mm` 合法帧作为 recursive handoff。只在起点输入一次 GT Inspire state，之后每步反馈 decoder
+预测的 Inspire state；真实 object flow 仅作当前 `t -> t+1` 的 display-only 对照，不输入 decoder/OICM，
+也不反馈 rollout。V1.3 保持 `unique_knn_edges`、`K=32`、2 cm validity、临时 source KNN 和冻结 OICM。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021 --run-id cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021 --knn-batch-size 4`
+- base_commit: `aba8a3650714b62823f996d1f1fde3d383b82fbf`；run 启动时 `worktree_dirty=false`。
+- decoder checkpoint: [best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)，SHA256 `e60f0e954c062d15e7c2fa217e1bebcb0a4b0be8795d1b5729771ee1f8f5fef7`。
+- frozen OICM checkpoint: [best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)，SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+
+**结果**
+
+- 自动起点解析为 0-based sequence frame `45`（source frame `180`），GT hand-object 最近距离
+  `0.564 mm`；完整 run 生成 `323` 个 transition，实际 sequence frame 为 `45..367`。
+- GT 接触段为 sequence frame `45..317` 的 `273` 帧；在该段内 `sample_valid=true` 为 `273/273`。
+  GT 接触段的递归 hand position EPE mean=`87.909 mm`，hand-flow EPE mean=`2.363 mm`。
+- GT 接触段内，Cm/OICM 对实际 object flow 的 display-only `pred-GT effect EPE`
+  mean/median/p90/max=`3.545/3.053/4.437/47.174 mm`；effective effect RMS mean=`5.566 mm`，
+  GT effect RMS mean=`3.611 mm`。
+- 按预测 rollout hand 与 object 的距离，预测 hand `<=20 mm` 的帧为 `285/323`，OICM
+  `sample_valid` 同为 `285/323=88.24%`；sequence frame `330..367` 的 `38` 帧无效并归零
+  effective effect。全程 hand position EPE mean/max=`246.452/1517.173 mm`。
+- 后段 GT object flow 接近零，因此 invalid 帧上的零 effective effect 与 GT 的低 EPE 不计作
+  Cm/OICM 预测能力；详细 GT/预测分段和里程碑见 `diagnostic_tables.json`。
+
+**结论边界**
+
+- `SUPPORTED`（工程协议）: 接触起点自动选择、一次 GT handoff、后续纯预测递归、V1.3 KNN/2 cm
+  validity 和 display-only 对照均按合同执行。
+- `INCONCLUSIVE`（科研效果）: 接触段可以得到有效 object-effect 预测，EPE 均值 `3.545 mm`；
+  但递归 hand position 已出现显著累计漂移，并在后段离开 2 cm 有效区。该单序列结果不足以
+  证明长期 rollout 正确或跨 embodiment 泛化成立。
+
+**证据**
+
+- [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/)
+- [run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/effect_summary.json)
+- [diagnostic_tables.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json)
+- [source_knn_indices.npy](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/source_knn_indices.npy)
+- [最终计划](../plan/v1.1.md)
+
 ## 2026-09-10 — V1.3 full10135 纯 Inspire recursive rollout/effect 诊断
 
 - experiment_id: `cmdecoderv2-inspire-rollout-effect-v13-full10135-v1.1.7`

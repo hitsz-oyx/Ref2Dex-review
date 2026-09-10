@@ -4,6 +4,81 @@
 - last_updated: 2026-09-11
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-11 00:14:44 +0800 — V1.1.7 GT 接触起点 Inspire recursive rollout 完整诊断
+
+- activity_id: `cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021`
+- timestamp: `2026-09-11 00:14:44 +0800`
+- modification_version: `V1.1.7`
+- type: `diagnostic / experiment / operation / documentation`
+- change_level: `L2`（按已批准接触起点合同运行长时递归诊断；不修改训练、正式 cache/schema、split、模型或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户确认递归测试从首个 GT Inspire 接触帧开始，并使用完整 Inspire `10135` 点、2 cm 半径和后续纯预测反馈。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `aba8a3650714b62823f996d1f1fde3d383b82fbf`
+- worktree_dirty: `false`（run 启动时）
+- run_id: `cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021`
+- run_status: `COMPLETED`
+- last_step: `323 transitions`（实际 sequence frame `45..367`）
+- best_metric: `not_applicable`
+- recent_checkpoint: [decoder best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)
+- conclusion: `INCONCLUSIVE`（接触起点和 effect 协议已支持；单序列长期递归的 hand position drift 较大，不能据此宣称 rollout 或跨序列效果成立）
+- scope: [V1.1 plan](../plan/v1.1.md) 第 16 节批准的纯 Inspire rollout/effect 诊断、运行产物及本 Task 实验/活动记录；未改变正式训练与数据产物。
+
+**文件**
+
+- [experiment_log.md](experiment_log.md) — 记录本次完整 run 的假设、运行参数、结果和结论边界。
+- [run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/run_manifest.json) — 锁定运行 commit、checkpoint、接触起点、输出和 posthoc 分段分析入口。
+- [diagnostic_tables.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json) — 保存 GT 接触/远离、预测 rollout validity 和里程碑数据。
+
+**原因**
+
+此前 V1.3 完整诊断从 frame 0 启动，预测 hand 未进入 2 cm 有效区，无法评价接触段 Cm/OICM effect。本次按用户确认的首个 GT 接触帧重新运行，以区分接触段 effect 质量和递归 hand state 漂移。
+
+**运行**
+
+- command: `CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021 --run-id cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021 --knn-batch-size 4`
+- device: 物理 GPU `1`（通过 `CUDA_VISIBLE_DEVICES=1` 映射为进程内 `cuda:0`）；省略 `--rollout-start-frame`，自动选择首个 GT `<=20 mm` 合法接触帧。
+- decoder checkpoint SHA256: `e60f0e954c062d15e7c2fa217e1bebcb0a4b0be8795d1b5729771ee1f8f5fef7`。
+- frozen OICM checkpoint SHA256: `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+
+**结果**
+
+- 起点: 0-based sequence frame `45`、source frame `180`、GT hand-object 最近距离 `0.564 mm`；只在该帧做一次 GT Inspire state handoff，后续不再输入 GT hand state。
+- 轨迹范围: `323` 个 transition，sequence frame `45..367`；GT hand 到 object 的 `<=20 mm` 接触段为 `273` 帧（`45..317`），之后 `50` 帧为 GT 远离段。
+- OICM validity: 递归预测 hand 的 `<=20 mm` 段为 `285` 帧（`45..329`），`sample_valid=true` 为 `285/323=88.24%`；sequence frame `330..367` 的 `38` 帧无效，effective effect 按合同归零。
+- GT 接触段 `45..317`: Cm/OICM 对 display-only 实际 object flow 的 `pred-GT effect EPE` mean/median/p90/max=`3.545/3.053/4.437/47.174 mm`；effective effect RMS mean=`5.566 mm`，GT effect RMS mean=`3.611 mm`。
+- 同一 GT 接触段的递归 hand position EPE mean/median/max=`87.909/88.100/156.048 mm`，hand-flow EPE mean=`2.363 mm`；说明状态位置已明显漂移，但单步 flow 仍部分跟随。
+- 全部 transition 的递归 hand position EPE mean/median/max=`246.452/90.633/1517.173 mm`；effective effect RMS mean=`4.923 mm`，raw effect RMS mean=`8.183 mm`，无效帧的 raw 输出不作物理解释。
+- `effect_summary.json` 的 `near_le_20mm`/`far_gt_20mm` 分组沿用历史字段，但其距离来源是预测 rollout hand 的 `min_hand_object_distance_mm`；GT 接触/远离分组和里程碑以 `diagnostic_tables.json` 为准。
+
+**验证**
+
+- run 状态为 `COMPLETED`，生成 `323` 个 transition；manifest 记录 `base_commit=aba8a36`、`worktree_dirty=false`、起点 frame `45`。
+- `effect.npz`、`effect_summary.json`、`run_manifest.json`、`source_knn_indices.npy` 和 posthoc `diagnostic_tables.json` 均存在且非空。
+- 接触段分段统计与 effect 里程碑由 `effect.npz` 独立复核，GT 接触 `273` 帧、OICM valid `285/323` 与 manifest/日志一致。
+
+**结论边界**
+
+- `SUPPORTED`（工程协议）: 自动接触起点解析为 frame `45`，真实 sequence/source frame 映射正确，单次 GT handoff 后递归反馈正确执行；KNN、2 cm validity 和 display-only GT object flow 均按计划隔离。
+- `INCONCLUSIVE`（科研效果）: GT 接触段内有效 effect EPE 均值为 `3.545 mm`，表明该序列上可以测到有意义的 Cm/OICM object-effect 输出；但递归 hand position EPE 已达 `87.909 mm` 均值且后段完全失效，单序列不能证明长期 rollout 或一般化效果。
+- `INCONCLUSIVE`（display-only 对照解释）: GT object flow 不进入 decoder/OICM，也不反馈 rollout；后段 GT object flow 接近零时，invalid effective effect 与 GT 的低 EPE 不能当作预测能力证据。
+
+**证据**
+
+- [运行目录](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/)
+- [run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/run_manifest.json)
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/effect.npz)
+- [effect_summary.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/effect_summary.json)
+- [diagnostic_tables.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json)
+- [source_knn_indices.npy](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/source_knn_indices.npy)
+- [最终计划](../plan/v1.1.md)
+
+**保护边界与回滚**
+
+- 未修改训练配置、训练运行、正式 view/cache、split、checkpoint、`src/base/` 或旧的 frame 0 输出；生成目录按仓库规则忽略。
+- 回滚入口：回退记录本次终态的 Git 提交并删除/隔离本 run 输出目录；实现提交 `aba8a36` 及旧 frame 0 诊断保持独立。
+
 ## 2026-09-11 00:06:30 +0800 — V1.1.7 recursive rollout 改为 GT 接触起点
 
 - activity_id: `cmdecoderv2-inspire-effect-contact-start-impl-20260911-000630`
