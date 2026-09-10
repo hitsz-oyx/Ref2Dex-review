@@ -5,6 +5,47 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-10 08:30:16 +0800 — V1.3 全量训练运行中状态检查
+
+- activity_id: `ACT-20260910-083016-OBJECTINTERACTIONCM-V13-FULL-TRAIN-STATUS`
+- timestamp: `2026-09-10 08:30:16 +0800`
+- modification_version: `V1.3`
+- type: `operation`
+- operation_category: `[operation, diagnostic]`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 V1.3 全量训练当前状态；本次只读检查进程、GPU、日志、metrics 和 checkpoint，未修改训练配置、代码、数据、cache 或 checkpoint
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e6998f31ad37587f56bdc6bcf9863d4001ee4c46`
+- worktree_dirty: `false`
+- run_id: `object_interaction_cm_dexplore_rl_v1_3_20260910_020856`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（运行尚未完成；当前只确认进程和中间指标）
+- scope: 查询 V1.3 full training 的当前 step、epoch、ETA、validation metric、checkpoint 和错误关键词；训练仍使用 launch 时记录的代码基线 `158e0f34068e260d7077a94b4457799b7fca2f31`。
+
+**文件**
+
+- [活动记录](activity_log.md) — 追加本次状态检查记录。
+- [正式训练输出目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/)
+- [metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/metrics.jsonl)
+- [train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/train.log)
+- [best checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt)
+- [latest checkpoint](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/latest.pt)
+
+**原因**
+
+用户需要确认全量训练是否仍在正常推进、是否出现错误，以及当前距离完成还有多久。
+
+**验证**
+
+- 时间：`2026-09-10 08:30:16 +0800`；主 `torchrun` PID `1771994` 和三个 rank PID `1772101/1772102/1772103` 均仍在运行，已运行约 `06:21:15`。
+- 最新 metrics：`step=142200`、`epoch=194`，约完成 `70.3%`；最新 ETA `2.45 h`，吞吐 `653.37 samples/s`。
+- 最新 validation：`step=141312`、`epoch=192`，equal-source `val/obj/flow_epe_mm=6.714225`，GRAB `7.671749`，Inspire-F1 `5.756701`，`val/hand/flow_epe_knn_unique_mm=1.942620`。
+- 当前 best validation：`step=132480`、`epoch=180`，equal-source `val/obj/flow_epe_mm=6.516671`，GRAB `7.290740`，Inspire-F1 `5.742603`，`val/hand/flow_epe_knn_unique_mm=2.024513`。
+- `train.log` 未匹配 `traceback/out of memory/cuda error/nan/inf/nccl/failed/error`。
+- GPU 状态：物理 GPU `0/2/3` 仍在高利用率运行；显存约 `23.4 GiB / 17.6 GiB / 17.7 GiB`。
+
 ## 2026-09-10 02:11:08 +0800 — V1.3 全量训练启动（物理 GPU 0/2/3）
 
 - activity_id: `ACT-20260910-021108-OBJECTINTERACTIONCM-V13-FULL-TRAIN-START`
