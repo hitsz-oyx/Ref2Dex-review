@@ -21,6 +21,8 @@ from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
 
 MODIFICATION_VERSION = "V1.1.6"
 LABELS = {"mano": 0, "inspire_rl": 1}
+LEGACY_INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_1"
+V13_INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_2"
 
 
 def _resolve(value: str | Path) -> Path:
@@ -61,6 +63,8 @@ class GeometrySequence:
 
     def __init__(self, entry: dict[str, Any], index_root: Path) -> None:
         self.entry = entry
+        self.index_schema = str(entry.get("_index_schema", LEGACY_INDEX_SCHEMA))
+        self.unique_knn = self.index_schema == V13_INDEX_SCHEMA
         self.path = (index_root / str(entry["path"])).resolve()
         geometry = self.path / "geometry"
         required = {
@@ -84,11 +88,35 @@ class GeometrySequence:
             raise ValueError(f"Unexpected cache shapes for {entry['id']}: object={self.object_points.shape}, hand={self.hand_points.shape}")
         if any(len(value) != len(self.object_points) for value in (self.object_normals, self.object_pose, self.hand_points, self.hand_normals, self.source_frame)):
             raise ValueError(f"Frame count mismatch for {entry['id']}")
+        if self.unique_knn:
+            knn_required = {
+                "knn_hand_points": geometry / "knn_hand_points_world.npy",
+                "knn_hand_normals": geometry / "knn_hand_normals_world.npy",
+                "knn_indices": geometry / "obj_knn_indices.npy",
+            }
+            missing_knn = [str(path) for path in knn_required.values() if not path.is_file()]
+            if missing_knn:
+                raise FileNotFoundError(f"Missing V1.3 KNN geometry for {entry['id']}: {missing_knn}")
+            self.knn_hand_points = np.load(knn_required["knn_hand_points"], mmap_mode="r")
+            self.knn_hand_normals = np.load(knn_required["knn_hand_normals"], mmap_mode="r")
+            self.knn_indices = np.load(knn_required["knn_indices"], mmap_mode="r")
+            if self.knn_hand_points.ndim != 3 or self.knn_hand_points.shape[0] != len(self.object_points):
+                raise ValueError(f"Unexpected V1.3 KNN hand shape for {entry['id']}: {self.knn_hand_points.shape}")
+            if self.knn_hand_normals.shape != self.knn_hand_points.shape:
+                raise ValueError(f"V1.3 KNN normal shape mismatch for {entry['id']}")
+            if (
+                self.knn_indices.ndim != 3
+                or self.knn_indices.shape[:2] != (len(self.object_points), 4096)
+                or self.knn_indices.dtype != np.uint16
+            ):
+                raise ValueError(f"Unexpected V1.3 KNN index shape/dtype for {entry['id']}: {self.knn_indices.shape}, {self.knn_indices.dtype}")
+            self.knn_k = int(self.knn_indices.shape[-1])
 
 
 def _load_entries(index_path: Path) -> dict[str, list[dict[str, Any]]]:
     payload = json.loads(index_path.read_text(encoding="utf-8"))
-    if payload.get("schema_name") != "ref2dex_object_interaction_cm_index_v1_1":
+    index_schema = str(payload.get("schema_name", ""))
+    if index_schema not in {LEGACY_INDEX_SCHEMA, V13_INDEX_SCHEMA}:
         raise ValueError(f"Unsupported index schema: {payload.get('schema_name')!r}")
     entries = payload.get("sequences", {})
     result: dict[str, list[dict[str, Any]]] = {}
@@ -96,6 +124,7 @@ def _load_entries(index_path: Path) -> dict[str, list[dict[str, Any]]]:
         result[split] = []
         for raw in entries.get(split, []):
             item = dict(raw)
+            item["_index_schema"] = index_schema
             path = (index_path.parent / str(item["path"])).resolve()
             if not path.is_dir():
                 raise FileNotFoundError(path)
@@ -138,7 +167,149 @@ def _pool_tokens(values: np.ndarray) -> np.ndarray:
     return np.concatenate([values.mean(axis=1), values.max(axis=1), values.std(axis=1)], axis=-1).astype(np.float32)
 
 
-def _make_batch(sequence: GeometrySequence, frames: np.ndarray, num_obj_points: int) -> dict[str, np.ndarray]:
+def _make_unique_knn_sample(
+    sequence: GeometrySequence,
+    frame: int,
+    num_obj_points: int,
+    knn_k: int,
+    hand_supervision_radius_m: float,
+) -> dict[str, np.ndarray]:
+    pose = np.asarray(sequence.object_pose[frame], dtype=np.float32)
+    rng = np.random.default_rng(_stable_seed(sequence.entry["id"], frame, 2024) ^ 0xA17)
+    selected = rng.choice(4096, size=int(num_obj_points), replace=False)
+    current_object = np.asarray(sequence.object_points[frame], dtype=np.float32)
+    object_points = _world_to_frame(current_object[selected], pose)
+    object_normals = _normal_world_to_frame(np.asarray(sequence.object_normals[frame, selected]), pose)
+
+    edge_global_ids = np.asarray(sequence.knn_indices[frame, selected], dtype=np.int64)
+    if edge_global_ids.shape != (num_obj_points, knn_k):
+        raise ValueError(
+            f"V1.3 KNN edge shape mismatch for {sequence.entry['id']} frame {frame}: "
+            f"{edge_global_ids.shape} != {(num_obj_points, knn_k)}"
+        )
+    knn_count = int(sequence.knn_hand_points.shape[1])
+    if edge_global_ids.size and (edge_global_ids.min() < 0 or edge_global_ids.max() >= knn_count):
+        raise ValueError(
+            f"V1.3 KNN edge range for {sequence.entry['id']} frame {frame} is outside "
+            f"the cached hand stream size {knn_count}"
+        )
+
+    # Transform only the KNN points referenced by this object sample. This
+    # preserves the training loader's unique-edge semantics without copying
+    # the complete 2,048/10,135-point stream for every frame.
+    candidate_global_ids = np.unique(edge_global_ids)
+    candidate_lookup = np.full((knn_count,), -1, dtype=np.int64)
+    candidate_lookup[candidate_global_ids] = np.arange(len(candidate_global_ids), dtype=np.int64)
+    candidate_current = _world_to_frame(
+        np.asarray(sequence.knn_hand_points[frame, candidate_global_ids], dtype=np.float32),
+        pose,
+    )
+    candidate_edge_indices = candidate_lookup[edge_global_ids]
+    edge_points = candidate_current[candidate_edge_indices]
+    edge_distances = np.linalg.norm(edge_points - object_points[:, None, :], axis=-1)
+    edge_valid = edge_distances <= float(hand_supervision_radius_m)
+    valid_global_ids = np.asarray(edge_global_ids[edge_valid], dtype=np.int64)
+    unique_global_ids = np.unique(valid_global_ids) if valid_global_ids.size else np.empty((0,), dtype=np.int64)
+
+    if unique_global_ids.size:
+        hand_global_ids = unique_global_ids
+        hand_candidate_indices = candidate_lookup[hand_global_ids]
+        hand_points = candidate_current[hand_candidate_indices]
+        hand_normals = _normal_world_to_frame(
+            np.asarray(sequence.knn_hand_normals[frame, hand_global_ids], dtype=np.float32),
+            pose,
+        )
+        hand_future = _world_to_frame(
+            np.asarray(sequence.knn_hand_points[frame + 1, hand_global_ids], dtype=np.float32),
+            pose,
+        )
+        hand_valid = np.ones((len(hand_global_ids),), dtype=bool)
+    else:
+        # Keep one invalid row so all-invalid samples remain batchable.
+        hand_global_ids = np.zeros((1,), dtype=np.int64)
+        hand_points = _world_to_frame(
+            np.asarray(sequence.knn_hand_points[frame, hand_global_ids], dtype=np.float32),
+            pose,
+        )
+        hand_normals = _normal_world_to_frame(
+            np.asarray(sequence.knn_hand_normals[frame, hand_global_ids], dtype=np.float32),
+            pose,
+        )
+        hand_future = _world_to_frame(
+            np.asarray(sequence.knn_hand_points[frame + 1, hand_global_ids], dtype=np.float32),
+            pose,
+        )
+        hand_valid = np.zeros((1,), dtype=bool)
+
+    hand_lookup = np.full((knn_count,), -1, dtype=np.int64)
+    if unique_global_ids.size:
+        hand_lookup[unique_global_ids] = np.arange(len(unique_global_ids), dtype=np.int64)
+    local_edge_indices = hand_lookup[edge_global_ids]
+    local_edge_indices = np.where(edge_valid, local_edge_indices, 0).astype(np.int64, copy=False)
+    if np.any(local_edge_indices[edge_valid] < 0):
+        raise RuntimeError(f"V1.3 valid KNN edges were not mapped for {sequence.entry['id']} frame {frame}")
+
+    return {
+        "obj_points": object_points.astype(np.float32, copy=False),
+        "obj_normals": object_normals.astype(np.float32, copy=False),
+        "hand_points": hand_points.astype(np.float32, copy=False),
+        "hand_normals": hand_normals.astype(np.float32, copy=False),
+        "hand_flow": (hand_future - hand_points).astype(np.float32, copy=False),
+        "hand_valid_mask": hand_valid,
+        "knn_edge_indices": local_edge_indices,
+        "knn_edge_valid_mask": edge_valid,
+    }
+
+
+def _make_batch(
+    sequence: GeometrySequence,
+    frames: np.ndarray,
+    num_obj_points: int,
+    *,
+    knn_k: int = 0,
+    hand_supervision_radius_m: float = 0.05,
+) -> dict[str, np.ndarray]:
+    if sequence.unique_knn:
+        if int(knn_k) <= 0:
+            raise ValueError("V1.3 KNN extraction requires a positive knn_k")
+        if int(knn_k) != sequence.knn_k:
+            raise ValueError(
+                f"Configured knn_k={knn_k} does not match cache knn_k={sequence.knn_k} "
+                f"for {sequence.entry['id']}"
+            )
+        samples = [
+            _make_unique_knn_sample(
+                sequence,
+                int(frame),
+                int(num_obj_points),
+                int(knn_k),
+                float(hand_supervision_radius_m),
+            )
+            for frame in frames.tolist()
+        ]
+        max_hand_points = max(int(sample["hand_points"].shape[0]) for sample in samples)
+        batch_size = len(samples)
+        hand_points = np.zeros((batch_size, max_hand_points, 3), dtype=np.float32)
+        hand_normals = np.zeros_like(hand_points)
+        hand_flow = np.zeros_like(hand_points)
+        hand_valid_mask = np.zeros((batch_size, max_hand_points), dtype=bool)
+        for batch_index, sample in enumerate(samples):
+            count = int(sample["hand_points"].shape[0])
+            hand_points[batch_index, :count] = sample["hand_points"]
+            hand_normals[batch_index, :count] = sample["hand_normals"]
+            hand_flow[batch_index, :count] = sample["hand_flow"]
+            hand_valid_mask[batch_index, :count] = sample["hand_valid_mask"]
+        return {
+            "obj_points": np.stack([sample["obj_points"] for sample in samples]).astype(np.float32),
+            "obj_normals": np.stack([sample["obj_normals"] for sample in samples]).astype(np.float32),
+            "hand_points": hand_points,
+            "hand_normals": hand_normals,
+            "hand_flow": hand_flow,
+            "hand_valid_mask": hand_valid_mask,
+            "knn_edge_indices": np.stack([sample["knn_edge_indices"] for sample in samples]).astype(np.int64),
+            "knn_edge_valid_mask": np.stack([sample["knn_edge_valid_mask"] for sample in samples]).astype(bool),
+        }
+
     object_points: list[np.ndarray] = []
     object_normals: list[np.ndarray] = []
     hand_points: list[np.ndarray] = []
@@ -176,6 +347,8 @@ def extract_features(
     frames_per_sequence: int,
     batch_size: int,
     seed: int,
+    knn_k: int,
+    hand_supervision_radius_m: float,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     records: dict[str, list[Any]] = {"cm": [], "anchor": [], "label": [], "split": [], "source": [], "sequence": [], "object": [], "frame": [], "valid": [], "active": []}
     sequence_counts: dict[str, int] = {}
@@ -190,7 +363,13 @@ def extract_features(
             sequence_counts[split] += 1
             for start in range(0, len(frames), int(batch_size)):
                 batch_frames = frames[start:start + int(batch_size)]
-                arrays = _make_batch(sequence, batch_frames, num_obj_points)
+                arrays = _make_batch(
+                    sequence,
+                    batch_frames,
+                    num_obj_points,
+                    knn_k=knn_k,
+                    hand_supervision_radius_m=hand_supervision_radius_m,
+                )
                 torch_batch = {
                     "obj_points": torch.from_numpy(arrays["obj_points"]).to(device),
                     "obj_normals": torch.from_numpy(arrays["obj_normals"]).to(device),
@@ -198,8 +377,11 @@ def extract_features(
                     "hand_points": torch.from_numpy(arrays["hand_points"]).to(device),
                     "hand_normals": torch.from_numpy(arrays["hand_normals"]).to(device),
                     "hand_flow": torch.from_numpy(arrays["hand_flow"]).to(device),
-                    "hand_valid_mask": torch.ones((len(batch_frames), 1538), dtype=torch.bool, device=device),
+                    "hand_valid_mask": torch.from_numpy(arrays["hand_valid_mask"]).to(device),
                 }
+                if "knn_edge_indices" in arrays:
+                    torch_batch["knn_edge_indices"] = torch.from_numpy(arrays["knn_edge_indices"]).to(device)
+                    torch_batch["knn_edge_valid_mask"] = torch.from_numpy(arrays["knn_edge_valid_mask"]).to(device)
                 with torch.inference_mode():
                     output = model(torch_batch)
                 cm = output["cm_tokens"].detach().cpu().numpy().astype(np.float32)
@@ -319,7 +501,7 @@ def train_one(
         probabilities = torch.sigmoid(model(torch.from_numpy(test_x).to(device))).cpu().numpy()
     result = {
         "train": _metrics(train_y.astype(np.int64), torch.sigmoid(model(torch.from_numpy(train_x).to(device))).detach().cpu().numpy()),
-        "test": _metrics(test_y, probabilities),
+        "val_held_out": _metrics(test_y, probabilities),
         "train_loss_last_batch": last_loss,
         "epochs": int(epochs),
         "input_dim": int(train_x.shape[1]),
@@ -346,6 +528,8 @@ def main() -> None:
     np.random.seed(int(args.seed))
     torch.manual_seed(int(args.seed))
     index_path = _resolve(args.index)
+    index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+    index_schema = str(index_payload.get("schema_name", ""))
     index_entries = _load_entries(index_path)
     per_split_common: list[set[str]] = []
     for split in ("train", "val"):
@@ -385,6 +569,8 @@ def main() -> None:
         frames_per_sequence=int(args.frames_per_sequence),
         batch_size=int(args.batch_size),
         seed=int(args.seed),
+        knn_k=int(getattr(oicm_cfg.meta, "knn_k", 0) or 0),
+        hand_supervision_radius_m=float(getattr(oicm_cfg.meta, "hand_supervision_radius_m", 0.05)),
     )
     run_id = f"cmdecoderv2-cm-source-classifier-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     output = _resolve(args.output_root) / run_id
@@ -398,7 +584,12 @@ def main() -> None:
         split_test = arrays["split"] == "val"
         train_mask = split_train & sample_mask
         test_mask = split_test & sample_mask
-        results[sample_name] = {"available": {"train": int(train_mask.sum()), "test": int(test_mask.sum())}}
+        results[sample_name] = {
+            "available": {
+                "train": int(train_mask.sum()),
+                "val_held_out": int(test_mask.sum()),
+            }
+        }
         for feature_name in ("cm_features", "anchor_features"):
             try:
                 result, classifier, norm = train_one(
@@ -419,6 +610,12 @@ def main() -> None:
         "run_id": run_id,
         "modification_version": MODIFICATION_VERSION,
         "label_map": LABELS,
+        "index_schema": index_schema,
+        "held_out_split": "val-held-out",
+        "hand_stream_mode": str(getattr(oicm_cfg.meta, "hand_stream_mode", "decoder")),
+        "knn_k": int(getattr(oicm_cfg.meta, "knn_k", 0) or 0),
+        "interaction_radius_m": float(getattr(oicm_cfg.meta, "interaction_radius_m", 0.05)),
+        "hand_supervision_radius_m": float(getattr(oicm_cfg.meta, "hand_supervision_radius_m", 0.05)),
         "common_object_names": sorted(common_objects),
         "sequence_counts": {split: {source: int(sum(1 for item in selected_entries[split] if item["variant"] == source)) for source in LABELS} for split in ("train", "val")},
         "frames_per_sequence": int(args.frames_per_sequence),
@@ -443,9 +640,18 @@ def main() -> None:
         "oicm_config": str(_resolve(args.oicm_config)),
         "oicm_checkpoint": str(checkpoint_path),
         "oicm_checkpoint_sha256": _sha256(checkpoint_path),
-        "split_contract": "existing ObjectInteractionCm train sequences for classifier training, val sequences for held-out test; no frame-level mixing",
+        "index_schema": index_schema,
+        "held_out_split": "val-held-out",
+        "split_contract": "existing ObjectInteractionCm train sequences for classifier training, val sequences for val-held-out evaluation; official test is not used; no frame-level mixing",
         "feature_contract": "primary=cm_tokens mean/max/std pooling; control=cm_anchor_pos mean/max/std pooling; no hand flow or object points in classifier input",
         "invalid_cm_contract": "all samples and sample_valid=true subset are reported separately; invalid dummy tokens have no physical semantics",
+        "input_contract": {
+            "hand_stream_mode": str(getattr(oicm_cfg.meta, "hand_stream_mode", "decoder")),
+            "decoder_hand_points": int(getattr(oicm_cfg.meta, "num_hand_points", 1538)),
+            "knn_k": int(getattr(oicm_cfg.meta, "knn_k", 0) or 0),
+            "knn_hand_points_by_source": {"mano": 2048, "inspire_rl": 10135},
+            "unique_edge_hand_padding": "batch_max",
+        },
         "common_object_names": sorted(common_objects),
         "sequence_counts": metrics["sequence_counts"],
         "extraction": extraction_meta,
