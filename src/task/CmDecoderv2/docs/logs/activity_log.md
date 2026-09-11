@@ -4,6 +4,58 @@
 - last_updated: 2026-09-11
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-11 09:26:31 +0800 — V1.1.7 GT 接触起点 Inspire effect viewer
+
+- activity_id: `cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441`
+- timestamp: `2026-09-11 09:26:31 +0800`
+- modification_version: `V1.1.7`
+- type: `diagnostic / operation / documentation`
+- change_level: `L0`（复用既有 viewer 脚本启动交互可视化；不改变研究变量、训练、正式 cache/schema、split、模型或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户要求把刚完成的 contact-start Inspire rollout/effect 结果可视化，并指出此前已有类似脚本。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `fc90fcea25df449eac5947175c611b78e027b992`
+- worktree_dirty: `false`（viewer 启动时）
+- run_id: `cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441`
+- run_status: `RUNNING`
+- last_step: `323 transitions`（viewer 初始化时已复算 contact-start effect arrays）
+- best_metric: `not_applicable`
+- conclusion: `INCONCLUSIVE`（交互 viewer 工程启动成功；可视化本身不新增科研结论）
+- scope: [inspire_rollout_effect](../../research/inspire_rollout_effect/) 既有中文 Viser viewer；正式训练、cache、split 和 checkpoint 未修改。
+
+**文件**
+
+- [activity_log.md](activity_log.md) — 记录本次 RUNNING viewer 操作、端口、tmux session 和停止入口。
+- [run_manifest.json](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441/run_manifest.json) — 记录 viewer run 的 checkpoint、配置、起点 frame `45` 和输出入口。
+- [effect.npz](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441/effect.npz) — viewer 初始化时复算的 contact-start effect arrays。
+- [viewer log](../../research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441.log) — Viser 启动输出。
+
+**原因**
+
+需要直观看递归 Inspire hand、预测/GT object effect、OICM validity 和接触后漂移过程；复用已有 `--serve` 中文交互入口，避免修改正式实验结果。
+
+**运行**
+
+- command: `tmux new-session -d -s cmdecoderv2_inspire_viewer_092441 "cd /home2/wyy/oyx_ws/Ref2Dex && CUDA_VISIBLE_DEVICES=1 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.inspire_rollout_effect.run --config src/task/CmDecoderv2/configs/active/dexplore_rl_v1_3_full10135.yaml --checkpoint outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt --device cuda:0 --sequence s1/mouse_lift --rl-root data/processed_data/inspire_rl_object_dexplore --activity-id cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441 --run-id cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441 --knn-batch-size 4 --port 8104 --fps 8 --serve > src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-viewer-20260911-092441.log 2>&1"`
+- viewer: `http://localhost:8104`
+- tmux session: `cmdecoderv2_inspire_viewer_092441`
+- stop command: `tmux kill-session -t cmdecoderv2_inspire_viewer_092441`
+- process: pane pid `3722066`，server pid `3722069`，physical GPU `1`。
+
+**验证**
+
+- Viser 日志打印 `Viser Inspire effect viewer: http://localhost:8104`。
+- `ss -ltnp` 显示 `0.0.0.0:8104` 正在监听，server pid `3722069`。
+- `curl -sS --max-time 5 http://127.0.0.1:8104/ | head -5` 返回 HTML 入口。
+- `tmux list-sessions` 显示 `cmdecoderv2_inspire_viewer_092441` 正在运行。
+- manifest 记录 `run_status=RUNNING`、`rollout_start_frame=45`、`frame_count=323`、`worktree_dirty=false`。
+
+**保护边界与回滚**
+
+- 未修改代码、训练配置、正式 cache、split、checkpoint 或旧的完整诊断 run；viewer 产物按仓库规则忽略。
+- 关闭 viewer 使用 `tmux kill-session -t cmdecoderv2_inspire_viewer_092441`；如需清理产物，删除/隔离本 viewer run 目录和同名 `.log`。
+
 ## 2026-09-11 00:14:44 +0800 — V1.1.7 GT 接触起点 Inspire recursive rollout 完整诊断
 
 - activity_id: `cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021`
