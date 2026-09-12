@@ -1,0 +1,22 @@
+name: cross_hand_cm_swap
+modification_version: V1.1.9
+importance: primary
+pinned: true
+tags: [cm, cross-hand, frozen, mano, inspire, paired-control]
+entrypoint: src.task.CmDecoderv2.research.cross_hand_cm_swap.run
+plan: ../../docs/plan/v1.1.md
+output: output/<run_id>/
+hypothesis: 同效果和接触区域的原始 MANO Cm 能在固定 Inspire 当前状态下支持单步参考动作解码。
+conditions: [correct, identity, mano_sync, mano_shift, mano_transported]
+limits:
+  effect_absolute_mm: 1.0
+  effect_relative: 0.25
+  contact_iou: 0.25
+  contact_centroid_mm: 20.0
+  moving_rms_mm: 1.0
+  minimum_strict_moving_windows: 100
+  minimum_strict_moving_parents: 10
+  runtime_seconds: 1800
+  gpu_allocated_gib: 8
+  output_gib: 2
+limitations: 原始参考非独立 test；transported 注入目标物体运动；兼容性不等于物理成功。

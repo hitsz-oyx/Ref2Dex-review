@@ -1,5 +1,354 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-12 — V1.1.12 轨迹质量标记：参考跟踪与实际跨手兼容不能合并成同一准入条件
+
+- experiment_id: trajectory-quality-gate-v1.1.12；modification_version: V1.1.12；approval: user-approved（用户在质量准入建议后回复“继续”）；[最终计划](../plan/v1.1.md)。
+- run_id: quality_val_20260912_155200；run_status: COMPLETED；实际2026-09-12 15:51:22–15:51:28 +0800，6.06秒。
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607；dirty=true；无模型加载、训练或仿真。
+- conclusion: SUPPORTED（既定参考跟踪标记与既定跨手几何兼容性选出不同样本）；INCONCLUSIVE（这些阈值作为物理成功/正式训练准入标准的有效性）。
+
+**协议**
+
+固定4254个val窗口，其中target四步有效且运动的窗口3017。复用V1.1.10原始MANO任意偏移的全部严格候选边，基线53个运动接收窗口/10 parent/18个双流不重叠贪心配对。
+质量标记只依赖参考与实际物体轨迹，不利用未来手q/wrist或decoder误差。effect标记要求K4每一步actual→几何参考的逐点flow EPE<=max(1mm,25%×较大RMS)。
+pose20标记要求K+1五帧全部中心误差<=20mm且旋转<=15deg；固定pose40=40mm/30deg、pose80=80mm/60deg作敏感性检查；combined取effect与pose交集。
+pose阈值在运行前写入计划，是工程诊断值，不是经任务成功率验证的标准，也没有根据结果择优放宽。
+
+所有候选交集重新选择供体和重算不重叠贪心，未直接过滤旧贪心列表。清单明确diagnostic_only=true、split=val，不写正式训练index。
+
+**结果**
+
+| 标记条件 | 通过标记的运动窗口/3017 | 仍可跨手配对的接收窗口 | parent | 不重叠贪心配对 |
+|---|---:|---:|---:|---:|
+| 基线（不加跟踪标记） | 3017 | 53 | 10 | 18 |
+| effect | 20 | 13 | 4 | 5 |
+| pose20 | 47 | 0 | 0 | 0 |
+| combined20 | 0 | 0 | 0 | 0 |
+| pose40 | 216 | 12 | 4 | 4 |
+| combined40 | 8 | 8 | 2 | 2 |
+| pose80 | 1470 | 35 | 7 | 12 |
+| combined80 | 16 | 12 | 4 | 4 |
+
+原53个几何兼容运动窗口中，40个未达原参考effect跟踪门槛，53个均未达pose20；其中仍有13个同时满足effect跟踪与跨手兼容。
+这里“兼容”只指前述逐步物体效果/接触区域条件，不等于物理成功或跨手唯一正确动作。
+
+**路线调整**
+
+V1.1.11指出实际执行没有忠实保持原参考，仍成立；但不能由此推导“跟好原参考”是Cm跨手正对的必要条件。原参考跟踪质量检查生成器，实际效果/接触兼容性检查两段动作能否成为候选正对，二者目标不同。
+object-centric动作可以发生在不同world位姿；直接用绝对参考pose误差硬过滤，会额外要求任务没有定义的绝对轨迹接近，并排除原几何兼容候选。新工具因此只输出标记与检查队列，不自动应用于正式训练。
+下一步应回到训练划分，按真实执行的效果与接触组织跨手正对，保留跟踪质量为独立标签/分层变量；评估Cm一致性训练时隔离validation，不能把本轮53个val候选送入训练。
+本轮没有证明53个候选足以训练，也没有证明更宽pose阈值有效；不以扩大筛选规模代替数据或物理验证。
+
+**实现与证据**
+
+- 可复用入口 `research/trajectory_quality_gate/gates.py::quality_flags`，区分4步effect和5帧pose，拒绝非有限/负值/错误shape；失败位1/2/4分别是effect/position/rotation。
+- 每窗口指标含独立cross_hand_compatible和质量标记；CSV检查队列按有效运动窗口中effect失败比例降序、失败数降序、id排序，只是检查顺序，不代表修复收益排序。首项包括s6/toothpaste_lift、s9/flashlight_on_1、s8/pyramidmedium_inspect_1。
+- 候选清单含mode、best/贪心类别、原始MANO与目标Inspire的parent、cache/raw起点及原因位，共178行；不同条件/类别重复同一配对，不能当178个独立样本。
+- 4项定向测试通过；独立复核全部4254个窗口标记和178条候选，效果归一化比值最大差4.78e-13，旧输入/代码/产物摘要与stat保持不变。
+- [运行目录](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/)、[manifest](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/run_manifest.json)、[config](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/config.json)、[metadata](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/metadata.json)
+- [逐窗口指标](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/window_metrics.jsonl)、[候选清单](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/candidate_manifest.jsonl)、[检查队列CSV](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/repair_queue.csv)
+- [分层指标](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/metrics.jsonl)、[summary](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/summary.json)、[coverage图](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/quality_coverage.png)、[独立核验](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/independent_verification.json)、[run.log](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/run.log)
+
+## 2026-09-12 — V1.1.11 物体轨迹来源审计：主要效果差出现在RL实际执行段
+
+- experiment_id: object-tracking-audit-v1.1.11；modification_version: V1.1.11；approval: user-approved（用户回复“继续”）；[最终计划](../plan/v1.1.md)。
+- run_id: tracking_val_20260912_154240；run_status: COMPLETED；实际2026-09-12 15:42:29–15:42:53 +0800，约24秒。
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607；dirty=true。CPU只读诊断，无decoder、训练或仿真。
+- conclusion: SUPPORTED（已有RL导出与几何参考存在显著物体跟踪差异）；REFUTED（本协议下前半选择的固定lag能改善后半效果误差）；INCONCLUSIVE（Cm整体跨手能力及物理任务成功）。
+
+**来源链与坐标合同**
+
+对前两轮相同30个val parent的7927帧核验：几何参考tensor与RL导出在物体pose `[198:205]`、native q `[373:391]` 以外逐元素完全一致；缓存actual pose可由RL tensor重放，raw frame步长4、frame_time=raw/120。
+RL exporter逐次记录实际object root state与DOF状态，保留参考/contact字段。参考标签未被actual替换并不意味着真实接触已通过核验。
+
+外部 `dexplore/data_processing/prepare_grab.py` 在生成object angles时显式使用原旋转的inverse；`convert_grab.py` 对骨盆、地面和object相对位移再次转换。
+native几何参考的旋转矩阵转置后，与parent rotation的最大元素差为9.34e-7；这一关系可追溯，不能只因cache转换包含 `.T` 就判定新bug。
+上游逆旋转对物理资产的合理性未在此轮仿真验证，不能把来源一致性升级成完整物理坐标正确性证明。
+
+本实验显式区分两类量：几何参考→RL实际的中心位置/旋转角误差采用相同native XYZW约定；与前两轮比较的逐点object flow继续采用既有cache转置约定。
+原parent到几何参考有world偏移且包含小幅时变分量，去每序列均值偏移后的残差均值4.6627 mm、中位数1.4757 mm。固定world平移不改变局部endpoint flow，不能直接把绝对world位置偏差当动作效果误差。
+
+**定量结果**
+
+全7927帧、30 parent的native参考→实际跟踪：
+
+| 指标 | frame mean | frame median | frame P95 | parent macro mean |
+|---|---:|---:|---:|---:|
+| 物体中心位置误差 mm | 123.9094 | 41.4962 | 498.8197 | 133.9448 |
+| 旋转误差 deg | 53.5425 | 33.0451 | 173.8581 | 49.2279 |
+
+初始帧中心误差最大0.00192 mm、旋转误差最大2.96e-6 deg。导出从几何参考初始状态开始，之后出现跟踪偏离；不是所有序列一开始就有统一world错位。
+8条parent的平均中心误差超过100 mm：s3/pyramidsmall_pass_1(103.5)、s4/duck_pass_1(622.5)、s6/hand_inspect_1(166.2)、s6/scissors_use_2(251.3)、s8/cubelarge_inspect_1(193.2)、s8/eyeglasses_pass_1(908.6)、s9/hammer_use_1(228.7)、s9/hammer_use_2(736.2)。这些是轨迹误差，不据此自动标注掉落或具体物理失效原因。
+
+从target四步有效窗口覆盖的transition中去重，再取actual object RMS>=1 mm，得到2983个运动transition。与V1.1.10的3017个运动窗口分母不同。
+
+| 既有cache合同下的逐步4096点效果差 | frame mean mm | median mm | parent macro mm |
+|---|---:|---:|---:|
+| parent → 几何参考 | 0.4801 | 0.0840 | 0.6233 |
+| 几何参考 → RL实际 | 14.7682 | 9.1728 | 16.7992 |
+| parent → RL实际 | 14.9160 | 9.1586 | 17.0175 |
+
+三段EPE不是可加分解。可观察到parent与几何参考的运动效果接近，而几何参考与实际轨迹的差明显更大，支持优先检查/改善实际轨迹跟踪。
+去除每序列actual-reference均值偏移后的平均欧氏位置残差131.1013 mm；均值偏移最小化的是平方误差，不保证降低平均欧氏距离，此数不能解释成“最优刚体校准反而恶化”。
+
+**固定lag检查**
+
+lag=-15..15，负值表示actual[t]对应reference[t+lag]即实际滞后；所有lag使用相同支持，排除边界样本变化。
+每序列按时间前半选择lag，后半测试；1498个去重运动transition、30 parent，baseline EPE=14.9919 mm，选lag后15.8312 mm，配对增加0.8393 mm，parent聚类bootstrap2000次CI95=[0.1303,1.8224]；parent macro增加1.2997 mm。
+30个parent中只有9个后半段得到改善；选择lag分散，10个为-1、6个为0，其余跨多个值并包括边界。
+即使在全支持上取oracle最优lag，平均效果差也只由14.7682降至14.2641 mm，约3.4%。该oracle不可当独立验证结果。
+结论仅针对固定lag与当前运动支持；不否定可变时间重参数化等其他方法，也不能定位控制器、接触、资产或奖励中的具体根因。
+
+**对后续Cm工作的影响与限制**
+
+当前直接以“同parent、同时间”的MANO与Inspire作等价正对，会混入真实物体效果差。优先建立带物体跟踪质量准入的跨手演示数据，再比较Cm一致性训练；不能用transported oracle隐式注入目标运动来掩盖这一缺口。
+本轮保留了输入、历史结果和坐标合同，没有修改cache、剔除正式样本、重训模型或改外部dexplore代码。
+frame_time只核验了当前缓存与原始采样一致；历史导出没有逐帧模拟器时间戳，此轮未独立锁定当时controlFrequencyInv配置，故30Hz按既有数据合同解释。
+
+**验证与入口**
+
+- 4项定向测试通过；独立四元数测地距离检查7927帧，最大差2.96e-6 deg；1080项独立刚体pointflow检查最大差4.55e-13 mm；lag选择与heldout均值复现。
+- 所有新tensor、外部源码与旧输入/产物SHA256及stat保持不变；输出约2.78 MiB。smoke 2序列1096帧，6.21秒，只证明工程实现。
+- [运行目录](../../research/object_tracking_audit/output/tracking_val_20260912_154240/)、[manifest](../../research/object_tracking_audit/output/tracking_val_20260912_154240/run_manifest.json)、[config](../../research/object_tracking_audit/output/tracking_val_20260912_154240/config.json)、[metadata与外部源码SHA](../../research/object_tracking_audit/output/tracking_val_20260912_154240/metadata.json)
+- [metrics.jsonl](../../research/object_tracking_audit/output/tracking_val_20260912_154240/metrics.jsonl)、[summary](../../research/object_tracking_audit/output/tracking_val_20260912_154240/summary.json)、[tracking.png](../../research/object_tracking_audit/output/tracking_val_20260912_154240/tracking.png)
+- [独立核验](../../research/object_tracking_audit/output/tracking_val_20260912_154240/independent_verification.json)、[run.log](../../research/object_tracking_audit/output/tracking_val_20260912_154240/run.log)、[活动终态](activity_log.md)
+
+## 2026-09-12 — V1.1.10 跨时间配对覆盖：偏移有帮助，但不足以补齐运动配对
+
+- experiment_id: cross-hand-pair-coverage-v1.1.10；modification_version: V1.1.10；operation_category: diagnostic / experiment / operation。
+- approval: user-approved（用户在优先补齐同效果/接触跨手配对的建议后回复“继续”）；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) final。
+- run_id: pair_coverage_val_20260912_153150；run_status: COMPLETED；实际2026-09-12 15:30:52–15:31:06 +0800，13.88秒。
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607；dirty=true；没有加载 decoder、更新权重或运行训练。
+- conclusion: **REFUTED（当前候选库中，仅允许时间偏移即可达到100严格运动窗口/10 parent的充足性命题）**；总体跨手迁移仍 INCONCLUSIVE。自动运行摘要保留后者，不把覆盖诊断当作迁移效果实验。
+
+**协议与保护边界**
+
+候选固定为 V1.1.9 的4254个 val active-only窗口；接收手四步有效3874，其中平均 actual object RMS>=1 mm的运动窗口3017。
+同一 parent 内穷举原始 MANO 的四步有效源起点，原始 object trajectory、K4/30 Hz、空间坐标和所有效果/接触门槛保持不变。
+不使用 transported，不放宽相对/绝对效果差，不做时间缩放或跨 parent 搜索，不按 latent、decoder误差或目标未来q/wrist选样本。
+逐点平均欧氏效果差是最终判据；均值运动向量差仅作 Jensen 必要条件预筛，随后对全部候选执行精确4096点计算。
+
+选择满足严格条件且平均归一化效果差最小的源；平局依次选较小时间差、较早源起点。
+供体可复用，因此分别统计接收覆盖、唯一选中源、最大一对一窗口匹配容量，以及两流各自K+1帧都不重叠的确定性贪心配对数。
+后者是保守下界，不是最优解，也不意味着这些片段是独立物理试验。所有结果只属于该val候选库，不回流训练。
+
+**严格运动覆盖**
+
+| 源时间范围（30 Hz） | 接收窗口 | parent | 唯一选中源 | 一对一窗口容量 | 双流不重叠贪心配对 |
+|---|---:|---:|---:|---:|---:|
+| 同步 | 16 | 4 | 16 | 16 | 6 |
+| ±5帧 | 40 | 9 | 31 | 35 | 12 |
+| ±15帧 | 48 | 10 | 38 | 43 | 14 |
+| ±30帧 | 48 | 10 | 38 | 43 | 14 |
+| 同parent任意偏移 | 53 | 10 | 43 | 48 | 18 |
+| 只允许绝对偏移>=5帧 | 16 | 5 | 15 | 16 | 10 |
+| 只允许绝对偏移>=20帧 | 6 | 1 | 6 | 6 | 5 |
+
+“偏移>=5帧”限制单个源/目标片段的相对时间；最后一列限制不同配对在每条流内的时间区间复用，两者含义不同。
+±15帧已覆盖48/53，扩大到±30帧没有新增运动接收窗口；远时匹配很少。任意偏移的严格运动覆盖为53/3017=1.76%。
+即使只检查效果、暂不检查接触，也只有76个运动接收窗口能匹配，仍低于100；这把当前库的主要缺口指向动作效果对应，而不仅是接触门槛。
+
+不加运动条件时，任意偏移产生20096条严格边、覆盖651个接收窗口/16 parent，但只有90条边属于运动接收窗口。
+其中18299条（91.1%）来自s1/torussmall_lift，其严格运动接收数为0。不能把两万条边当作两万个动作正对：静止片段和供体复用会严重放大数据量。
+
+53个运动接收窗口来自10 parent、8个物体，动作标签主要为pass（7 parent），其余为lift、see、on各1。
+逐parent覆盖/贪心数为：waterbottle_lift(s1)7/6、binoculars_pass(s10)7/2、stamp_pass(s10)3/1、
+pyramidlarge_pass(s2)1/1、alarmclock_see(s3)2/1、stapler_pass(s3)8/1、apple_pass(s7)14/3、
+pyramidlarge_pass(s7)2/1、waterbottle_pass(s7)4/1、flashlight_on(s9)5/1。
+
+**对 Cm 路线的影响**
+
+允许小幅时间偏移确实提高配对可用性，支持保留异步匹配机制；但当前库不足以支持预设规模的严格运动迁移诊断，更不宜直接把大量静止匹配送入跨手一致性训练。
+下一步优先定位/补齐目标手实际物体运动与源参考的对应：按共同物体动作目标构造跨手数据，控制轨迹跟踪误差，再检查接触与可达性。
+若只扩展现有库，还需另行核验未进入当前active-only bank的窗口、跨parent同物体匹配或时间尺度；本实验没有否定这些可能性，也没有证明Cm结构本身无效。
+当前53个优选运动配对和18个不重叠片段可作后续诊断锚点；不能作为充分的训练集或最终独立测试集。
+
+**工程验证与产物**
+
+- 5项定向测试通过：Jensen预筛对完整穷举、无效源/接收排除、四步接触、供体复用和端点重叠。
+- V1.1.9同步effect/strict对角线逐窗口完全复现，85严格窗口/16严格运动窗口不变；对角线描述最大数值差7.44e-6。
+- 独立使用归档pose与canonical点构造刚体位移，对1749个局部网格候选穷举，边存在性完全一致；保存描述最大差1.33e-5。
+- 所有保存边门槛、选中供体最优排序、parent/有效性、双流不重叠区间和summary复核通过；旧输入/代码/产物摘要及stat保持不变。
+- GPU3 peak allocated199.9 MiB，输出约5.20 MiB；两parent smoke仅工程证据（15:29:49–15:29:54 COMPLETED）。正式运行前仅补充独立复核脚本，并把manifest last_step改为实际active-only评估数。
+- [运行目录](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/)、[manifest](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run_manifest.json)、[config](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/config.json)、[metadata](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/metadata.json)
+- [全部严格候选边](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/candidate_pairs.npz)、[选择索引](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/selected_pairs.jsonl)。target/source为V1.1.9 bank全局行号；每parent [descriptors](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/descriptors/) 的global_rows/starts映射到30 Hz起点。
+- [逐parent metrics](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/metrics.jsonl)、[summary](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/summary.json)、[coverage.png](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/coverage.png)
+- [独立核验](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/independent_verification.json)、[run.log](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run.log)、[活动终态](activity_log.md)
+
+## 2026-09-12 — V1.1.9 同步 MANO→Inspire 冻结 Cm 交换
+
+- experiment_id: cross-hand-cm-swap-v1.1.9；modification_version: V1.1.9。
+- approval: user-approved（用户连续回复“继续”）；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) 已 final。
+- run_id: cross_hand_val_20260912_151850；run_status: COMPLETED；2026-09-12 15:18:08–15:21:28 +0800。
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607；worktree_dirty=true。
+- 冻结 checkpoint 与 V1.1.8 完全相同：decoder SHA256 `e60f0e954c062d15e7c2fa217e1bebcb0a4b0be8795d1b5729771ee1f8f5fef7`，OICM SHA256 `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`；无训练或 checkpoint 选择。
+- conclusion: **INCONCLUSIVE（总体跨手迁移）**；观察到同步 MANO 相对错时条件的局部兼容性信号，严格运动覆盖不足。
+
+**假设与协议**
+
+H：当源/目标的物体效果和接触区域相近时，原始 MANO 完整 Cm 可以在固定 Inspire 当前状态下支持参考动作解码。
+30 条 Inspire val、4254 active-only 窗口，K4、stride1、30 Hz、右手、object_pose_t、KNN32/2 cm，源 MANO2048、目标 Inspire10135 点。
+使用 V1.3 原表面 sampler/seed2024，从原 parent mesh 与 raw timestamp 重建 MANO；原始 parent object pose 保持不变。
+每个 transition 的手点、法向与两端 flow 都先转到其起点物体坐标，再编码；完整替换 tokens/anchor position/normal。
+目标当前 q/wrist/link features 不变，未来目标手点/q/wrist 只用于误差计算。
+
+`mano_transported` 将原 MANO 的物体相对几何重放到目标实际 object pose，显式注入目标物体运动，属于 oracle。
+正式 producer 的 `dex_data[:,198:205]` 是实际物体 pose；旧正式 MANO cache 也含这类搬运。因此不能把 transported 的结果当作独立迁移证据。
+两源所有对齐帧的 canonical object4096 逐点一致性最大误差 2.46e-7 m，没有拟合额外刚体变换。
+
+两源四步均有效后，每步 object endpoint flow EPE <= max(1 mm,0.25×两源较大 RMS)；进一步要求四步接触物体点 IoU>=0.25、centroid 距离<=20 mm；运动子集平均 actual RMS>=1 mm。
+物体未来轨迹只作离线效果筛选及 oracle 对照，不输入原始 MANO 条件。门槛没有按结果调整。
+错时源在同 parent 内抽取，起点间隔>=20 帧、四步有效、seed42。所有差异在共同 recipient 上配对；bootstrap2000 次，以 parent 聚类。
+
+**覆盖与结果**
+
+| 子集 | 窗口 | parent | correct EPE mm | identity | mano_sync | mano_shift | mano_transported |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 两源四步有效 | 3665 | 30 | 6.6180 | 13.2766 | 15.5397 | 23.2145* | 10.6531 |
+| 再匹配物体效果 | 176 | 17 | 5.1410 | 8.1242 | 8.4433 | 17.2948 | 8.2750 |
+| 再匹配接触区域 | 85 | 9 | 4.7513 | 9.9045 | 5.4492 | 17.7010 | 5.0848 |
+| 严格运动子集 | 16 | 4 | 8.7499 | 46.7284 | 10.8513 | 54.0171 | 9.0612 |
+
+数值为 frame micro；*错时有效窗口为3650，其同步 MANO 配对基线为15.5694 mm，不能直接用3665行平均做差。各条件 parent macro、q MAE、wrist translation/rotation、输出点变化和区间完整保存在 summary。
+
+- 有效共同3650窗口，同步优于错时7.6451 mm，parent cluster CI95=[4.6160,11.6464]；这支持源时间信息影响目标输出，但未控制两源物体效果相等。
+- 有效3665窗口，同步对 identity 的改善为 -2.2631 mm，CI95=[-6.1117,1.2326]；不能声称直接无筛选替换已带来总体改善。
+- 严格85窗口，同步相对 correct 增加0.6980 mm，CI95=[0.1939,2.2326]；相对 correct 预测点变化3.7469 mm；对 identity 改善4.4553 mm，但 CI95=[-2.4486,29.4832] 跨零。
+- 严格运动16窗口，同步对 identity 改善35.8771 mm，对错时改善43.1658 mm；相对 correct 增加2.1014 mm、预测点变化6.4274 mm。**仅4个聚类，不能以其区间作总体显著性论证。**
+- 16窗口分别来自 s1/waterbottle_lift(1)、s3/stapler_pass_1(8)、s7/apple_pass_1(6)、s7/waterbottle_pass_1(1)；14/16集中在两条序列，且窗口重叠。
+- 两源有效窗口的平均每步效果差中位数8.0708 mm，P90=26.7838 mm。同步时间不是同一动作效果；effect 门槛只保留176/3665=4.80%，严格运动只保留16/3665=0.44%。
+
+**结论与下一步依据**
+
+预设总体结论要求>=100严格运动窗口且>=10 parent，本次16/4未达标，故总体结论 INCONCLUSIVE。
+局部匹配样本有可复用信号，不能把未匹配样本的退化直接解释成 Cm 只编码手型，也不能用 oracle 搬运改善证明跨手成功。
+本轮是单步 reference compatibility；目标参考并非跨手唯一正确动作，没有执行接触力、碰撞、物体任务成功率或物理闭环评估；val 曾参与 checkpoint 选择，也不是独立 test。
+
+下一步优先补足“同物体效果 + 相近接触”的真实跨手运动配对：先在现有序列只读检查允许时间偏移时的配对覆盖和 parent 分布，保持效果/接触门槛，避免先扩大模型或直接施加同 timestamp 的 latent 对齐。
+未来训练用的正对必须由 train 构造并单独冻结验证划分；本轮 val 诊断配对不能被直接回流为训练样本。充足配对后再比较 effect-conditioned Cm 一致性目标与现有手流重建目标。
+
+**工程验证与证据**
+
+- 5 项定向测试通过；正式 Inspire source_window 回放差0；MANO缓存表面回放差0；correct完整 Cm 最大回放差4.14e-6，q/wrist回放差1.19e-7。
+- 全条件×30 parent 共150次独立 NumPy FK 检查，手 EPE/输出变化最大差1.68e-5 mm；归档 donor、分层覆盖、paired summary 可重现；参数/buffer、输入/code摘要及文件stat前后不变。
+- 完整运行200.53秒，GPU3 peak allocated5459.5 MiB，输出约75.9 MiB；两序列 smoke 仅证明工程实现可用。
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/)
+- [run_manifest.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run_manifest.json)、[config.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/config.json)、[metadata.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metadata.json)
+- [metrics.jsonl](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metrics.jsonl)、[summary.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/summary.json)、[comparison.png](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/comparison.png)
+- [independent_verification.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/independent_verification.json)、[run.log](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run.log)、[活动终态](activity_log.md)
+
+## 2026-09-12 — V1.1.8 冻结 Cm 条件依赖与 16 步递归诊断
+
+- experiment_id: cm-condition-dependence-v1.1.8
+- modification_version: V1.1.8；operation_category: diagnostic / experiment / operation
+- approval: user-approved（用户回复“按照你的想法继续”）；计划：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) 。
+- run_id: cm_dependence_val_20260912_145016；run_status: COMPLETED；终态见 [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) 。
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607；worktree_dirty=true，代码 SHA256 由 metadata 锁定。
+- decoder: 固定 full10135 best，epoch=5、step=7240、原 best val/loss=0.003993955866854461；OICM V1.3 冻结。
+
+**假设与协议**
+
+H1：在同一个目标 Inspire 当前状态下，正确的完整 Cm 比另一真实动作的 Cm 更能恢复参考运动。
+H2：这种作用是否可以维持到 16 步手状态递归？本轮没有改变手来源，不能回答跨手等价或迁移。
+
+保持现有 K=4、30 Hz、stride=1、object_pose_t、右手、KNN32/2 cm/unique-hand、10135 点 FK 和无扰动
+val loader。完整 30 条 Inspire val 共 4254 active-only 窗口，其中 h1 有效 4061、四帧均有效 3874。
+原始几何/输入 hand flow 经冻结 OICM 得到完整 Cm bank，后续只将 tokens/anchors 与当前手状态/link
+queries 交给 core。未来 target 手点/q/wrist 仅用于误差，没有输入 decoder，也没有使用 GT 选择 donor。
+
+这里 source hand-flow 按参考解码任务的定义合法包含未来源动作；同源实验的源参考和目标动作来自同一
+Inspire 序列。“GT 不输入”指没有额外传入未来 target q/wrist/手点的捷径，不是声称不利用未来参考运动。
+因此这是 reference-conditioned reconstruction/realization 诊断，不是不看未来的在线动作预测。
+
+所有 donor 都在接收方同一序列内，起点相差至少 20 帧，完整 K=4 Cm 全有效；一次交换整个 window，
+保留 tokens/anchor/时间对应。随机交换覆盖 3848 帧/30 序列；严格匹配覆盖 1302 帧/21 序列，约占
+h1 有效样本的 32.06%。严格匹配按计划固定当前 wrist/q/active fraction 与 hand-flow RMS 条件，并要求
+输入动作均值向量有变化，不根据预测误差调阈值。它仍是有限条件匹配，不等于所有物理状态完全一致。
+
+**单步结果：每行只比较该对照自己的共同接收样本**
+
+| 对照 | 样本/序列 | 正确 Cm EPE / mm | 对照 EPE / mm | 对照增加 / mm | 增加的 95% sequence CI |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 保持当前手 identity | 4061/30 | 7.0968 | 13.6469 | 6.5501 | [3.7909, 9.8326] |
+| 完整 Cm 置零（OOD） | 4061/30 | 7.0968 | 21.2582 | 14.1613 | [11.7423, 16.4101] |
+| 真实窗口随机交换 | 3848/30 | 6.7863 | 23.2002 | 16.4139 | [12.3724, 21.5001] |
+| 严格匹配后交换 | 1302/21 | 5.3292 | 24.3919 | 19.0628 | [12.3278, 30.5853] |
+
+CI 使用 2000 次 paired sequence-cluster bootstrap，donor 和 recipient 位于同一 cluster。
+sequence-macro 的 random/matched 交换惩罚分别为 18.9452 / 25.5138 mm，方向一致；两类交换覆盖率与
+接收样本不同，不能用 24.39 与 23.20 比较两种对照的难度，更不能将 matched 较大误差解释为因果增强。
+
+交换相对原预测的全表面点变化均值为 21.8483 / 23.1559 mm；严格匹配 donor 的平均 wrist 位移差
+13.21 mm、旋转差 9.39°、q RMS 差 0.0668 rad、active fraction 差 0.0221，输入平均 flow 向量差
+24.45 mm。因匹配允许一定状态差异，惩罚不能全归因于某一个 disentangled motion 维度。
+
+在 identity EPE >=2 mm 的子集（3221 帧/30 序列）中，正确/identity EPE 为 7.6762/16.8500 mm，
+相对改善 9.1738 mm；random/matched 交换惩罚分别为 18.6342/20.1699 mm，CI 仍为正。
+该子集按已声明阈值定义，identity 本身包含固定 mimic/FK 表示约束，不等同于纯 native cache 点位移阈值。
+
+**短时递归**
+
+每个条件从相同 GT 当前状态 handoff，后续仅反馈自己的预测状态，clamp finger q、右乘 wrist delta。
+每序列最多 3 个确定性分散起点，要求后续 16 个完整 source window 全有效；共 83 个起点/30 序列。
+随机 donor 具有连续 16 步，覆盖 78 起点/27 序列；严格匹配仅 17 起点/10 序列，不外推到所有状态。
+物体 pose 每步仍来自当前参考帧，不能把此结果称为物理闭环或接触成功率。
+
+| 执行步数 | 正确 Cm EPE / mm（83 起点） | identity / mm（相同起点） |
+| --- | ---: | ---: |
+| 1 | 8.5667 | 15.5855 |
+| 4 | 20.1408 | 42.0166 |
+| 8 | 31.6613 | 62.1715 |
+| 16 | 53.1931 | 118.9288 |
+
+第 16 步 random swap：184.1595 mm，同接收方 correct=50.6555 mm，惩罚 133.5040 mm，
+95% CI [90.3943,182.4695]。matched swap：125.2776 mm，同接收方 correct=36.4542 mm，
+惩罚 88.8234 mm，CI [51.1880,127.5756]。正确 Cm 的有用性延续到短递归，但仍有较大状态误差。
+
+**新发现：native 从动关节与 decoder 固定 mimic 的不一致**
+
+首次 smoke 将“6 维 GT q + 固定 mimic FK 必须等于 native cache”作为断言，因 0.577569 mm 最大坐标差
+退出；这项诊断断言的假设不成立。cache producer 使用原始 18 维 simulator q，含实际从动关节状态；
+decoder 将 6 个独立 finger q 按 1.05、0.6、0.8 比例展开并夹紧独立关节。真实从动关节可能偏离比例。
+现有 pointflow 测试主要覆盖初始化帧，不能保证动作中两者相等。
+
+没有改模型、GT 或误差定义；改用 full-native q 重放 cache 检查采样顺序与坐标。在每 batch 一行的
+抽查中，native replay 最大坐标差为 0；现有 core 重放差也为 0。所有窗口的 6 维 GT 重建 EPE
+均值/中位数/p95/max 为 0.6074/0.4907/1.4958/2.5348 mm；h1 有效集均值 0.6305 mm。
+38.74% 的窗口下一帧至少一个独立 q 超限 >1e-5 rad；从动关节相对固定比例的逐样本 RMS 均值 0.3308 rad。
+局部点最大坐标差可达 75.75 mm，但全表面均值较小，不应把二者混为同一个误差指标。
+
+这些数值是代入 GT 六维状态后的几何重建差异，不是优化所有可用自由度得到的不可约下界。
+按三角不等式，在同一 h1 有效集上仅把 native GT 替换成该 reduced GT，平均 EPE 的变化至多约
+0.6305 mm，不能由此解释目前全部约 7.10 mm 误差；本轮并未替换 GT。
+
+**结论与下一项实验**
+
+- SUPPORTED：当前冻结 decoder 在已评估 Inspire val 条件下利用完整 Cm，正确 Cm 对单步和短递归
+  均有任务相关收益。不能再把“完全忽略 Cm、只靠当前状态”作为这些样本的默认解释。
+- SUPPORTED：存在 native simulator 与固定 mimic/限位 FK 的表示差异，以及短递归累计状态误差。
+- INCONCLUSIVE：哪部分 token/anchor 分别负责动作，跨手可互换性、未见手型泛化、长期稳定与物理闭环成功。
+- 下一项优先推进受控 MANO→Inspire Cm 交换：固定目标手起点/短 horizon，审查源参考与目标状态的
+  物体 frame、实际 effect、接触可达性。保留本轮同源上界和错误 Cm 对照，优先测交换增量；
+  暂不因 source classifier 可分性就加入对抗对齐，也不立即重训 state-only baseline。
+- 生成 summary/manifest 保持保守的自动 `INCONCLUSIVE` 标签；上述分命题人工解释以本实验记录为准。
+  工程 smoke 与正式科研结果分开，未修改前序实验结论。
+
+**验证与产物**
+
+- 13 个定向/相关模型与运动学测试通过；正式运行约 104.9 秒、peak allocated 2745.3 MiB、输出约 49.1 MiB。
+- 17912 teacher 指标行、5504 rollout 指标行；donor 与配对 summary 独立重算一致。
+- 独立 NumPy FK 对 15 个分条件样本复算，EPE 与归档最大差 0.0000078251 mm；
+  20 个输入/代码 SHA256、450 个 geometry/q/wrist 文件 stat 和模型参数/缓冲区摘要保持不变。
+- 输出目录：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016)
+- 配置：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/config.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/config.json)
+- Manifest：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json)
+- 单步指标：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/metrics.jsonl](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/metrics.jsonl)
+- 递归指标：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/rollout_metrics.jsonl](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/rollout_metrics.jsonl)
+- 统计：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence_summary.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence_summary.json)
+- 图：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence.png](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence.png)
+- 独立复核：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/verification.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/verification.json)
+- 运行日志：[src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run.log](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run.log)
+
 ## 2026-09-11 — V1.3 full10135 从 GT 接触帧开始的纯 Inspire recursive rollout/effect 诊断
 
 - experiment_id: `cmdecoderv2-inspire-rollout-effect-v13-contact-start-v1.1.7`

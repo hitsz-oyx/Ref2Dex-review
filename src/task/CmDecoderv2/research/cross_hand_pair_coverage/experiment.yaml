@@ -1,0 +1,20 @@
+name: cross_hand_pair_coverage
+modification_version: V1.1.10
+importance: primary
+pinned: true
+tags: [cm, cross-hand, temporal-pairing, coverage, no-training]
+entrypoint: src.task.CmDecoderv2.research.cross_hand_pair_coverage.run
+plan: ../../docs/plan/v1.1.md
+output: output/<run_id>/
+hypothesis: 固定效果与接触门槛，仅允许源时间偏移即可显著补足当前库的跨手运动配对。
+candidate_pool: V1.1.9 的4254个val active-only窗口；同parent；两源各四步有效。
+policies: [sync, within_5, within_15, within_30, any_time, nonoverlap, far_20]
+minimum_strict_moving_windows: 100
+minimum_parents: 10
+effect_absolute_mm: 1.0
+effect_relative: 0.25
+contact_iou: 0.25
+contact_centroid_mm: 20.0
+moving_target_rms_mm: 1.0
+budget: {gpu_allocated_gib: 4, runtime_seconds: 1200, output_gib: 1}
+limitations: 不运行decoder；不评估物理成功；val不回流训练；不跨parent或时间缩放。

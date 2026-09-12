@@ -1,9 +1,510 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-10
+- last_updated: 2026-09-12
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
+
+## 2026-09-12 13:30:43 +0800 — Cm 后续路线的仓库复核与定向文献调研
+
+- activity_id: ACT-20260912-133043-OICM-RESEARCH-REVIEW
+- timestamp: 2026-09-12 13:30:43 +0800
+- modification_version: V1.3.2
+- task_mode: read-only/diagnostic
+- type: diagnostic
+- operation_category: [diagnostic, documentation]
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求浏览仓库并调研/探索 Cm 效果和数据瓶颈；本次只读复核已有产物及文献，不扩展训练或核心实现授权。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true（保留进入本次请求前的全部差异；仅追加本条记录）
+- scope: ObjectInteractionCm V1.3 既有结果重聚合、模型输入审阅、CmDecoderv2 历史证据与研究建议。
+- run_id: repository_review_20260912_133043
+- run_status: COMPLETED
+- conclusion: SUPPORTED（描述性统计复核）；INCONCLUSIVE（压缩/条件信息/数据规模/迁移机制）。
+- last_step: N/A；last_epoch: N/A；best_metric: N/A；checkpoint: N/A（无新训练或推理）。
+- exit_reason: 正常完成只读调查；训练与科学变量变更仍需最终计划。
+
+**文件**
+
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 只追加本次诊断事件，不修改历史条目。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043](../../research/cross_source_effect/output/repository_review_20260912_133043) — 新诊断目录，已忽略。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043/report.md](../../research/cross_source_effect/output/repository_review_20260912_133043/report.md) — 证据、文献链接、建议及其适用边界。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043/observations.json](../../research/cross_source_effect/output/repository_review_20260912_133043/observations.json) — 原指标/index 重聚合与关键帧入口。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043/run_manifest.json](../../research/cross_source_effect/output/repository_review_20260912_133043/run_manifest.json) — 本次追溯入口。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043/config.json](../../research/cross_source_effect/output/repository_review_20260912_133043/config.json) 与 [src/task/ObjectInteractionCm/research/cross_source_effect/output/repository_review_20260912_133043/metadata.json](../../research/cross_source_effect/output/repository_review_20260912_133043/metadata.json) — 操作范围和输入摘要。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl) 与 [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json) — 只读源证据。
+
+**原因**
+
+将效果平台期拆分为模型对可用运动信息的利用、缺失状态条件、训练覆盖与递归控制误差；提出能够区分这些解释的下一项实验，避免盲目延长训练或扩数据。
+
+**验证**
+
+- Python 标准库只读读取原 index 和 7670 行 metrics，按 source/sequence_id 聚合；5 项源内均值与原 diagnosis.json 差小于 1e-9 mm，primary_valid 全 true。
+- train/val/test parent_seq_id 两两交集为 0；val/test object_name 相对 train 的差集为空。只读计数不改变 split 或其语义。
+- MANO 两条最高 MSE 序列贡献约 66.2% 平方误差；flashlight_lift frame 327 的 Cm/rigid-hand EPE 为 270.54/4.51 mm。均为后验局部定位，不证明全局病因或物理 GT 正确。
+- 验证命令：python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links
+- 验证命令：git diff --check -- src/task/ObjectInteractionCm/docs/logs/activity_log.md；另核对诊断 JSON、报告本地链接和进入写入前已有差异的 SHA256。
+- 本次无模型 smoke 或正式训练效果结果；未修改 experiment_log 科研结论或版本指针。
+- 交接复核通过：最新 activity 的 9 个本地链接、报告 12 个本地链接和 4 个 JSON 均有效；15 个既有文件 SHA256 不变，移除本条后历史 activity 字节摘要与写入前完全一致。审计脚本按合同排除 activity 自身，因本次仅增加日志及 ignored 产物，其代码变更路径计数为 0；未将该计数解释为全工作树 diff 审计。
+
+**回滚**
+
+仅移除本 activity_id 条目与上述新输出目录；其余既有差异、数据、配置、checkpoint、指导、架构和运行无需恢复。
+
+**规范反馈**
+
+本次未遇到格式、目录、版本或审批阻碍。dirty 工作树的审计仅限定本次 activity 路径，并单独核对既有文件摘要，避免把其他工作纳入本次审计范围；未修改治理规则。
+
+
+## 2026-09-12 13:22:38 +0800 — V1.3.2 机制诊断完成，修正低接触主因判断
+
+- activity_id: `ACT-20260912-132238-OICM-MECHANISM-END`
+- timestamp: `2026-09-12 13:22:38 +0800`
+- modification_version: `V1.3.2`
+- type: `experiment_run / code_change`
+- operation_category: `[code, diagnostic, experiment, operation, documentation]`
+- change_level: `L3`（局部诊断定义 L2，运行保守 L3）
+- approval: `user-approved`
+- approval_basis: 用户授权自主探索并要求继续；在现有 final 范围追加无学习机制诊断，不启动网络训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`；保留 V1.3.1 全部未提交差异，无 Git 提交。
+- scope: 新增诊断脚本/定义/测试，维护 README、现有计划范围、Task 指针和日志。主模型/runner/dataset、GT、单位/坐标、cache、split、训练配置、checkpoint、指导、架构和旧输出均未修改。
+- run_id: `mechanism_v1_3_2_val_20260912_131550`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（相对平均手位移有有限增益、数据刚性/工程检查）；`REFUTED`（低接触贡献大部分总 EPE、effective_count 可证明 slot 利用率的解释）；`INCONCLUSIVE`（Cm 压缩必要性及跨手型表征）。
+- last_step: `N/A`；last_epoch: `N/A`；best_metric: `N/A`（没有训练或新 checkpoint）。
+- exit_code: `0`；exit_reason: `正常完成`；elapsed: `49.1 s`；outputs: `12103557 bytes`。
+- command: `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.diagnose --run-id mechanism_v1_3_2_val_20260912_131550`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针从 V1.3.1 到 V1.3.2。
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md) — 沿用现有 final，追加第 8 节最小诊断边界；没有新建 plan。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/diagnose.py](../../research/cross_source_effect/diagnose.py) — 无学习运动基线、刚性、slot 谱、误差份额和 bootstrap。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/diagnostic.yaml](../../research/cross_source_effect/diagnostic.yaml) — exploratory 诊断定义。
+- [src/task/ObjectInteractionCm/tests/test_effect_diagnostics.py](../../tests/test_effect_diagnostics.py) — 合成/退化/反射、独立 SVD、配对 bootstrap、slot 指标反例和误差份额。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md) — 新增诊断入口、符号与 oracle 限制。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本次启动/终态。
+- [src/task/ObjectInteractionCm/docs/logs/experiment_log.md](experiment_log.md) — 完整数值、结论及对上一轮解释的明确修正。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py)、[src/task/ObjectInteractionCm/research/cross_source_effect/verify.py](../../research/cross_source_effect/verify.py)、[src/task/ObjectInteractionCm/research/cross_source_effect/experiment.yaml](../../research/cross_source_effect/experiment.yaml)、[src/task/ObjectInteractionCm/tests/test_cross_source_effect.py](../../tests/test_cross_source_effect.py) — 仅保留 V1.3.1 未提交工作区差异，本轮未改。
+
+**原因**
+
+先用可计算的误差份额检验低接触假设，再比较弱零流之外的无学习基线。避免因均值/分层相关性直接扩充
+null 或刚体结构，也避免把 source-heldout 失败归因于未经定位的 Cm 瓶颈。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCm/tests -q`：最终 `18 passed`。
+- smoke `mechanism_v1_3_2_smoke_20260912_131600` 的 6 行与 full 对应行完全一致；独立 NumPy SVD
+  对两源 12 个真实样本复核刚体拟合，EPE 最大差 `2.79e-13 mm`；独立重算全部分源均值一致。
+- 58 条 val sequence、7670 有效样本（MANO 3610 / Inspire RL 4060），raw/future frame ID、stride=2、
+  抽样 geometry/GT、hand-valid 点数均与原运行严格对应；所有值有限；原输入摘要与几何 stat 不变。
+- 无学习平均手位移 EPE `8.4420 / 7.1632 mm`，完整 Cm 为 `7.2907 / 5.7426 mm`。改善 `1.1513 / 1.4206 mm`，
+  paired sequence CI `[0.5037,1.8441] / [0.8449,2.1415]`。平均手位移已达到原 zero-flow gain 的约 `94.9% / 92.5%`。
+- 无学习刚体手拟合 EPE `7.7724 / 7.9028 mm`。MANO 上 Cm 的改善 CI 跨零，不能证明优于或等价。
+- active<0.1 仅占总 EPE 的 `12.49% / 13.89%`；置零只使全体 EPE 改善 `0.1023 / 0.1768 mm`。
+  明确修正 `ACT-20260912-122139-OICM-CROSS-SOURCE-SPARSITY-DIAG` 中“主要来自低接触、优先 null”的判断。
+- pred 刚体投影仅改善 `0.0065 / 0.0100 mm`；GT 刚体拟合残差约 `6.3e-5 mm`。这只核对刚性，未证明物理 GT 全部正确。
+- `runner.py` 的 slot-weight 均值归一化使 `effective_count` 几乎恒等于 16，不能判断 slot 利用率；只定位未修改。
+  当前 tokens 的跨 slot 标准差/整体 RMS 约 `0.37`，不属于所有 tokens 数值相同；谱秩不等同语义 slot 数。
+- train 最后 EPE=8.1995 mm、val=6.6839 mm，但 stride=1..10 vs 2，不能直接判断训练/泛化差距。
+- 本轮没有训练 geometry-only、null 或 no-Cm 模型。下一学习对照应优先使用相同输入与局部交互 encoder 的
+  无 Cm 压缩 effect predictor，统一训练/验证评估 horizon，再定位瓶颈还是输入/监督；这是后续工作，不冒充已验证结果。
+- `git diff --check` 通过；`python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --check-links` 通过，11 个受审差异路径一致、20 个本地链接可导航；staged diff 为空。
+
+**产物**
+
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run_manifest.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/config.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/config.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metadata.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metadata.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run.log](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run.log)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json)
+- [outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt) — 原冻结预测来源，本轮只校验摘要，无新加载推理/训练。
+
+**回滚与规范反馈**
+
+- 可独立撤销本次 3 个新增诊断/测试文件以及 README、第 8 节、版本/日志增量；保留原 V1.3.1 差异和旧产物。
+  新 output 可单独移除，主模型/数据/checkpoint 无写入，无需恢复。
+- 目录、链接和审批无未解决阻碍；审计要求将“验证与结果”标题写成“验证”，已局部修正，无科研影响。
+  按用户“不必新写计划”的要求沿用现有 final 范围，不新建 plan，未改治理规则。
+
+## 2026-09-12 13:15:50 +0800 — V1.3.2 无学习机制对照启动
+
+- activity_id: `ACT-20260912-131550-OICM-MECHANISM-START`
+- timestamp: `2026-09-12 13:15:50 +0800`
+- modification_version: `V1.3.2`
+- type: `experiment_run`
+- operation_category: `[code, diagnostic, experiment, operation, documentation]`
+- change_level: `L3`（局部诊断定义 L2，运行保守 L3）
+- approval: `user-approved`
+- approval_basis: 用户授权自主探索并要求继续；本次先开展无学习基线与机制诊断，不启动网络训练，不改科研目标或保护边界。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`（保留 V1.3.1 未提交差异）
+- scope: 原冻结结果与相同 Dataset 逐样本重放；比较平均手位移、手刚体拟合、pred 刚体投影，检查 GT 刚性、误差归因与 slot 指标。
+- run_id: `mechanism_v1_3_2_val_20260912_131550`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`
+- command: `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.diagnose --run-id mechanism_v1_3_2_val_20260912_131550`
+
+**文件**
+
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md) — 现有计划第 8 节记录最小执行范围，不另建 plan。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/diagnose.py](../../research/cross_source_effect/diagnose.py)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/diagnostic.yaml](../../research/cross_source_effect/diagnostic.yaml)
+- [src/task/ObjectInteractionCm/tests/test_effect_diagnostics.py](../../tests/test_effect_diagnostics.py)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md)
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run_manifest.json](../../research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/run_manifest.json)
+
+**原因**
+
+上一轮从低接触区间误差高直接跳到 null 分支，未量化它能改善多少总体误差；本次先做误差份额和无学习强基线。
+同时代码检查发现 `slot/effective_count` 由各 slot 已归一化权重的均值计算，几乎恒为 S，不能用作 slot 利用率证据。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCm/tests -q`：17 passed。
+- smoke_run_id: `mechanism_v1_3_2_smoke_20260912_131600`；smoke_run_status: `COMPLETED`；命令同上诊断入口，替换 run-id 并加 `--smoke`，6 样本、退出码 0、约 1 秒，sample/geometry/GT 对齐和输入摘要通过。仅工程 SUPPORTED。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/](../../research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/run_manifest.json](../../research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/metrics.jsonl](../../research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/run.log](../../research/cross_source_effect/output/mechanism_v1_3_2_smoke_20260912_131600/run.log)
+- CPU、最多 15 分钟/100 MiB；无 optimizer，无新 checkpoint，原模型/缓存/GT/split/旧输出不写入。
+
+## 2026-09-12 12:21:39 +0800 — V1.3.1 结果的接触稀疏性后验诊断
+
+- activity_id: `ACT-20260912-122139-OICM-CROSS-SOURCE-SPARSITY-DIAG`
+- timestamp: `2026-09-12 12:21:39 +0800`
+- modification_version: `V1.3.1`
+- type: `diagnostic`
+- operation_category: `[diagnostic]`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户授权自主探索；本次只读分析已有冻结运行产物，不改代码、配置、数据、cache、split 或 checkpoint。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`（沿用已记录的本次实验差异）
+- scope: 分析 `cross_source_effect_v1_3_1_val_20260912_112900` 的每样本 EPE、zero-flow、active fraction、flow RMS 和空间置换结果；不产生新运行目录。
+- source_run_id: `cross_source_effect_v1_3_1_val_20260912_112900`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（后验诊断，不改变冻结实验的主要结论）
+
+**文件**
+
+- [冻结运行逐样本指标](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/metrics.jsonl)
+- [冻结运行统计](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/effect_summary.json)
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/experiment.yaml](../../research/cross_source_effect/experiment.yaml)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/verify.py](../../research/cross_source_effect/verify.py)
+- [src/task/ObjectInteractionCm/tests/test_cross_source_effect.py](../../tests/test_cross_source_effect.py)
+- [实验记录](experiment_log.md)
+- [活动记录](activity_log.md)
+
+**原因**
+
+判断当前“效果差”主要来自 Cm 本身，还是来自低接触/低运动样本的失效；为 source-heldout 之前确定真正的下一项实验。
+
+**验证**
+
+- 只读命令按 `active_fraction` 分箱重算 full Cm、zero-flow、预测优于 zero-flow 的比例和后验 gate；未修改任何输入。
+- MANO：active `<0.1` 的 240/3610 样本 EPE `10.39–14.84 mm`，zero-flow `7.22–15.59 mm`，平均反而更差；active `0.1–0.5` 时 EPE `7.84/7.03 mm`，zero-flow `28.83/32.33 mm`。
+- Inspire RL：active `<0.1` 的 200/4060 样本 EPE `14.17–20.34 mm`，zero-flow `11.02–17.03 mm`，平均反而更差；active `0.25–0.5` 与 `>0.5` 时 EPE `5.63/3.57 mm`，zero-flow `26.75/25.30 mm`。
+- 中位 EPE 仅 MANO `4.01 mm`、Inspire `2.49 mm`，但 p99 为 `69.62/59.46 mm`；均值主要受少量失败样本和接触稀疏区间影响。
+- EPE 与 hand-flow RMS 相关系数 MANO/Inspire 为 `0.502/0.328`；active fraction 相关系数为 `-0.147/-0.243`。这支持先处理稀疏接触和长尾，而不是直接把差距解释为跨手型差异。
+- 后验仅在 val 上观察，不能作为已训练 gate 的效果或正式泛化结论。
+
+**判断**
+
+当前最有信息量的下一项是训练一个输入分布内的 **null/low-contact-aware control**，并同时做 Full vs geometry-only 归因；source-heldout 暂缓。配对同-effect 实验暂不开展。
+
+## 2026-09-12 11:35:10 +0800 — V1.3.1 冻结跨源 effect 诊断完成与独立复核
+
+- activity_id: `ACT-20260912-113510-OICM-CROSS-SOURCE-END`
+- timestamp: `2026-09-12 11:35:10 +0800`
+- modification_version: `V1.3.1`
+- type: `experiment_run / code_change`
+- operation_category: `[code, diagnostic, experiment, operation, documentation]`
+- change_level: `L3`（研究对照/指标 L2，运行保守按 L3）
+- approval: `user-approved`
+- approval_basis: 用户批准第一阶段冻结跨源 effect 实验，并明确“可以，你直接开始吧”；未授权第二阶段重训。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`（9 个本次相关代码/文档路径，未提交；运行产物已忽略）
+- scope: 独立 cross_source_effect 诊断及测试、Task 计划/活动/实验和 Task 版本指针；未修改核心 model/dataset、src/base、GT、坐标/单位、cache、split、训练配置、checkpoint、指导或架构。
+- final_plan: [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md) 第 7 节。
+- run_id: `cross_source_effect_v1_3_1_val_20260912_112900`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（跨手型等价/未见手型泛化）；`SUPPORTED`（本验证集两源平均重建优于零流，以及工程检查）。
+- last_step: `N/A`（冻结诊断，无训练）；last_epoch: `N/A`；best_metric: `N/A`（没有优化或新 checkpoint）。
+- loaded_checkpoint_step: `132480`；loaded_checkpoint_epoch: `180`；loaded_best_metric: `6.5166713276 mm`。
+- exit_code: `0`；exit_reason: `正常完成`；推理/统计/绘图约 `149.3 s`，产物约 `870.15 MiB`。
+- command: `CUDA_VISIBLE_DEVICES=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.run --run-id cross_source_effect_v1_3_1_val_20260912_112900`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅 ObjectInteractionCm 指针更新为 V1.3.1。
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md) — 新增已批准 final 的冻结诊断节；文档更正 Dataset fixed-stride 产生 T-2 行，不改变实现。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py) — 同 checkpoint 冻结推理、三种对照、固定难度匹配、sequence cluster bootstrap、原始张量归档。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/verify.py](../../research/cross_source_effect/verify.py) — 独立 NumPy 重算全部归档预测的误差、有效性、匹配与输入/代码 SHA256。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/experiment.yaml](../../research/cross_source_effect/experiment.yaml) — primary/pinned 实验定义。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md) — 入口、指标、产物与结论边界。
+- [src/task/ObjectInteractionCm/tests/test_cross_source_effect.py](../../tests/test_cross_source_effect.py) — 单位/掩码、置换、匹配、cluster bootstrap 和 decoder 重放测试。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本次开始、smoke、首轮终态、复跑和终态。
+- [src/task/ObjectInteractionCm/docs/logs/experiment_log.md](experiment_log.md) — 定量证据、CI、失败序列及结论边界。
+
+**原因**
+
+从已有 mixed-source shared decoder 的分源验证进一步检查对照、运动信息和源差距。完整 Cm 包含
+tokens 与 anchors，decoder 还读取物体几何；验证“共享解码有效”不能替代“跨手型表征等价”。
+首次运行发现 `config:split -> val` 的通用 manifest 路径误判，保留原输出，只在本实验中将标签
+改名为 `evaluation_partition` 后复跑；不改共享合同、研究变量或原始结果。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCm/tests -q`：`9 passed`，包括 5 个本次定向测试与 4 个 V1.3 KNN 测试。
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.verify src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900`：58 NPZ / 14622 行 / 916 matched 全部通过，NumPy/Torch EPE 最大差 `0.00002693 mm`，manifest 引用存在、SHA256 不变。
+- 全部 58 条 val sequence、seed=42、epoch=0、stride=2；7670 有效（MANO 3610 / Inspire 4060），matched 458+458、11 类、115 strata、14+12 序列。无 train/test 指标混入。
+- 原 decoder 重放最大绝对差 `0 m`；GT 不进入模型；finite、模型 state/梯度、checkpoint/index/scale 摘要和数据文件 stat 检查通过。
+- 完整 Cm EPE `7.290740 / 5.742603 mm`；零流 `29.962009 / 24.785472 mm`；空间置换 `8.882639 / 6.232415 mm`；零-token `47.044641 / 43.269641 mm`。equal-source `6.5166713434 mm` 复现上游 best metric。
+- matched EPE `5.735400 / 6.817376 mm`，源差 CI `[-4.7626, 2.3963] mm`；未设置等价容差，也非同 effect 配对，因此等价结论保持 INCONCLUSIVE。
+- 主有效集仍有 MANO 1/28、Inspire 6/30 条序列不优于零流；零-token 为 OOD/保留 anchors 消融，不宣称它证明 token-only 充分性。
+- 与首轮相比 `metrics.jsonl`、`matched_selection.json` 逐字节一致，primary/matched/coverage/checks JSON 子树完全一致。
+- `git diff --check` 通过；`python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --check-links` 通过，8 个受审变更路径与最新 activity 一致，20 个本地链接可导航。`git diff --cached --stat` 为空，HEAD 未变化。
+
+**产物**
+
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/config.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/config.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/metadata.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/metadata.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/metrics.jsonl](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run.log](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run.log)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/effect_summary.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/effect_summary.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/matched_selection.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/matched_selection.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/effect_comparison.png](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/effect_comparison.png)
+- [outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt) — 仅只读载入，无新 checkpoint。
+
+**回滚与规范反馈**
+
+- 仅需撤销上述 9 个本次相关代码/文档差异并按需独立移除新 output；现有数据、训练输出和 checkpoint 无写入，无需回滚。未提交 Git。
+- 阻碍：通用 manifest 以字段名启发式识别路径，将 `split: val` 误当输入文件；workaround 为局部改名 `evaluation_partition`，保留首次输出并复跑，额外约 150 秒与 870 MiB。
+- 风险：标签与路径混淆导致错误缺失告警和重复运行。建议今后为共享 manifest 增加显式路径引用接口或约定分区标签字段，保留旧路径启发式兼容；本次未改 `src/base`、AGENTS、Skill 或公共合同，实施建议需用户另行确认。
+
+## 2026-09-12 11:29:01 +0800 — V1.3.1 manifest 标签修复后复跑
+
+- activity_id: `ACT-20260912-112901-OICM-CROSS-SOURCE-RERUN`
+- timestamp: `2026-09-12 11:29:01 +0800`
+- modification_version: `V1.3.1`
+- type: `experiment_run`
+- operation_category: `[code, diagnostic, experiment, operation, documentation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 已批准第一阶段范围内的本地 provenance 修正，不改科研变量或共享 manifest 合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`
+- scope: 本实验 config 将 `split` 标签改名 `evaluation_partition`，避免通用 manifest 路径启发式误判；新增独立 NPZ 验证入口；修正文档对现有 fixed-stride 行范围的描述，采样代码不变。
+- run_id: `cross_source_effect_v1_3_1_val_20260912_112900`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`
+- command: `CUDA_VISIBLE_DEVICES=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.run --run-id cross_source_effect_v1_3_1_val_20260912_112900`
+
+**文件**
+
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/verify.py](../../research/cross_source_effect/verify.py)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md)
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112900/run_manifest.json)
+
+**原因**
+
+首次完整运行数值有效，但 manifest 把字符串 `val` 误报为不存在的输入文件。保留首轮产物并使用新目录复跑，不覆盖旧 evidence。
+
+**验证**
+
+- 首轮已精确复现 best checkpoint 两源验证 EPE，9 个 Task 测试通过。
+- 新运行额外核对所有 manifest 输入引用存在、逐 NPZ 重算误差/掩码/匹配和完整 T-2 行覆盖。
+- 30 分钟/3 GiB 单 run 预算保持不变；保护所有已有训练进程与数据。
+
+## 2026-09-12 11:29:00 +0800 — V1.3.1 首轮全验证集诊断完成，待修正 manifest 标签
+
+- activity_id: `ACT-20260912-112900-OICM-CROSS-SOURCE-FIRST-END`
+- timestamp: `2026-09-12 11:29:00 +0800`
+- modification_version: `V1.3.1`
+- type: `operation`
+- operation_category: `[diagnostic, experiment, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 已批准冻结诊断。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`
+- scope: 58 条 val sequence 的冻结推理与预定匹配。
+- run_id: `cross_source_effect_v1_3_1_val_20260912_112331`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`（跨手型等价未证实；数值检查通过，manifest 标签需修正）
+- last_step: `N/A`；last_epoch: `N/A`；best_metric: `N/A`（冻结诊断无训练/新 checkpoint）。
+- command: 见 `ACT-20260912-112331-OICM-CROSS-SOURCE-START` 的完整命令。
+
+**文件**
+
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/metrics.jsonl](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run.log](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run.log)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/effect_summary.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/effect_summary.json)
+
+**原因**
+
+记录首轮实际终态，并明确 provenance 瑕疵与模型效果是不同问题。
+
+**验证**
+
+- 退出码 0，约 150 秒，输出 870.15 MiB；14622 行、7670 有效，matched 916 行。
+- 两源 EPE `7.290740 / 5.742603 mm`，equal-source `6.516671 mm`，复现 checkpoint best metric。
+- 所有 finite、state/input unchanged 通过；decoder replay 最大绝对误差 `0 m`。
+- manifest 中仅 `config:split -> val` 被误识别为缺失路径；已决定只修正本实验字段名称并复跑，不修改 `src/base`。
+
+## 2026-09-12 11:23:31 +0800 — V1.3.1 全验证集冻结诊断启动
+
+- activity_id: `ACT-20260912-112331-OICM-CROSS-SOURCE-START`
+- timestamp: `2026-09-12 11:23:31 +0800`
+- modification_version: `V1.3.1`
+- type: `experiment_run`
+- operation_category: `[diagnostic, experiment, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准第一阶段冻结评估；双源 smoke 已通过，按 final plan 执行全部 val。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`
+- scope: 58 条 val sequence，单物理 GPU 2；不重训、不改 cache/GT/split/权重。
+- run_id: `cross_source_effect_v1_3_1_val_20260912_112331`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`
+- command: `CUDA_VISIBLE_DEVICES=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.run --run-id cross_source_effect_v1_3_1_val_20260912_112331`
+
+**文件**
+
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_val_20260912_112331/run_manifest.json)
+
+**原因**
+
+在全部验证序列上建立源差距、零流/空间打乱/零-token 对照和预定匹配分析证据。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCm/tests/test_cross_source_effect.py -q`：5 passed。
+- 双源 smoke 16 行、14 有效，decoder 重放/finite/state/input checks 通过；工程证据不能证明效果等价。
+- 预算单 GPU、30 分钟/3 GiB；超预算或异常终止并保留独立产物。
+
+## 2026-09-12 11:23:30 +0800 — V1.3.1 双源 smoke 完成
+
+- activity_id: `ACT-20260912-112330-OICM-CROSS-SOURCE-SMOKE-END`
+- timestamp: `2026-09-12 11:23:30 +0800`
+- modification_version: `V1.3.1`
+- type: `operation`
+- operation_category: `[diagnostic, operation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 已批准的冻结诊断之双源 wiring 验证。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`
+- scope: 两源各一条序列；不用于科研效果判断。
+- run_id: `cross_source_effect_v1_3_1_smoke_20260912_112231`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（仅工程 smoke）
+- last_step: `N/A`；last_epoch: `N/A`；best_metric: `N/A`（无优化，无新 checkpoint）。
+- command: 与 `ACT-20260912-112231-OICM-CROSS-SOURCE-SMOKE` 相同。
+
+**文件**
+
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/metrics.jsonl](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run.log](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run.log)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/effect_summary.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/effect_summary.json)
+
+**原因**
+
+正式运行前核对冻结权重、decoder replay、空交互排除和对照接线。
+
+**验证**
+
+- 退出码 0；16 行中 14 有效，全部有限；decoder replay、state 与输入保护检查通过；耗时约 2.7 秒。
+- 无 matched 样本（smoke 两序列 object 不同），属于预期，不扩大为科研结论。
+
+## 2026-09-12 11:22:31 +0800 — V1.3.1 冻结跨源 effect 诊断 smoke 启动
+
+- activity_id: `ACT-20260912-112231-OICM-CROSS-SOURCE-SMOKE`
+- timestamp: `2026-09-12 11:22:31 +0800`
+- modification_version: `V1.3.1`
+- type: `experiment_run`
+- operation_category: `[code, diagnostic, experiment, operation, documentation]`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认第一阶段冻结诊断并明确“可以，你直接开始吧”；不授权 source-heldout 重训。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e7df6b46e9a3009a5b6e07c41bad5216d032a607`
+- worktree_dirty: `true`（仅本次独立实验与文档）
+- scope: Task-local 冻结 checkpoint 双源 effect 诊断；保护核心 model/dataset、src/base、GT、split、cache、权重、指导和架构。
+- run_id: `cross_source_effect_v1_3_1_smoke_20260912_112231`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`（smoke 尚未完成，且不作为科研效果证据）
+- command: `CUDA_VISIBLE_DEVICES=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.research.cross_source_effect.run --run-id cross_source_effect_v1_3_1_smoke_20260912_112231 --smoke`
+
+**文件**
+
+- [src/task/ObjectInteractionCm/docs/plan/V1.3.md](../plan/V1.3.md) — 第 7 节已批准 final 方案。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Task 指针 V1.3.1。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/run.py](../../research/cross_source_effect/run.py) — 冻结评估、对照、匹配和 sequence bootstrap。
+- [src/task/ObjectInteractionCm/research/cross_source_effect/experiment.yaml](../../research/cross_source_effect/experiment.yaml)
+- [src/task/ObjectInteractionCm/research/cross_source_effect/README.md](../../research/cross_source_effect/README.md)
+- [src/task/ObjectInteractionCm/tests/test_cross_source_effect.py](../../tests/test_cross_source_effect.py)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/)
+- PENDING [src/task/ObjectInteractionCm/research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run_manifest.json](../../research/cross_source_effect/output/cross_source_effect_v1_3_1_smoke_20260912_112231/run_manifest.json)
+
+**原因**
+
+补齐共享 decoder 的显式双源对照与难度匹配诊断。原训练已有共享 decoder 分源验证，但不能据此证明跨手型等价。
+
+**验证**
+
+- 已完成静态 `git diff --check`；定向 pytest 执行中。
+- smoke 使用物理 GPU 2、batch=16、workers=2，两个 source 各一条 sequence 的最多 8 个样本。
+- 回滚入口为本次新增 research/tests、计划第 7 节、版本指针和日志差异；不动已有训练/数据产物。
 
 ## 2026-09-10 08:34:42 +0800 — V1.3 全量训练收敛状态检查
 

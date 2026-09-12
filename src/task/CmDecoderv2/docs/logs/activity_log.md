@@ -1,8 +1,541 @@
 # CmDecoderv2 活动记录
 
 - scope: `src/task/CmDecoderv2/`
-- last_updated: 2026-09-11
+- last_updated: 2026-09-12
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+## 2026-09-12 15:53:16 +0800 — V1.1.12 轨迹质量标记与候选交叉检查完成
+
+- activity_id: ACT-20260912-155316-QUALITY-END
+- timestamp: 2026-09-12 15:53:16 +0800
+- modification_version: V1.1.12
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户在质量准入与跨手正对建议后回复“继续”，落实独立诊断规则与候选检查。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 新trajectory_quality_gate、专属测试、Task计划/日志和指针；不修改正式cache/GT/split、模型、旧研究/输出、外部dexplore、其他Task或用户删除的AGENTS.md。
+- run_id: quality_val_20260912_155200
+- run_status: COMPLETED
+- actual_run_time: 2026-09-12 15:51:22–15:51:28 +0800，6.06秒。
+- last_step: 4254窗口；3017个有效运动窗口；240条分层指标；178条含条件/类别重复的候选清单行。
+- last_epoch: not_applicable；best_metric: not_applicable；recent_checkpoint: not_applicable（无模型加载、训练或仿真）。
+- conclusion: SUPPORTED（参考跟踪标记与实际跨手几何兼容选出不同样本）；INCONCLUSIVE（正式质量准入或物理成功标准）。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/trajectory_quality_gate](../../research/trajectory_quality_gate/) — run.py、gates.py、verify.py、README.md、experiment.yaml、__init__.py，复用质量标记、CSV检查队列、带raw/cache帧的候选清单与独立核验。
+- [src/task/CmDecoderv2/tests/test_trajectory_quality_gate.py](../../tests/test_trajectory_quality_gate.py) — 四步/五帧、阈值边界、独立标记、原因位和无效输入测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.12 final；[src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 固定阈值对照、结果与路线调整；[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 运行与审计记录。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅本Task指针推进V1.1.12。
+- 累计未提交差异还含此前的 [src/task/CmDecoderv2/research/cm_condition_dependence](../../research/cm_condition_dependence/)、[src/task/CmDecoderv2/research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/)、[src/task/CmDecoderv2/research/cross_hand_pair_coverage](../../research/cross_hand_pair_coverage/)、[src/task/CmDecoderv2/research/object_tracking_audit](../../research/object_tracking_audit/)，以及 [src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py)、[src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py](../../tests/test_cross_hand_cm_swap.py)、[src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py](../../tests/test_cross_hand_pair_coverage.py)、[src/task/CmDecoderv2/tests/test_object_tracking_audit.py](../../tests/test_object_tracking_audit.py)；本轮只读消费，未修改。
+
+**原因**
+
+将参考跟踪检查做成可复用诊断，同时检验其能否直接作为跨手正对准入条件。既有53个兼容运动窗口中40个未达原参考effect门槛、53个均未达20mm/15deg五帧pose门槛；不能把这两类目标混同。
+effect与跨手兼容交集13窗口/4parent/5不重叠贪心对；combined20为0；combined40为8/2/2，combined80为12/4/4。所有阈值运行前声明，没有后验择优放宽。
+原53/10/18基线完整保留，新增清单diagnostic_only=true、split=val；跟踪质量不自动应用于正式训练过滤。
+
+**验证**
+
+- 测试：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_trajectory_quality_gate.py`：4 passed。
+- 正式命令：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.trajectory_quality_gate.run --run-id quality_val_20260912_155200`。
+- 独立核验：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.trajectory_quality_gate.verify src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200`：通过；4254窗口标记、178候选行，效果比值最大差4.78e-13；源/目标身份、原始候选成员资格、最佳供体和双流不重叠区间通过。
+- 旧输入/代码/产物SHA与stat不变；CPU6.06秒、输出约2.33MiB；output按现有规则忽略，`git diff --check`通过，无暂存提交。
+- `audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`：通过，38个累计变更路径和24个本地链接可导航；此前差异明确只读保留。
+- 可回滚为隔离新诊断目录/测试及本轮文档增补；不影响旧运行或正式数据。无额外确认或规范阻碍。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/run_manifest.json](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/run_manifest.json)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/config.json](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/config.json)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/window_metrics.jsonl](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/window_metrics.jsonl)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/metrics.jsonl](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/metrics.jsonl)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/candidate_manifest.jsonl](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/candidate_manifest.jsonl)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/repair_queue.csv](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/repair_queue.csv)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/summary.json](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/summary.json)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/run.log](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/run.log)
+- [src/task/CmDecoderv2/research/trajectory_quality_gate/output/quality_val_20260912_155200/independent_verification.json](../../research/trajectory_quality_gate/output/quality_val_20260912_155200/independent_verification.json)
+
+## 2026-09-12 15:45:43 +0800 — V1.1.11 物体轨迹来源与跟踪审计完成
+
+- activity_id: ACT-20260912-154543-TRACKING-END
+- timestamp: 2026-09-12 15:45:43 +0800
+- modification_version: V1.1.11
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户在改善两手共同物体动作轨迹对应的建议后回复“继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 本Task新object_tracking_audit、专属测试、计划/日志与指针；dexplore源码/输入只读；核心模型、正式cache/GT/split、旧实验代码/产物/权重、其他Task及用户删除的AGENTS.md保持不变。
+- run_id: tracking_val_20260912_154240
+- run_status: COMPLETED
+- actual_run_time: 2026-09-12 15:42:29–15:42:53 +0800，23.95秒。
+- last_step: 7927帧/30 parent；2983去重运动transition；1498个后半段lag验证transition。
+- last_epoch: not_applicable；best_metric: not_applicable；recent_checkpoint: not_applicable（无decoder加载、训练或仿真）。
+- conclusion: SUPPORTED（现有参考→RL实际轨迹存在明显跟踪差异）；REFUTED（本协议固定lag改善后半效果误差）；INCONCLUSIVE（Cm总体跨手能力及具体物理失效根因）。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/object_tracking_audit](../../research/object_tracking_audit/) — 新run.py、diagnostics.py、verify.py、README.md、experiment.yaml、__init__.py；三段轨迹来源、native跟踪与同支持分半lag审计。
+- [src/task/CmDecoderv2/tests/test_object_tracking_audit.py](../../tests/test_object_tracking_audit.py) — 四元数约定、固定偏移、lag符号/支持和缺失处理。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.11 final范围。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 来源链、指标分母、定量结果和限制。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 运行与复核终态。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅本Task指针推进V1.1.11。
+- 工作区累计未提交差异还包含此前的 [src/task/CmDecoderv2/research/cm_condition_dependence](../../research/cm_condition_dependence/)、[src/task/CmDecoderv2/research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/)、[src/task/CmDecoderv2/research/cross_hand_pair_coverage](../../research/cross_hand_pair_coverage/)、[src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py)、[src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py](../../tests/test_cross_hand_cm_swap.py)、[src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py](../../tests/test_cross_hand_pair_coverage.py)；本轮未改写，旧输入摘要保持不变。
+
+**原因**
+
+上一轮仅53个严格运动接收窗口，需定位物体效果差来源。native参考→实际的中心位置误差mean123.91mm/median41.50mm，旋转mean53.54deg；初始帧误差最大仅0.00192mm，偏离发生于执行过程中。
+2983个去重运动transition上，parent→几何参考effect EPE0.4801mm，几何参考→实际14.7682mm；分段EPE不作可加分解。
+前半选固定lag、后半验证的EPE由14.9919升至15.8312mm，增加0.8393mm，parent聚类CI95=[0.1303,1.8224]。
+上游显式取逆旋转与重算骨盆/地面偏移有源码依据；仅核验合同，不自动修改转置或把诊断拟合写成新GT。
+
+**验证**
+
+- 测试：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_object_tracking_audit.py`：4 passed。
+- 正式命令：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.object_tracking_audit.run --run-id tracking_val_20260912_154240`。
+- 独立核验：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.object_tracking_audit.verify src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240`：通过；7927帧旋转测地距离最大差2.96e-6deg，1080项独立pointflow最大差4.55e-13mm，lag选择与heldout复现。
+- 全部参考未替换字段逐元素不变、缓存actual pose回放通过、raw/time合同通过；新tensor、外部源码、旧代码/产物摘要与input stat不变。
+- CPU运行23.95秒，输出2.78MiB，output按现有规则忽略；`git diff --check`通过，无暂存提交。
+- `audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`：通过，31个累计变更路径、21个本地链接可导航；前阶段差异明确只读保留。
+- smoke run_id=tracking_smoke_20260912_154300，run_status=COMPLETED，实际15:41:43–15:41:50，1096帧、6.21秒，仅工程证据。
+- 解释边界：历史export未提供实际模拟器逐帧时间戳，本轮未锁定当时controlFrequencyInv；未仿真验证上游逆旋转对物理资产的合理性。结果不等于物理任务成功率。
+- 回滚仅隔离新研究目录、专属测试和本轮文档；无额外确认或规范阻碍。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240](../../research/object_tracking_audit/output/tracking_val_20260912_154240/)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/run_manifest.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/run_manifest.json)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/config.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/config.json)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/metadata.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/metadata.json)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/metrics.jsonl](../../research/object_tracking_audit/output/tracking_val_20260912_154240/metrics.jsonl)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/run.log](../../research/object_tracking_audit/output/tracking_val_20260912_154240/run.log)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/summary.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/summary.json)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/tracking.png](../../research/object_tracking_audit/output/tracking_val_20260912_154240/tracking.png)
+- [src/task/CmDecoderv2/research/object_tracking_audit/output/tracking_val_20260912_154240/independent_verification.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/independent_verification.json)
+
+## 2026-09-12 15:42:29 +0800 — V1.1.11 全val物体轨迹审计启动
+
+- activity_id: tracking_val_20260912_154240
+- timestamp: 2026-09-12 15:42:29 +0800
+- modification_version: V1.1.11
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户在改善两手共同物体动作轨迹对应的建议后回复“继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 新物体轨迹来源/跟踪诊断及定向测试、Task计划/日志/指针；外部dexplore只读；不改正式数据或模型。
+- run_id: tracking_val_20260912_154240
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.object_tracking_audit.run --run-id tracking_val_20260912_154240`
+- output: [run_manifest.json](../../research/object_tracking_audit/output/tracking_val_20260912_154240/run_manifest.json)
+
+**文件**
+
+- [src/task/CmDecoderv2/research/object_tracking_audit](../../research/object_tracking_audit/) — native参考/实际跟踪、parent到几何参考偏移、既有cache合同effect和分半lag验证。
+- [src/task/CmDecoderv2/tests/test_object_tracking_audit.py](../../tests/test_object_tracking_audit.py) — 4项四元数、固定偏移、lag符号/支持及空支持测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — final V1.1.11；[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) 仅本Task推进。
+
+**原因**
+
+追踪低配对覆盖的数据生成来源。上游prepare_grab显式取逆旋转，convert_grab重算骨盆/地面偏移，RL导出只替换实际物体pose和native q。先核验合同再区分跟踪误差，不能单凭转置就修改缓存。
+
+**验证**
+
+4项定向测试通过；smoke run_id=tracking_smoke_20260912_154300，run_status=COMPLETED，实际15:41:43–15:41:50，2序列1096帧，6.21秒；只作工程证据。完整运行保留原protocol，新增独立核验入口。回滚仅新目录、测试和本轮文档。
+
+## 2026-09-12 15:33:30 +0800 — V1.1.10 全 val 时间偏移配对覆盖完成
+
+- activity_id: ACT-20260912-153330-PAIR-COVERAGE-END
+- timestamp: 2026-09-12 15:33:30 +0800
+- modification_version: V1.1.10
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2（独立配对诊断）；单卡限时运行按 L3
+- approval: user-approved
+- approval_basis: 用户在 V1.1.9 结果与补足同效果/接触配对的建议后回复“继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 本Task新 cross_hand_pair_coverage、专属测试、计划/日志和版本指针；核心模型/loader/训练变量、正式数据/GT/cache/split、旧研究代码/产物/权重、其他Task和用户删除的AGENTS.md保持不变。
+- run_id: pair_coverage_val_20260912_153150
+- run_status: COMPLETED
+- actual_run_time: 2026-09-12 15:30:52–15:31:06 +0800，13.88秒。
+- last_step: 4254 active-only候选窗口；30 parent；420条逐parent/policy/group指标。
+- last_epoch: not_applicable；best_metric: not_applicable；recent_checkpoint: not_applicable（没有加载decoder或训练；只继承V1.1.9冻结Cm有效mask）。
+- conclusion: REFUTED（仅时间偏移达到100严格运动窗口/10 parent的当前库充足性命题）；INCONCLUSIVE（总体跨手迁移，未运行decoder）。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage](../../research/cross_hand_pair_coverage/) — 新增run.py、matching.py、verify.py、README.md、experiment.yaml、__init__.py；精确效果配对、全parent时间搜索、供体复用/不重叠统计与独立穷举复核。
+- [src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py](../../tests/test_cross_hand_pair_coverage.py) — 5项定向合同验证。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.10 final执行增补。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 分层覆盖、受限命题结论与下一步依据。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — smoke、全量运行与验证终态。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅本Task指针推进V1.1.10；其他已有差异保留。
+- 工作区累计差异还含此前的 [src/task/CmDecoderv2/research/cm_condition_dependence](../../research/cm_condition_dependence/)、[src/task/CmDecoderv2/research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/)、[src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py)、[src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py](../../tests/test_cross_hand_cm_swap.py)；本轮只读消费，未重新修改。
+
+**原因**
+
+同步严格运动只有16窗口/4 parent，固定效果与接触门槛后放开时间偏移，检查现有数据能否补足有效跨手配对。
+任意偏移达到53窗口/10 parent，仅覆盖3017个有效运动接收窗口的1.76%；43个唯一选中源、最大一对一容量48、保守提取18个双流不重叠配对。
+只按效果也仅76个运动窗口，不足100。20096条严格边中只有90条属于运动接收，91.1%全部边来自一个无严格运动匹配的torussmall序列；不能据总边数扩大训练正对规模。
+
+**验证**
+
+- 测试：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py`：5 passed。
+- 正式命令：`CUDA_VISIBLE_DEVICES=3 OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_pair_coverage.run --run-id pair_coverage_val_20260912_153150`。
+- 独立核验：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_pair_coverage.verify src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150`：通过，1749个局部网格候选穷举一致，描述最大差1.33e-5；全部保存边门槛、选中供体排序、parent/有效性、不重叠区间和summary通过。
+- V1.1.9同步effect/strict对角线逐窗口精确重现，严格85/运动16不变；描述最大差7.44e-6；旧输入/代码/产物SHA256及stat不变。
+- GPU3 peak allocated199.9 MiB，输出5.20 MiB；output按现有规则忽略。`git diff --check`通过；无暂存提交。
+- `audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`：通过，24个累计变更路径、19个本地链接可导航；前阶段差异已明确标为只读保留。
+- smoke run_id=pair_coverage_smoke_20260912_153000，run_status=COMPLETED，实际15:29:49–15:29:54；882窗口，只作工程证据。正式运行前补充verify并修正manifest last_step为active-only实际数，科学协议未变。
+- 回滚：隔离新研究目录、专属测试与本轮文档增补，不影响旧运行或正式数据；无需要额外确认的规范阻碍。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run_manifest.json](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run_manifest.json)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/config.json](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/config.json)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/metrics.jsonl](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/metrics.jsonl)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run.log](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/run.log)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/summary.json](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/summary.json)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/selected_pairs.jsonl](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/selected_pairs.jsonl)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/coverage.png](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/coverage.png)
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/independent_verification.json](../../research/cross_hand_pair_coverage/output/pair_coverage_val_20260912_153150/independent_verification.json)
+
+## 2026-09-12 15:29:49 +0800 — V1.1.10 时间偏移配对覆盖 smoke 启动
+
+- activity_id: pair_coverage_smoke_20260912_153000
+- timestamp: 2026-09-12 15:29:49 +0800
+- modification_version: V1.1.10
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2；单卡限时运行按 L3
+- approval: user-approved
+- approval_basis: 用户在 V1.1.9 结果与补齐同效果跨手配对的建议后回复“继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 新跨时间配对诊断、专属测试、计划/日志及本Task版本指针；正式数据/模型/旧产物保持不变。
+- run_id: pair_coverage_smoke_20260912_153000
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=3 OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_pair_coverage.run --run-id pair_coverage_smoke_20260912_153000 --smoke`
+- output: [run_manifest.json](../../research/cross_hand_pair_coverage/output/pair_coverage_smoke_20260912_153000/run_manifest.json)
+
+**文件**
+
+- [src/task/CmDecoderv2/research/cross_hand_pair_coverage](../../research/cross_hand_pair_coverage/) — 固定逐步效果/接触门槛，全同parent候选搜索与供体复用/不重叠统计。
+- [src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py](../../tests/test_cross_hand_pair_coverage.py) — 必要条件预筛对穷举、有效性、接触、复用和共享端点测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — final V1.1.10。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 本Task指针V1.1.10。
+
+**原因**
+
+保持原始 MANO 轨迹与匹配门槛，检查只允许源时间偏移能否补足严格运动配对；不会按decoder结果或目标未来q/wrist挑选。
+
+**验证**
+
+`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_cross_hand_pair_coverage.py`：5 passed。smoke 首先复现 V1.1.9 对角线描述/覆盖；只作工程验证。回滚隔离新目录、测试和本轮文档增补。
+
+## 2026-09-12 15:23:08 +0800 — V1.1.9 全 val 跨手交换完成与独立复核
+
+- activity_id: ACT-20260912-152308-CROSS-HAND-END
+- timestamp: 2026-09-12 15:23:08 +0800
+- modification_version: V1.1.9
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2（跨手离线诊断）；限时单卡运行按 L3
+- approval: user-approved
+- approval_basis: 用户在已说明的跨手动作表征路线后连续回复“继续”，执行已定稿 V1.1.9。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 本 Task 新 cross_hand_cm_swap、专属测试、计划/日志和既有 CmDecoderv2 版本指针；核心模型/loader/runner、训练变量、GT/cache/split、旧输出/checkpoint、其他 Task 和用户删除的 AGENTS.md 无本轮写入。
+- run_id: cross_hand_val_20260912_151850
+- run_status: COMPLETED
+- actual_run_time: 2026-09-12 15:18:08 至 15:21:28 +0800；200.53 秒。
+- last_step: 4254 窗口；21270 条单步 metrics；30 条 val。
+- last_epoch: not_applicable（无训练；固定 decoder epoch5、step7240）。
+- best_metric: not_applicable（不作 checkpoint 选择；严格运动 mano_sync EPE=10.8513 mm）。
+- recent_checkpoint: [outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)
+- conclusion: INCONCLUSIVE（总体跨手迁移；严格运动只有16窗口/4 parent，低于100/10预设门槛）。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/) — 新增 run.py、diagnostics.py、verify.py、README.md、experiment.yaml、__init__.py；只读重建原始 MANO/transported，固定接收手状态交换完整 Cm。
+- [src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py](../../tests/test_cross_hand_cm_swap.py) — 5项坐标/单位、空接触、全窗口门槛、供体与 parent 统计测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.9 final 增补，明确实际 pose 的 `198:205` 是 tensor slice。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 记录完整协议、分层覆盖、配对指标、局限和下一步依据。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — smoke、全量运行与核验终态。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 本 Task 指针 V1.1.9，保留其他作用域已有差异。
+- 工作区累计差异还含上一阶段的 [src/task/CmDecoderv2/research/cm_condition_dependence](../../research/cm_condition_dependence/) 和 [src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py)；本次只读消费，前后摘要一致，未重新改写。
+
+**原因**
+
+将已确认的同源条件依赖推进到跨手。两源有效3665/30，效果匹配176/17，严格接触匹配85/9，严格运动16/4。
+同时间戳不保证物体效果等价，有效窗口平均效果差中位数8.0708 mm。严格运动上 correct/identity/原始MANO/错时MANO/oracle EPE为8.7499/46.7284/10.8513/54.0171/9.0612 mm，但样本过少且集中，不能据此推广迁移结论。
+下一步优先检查真实同效果跨手配对覆盖；oracle 注入目标物体运动，不能单独作为成功证据。
+
+**验证**
+
+- 定向测试：`/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py`，5 passed。
+- 完整命令：`CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_cm_swap.run --run-id cross_hand_val_20260912_151850`。
+- 独立复核：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_cm_swap.verify src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850`，通过；150个 NumPy FK 样本手点EPE/输出变化最大差1.68e-5 mm；donor、summary、覆盖可重现。
+- 正式loader窗口回放差0，官方val MANO表面回放差0，canonical object点最大差2.46e-7 m，correct q/wrist回放差1.19e-7；模型参数/buffer、受保护的旧代码/输出/checkpoint SHA256与所有输入stat保持不变。
+- GPU3 peak allocated5459.5 MiB，输出75.9 MiB；无新 checkpoint，未启动训练。`git diff --check` 通过，output 被现有规则忽略。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`：通过，17个变更路径与18个本地链接一致；包含前阶段累计差异的只读说明。
+- smoke run_id=cross_hand_smoke_20260912_151800，run_status=COMPLETED，实际15:16:33–15:17:33；仅工程证据，完整运行前补充了输入脚本保护和独立复核入口。
+- 回滚：隔离 cross_hand_cm_swap 新目录、专属测试和本轮文档增补；保留旧实验和所有正式数据。本轮未遇到需要额外确认的规范阻碍。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run_manifest.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run_manifest.json)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/config.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/config.json)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metadata.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metadata.json)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metrics.jsonl](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/metrics.jsonl)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run.log](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run.log)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/summary.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/summary.json)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/comparison.png](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/comparison.png)
+- [src/task/CmDecoderv2/research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/independent_verification.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/independent_verification.json)
+
+## 2026-09-12 15:18:08 +0800 — V1.1.9 全 val 跨手交换启动
+
+- activity_id: cross_hand_val_20260912_151850
+- timestamp: 2026-09-12 15:18:08 +0800
+- modification_version: V1.1.9
+- type: experiment / operation
+- change_level: L2；限时单卡运行按 L3
+- approval: user-approved
+- approval_basis: 用户连续回复“继续”，完成 final 跨手诊断。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 只读加载 30 条 val 和固定 checkpoint，新 output 保存结果。
+- run_id: cross_hand_val_20260912_151850
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_cm_swap.run --run-id cross_hand_val_20260912_151850`
+- outputs: [run_manifest.json](../../research/cross_hand_cm_swap/output/cross_hand_val_20260912_151850/run_manifest.json)
+
+**文件**
+
+- [research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/) — 增补来源脚本保护、精确起止时间和独立 NumPy FK 复核入口。
+
+**原因**
+
+smoke 在 15:17:33 COMPLETED，882 窗口通过所有工程断言；valid=796、effect=92、strict=53、strict_moving=1，只用于检查实现。其 run_id 中时间是标识，不作为实际启动时间。
+
+**验证**
+
+[smoke summary](../../research/cross_hand_cm_swap/output/cross_hand_smoke_20260912_151800/summary.json)、[smoke manifest](../../research/cross_hand_cm_swap/output/cross_hand_smoke_20260912_151800/run_manifest.json)、[smoke run.log](../../research/cross_hand_cm_swap/output/cross_hand_smoke_20260912_151800/run.log) 已生成；完整运行保持同一科学协议。
+
+## 2026-09-12 15:16:33 +0800 — V1.1.9 跨手交换 smoke 启动
+
+- activity_id: cross_hand_smoke_20260912_151800
+- timestamp: 2026-09-12 15:16:33 +0800
+- modification_version: V1.1.9
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2；限时单卡运行按 L3
+- approval: user-approved
+- approval_basis: 用户在已说明的冻结跨手交换路线后连续回复“继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 本 Task cross_hand_cm_swap、专属测试、计划/日志及既有版本指针；旧实验、核心实现和正式 cache 不修改。
+- run_id: cross_hand_smoke_20260912_151800
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=3 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cross_hand_cm_swap.run --run-id cross_hand_smoke_20260912_151800 --smoke`
+- outputs: [run_manifest.json](../../research/cross_hand_cm_swap/output/cross_hand_smoke_20260912_151800/run_manifest.json)
+
+**文件**
+
+- [research/cross_hand_cm_swap](../../research/cross_hand_cm_swap/) — 原始 MANO/transported 源重建、KNN、完整 Cm 交换、分层配对与统计。
+- [tests/test_cross_hand_cm_swap.py](../../tests/test_cross_hand_cm_swap.py) — 坐标、单位、空接触、全窗口筛选、供体和 parent 统计。
+- [docs/plan/v1.1.md](../plan/v1.1.md) — final V1.1.9 范围；明确 `198:205` 是原始 tensor slice，非代码行号。
+
+**原因**
+
+同源条件依赖已完成，推进真正的同步跨手单步兼容性诊断，显式区分注入目标实际运动的 oracle 对照。
+
+**验证**
+
+`python -m pytest -q src/task/CmDecoderv2/tests/test_cross_hand_cm_swap.py`：5 passed。完整冻结回放与输入核验在运行内执行；smoke 不构成科学结论。回滚仅隔离新研究目录、测试与本轮文档。
+
+## 2026-09-12 14:55:33 +0800 — V1.1.8 全 val Cm 条件依赖诊断完成
+
+- activity_id: ACT-20260912-145016-CM-DEPENDENCE-END
+- timestamp: 2026-09-12 14:55:33 +0800
+- modification_version: V1.1.8
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2（冻结对照/指标）；运行预算按 L3
+- approval: user-approved
+- approval_basis: 用户回复“按照你的想法继续”，完成已讨论路线的首项冻结诊断。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true（其他 Task 与根级已有差异保留）
+- scope: 本 Task 独立 cm_condition_dependence 实现、测试、计划/日志与 CmDecoderv2 版本指针；核心模型/loader/runner、正式训练配置、GT/cache/split、旧权重、指导/架构和其他 Task 无本轮写入。
+- run_id: cm_dependence_val_20260912_145016
+- run_status: COMPLETED
+- last_step: 4254 active-only 窗口；17912 单步指标行；5504 递归指标行
+- last_epoch: not_applicable（无训练；固定 checkpoint epoch=5、step=7240）
+- best_metric: not_applicable（无 checkpoint 选择；h1 有效集 correct EPE=7.096838 mm）
+- recent_checkpoint: [outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_3_full10135_20260910_123812/checkpoints/best.pt)
+- conclusion: SUPPORTED（当前同源 Cm 条件依赖）；INCONCLUSIVE（跨手复用与物理闭环）。
+
+**文件**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.8 final 范围、固定对照和 native/FK 检查说明。
+- [src/task/CmDecoderv2/research/cm_condition_dependence](../../research/cm_condition_dependence) — 新增实现、测试入口说明、定义、统计和独立复核；运行产物按规范忽略。
+- [src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py) — donor 条件/有效性、完整 Cm 交换、GT 隔离、配对统计、单位和递归状态更新。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmDecoderv2 从 V1.1.7 到 V1.1.8；保留 ObjectInteractionCm 原有指针差异。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 按命题记录科研证据及局限。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 登记失败 smoke、通过 smoke 和正式诊断终态。
+
+**原因**
+
+先隔离目标手是否有效使用 Cm，避免把原 decoder 忽略动作或递归误差归因于跨手。正确/identity h1 EPE
+为 7.0968/13.6469 mm；严格匹配的 1302 窗口上 correct/swap 为 5.3292/24.3919 mm，惩罚 CI
+[12.3278,30.5853] mm。83 起点的正确 Cm 第 16 步 EPE 为 53.1931 mm，仍有累计状态误差。
+原生从动关节与固定 mimic 的差异已单独量化；没有改 GT 或据此重训。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_cm_condition_dependence.py src/task/CmDecoderv2/tests/test_model.py src/task/CmDecoderv2/tests/test_kinematics.py`：13 passed。
+- 正式命令：`CUDA_VISIBLE_DEVICES=6 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_condition_dependence.run --run-id cm_dependence_val_20260912_145016 --activity-id ACT-20260912-145016-CM-DEPENDENCE-VAL`。
+- 复核命令：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_condition_dependence.verify src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016`：通过，15 个独立 NumPy FK 样本最大 EPE 差 0.00000783 mm。
+- 正式运行耗时 104.9 秒；GPU 6 peak allocated 2745.3 MiB，输出 49.1 MiB；未启动训练、未生成新 checkpoint。
+- core replay / native GT cache replay 差为 0；所有输入/代码摘要、geometry 文件 stat、模型参数及 buffer 保持不变。
+- `git diff --check -- docs/current_versions.yaml src/task/CmDecoderv2`：通过。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`：通过，覆盖 10 个变更路径，最新条目 16 个本地链接有效；等级与审批另由本记录声明。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/config.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/config.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/metrics.jsonl](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/metrics.jsonl)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/rollout_metrics.jsonl](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/rollout_metrics.jsonl)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence_summary.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence_summary.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence.png](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/dependence.png)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/verification.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/verification.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run.log](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run.log)
+
+**回滚与规范反馈**
+
+仅移除本轮新增研究/测试、V1.1.8 增补和活动/实验条目，并恢复 CmDecoderv2 指针；输出可独立隔离。
+不执行整个工作区 reset/revert。首次 smoke 的失败是已定位的诊断断言假设，不是权限或规范阻碍；
+本轮无审批阻碍，无治理规则改动。后续跨手实验尚未执行，不把本轮同源收益当作跨手结论。
+
+## 2026-09-12 14:50:16 +0800 — V1.1.8 smoke 通过并启动全 val 条件依赖诊断
+
+- activity_id: ACT-20260912-145016-CM-DEPENDENCE-VAL
+- timestamp: 2026-09-12 14:50:16 +0800
+- modification_version: V1.1.8
+- type: diagnostic / experiment / operation / code / documentation
+- change_level: L2；单 GPU 运行预算保守按 L3
+- approval: user-approved
+- approval_basis: 用户回复“按照你的想法继续”，实施已讨论的首项冻结条件依赖诊断。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true
+- scope: 本 Task 独立诊断和定向测试，当前计划、Task 日志与版本指针；核心模型、loader、训练、GT、split/cache、旧权重和其他任务保持不变。
+- run_id: cm_dependence_val_20260912_145016
+- run_status: STARTED
+- conclusion: INCONCLUSIVE（正式冻结诊断尚未完成）
+
+**文件**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.8 final 增补和 native/6-DOF FK 检查说明。
+- [src/task/CmDecoderv2/research/cm_condition_dependence/](../../research/cm_condition_dependence/) — 实现、定义、匹配、统计、重放与独立 NumPy FK 复核。
+- [src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py) — 7 个定向合同测试。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅推进本 Task 指针，其他已有差异保留。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 运行追溯。
+
+**原因**
+
+首次 smoke 的差异来自真实 native 从动关节与 decoder 固定 mimic/限位假设不一致。已改为以 native
+18 维 q 重放 cache 验证采样对应，逐窗口保留 6 维 GT 重建残差；没有改变 GT、预测指标或核心实现。
+通过 smoke 后执行既定 30 条 Inspire val 的 4254 active-only 窗口以及最多每序列 3 个 16 步递归起点。
+
+**验证**
+
+- smoke run_id: cm_dependence_smoke_20260912_145100；run_status: COMPLETED；实际启动 2026-09-12 14:47:53 +0800，结束 14:48:16；23.5 秒、2744.8 MiB peak allocated。
+- smoke 覆盖 882 窗口、858 h1 有效、835 完整有效；6 个递归起点；原生 FK/cache 抽查最大坐标差 0、原 core 重放差 0，参数/输入不变。只支持工程验证。
+- 独立复核 3881 teacher 行、416 rollout 行；donor/配对 summary 可重现，15 个 NumPy FK 样本与归档 EPE 最大差 0.00000780 mm。
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_smoke_20260912_145100/run_manifest.json](../../research/cm_condition_dependence/output/cm_dependence_smoke_20260912_145100/run_manifest.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_smoke_20260912_145100/verification.json](../../research/cm_condition_dependence/output/cm_dependence_smoke_20260912_145100/verification.json)
+- command: `CUDA_VISIBLE_DEVICES=6 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_condition_dependence.run --run-id cm_dependence_val_20260912_145016 --activity-id ACT-20260912-145016-CM-DEPENDENCE-VAL`
+- PENDING [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/)
+- PENDING [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json](../../research/cm_condition_dependence/output/cm_dependence_val_20260912_145016/run_manifest.json)
+
+**回滚**
+
+仅隔离本次新增诊断/测试/记录和输出，并恢复 CmDecoderv2 指针；不回退整个工作区。单 GPU 6、30 分钟、8 GiB allocated、1 GiB output，不启动训练。
+
+## 2026-09-12 14:45:00 +0800 — V1.1.8 首次 smoke 因 GT 重放假设失败
+
+- activity_id: ACT-20260912-144500-CM-DEPENDENCE-SMOKE
+- timestamp: 2026-09-12 14:45:00 +0800
+- modification_version: V1.1.8
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2（冻结对照/指标）；L3（有限 GPU 运行预算）
+- approval: user-approved
+- approval_basis: 用户在跨手路线及先做 Cm 条件依赖诊断的建议后回复“按照你的想法继续”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true（开始时的其他 Task/根诊断差异保留）
+- scope: 本 Task 独立 cm_condition_dependence 诊断、定向测试、当前计划/活动/实验记录与版本指针。
+- run_id: cm_dependence_smoke_20260912_144500
+- run_status: FAILED
+- last_step: 首个 batch
+- exit_reason: 约束后的 6 维 GT FK 不等于 native simulator 的实际从动关节状态；原检查错误地要求两者相等，最大坐标差 0.577569 mm。
+- conclusion: INVALID_IMPLEMENTATION（只针对诊断中的 GT 重放断言；不据此判定已有模型训练无效）
+
+**文件**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — 定稿 V1.1.8 首项执行边界。
+- [src/task/CmDecoderv2/research/cm_condition_dependence/](../../research/cm_condition_dependence/) — 完整 Cm bank、原状态下交换/置零、匹配/统计与短递归诊断。
+- [src/task/CmDecoderv2/tests/test_cm_condition_dependence.py](../../tests/test_cm_condition_dependence.py) — donor/GT 隔离、有效性、时间覆盖、误差单位与配对统计验证。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmDecoderv2 指针推进到 V1.1.8，保留 ObjectInteractionCm 原有改动。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 记录实现与运行。
+
+**原因**
+
+先确认同源目标手是否真正依赖 Cm，随后才能解释跨手失败。复用 checkpoint 内嵌配置与现有
+model/dataset/FK，保护 core、cache、split、GT、旧 checkpoint、指导/架构及运行中的其他进程。
+本轮没有新训练；随机/严格匹配 donor 均来自同一序列，完整交换 tokens/anchors/window。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_cm_condition_dependence.py`：6 passed。
+- `git diff --check -- docs/current_versions.yaml src/task/CmDecoderv2`：通过。
+- physical GPU 6 启动前无 compute process，5 MiB/0% 使用；单 GPU、30 分钟、8 GiB allocated、1 GiB output 上限。
+- command: `CUDA_VISIBLE_DEVICES=6 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.cm_condition_dependence.run --run-id cm_dependence_smoke_20260912_144500 --activity-id ACT-20260912-144500-CM-DEPENDENCE-SMOKE --smoke`
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/](../../research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/run_manifest.json](../../research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/run_manifest.json)
+- [src/task/CmDecoderv2/research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/run.log](../../research/cm_condition_dependence/output/cm_dependence_smoke_20260912_144500/run.log)
+
+**回滚**
+
+只移除本次新增诊断/测试/记录及对应 output，并恢复本 Task 指针；不回退整个工作区，不修改用户已有差异。
 
 ## 2026-09-11 09:26:31 +0800 — V1.1.7 GT 接触起点 Inspire effect viewer
 

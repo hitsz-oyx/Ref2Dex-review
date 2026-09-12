@@ -1,0 +1,15 @@
+name: object_tracking_audit
+modification_version: V1.1.11
+importance: primary
+pinned: true
+tags: [cm, cross-hand, provenance, object-tracking, no-training]
+entrypoint: src.task.CmDecoderv2.research.object_tracking_audit.run
+plan: ../../docs/plan/v1.1.md
+output: output/<run_id>/
+hypothesis: 核验跨手物体效果差来自哪一段轨迹转换，并检查固定时滞能否解释RL跟踪差异。
+candidate_pool: 与V1.1.10相同的30个val parent
+lags: [-15, 15]
+lag_selection: chronological_first_half
+lag_evaluation: chronological_second_half_common_support
+budget: {cpu_seconds: 600, output_gib: 1}
+limitations: 不修改缓存或坐标合同；不运行decoder或仿真；固定偏移与lag拟合不是新GT。

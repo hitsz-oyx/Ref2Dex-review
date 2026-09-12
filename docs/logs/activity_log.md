@@ -1,9 +1,111 @@
 # Ref2Dex 活动记录
 
 - scope: root
-- last_updated: 2026-09-03
+- last_updated: 2026-09-12
 - current_pointer: [docs/current_versions.yaml](../current_versions.yaml)
 - historical_audit: [modification_log.md](modification_log.md)
+
+## 2026-09-12 13:39:26 +0800 — 跨手 Cm 路线的代码与既有证据核对
+
+- activity_id: ACT-20260912-133926-CROSS-HAND-REVIEW
+- timestamp: 2026-09-12 13:39:26 +0800
+- modification_version: V1.2.15（沿用根级指针，只登记跨 Task 只读诊断）
+- task_versions_reviewed: ObjectInteractionCm V1.3.2；CmDecoderv2 V1.1.7
+- type: diagnostic / documentation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求自主浏览仓库并判断如何通过 Cm 实现跨手动作表征；本轮只读代码与既有产物，追加诊断记录。
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true（开始时已有根 AGENTS 删除、版本指针、ObjectInteractionCm 计划/日志及未跟踪诊断/测试）
+- scope: 跨 Task 代码与既有证据核对、下一步建议；不运行新训练/模型评估，不修改科研结论、模型、数据、split、cache、checkpoint、指导、计划或架构快照。
+- conclusion: SUPPORTED（所列代码事实和归档数值的复核）；INCONCLUSIVE（跨手可复用性、未见手型泛化和下面提出的机制假设）。
+
+**文件**
+
+- [docs/logs/activity_log.md](activity_log.md) — 仅新增本条；没有其他本轮写入。
+
+**原因**
+
+用户的目标是跨手动作表征，因此需要分别检验 effect 预测、目标手对 Cm 的依赖、跨源交换和递归执行。
+现有 object EPE 或来源分类实验不能独立替代后面三项。
+
+1. 当前相关主线是 ObjectInteractionCm → CmDecoderv2。前者由物体几何、邻近手几何和 endpoint hand flow
+   生成 `16 × 32` tokens、动态 anchor position/normal；后者冻结前者，以 `K=4` 的完整 Cm 和目标手当前
+   q/wrist/link geometry 预测运动。实际接口包含 anchors，不能只把 tokens 当作整个动作通道。
+   见 [src/task/ObjectInteractionCm/model.py](../../src/task/ObjectInteractionCm/model.py)、
+   [src/task/CmDecoderv2/model.py](../../src/task/CmDecoderv2/model.py)。
+2. ObjectInteractionCm 同时监督物体 flow 和源手 flow，默认权重均为 1；没有跨手交换/一致性损失。
+   源手重建可能要求保留 embodiment-specific motion，是待做消融的机制假设，不能仅凭代码认定它有害；
+   hand decoder 也接收手几何，部分形态信息可能由该条件提供。
+   见 [src/task/ObjectInteractionCm/config.py](../../src/task/ObjectInteractionCm/config.py)、
+   [src/task/ObjectInteractionCm/runner.py](../../src/task/ObjectInteractionCm/runner.py)。
+3. 归档的 7670 个有效样本复算得到如下 frame-micro object EPE；这支持存在预测增益，不支持已经实现跨手迁移。
+
+   | 方法 / mm | MANO | Inspire RL |
+   | --- | ---: | ---: |
+   | 平均接触手点位移 | 8.442019 | 7.163211 |
+   | 接触手点刚体拟合 | 7.772431 | 7.902781 |
+   | 当前 Cm 模型 | 7.290740 | 5.742603 |
+
+   原有 paired sequence-bootstrap 显示 MANO 上相对刚体拟合的改善 CI 跨零；不是等价证明。
+   证据：[src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/)、
+   [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json)、
+   [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl)。
+4. 当前 best checkpoint 的实际 SHA256 与 V1.3 source classifier manifest 一致，均为
+   `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+   有效 held-out 样本 88 个，分类准确率 `65/88=73.8636%`，AUROC `0.7531`。
+   这是 source 可分性的诊断，仍混合动作、接触、采样密度和数据来源差异；分类达到随机水平亦不能证明动作表征有效。
+   证据：[src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json](../../src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json)、
+   [src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json](../../src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json)。
+5. V1.3 index 的 630 个 parent sequence 全部唯一，train 为 MANO/Inspire `254/255`、val `28/30`、
+   test `63/0`。当前缓存不是同交互的双手配对；正式 test 也不能直接提供对称的双源评估。
+   同名动作或原始 retargeting 来源不保证修正后的实际物体 effect 相同。
+   证据：[data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json](../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json)、
+   [src/task/ObjectInteractionCm/docs/plan/V1.2.5.md](../../src/task/ObjectInteractionCm/docs/plan/V1.2.5.md)。
+6. 既有 `mouse_lift` Inspire 自身递归诊断中，GT 接触段 hand-position EPE 均值 `87.909 mm`，
+   hand-flow EPE `2.363 mm`；这说明该序列存在递归状态漂移，不能把所有 rollout 失败归因于换手。
+   物体位姿仍来自参考轨迹；OICM self-effect 重建并不是物理环境闭环成功的证据。
+   证据：[src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json](../../src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json)。
+
+**下一步建议（讨论方案，不是新的 final plan，也未执行）**
+
+- 首先固定 Inspire 目标手当前状态，验证 decoder 的动作条件依赖：正确 Cm、相同物体/相近接触条件下
+  另一真实动作的完整 Cm window、保持状态不动基线；置零完整 Cm 只作 OOD 辅助。真实 Cm 交换应把
+  tokens 与对应 anchors 一起交换并保持时间顺序，以免留下未消融的动作通道。先比较单步和短时递归，
+  用错误动作条件是否导致可解释的输出变化、正确条件是否提高误差指标判断。若仍有歧义，再训练相同预算的
+  state-only decoder；不能把“推理时置零”称为已训练 state-only baseline。
+- 随后建设小规模、可审计的跨手交换评估：目标手初始状态固定，分别输入同源 Cm、经物体状态/时间跨度/
+  实际 effect/接触可达性审查的 MANO Cm，以及不同 effect 的负对照。物体坐标系与 anchor 变换必须明确，
+  不以同名 sequence 自动建立正配对，不改正式 split。跨手成功以目标手可实现的运动、接触和物体任务效果
+  判断，目标手未来 GT 不作为输入；同一个冻结 OICM 的评分仅作诊断，最终需要独立仿真/真实执行验证。
+- 模型改动先用相同数据、训练预算与评估 stride 比较三项：现有 joint-loss Cm、去掉源手重建损失的 Cm、
+  同一局部交互 encoder 绕过 Cm 压缩的 object-effect head。前两项判断原手重建监督的作用；后者只定位
+  压缩/解码损失，不作为跨手表征候选。只有结果支持时再扩展成完整 2×2 消融或 effect/private 分支。
+  object EPE 改善需要进一步通过交换评估验证，不能自动认定迁移提高。
+- 表征目标建议为物体条件下的交互动作：保留任务 effect 与必要接触信息，把目标手运动学交给 decoder。
+  不预设每个 slot 跨样本一一对应，不直接对未对齐 slot 做 L2；也不把低 source-classification accuracy
+  或单步物体 flow 作为唯一目标，静止时的不同接触构型仍可能影响后续可执行动作。
+
+**验证**
+
+- `rg`/定向源码读取：核对 encoder、anchors、双重监督、Temporal-D2 输入及 loss；未修改运行实现。
+- `python3` 标准库只读复核：读取上述 `metrics.jsonl`，按 source 使用 `statistics.fmean` 重算四个
+  EPE 列并以 `math.isclose(abs_tol=1e-9)` 对照 `diagnosis.json`；全部通过，样本数 `3610/4060`。
+  同次调用使用 `Counter` 核验 split/variant，断言 `len(parent_ids)==len(set(parent_ids))==630`；
+  用 `hashlib.sha256` 分块读取 checkpoint 并与 classifier manifest 比较，通过；从 confusion matrix
+  复算 `65/88`，与归档 accuracy 一致。没有执行新模型评估或建立新实验 run。
+- `git diff --check -- docs/logs/activity_log.md` 和
+  `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log docs/logs/activity_log.md --worktree --scope-prefix docs/logs/activity_log.md --check-links`：通过，最新条目 13 个本地链接均可导航。
+  审计器按实现排除日志自身，报告 0 个其他变更路径；本轮日志差异另以 `git diff` 人工检查。
+- 数值核对属于既有证据复核；不将其记为新的科研实验或更新 Task experiment 结论。
+
+**回滚与规范反馈**
+
+删除本活动条目即可回滚；所有开始时已有的工作区差异保留。本轮只读诊断与 L0 记录未遇到审批阻碍；
+后续训练、配对评估与监督变体仍是建议，尚未形成新的执行计划。本轮未修改治理规则。
 
 ## 2026-09-03 22:03:39 +0800 — V1.2.15 共享运行追溯与测试治理提交边界
 

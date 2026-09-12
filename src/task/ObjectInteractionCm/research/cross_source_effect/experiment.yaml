@@ -1,0 +1,15 @@
+name: cross_source_effect
+modification_version: V1.3.1
+operation_category: [diagnostic, experiment]
+importance: primary
+pinned: true
+tags: [frozen-decoder, mano, inspire-rl, object-effect, observational-matching]
+entrypoint: src.task.ObjectInteractionCm.research.cross_source_effect.run
+guidance: ../../docs/指导/V1.3.md
+plan: ../../docs/plan/V1.3.md
+output: output/<run_id>/
+checkpoint: outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt
+split: val
+seed: 42
+bootstrap_repeats: 2000
+controls: [zero_flow, spatially_shuffled_hand_flow, zero_cm_tokens_keep_anchors]
