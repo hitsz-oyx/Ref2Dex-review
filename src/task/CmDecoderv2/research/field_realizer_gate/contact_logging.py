@@ -70,3 +70,39 @@ def extract_hand_object_contacts(
         normal_force = np.asarray(force, dtype=np.float32).reshape(len(selected), -1)
         normal_force = np.linalg.norm(normal_force, axis=1)
     return {"records": selected, "mask": mask, "normal_force": normal_force.astype(np.float32, copy=False)}
+
+
+class PairwiseContactTracker:
+    """Evaluator-only tracker for one rollout step across all environments.
+
+    Isaac Gym reports body ids in each environment's local domain.  The
+    current asset creation order is hand, then the one-body airplane, then
+    table; the caller supplies the hand body ids and the object body id after
+    validating that ordering from the loaded asset.
+    """
+
+    def __init__(self, *, hand_body_ids: Iterable[int], object_body_ids: Iterable[int]) -> None:
+        self.hand_body_ids = tuple(int(x) for x in hand_body_ids)
+        self.object_body_ids = tuple(int(x) for x in object_body_ids)
+        if not self.hand_body_ids or not self.object_body_ids:
+            raise ValueError("contact tracker requires non-empty hand and object body ids")
+
+    def capture(self, gym: Any, envs: Iterable[Any]) -> dict[str, np.ndarray]:
+        occupancy = []
+        counts = []
+        normal_force = []
+        for env in envs:
+            contacts = extract_hand_object_contacts(
+                gym.get_env_rigid_contacts(env),
+                hand_body_ids=self.hand_body_ids,
+                object_body_ids=self.object_body_ids,
+            )
+            occupancy.append(bool(len(contacts["records"])))
+            counts.append(len(contacts["records"]))
+            finite_force = contacts["normal_force"][np.isfinite(contacts["normal_force"])]
+            normal_force.append(float(finite_force.sum()) if len(finite_force) else np.nan)
+        return {
+            "occupancy": np.asarray(occupancy, dtype=bool),
+            "contact_count": np.asarray(counts, dtype=np.int32),
+            "normal_force": np.asarray(normal_force, dtype=np.float32),
+        }

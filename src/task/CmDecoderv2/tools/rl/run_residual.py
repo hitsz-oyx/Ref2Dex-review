@@ -25,6 +25,7 @@ from rl_games.torch_runner import Runner
 from src.task.CmDecoderv2.kinematics import InspireKinematics, QUERY_LINKS
 from src.task.CmDecoderv2.rl.online_base import sha256
 from src.task.CmDecoderv2.rl.residual_contract import actual_queries, matrix_pose, pose_matrix, sim_to_native
+from src.task.CmDecoderv2.research.field_realizer_gate.contact_logging import PairwiseContactTracker
 
 ROOT = Path(__file__).resolve().parents[5]
 VENDOR = ROOT / "third_party/IsaacGymEnvs"
@@ -74,10 +75,21 @@ def rollout(env, output: Path, policy=None):
     finished = torch.zeros(env.num_envs, device=env.device, dtype=torch.bool)
     successes = torch.zeros_like(finished)
     wrist_track, object_track, actions_track = [], [], []
+    if not hasattr(env.gym, "get_env_rigid_contacts"):
+        raise RuntimeError("V1.1.16 physical Gate requires Isaac Gym pairwise rigid-contact API")
+    hand_max = max(int(x) for x in env.query_indices.detach().cpu().tolist())
+    # Actor creation order is hand -> one-body airplane -> table.  Keep this
+    # evaluator-only assumption explicit in the output metadata.
+    contact_tracker = PairwiseContactTracker(hand_body_ids=range(hand_max + 1), object_body_ids=(hand_max + 1,))
+    contact_occupancy, contact_count, contact_force = [], [], []
     with (output / "rollout_metrics.jsonl").open("w") as log:
         for step in range(env.max_episode_length):
             action = torch.zeros((env.num_envs, 12), device=env.device) if policy is None else policy(env.obs_buf)
             obs, reward, done, info = env.step(action)
+            contact = contact_tracker.capture(env.gym, env.envs)
+            contact_occupancy.append(contact["occupancy"])
+            contact_count.append(contact["contact_count"])
+            contact_force.append(contact["normal_force"])
             active = ~finished
             returns[active] += reward[active]
             # step() auto-resets done envs, so use terminal observations/episode stats.
@@ -98,18 +110,39 @@ def rollout(env, output: Path, policy=None):
             row = {"step": step + 1, "return_mean": returns.mean().item(), "max_lift_mean_m": peaks.mean().item(),
                    "finished": int(finished.sum()), "successes": int(successes.sum()),
                    "residual_rms": action.square().mean().sqrt().item()}
+            row.update({"hand_object_contact_envs": int(contact["occupancy"].sum()),
+                        "hand_object_contact_pairs": int(contact["contact_count"].sum()),
+                        "hand_object_normal_force_sum": float(np.nansum(contact["normal_force"]))})
             log.write(json.dumps(row, allow_nan=False) + "\n")
             if finished.all():
                 break
     if not finished.all():
         raise AssertionError("A full legal reference episode did not terminate")
-    np.savez(output / "rollout.npz", wrist=np.stack(wrist_track), object_pose=np.stack(object_track), actions=np.stack(actions_track))
+    np.savez(output / "rollout.npz", wrist=np.stack(wrist_track), object_pose=np.stack(object_track),
+             actions=np.stack(actions_track), contact_occupancy=np.stack(contact_occupancy),
+             contact_count=np.stack(contact_count), contact_normal_force=np.stack(contact_force))
     result = {"episodes": env.num_envs, "control_steps": step + 1, "success_rate": successes.float().mean().item(),
               "return_mean": returns.mean().item(), "max_lift_mean_m": peaks.mean().item(),
               "max_lift_max_m": peaks.max().item(), "online_decoder_calls": env.base.calls,
+              "contact_occupancy_mean": float(np.mean(np.stack(contact_occupancy))),
+              "longest_contact_steps_env_mean": float(_longest_true_run(np.stack(contact_occupancy), axis=0).mean()),
+              "contact_tracker": {"hand_body_ids": list(range(hand_max + 1)), "object_body_ids": [hand_max + 1],
+                                  "body_order_assumption": "hand_then_one_body_airplane_then_table"},
               "success_definition": "instantaneous object lift > 0.08 m; not sustained grasp"}
     write_json(output / "evaluation.json", result)
     return result
+
+
+def _longest_true_run(values: np.ndarray, axis: int = 0) -> np.ndarray:
+    """Longest contiguous true run, used only for evaluator metrics."""
+    values = np.asarray(values, dtype=bool)
+    values = np.moveaxis(values, axis, 0)
+    best = np.zeros(values.shape[1:], dtype=np.int32)
+    current = np.zeros_like(best)
+    for row in values:
+        current = np.where(row, current + 1, 0)
+        best = np.maximum(best, current)
+    return best
 
 
 @torch.inference_mode()
