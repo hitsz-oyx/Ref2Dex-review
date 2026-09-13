@@ -1,0 +1,10 @@
+name: field_realizer_gate
+modification_version: V1.1.16
+importance: primary
+pinned: true
+tags: [F7, field-realizer, representation, contract-audit]
+entrypoint: src.task.CmDecoderv2.research.field_realizer_gate.audit
+plan: ../../docs/plan/v1.1.md
+run_kind: contract_audit
+training: false
+physics_rollout: false
