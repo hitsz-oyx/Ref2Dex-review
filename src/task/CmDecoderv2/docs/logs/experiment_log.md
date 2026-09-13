@@ -1,5 +1,49 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-13 — V1.1.16 并行离线消融与 GPU contact 能力核验
+
+- modification_version: `V1.1.16`；operation_category: diagnostic / experiment / operation；approval: user-approved。
+- 计划：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)；状态唯一入口：[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+- B1 主训练继续在 GPU7 运行；本次 GPU1 固定 epoch3 checkpoint，GPU0 单独执行 instrument-only
+  contact probe，CPU 核验 D 输入来源；没有改变训练、GT、physics 或主 run checkpoint。
+
+### B1/C0/Cs 离线诊断
+
+- 固定 checkpoint：`step_000012969_epoch_000003.pt`，SHA256 记录在本次 manifest；不是读取不断变化的 best.pt。
+- 全部 30 val sequences、4254 windows，active horizon 共16260，active h1共4065；C0置零raw F7，
+  Cs以seed42对每个window取独立anchor permutation，K内共享，anchor geometry不动。
+
+| 条件 | active sample-horizon point EPE/mm | h1 EPE/mm | 相对B1的预测腕平移变化/mm |
+| --- | ---: | ---: | ---: |
+| B1 | 31.96618123 | 13.64633166 | 0 |
+| C0 | 31.96618122 | 13.64633171 | 0.00001262 |
+| Cs | 31.96618118 | 13.64633168 | 0.00000064 |
+
+- q预测变化：C0 `4.23e-8 rad`，Cs `2.05e-9 rad`。该中间checkpoint对F7干预几乎不敏感，
+  但不能据此否定F7 representation；需要区分训练/实现/信息合同，并以终态统一权重复核。
+- 本次用全体active sample-horizon的micro汇总；训练日志用batch汇总，因此31.966与此前32.054
+  不能被解释为性能提升。结果只是offline sensitivity，未发生物理rollout。
+- conclusion: `SUPPORTED`（本checkpoint输出对这些干预近乎不变）；`INCONCLUSIVE`（Field增量控制价值）。
+- 证据：[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json)、[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/evaluation.json](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/evaluation.json)。
+
+### 真实 GPU contact probe
+
+- 使用contact50 source、64env、原GPU pipeline，连续4个控制步后查询env0；Gym明确返回
+  `GymGetEnvRigidContacts cannot be used with the GPU pipeline after simulation starts`，同时返回空数组。
+- 先前静态hasattr检查不足以通过此Gate；现有tracker的空接触结果不能作为有效指标。按final plan
+  暂停依赖pairwise指标的正式物理Gate，不用net force替代、不切CPU physics。
+- conclusion: `REFUTED`（此API可用于当前GPU pipeline的假设）；`INVALID_IMPLEMENTATION`（现有tracker作为正式接触评估器）；完整Gate仍`INCONCLUSIVE`。
+- 证据：[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/capability.json](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/capability.json)、[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log)。
+
+### D 数据来源核验
+
+- 284/284原始GRAB序列包含24D hand_pose、orient/transl和存在的subject template；parent与actual
+  Inspire raw frame ids逐位一致。此前“MANO-H数据不足”的表述过强，准确状态是尚未完成D接线。
+- 现有GRABSeqData在缺显式betas时采用zero beta + subject template；parent wrist原点是MANO
+  joint0，不能直接拿raw transl代替。mesh/template parity和D相同object-geometry输入仍待实现，未开训。
+- conclusion: `SUPPORTED`（来源可用、帧对齐）；`INCONCLUSIVE`（几何等价及D控制效果）。
+- 证据：[src/task/CmDecoderv2/research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/availability.json](../../research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/availability.json)。
+
 ## 2026-09-13 - V1.1.15 接触起点残差抬升 pilot
 
 - 假设：把 episode 初始化切到原参考轨迹第50帧、避开远距离接近阶段后，冻结 Cm base 上的残差策略是否能改善物体抬升。
