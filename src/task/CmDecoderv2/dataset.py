@@ -47,9 +47,23 @@ class _Sequence:
         self.object_pose = np.load(self.geometry_root / "obj_pose_world.npy", mmap_mode="r")
         self.hand_points = np.load(self.geometry_root / "hand_points_world.npy", mmap_mode="r")
         self.hand_normals = np.load(self.geometry_root / "hand_normals_world.npy", mmap_mode="r")
+        # Stage-2 paired views may provide a separate MANO source stream for
+        # Cm while keeping the target Inspire geometry in the canonical fields.
+        cm_root = Path(entry.get("cm_geometry_root", self.geometry_root))
+        cm_points_path = Path(entry.get("cm_hand_points", cm_root / "knn_hand_points_world.npy"))
+        cm_normals_path = Path(entry.get("cm_hand_normals", cm_root / "knn_hand_normals_world.npy"))
+        if "cm_hand_points" not in entry and not cm_points_path.is_file():
+            cm_points_path = cm_root / "hand_points_world.npy"
+        if "cm_hand_normals" not in entry and not cm_normals_path.is_file():
+            cm_normals_path = cm_root / "hand_normals_world.npy"
+        self.cm_hand_points = np.load(cm_points_path, mmap_mode="r")
+        self.cm_hand_normals = np.load(cm_normals_path, mmap_mode="r")
         active_path = self.geometry_root / "obj_candidate_mask_5cm.npy"
         if not active_path.is_file():
             active_path = self.geometry_root / "obj_candidate_mask_2cm.npy"
+        cm_active_path = Path(entry.get("cm_active_mask", cm_root / "obj_candidate_mask_2cm.npy"))
+        if cm_active_path.is_file():
+            active_path = cm_active_path
         if not active_path.is_file():
             raise FileNotFoundError(f"Missing candidate mask for decoder view {self.id}: {self.geometry_root}")
         active = np.load(active_path, mmap_mode="r")
@@ -64,6 +78,9 @@ class _Sequence:
         self.knn_hand_points = None
         self.knn_hand_normals = None
         self.knn_edge_indices = None
+        self.cm_knn_hand_points = None
+        self.cm_knn_hand_normals = None
+        self.cm_knn_edge_indices = None
         knn_paths = {
             "points": self.geometry_root / "knn_hand_points_world.npy",
             "normals": self.geometry_root / "knn_hand_normals_world.npy",
@@ -75,6 +92,15 @@ class _Sequence:
             self.knn_hand_points = np.load(knn_paths["points"], mmap_mode="r")
             self.knn_hand_normals = np.load(knn_paths["normals"], mmap_mode="r")
             self.knn_edge_indices = np.load(knn_paths["indices"], mmap_mode="r")
+        cm_knn_paths = {
+            "points": cm_root / "knn_hand_points_world.npy",
+            "normals": cm_root / "knn_hand_normals_world.npy",
+            "indices": cm_root / "obj_knn_indices.npy",
+        }
+        if all(path.is_file() for path in cm_knn_paths.values()):
+            self.cm_knn_hand_points = np.load(cm_knn_paths["points"], mmap_mode="r")
+            self.cm_knn_hand_normals = np.load(cm_knn_paths["normals"], mmap_mode="r")
+            self.cm_knn_edge_indices = np.load(cm_knn_paths["indices"], mmap_mode="r")
         expected = (self.frame_count,)
         arrays = (
             self.object_points,
@@ -86,6 +112,8 @@ class _Sequence:
             self.source_frame,
             self.q_native,
             self.wrist_pose,
+            self.cm_hand_points,
+            self.cm_hand_normals,
         )
         if any(len(array) != self.frame_count for array in arrays):
             raise ValueError(f"Frame mismatch in decoder view {self.id}, expected {expected[0]}")
@@ -99,6 +127,16 @@ class _Sequence:
                 or self.knn_edge_indices.shape[1] != self.object_points.shape[1]
             ):
                 raise ValueError(f"Invalid V1.3 KNN geometry shapes for decoder view {self.id}")
+        if self.cm_knn_hand_points is not None:
+            if (
+                self.cm_knn_hand_points.ndim != 3
+                or self.cm_knn_hand_points.shape[0] != self.frame_count
+                or self.cm_knn_hand_normals.shape != self.cm_knn_hand_points.shape
+                or self.cm_knn_edge_indices.ndim != 3
+                or self.cm_knn_edge_indices.shape[0] != self.frame_count
+                or self.cm_knn_edge_indices.shape[1] != self.object_points.shape[1]
+            ):
+                raise ValueError(f"Invalid paired Cm KNN geometry shapes for decoder view {self.id}")
 
 
 class CmDecoderV2Dataset(Dataset):
@@ -222,13 +260,14 @@ class CmDecoderV2Dataset(Dataset):
             object_points.append(_points_world_to_frame(sequence.object_points[frame, selected], pose))
             object_normals.append(_normals_world_to_frame(sequence.object_normals[frame, selected], pose))
             if self.hand_stream_mode == "unique_knn_edges":
-                assert sequence.knn_hand_points is not None
-                assert sequence.knn_hand_normals is not None
-                assert sequence.knn_edge_indices is not None
-                current_full = _points_world_to_frame(sequence.knn_hand_points[frame], pose)
-                future_full = _points_world_to_frame(sequence.knn_hand_points[frame + 1], pose)
-                current_normals_full = _normals_world_to_frame(sequence.knn_hand_normals[frame], pose)
-                sampled_edges = np.asarray(sequence.knn_edge_indices[frame, selected], dtype=np.int64)
+                cm_points = sequence.cm_knn_hand_points if sequence.cm_knn_hand_points is not None else sequence.knn_hand_points
+                cm_normals = sequence.cm_knn_hand_normals if sequence.cm_knn_hand_normals is not None else sequence.knn_hand_normals
+                cm_edges = sequence.cm_knn_edge_indices if sequence.cm_knn_edge_indices is not None else sequence.knn_edge_indices
+                assert cm_points is not None and cm_normals is not None and cm_edges is not None
+                current_full = _points_world_to_frame(cm_points[frame], pose)
+                future_full = _points_world_to_frame(cm_points[frame + 1], pose)
+                current_normals_full = _normals_world_to_frame(cm_normals[frame], pose)
+                sampled_edges = np.asarray(cm_edges[frame, selected], dtype=np.int64)
                 edge_points = current_full[sampled_edges]
                 edge_distances = np.linalg.norm(
                     edge_points - object_points[-1][:, None, :],
@@ -308,11 +347,15 @@ class CmDecoderV2Dataset(Dataset):
             "hand_flow": torch.from_numpy(padded_hand_flow),
             "hand_valid_mask": torch.from_numpy(padded_hand_valid),
             "current_finger_q": torch.from_numpy(current_finger.astype(np.float32)),
+            # Preserve the complete observed Inspire state.  The decoder
+            # action remains six-dimensional, but observation FK must not
+            # reconstruct this state through the mimic ratios.
+            "current_native_q": torch.from_numpy(current_native.astype(np.float32)),
             "current_wrist_pose_world": torch.from_numpy(current_wrist.astype(np.float32)),
             "object_pose_world": torch.from_numpy(object_pose_start.astype(np.float32)),
             "current_wrist_translation_object": torch.from_numpy(current_object[:3, 3].astype(np.float32)),
             "current_wrist_rotation_6d_object": torch.from_numpy(_rotation_6d(current_object[:3, :3])),
-            "current_link_features": torch.from_numpy(self.kinematics.query_features(current_finger, current_wrist, object_pose_start)),
+            "current_link_features": torch.from_numpy(self.kinematics.query_features_native(current_native, object_pose_start)),
             "target_q_delta": torch.from_numpy(np.stack(target_q_delta).astype(np.float32)),
             "target_wrist_translation": torch.from_numpy(np.stack(target_translation).astype(np.float32)),
             "target_wrist_rotation": torch.from_numpy(np.stack(target_rotation).astype(np.float32)),
@@ -320,6 +363,7 @@ class CmDecoderV2Dataset(Dataset):
             # One mask entry per source frame/Cm horizon.  This is the exact
             # full-object-pool candidate mask, before OICM point sampling.
             "active_mask": torch.from_numpy(active_mask),
+            "cm_source_stream": torch.tensor(1 if sequence.cm_knn_hand_points is not None else 0, dtype=torch.int64),
             "sequence_id": sequence.id,
             "start_frame": torch.tensor(start, dtype=torch.int64),
             "source_frame_id": torch.tensor(int(sequence.source_frame[start]), dtype=torch.int64),
@@ -379,9 +423,17 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     view_root = _resolve(str(data_cfg.view_root))
     index_path = view_root / "index.json"
     index = json.loads(index_path.read_text(encoding="utf-8"))
-    if index.get("schema_name") != "ref2dex_cm_decoder_v2_dexplore_view_v1":
+    if index.get("schema_name") not in {
+        "ref2dex_cm_decoder_v2_dexplore_view_v1",
+        "ref2dex_cm_decoder_v2_dexplore_paired_view_v1",
+    }:
         raise ValueError(f"Unsupported CmDecoderv2 view: {index.get('schema_name')!r}")
-    if index.get("split_contract") != {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"}:
+    split_contract = index.get("split_contract")
+    allowed_split_contracts = (
+        {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"},
+        {"train": "mano_source_actual_inspire", "val": "mano_source_actual_inspire", "test": "not_built"},
+    )
+    if split_contract not in allowed_split_contracts:
         raise ValueError("CmDecoderv2 view split contract changed")
     common = dict(
         urdf_path=_resolve(str(data_cfg.urdf_path)), window_size=int(meta_cfg.window_size),
@@ -425,8 +477,8 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         "view_index": str(index_path),
         "view_cache_manifest": str(view_root / "manifest.json"),
         "view_run_manifest": str(view_root / "run_manifest.json"),
-        "source_index_sha256": index["source_index_sha256"],
-        "urdf_sha256": index["urdf_sha256"],
+        "source_index_sha256": index.get("source_index_sha256", "paired_view:" + str(index.get("source_actual_index", "unknown"))),
+        "urdf_sha256": index.get("urdf_sha256", "paired_view:task_urdf"),
         "point_flow_hand_points": int(meta_cfg.num_hand_points),
         "point_flow_target_file": str(index.get("point_flow_supervision", {}).get("target_file", "")),
         "hand_stream_mode": str(getattr(meta_cfg, "hand_stream_mode", "decoder")),

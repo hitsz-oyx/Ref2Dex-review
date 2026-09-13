@@ -197,6 +197,20 @@ class DifferentiableInspireSurface(nn.Module):
         points = torch.einsum("bnj,bnkj->bnk", local_points, transforms[..., :3, :3]) + transforms[..., :3, 3]
         return points.reshape(*leading, self.surface_points_local.shape[0], 3)
 
+    def link_points(self, finger_q: torch.Tensor, wrist_pose_world: torch.Tensor,
+                    link_names: tuple[str, ...]) -> torch.Tensor:
+        """Return world positions of selected links for constrained retargeting."""
+        if not link_names:
+            raise ValueError("link_names must be non-empty")
+        leading = finger_q.shape[:-1]
+        flat_q = finger_q.reshape(-1, 6)
+        flat_wrist = wrist_pose_world.reshape(-1, 4, 4).to(dtype=finger_q.dtype)
+        finger_q = torch.maximum(torch.minimum(flat_q, self.finger_upper.to(dtype=finger_q.dtype)), self.finger_lower.to(dtype=finger_q.dtype))
+        canonical = self._canonical_links(finger_q)
+        world_links = (flat_wrist @ self.zero_hand_base_inverse.to(dtype=finger_q.dtype))[:, None] @ canonical
+        indices = [self.link_names.index(name) for name in link_names]
+        return world_links[:, indices, :3, 3].reshape(*leading, len(indices), 3)
+
 
 def make_relative_transform(rotvec: torch.Tensor, translation: torch.Tensor) -> torch.Tensor:
     """Build current-wrist-local SE(3) deltas from decoder outputs."""

@@ -1,8 +1,563 @@
 # CmDecoderv2 活动记录
 
 - scope: `src/task/CmDecoderv2/`
-- last_updated: 2026-09-12
+- last_updated: 2026-09-13
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+## 2026-09-13 10:29:45 +0800 - V1.1.14 IsaacGymEnvs vendor 迁移记录
+
+- timestamp: 2026-09-13 10:29:45 +0800
+- activity_id: ACT-20260913-102945-CM-ISAACGYM-VENDOR
+- modification_version: V1.1.14
+- type: governance / code / operation / documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认将 IsaacGymEnvs 纳入 Ref2Dex 的 `third_party/IsaacGymEnvs` subtree/vendor 路径。
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- import_commit: e1aabc1897bd27c793a765ec58e6145fb47ee02f
+- scope: upstream `release/1.5.1` commit `aeed298638a1f7b5421b38f5f3cc2d1079b6d9c3` 已以 squashed snapshot 导入；外部 checkout 保留为只读 mirror；当前 CmResidual 修改随 vendor 路径保留为未提交差异；未迁移 runs、日志、cache 或 checkpoint。
+- run_id: `cm_residual_decoder_bank_vendor_smoke_20260913_102945`
+- run_status: COMPLETED
+- output: [runs/CmResidual_13-10-29-45](../../../../../runs/CmResidual_13-10-29-45/)、[run_manifest.json](../../../../../runs/CmResidual_13-10-29-45/run_manifest.json)。vendor 路径 smoke exit_code=0，action `(12,)`、observation `(71,)`。
+- conclusion: SUPPORTED（vendor 路径和现有 RL task 可运行）；INCONCLUSIVE（正式RL和物理任务效果）。
+
+**原因**
+
+统一到 Ref2Dex 后，VSCode 的同一 Git 工作区可以直接显示 IsaacGymEnvs 基线和 CmResidual 本地修改；上游 provenance 与回滚入口保留在 [third_party/IsaacGymEnvs/UPSTREAM.md](../../../../../third_party/IsaacGymEnvs/UPSTREAM.md)。
+
+**验证**
+
+- vendor task/config `py_compile` 通过；Ref2Dex 定向测试 `8 passed`。
+- 从 Ref2Dex 根目录执行 vendor IsaacGymEnvs GPU smoke，object asset 解析到 vendor 内部路径，单 PPO epoch 完成；未完成 episode，`rew=-inf` 不作策略结论。
+- 根 `runs/` 已加入 `.gitignore`；外部仓库未删除、reset 或改写历史。
+
+**累计工作树路径**
+
+`src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/runner.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`; `src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/rl/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_residual_contract.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py`; `src/task/CmDecoderv2/tools/rl/`。
+
+## 2026-09-13 10:13:44 +0800 - V1.1.14 当前 best.pt 接入残差 RL smoke
+
+- timestamp: 2026-09-13 10:13:44 +0800
+- activity_id: ACT-20260913-101344-DECODER-BANK-RL-SMOKE
+- modification_version: V1.1.14
+- type: code / operation / diagnostic / documentation
+- task_mode: change + run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求先用当前 best.pt 跑通 RL 训练接口；沿用已批准的 reference-conditioned residual RL 范围，不启动正式策略训练。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true（保留既有差异；外部 IsaacGymEnvs 修改不回滚）
+- scope: 新增 Task-local decoder bank exporter；外部 IsaacGymEnvs `CmResidual` 增加显式 `decoder_bank` provider 和 `CmResidualDecoderBank` alias/config。当前 decoder best 在离线 paired view 上以 teacher-forced one-step 生成 q/wrist bank，RL task 启动时校验 bank schema 与 checkpoint SHA，再冻结 bank 作为 base；未声称在线 decoder 闭环。
+- decoder_bank_run_id: `rl_decoder_bank_s1_airplane_best_20260913`; status: COMPLETED; 432帧、覆盖428帧；checkpoint SHA=`420ba5798bb668cc96bfbb266bf999bb17ef920b247410afc860245eca276201`。
+- run_id: `cm_residual_decoder_bank_isaac_smoke_20260913_101311`
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=4 PYTHONPATH=/home2/wyy/oyx_ws/Ref2Dex:/home2/wyy/oyx_ws/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python isaacgymenvs/train.py task=CmResidualDecoderBank train=CmResidualPPO headless=True num_envs=4 max_iterations=1 force_render=False pipeline=gpu sim_device=cuda:0 rl_device=cuda:0 train.params.config.minibatch_size=128`
+- output: `/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/`；one PPO epoch completed, action space `(12,)`, observation space `(71,)`；未有 episode termination，`rew=-inf` 是一轮 smoke 的统计伪影。
+- conclusion: SUPPORTED（best.pt→decoder bank→IsaacGymEnvs provider→PPO 单迭代接口）；INCONCLUSIVE（在线闭环解码、残差策略学习、抓取成功）。
+
+**原因**
+
+现有 task 的 `decoder` provider 原先 fail-closed，直接运行会绕过 best.pt。此次增加可审计的离线 bank provider，先验证 checkpoint 身份、base 轨迹加载、物理环境、动作/观测合同和 PPO wiring；bank 明确不是在线 receding-horizon decoder。
+
+**验证**
+
+- exporter 在 GPU4 strict-load 当前 best.pt，输出 432 帧 q/wrist bank，manifest 中 checkpoint SHA 与文件一致。
+- IsaacGymEnvs alias task 启动时成功校验 decoder bank schema/SHA，加载 Inspire 18-DOF 资产，报告 action `(12,)`、observation `(71,)`，完成一轮 PPO；exit_code=0。
+- `run_manifest.json` 已写入 RL run 目录；外部日志中的 `rew=-inf` 仅因 max_iterations=1 且无 episode 完成，不作为策略结果。
+
+**产物与回滚**
+
+- [decoder bank](../../../../../outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/)、[bank manifest](../../../../../outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/manifest.json)。
+- RL smoke目录：`/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/`；run_manifest：`/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/run_manifest.json`。
+- 修改入口：`src/task/CmDecoderv2/tools/rl/export_decoder_bank.py`、外部 `IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`、`tasks/__init__.py`、`cfg/task/CmResidualDecoderBank.yaml`；回滚只隔离这些新增/修改的接口文件与 bank/run 输出，不删除当前 decoder 微调或旧 RL smoke。
+
+**累计工作树路径**
+
+`docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/runner.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`; `src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/rl/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_residual_contract.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py`; `src/task/CmDecoderv2/tools/rl/`。
+
+## 2026-09-13 10:02:37 +0800 - V1.1.14 微调中期状态核对
+
+- timestamp: 2026-09-13 10:02:37 +0800
+- activity_id: ACT-20260913-100237-MANO-ACTUAL-FINETUNE-STATUS
+- modification_version: V1.1.14
+- type: diagnostic / operation / documentation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问当前微调是否收敛及剩余时间；只读运行日志、metrics、进程和checkpoint，不改变训练变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true（保留既有差异）
+- scope: 核对 run_id `cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251` 的中期状态。
+- run_status: RUNNING；last_observed_step=8500/31940，已完成5个epoch，epoch6进行中；GPU三卡进程仍存在。
+- validation_snapshot: val/loss 为 epoch1/2/3/4/5 = 0.00615713/0.00601656/0.00596945/0.00603457/0.00600916；当前 best 为 epoch3/step4791；val h1 point-flow EPE 最佳约8.428mm，epoch5为8.432mm；val h1 q MAE 最佳约0.03986rad（epoch3），epoch5回升至0.04821rad。
+- convergence_assessment: 尚不能称最终收敛；epoch3后验证指标进入平台并有轻微波动，属于中期 plateau 信号，20 epoch 计划仍继续执行。当前吞吐估计剩余约1.7–1.9小时，随验证和机器负载变化。
+- conclusion: SUPPORTED（运行正常、指标有限、checkpoint持续写入）；INCONCLUSIVE（最终收敛、微调收益和跨手/RL效果）。
+
+**原因**
+
+中期验证集改善在 epoch3 后停止，需区分暂时平台与完整训练收敛；不提前停止，以免把 cosine 退火尚未完成的运行误判为终态。
+
+**验证**
+
+- `metrics.jsonl` 已有94条记录和5条完整 val 记录，全部可解析；`best.pt` 为epoch3附近，`latest.pt` 已更新到epoch5。
+- `train.log` 最新记录 step8500/epoch6，未见异常退出、OOM或非有限值；`pgrep` 显示 torch.distributed 三进程仍在运行。
+
+**产物**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/train.log)、[best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/best.pt)、[latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/latest.pt)。
+
+**累计工作树路径**
+
+`docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/runner.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`; `src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/rl/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_residual_contract.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py`。
+
+## 2026-09-13 09:24:02 +0800 - V1.1.14 MANO→actual Inspire 微调启动
+
+- timestamp: 2026-09-13 09:24:02 +0800
+- activity_id: ACT-20260913-092402-MANO-ACTUAL-FINETUNE-START
+- modification_version: V1.1.14
+- type: data / experiment / operation / diagnostic
+- task_mode: change + run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求开始已确认的 MANO source→actual Inspire 两阶段微调；沿用最终计划，不改变6维独立输出、实际12维状态或三卡设置。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true（保留既有差异；未覆盖旧代码、数据或checkpoint）
+- scope: 使用 paired view 将 MANO parent surface 作为 source、Dexplore actual Inspire geometry/q/wrist 作为 target；254 train/30 val，排除 `s2/mug_drink_2` 的缺失 MANO provenance。冻结 OICM，加载阶段一 best 作为 decoder 初始化，三卡每卡 batch8/global24，20 epoch；不修改RL任务或旧运行。
+- paired_view_run_id: `mano_actual_finetune_v1_1_14_eligible_20260913`; paired_view_status: COMPLETED; counts: train=254, val=30, test=0; excluded=1。
+- smoke_run_id: `cm_decoder_v2_mano_actual_finetune_smoke_20260913_091945`; smoke_status: COMPLETED; 10 steps/42s；有限 train/val 指标，strict 初始化加载通过。
+- run_id: `cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251`
+- run_status: RUNNING
+- command: `CUDA_VISIBLE_DEVICES=0,1,3 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 timeout --signal=INT --kill-after=30s 21600 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml`
+- output: [outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/)（RUNNING；终态指标/checkpoint待补写）
+- progress_snapshot: 2026-09-13 09:24 左右 step=200/31940，train h1 point-flow EPE=6.04841mm，loss=0.00434146，进程仍运行；当前吞吐估计剩余约2.4小时，仅作动态估计。
+- conclusion: SUPPORTED（paired 数据契约、三卡初始化与训练循环 smoke/正式运行可用）；INCONCLUSIVE（MANO→actual 微调是否改善、跨手效果与RL任务成功）。
+
+**原因**
+
+用户已确认先完成两阶段 decoder 微调；本次先完成 source/target 数据隔离、eligible 样本门控和短程 smoke，再启动正式三卡运行。当前只记录工程运行证据，不把中途指标解释为科研结论。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' ... pytest -q src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py src/task/CmDecoderv2/tests/test_kinematics.py src/task/CmDecoderv2/tests/test_pointflow.py src/task/CmDecoderv2/tests/test_dataset.py src/task/CmDecoderv2/tests/test_residual_contract.py`：17 passed。
+- paired view `index.json`、根 `manifest.json`、`run_manifest.json` 均可解析；source/target stream smoke shape、finite、source active mask 和 target supervision 均通过。
+- smoke train/val metrics 全部有限，最终 exit_code=0；正式 run 已完成 setup、三进程均加载 `initial.pt`，未检测到OOM或配置回退。
+
+**产物与回滚**
+
+- paired view：[data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913](../../../../../data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913/)、[index.json](../../../../../data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913/index.json)、[manifest.json](../../../../../data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913/manifest.json)、[run_manifest.json](../../../../../data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913/run_manifest.json)。
+- formal output：[运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/)、[run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/run_manifest.json)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/train.log)（运行中；终态checkpoint链接待补写）。
+- 初始化权重：[initial.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_20260913/checkpoints/initial.pt)；旧阶段一权重和旧失败paired prep均保留，不删除、不覆盖。
+- 回滚入口：停止 `run_id` 对应进程并隔离本次新增配置/paired view/运行目录；不回滚用户既有工作树差异。
+
+**累计工作树路径**
+
+`docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/runner.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`; `src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/rl/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_residual_contract.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py`。
+
+## 2026-09-13 08:50:12 +0800 - V1.1.14 长训终态核对
+
+- timestamp: 2026-09-13 08:50:12 +0800
+- activity_id: ACT-20260913-085012-COUPLED-LONG-END
+- modification_version: V1.1.14
+- type: diagnostic / operation / documentation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问训练是否完成；只读已有运行并补记原用户批准长训的终态，不重跑或改变实验变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true（保留检查前全部既有差异）
+- scope: 只追加本活动；不修改代码、配置、数据、checkpoint、版本指针、实验结论、指导或架构快照。
+- run_id: cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622
+- run_id_correction: 启动条目的 `cm_decoder_v2_coupled_geometric_batch8_long_20260912_234000` 是预先登记别名；此处以实际目录及原 run_manifest 的 run_name 为准，对应 ACT-20260912-234000-COUPLED-LONG-START，不是新运行。
+- run_status: COMPLETED
+- last_step: 83150
+- last_epoch: 50
+- best_metric: val/loss=0.0017697377727122（epoch47/step78161）
+- elapsed: 06:31:48（train.log 训练循环记录）；最新checkpoint于2026-09-13约06:28落盘。
+- exit_code: 0（恢复原执行session 73337取得）；pgrep 未发现该训练进程。
+- command: `CUDA_VISIBLE_DEVICES=0,1,3 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 timeout --signal=INT --kill-after=30s 36000 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml --set name=cm_decoder_v2_coupled_geometric_batch8_long --set train.epochs=50 --set train.max_steps=null`
+- conclusion: SUPPORTED（正常完成与已有指标/checkpoint一致）；INCONCLUSIVE（Cm跨手能力、闭环适配和RL效果）。不新增科研结论。
+
+**文件**
+
+仅追加 [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)；沿用 [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)，未修改计划。
+
+**原因**
+
+用户查询既有训练状态；用进程退出码、完成日志、50轮验证记录和checkpoint字段交叉核对，避免把进程消失误报为正常完成。
+
+**验证**
+
+- `pgrep -af '[c]m_decoder_v2_coupled_geometric_batch8_long'` 无匹配；`tail -n 10 outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/train.log` 含 `Training finished at step 83150 in 06:31:48.`；原执行session返回exit_code=0。
+- graspenv Python按JSON解析metrics.jsonl：931条记录、50条val记录，无非有限数；argmin(val/loss)为epoch47，与best.pt一致。CPU读取best/latest，各124个model tensor全部有限；latest为epoch50/step83150。此核对不替代重新推理评估或strict模型重建测试。
+- 最佳epoch47的h1表面EPE=2.530714mm、四horizon平均=6.944699mm、腕平移=3.654358mm、腕旋转=1.796353deg；h1 q MAE=0.007450926rad，identity=0.006188740rad，手指角度尚未超过该基线。
+- epoch45/47/50 val/loss=0.001779085/0.001769738/0.001771657；末几轮变化很小，但cosine学习率已趋近零，不据此证明换优化日程也不会改善。
+- 本次为几何监督50epoch；未运行MANO参考到实际Inspire微调、在线decoder仿真或正式残差RL训练。
+
+**产物与回滚**
+
+- 运行目录：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/)；manifest：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/run_manifest.json)。
+- 指标：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/metrics.jsonl)；日志：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/train.log)。
+- 最佳：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/checkpoints/best.pt)；最近：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/checkpoints/latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/checkpoints/latest.pt)。
+- 只追加状态记录，无运行产物写入，无需模型/数据回滚；不修改或清理已有dirty工作树。
+- 规范反馈：无新增阻碍；审计仅限定本次追加的activity文件，不把其他既有dirty文件误记成本次修改。
+
+## 2026-09-13 00:19:02 +0800 — V1.1.14 IsaacGymEnvs CmResidual wiring smoke
+
+- timestamp: 2026-09-13 00:19:02 +0800
+- activity_id: ACT-20260913-001902-CM-RESIDUAL-SMOKE
+- modification_version: V1.1.14
+- type: code / operation / diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认 airplane_lift、12维残差动作、冻结 Cm/OICM/base、71维实际状态观测四项接口。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: Ref2Dex 新增残差动作展开/映射合同与测试；外部 IsaacGymEnvs 注册 `CmResidual` task、task/train 配置。未修改 Cm decoder/OICM 主干、数据 split、GT 或长训配置。
+- files: [src/task/CmDecoderv2/rl/residual_contract.py](../../rl/residual_contract.py)、[src/task/CmDecoderv2/tests/test_residual_contract.py](../../tests/test_residual_contract.py)、外部 `/home2/wyy/oyx_ws/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`、`tasks/__init__.py`、`cfg/task/CmResidual.yaml`、`cfg/train/CmResidualPPO.yaml`。
+- environment: 在共享 `graspenv` 安装/升级 hydra-core、omegaconf、pyvirtualdisplay、warp-lang、pysdf、urdfpy、rl-games==1.6.5；其中 urdfpy 将 networkx 降至2.2，rl-games 同时更新 gym/psutil 等，属于环境漂移风险，未改变长训进程。
+- run_id: `cm_residual_isaac_smoke_20260913_001902`
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=4 PYTHONPATH=/home2/wyy/oyx_ws/Ref2Dex:/home2/wyy/oyx_ws/IsaacGymEnvs OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python isaacgymenvs/train.py task=CmResidual train=CmResidualPPO headless=True num_envs=4 max_iterations=1 force_render=False pipeline=gpu sim_device=cuda:0 rl_device=cuda:0 train.params.config.minibatch_size=128`
+- output: `/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-00-18-30/nn/last_CmResidual_ep_1_rew_-inf.pth`
+- evidence: Hydra registration, Inspire 18-DOF asset load, GPU PhysX, action space `(12,)`, observation space `(71,)`, actor forward and one PPO epoch completed. `rew=-inf` is a one-epoch/no-terminated-episode artifact, not a policy result.
+- conclusion: SUPPORTED（任务注册、动作/观测合同和单步 GPU wiring）；INCONCLUSIVE（残差策略学习、物理抓取、CmDecoder 在线闭环）。`reference_frozen` 是唯一可运行 provider；`decoder` provider 在缺少 Cm-bank adapter 时 fail-closed。
+- validation: Ref2Dex focused pytest `17 passed`; external task py_compile passed. Smoke 前三次失败均为局部兼容/索引问题，已修复并在上述终态重跑通过。
+- rollback: 隔离外部 checkout 的四个新增/修改文件和 Ref2Dex 新增 `rl/`；不删除长训、旧输出或用户已有改动。
+- cumulative_dirty_paths: `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`, `src/task/CmDecoderv2/dataset.py`, `src/task/CmDecoderv2/docs/logs/experiment_log.md`, `src/task/CmDecoderv2/docs/plan/v1.1.md`, `src/task/CmDecoderv2/kinematics.py`, `src/task/CmDecoderv2/pointflow.py`, `src/task/CmDecoderv2/research/dexplore_contract_audit/`, `src/task/CmDecoderv2/rl/`, `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`, `src/task/CmDecoderv2/tests/test_pointflow.py`, `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`, `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`, `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`。
+
+**原因**
+
+按用户确认的四项接口搭建 IsaacGymEnvs 残差策略最小任务，并在不占用长训 GPU 的 GPU4 上做单迭代 wiring 验收；decoder 在线 provider 依赖尚未实现的 Cm-bank adapter，因此保持显式 fail-closed。
+
+**验证**
+
+`CUDA_VISIBLE_DEVICES='' ... pytest ...`：17 passed；外部 task 与 Ref2Dex contract `py_compile` 通过；IsaacGymEnvs 单迭代 smoke 完成并生成 checkpoint。当前长训仍为 `RUNNING`，不在本条中提前写终态指标。
+
+## 2026-09-12 23:40:00 +0800 — V1.1.14 三卡50epoch长训启动
+
+- timestamp: 2026-09-12 23:40:00 +0800
+- activity_id: ACT-20260912-234000-COUPLED-LONG-START
+- modification_version: V1.1.14
+- type: operation / experiment
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求启动长训；沿用已完成的全量FK验收和5epoch batch8配置，不改变研究变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 从随机decoder开始，冻结OICM，使用V1.1.14耦合view、`v1_3_cache`、三卡每卡batch8、50epoch；不resume 5epoch checkpoint，不修改RL代码、外部IsaacGymEnvs、数据/GT/split或共享src/base。
+- run_id: `cm_decoder_v2_coupled_geometric_batch8_long_20260912_234000`
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=0,1,3 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 timeout --signal=INT --kill-after=30s 36000 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml --set name=cm_decoder_v2_coupled_geometric_batch8_long --set train.epochs=50 --set train.max_steps=null`
+- initial_checkpoint: none；每卡batch8/global24、seed42、FP32、无状态扰动、workers0；预计约6–7小时，超时或资源异常安全停止。
+- output: [outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_long_20260912_235622/)（RUNNING；实际目录已生成，终态指标/最佳checkpoint待补写）。
+- progress_snapshot: 2026-09-13 00:19 左右已完成约3个epoch/4989步，`val/loss=0.00938727`；进程仍在运行，预计总耗时约6–7小时。
+
+**原因**
+
+5epoch仍有持续但变小的验证集改善，且未观察到过拟合；用户要求继续长训。该运行只回答几何阶段优化是否继续改善，不代表跨手迁移或物理RL成功。
+
+**验证**
+
+- 启动前FK gate：`coupled_fk_gate_v14_20260912_224950` COMPLETED；最大标签到FK误差0.000491738mm。
+- 5epoch前置运行：`cm_decoder_v2_coupled_geometric_batch8_20260912_225225` COMPLETED，作为速度和显存基准，不作为初始化权重。
+- 终态将补写last_step/last_epoch、best metric、checkpoint、metrics/train log及结论；运行期间不创建RL代码。
+
+## 2026-09-12 23:34:52 +0800 — V1.1.14 三卡batch8的5epoch训练完成
+
+- timestamp: 2026-09-12 23:34:52 +0800
+- activity_id: ACT-20260912-233452-COUPLED-FIVE-EPOCH-END
+- modification_version: V1.1.14
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求耦合标签与预测FK一致后训练、扩大batch并继续；沿用已说明的三卡200步smoke和5epoch初步训练范围。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 新增batch8显式配置、只读全帧FK验收及定向测试、新版本同内容轻量view与本次运行/记录；不改Cm主干、6维输出、原始参考/实际状态、旧cache/split/checkpoint、共享src/base、外部仓库、指导和架构快照。
+- run_id: cm_decoder_v2_coupled_geometric_batch8_20260912_225225
+- run_status: COMPLETED
+- last_step: 8315
+- last_epoch: 5
+- best_metric: val/loss=0.00901879200305763（epoch5/step8315）
+- actual_elapsed: 40分24秒（训练循环含5次验证和checkpoint），exit_code=0；未触发1小时timeout，无OOM，GPU2/4/5训练进程均已退出。
+- command: `CUDA_VISIBLE_DEVICES=2,4,5 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 timeout --signal=INT --kill-after=30s 3600 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`
+- conclusion: SUPPORTED（全量标签FK合同及batch8三卡工程可运行）；INCONCLUSIVE（Cm跨手表征、完整手运动学习、实际状态适配或RL成功）。不将本次无扰动初步训练称为闭环训练或合格RL base。
+
+**文件**
+
+- 本次新增：[src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml](../../configs/active/coupled_geometric_v1_batch8.yaml)、[src/task/CmDecoderv2/research/dexplore_contract_audit/verify_coupled_view.py](../../research/dexplore_contract_audit/verify_coupled_view.py)；扩展[src/task/CmDecoderv2/tests/test_pointflow.py](../../tests/test_pointflow.py)；更新计划/版本/活动/实验记录。生成view和输出均被Git忽略，没有提交。
+- 为累计worktree审计列出本边界保留文件，不表示本事件再次改写它们：`docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`。
+
+**原因**
+
+修正旧启动遗漏的V1.3表面采样配置，按用户扩大batch的请求确认运行稳定性及真实epoch耗时。4个旧耦合smoke的学习证据已在本版本重新标记INVALID_IMPLEMENTATION，旧目录不删、权重不resume。
+
+**验证**
+
+- 全量FK gate run_id `coupled_fk_gate_v14_20260912_224950`、run_status COMPLETED：285条/72935帧，最大逐点误差0.000491738mm；mimic和全部手指限位通过。新旧view的285条q/wrist逐位一致，348条身份/split/geometry路径不变。原数据不覆盖。
+- batch8/global24、GPU2/4/5、graspenv、FP32、workers0、无状态扰动、seed42、新初始化decoder，冻结OICM v1.3。8315步性能窗口均值266.802ms，窗口p05/p95为261.491/271.726ms，data_wait平均占46.51%；验证间隔实测约484–488秒/epoch。同设置50epoch约6.7小时，非收敛时间承诺。
+- 5轮val/loss依次0.00943987、0.00947883、0.00910965、0.00906360、0.00901879；h1表面EPE依次11.4056、11.3262、10.9544、10.8358、10.7753mm；最终四horizon平均25.9471mm。数字使用现有Runner聚合，不冒充独立样本micro或序列macro统计。
+- 最终h1腕部平移12.1966mm，identity为15.6140mm；手指q MAE0.00779017rad，identity为0.00618874rad；腕部旋转2.57239deg，identity为2.47760deg。改善不是各分量一致发生；没有Cm交换对照、独立test或物理rollout，不能归因于跨手表征成立。
+- 定向命令：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py src/task/CmDecoderv2/tests/test_kinematics.py src/task/CmDecoderv2/tests/test_pointflow.py src/task/CmDecoderv2/tests/test_dataset.py`：15 passed；包含新配置与view版本/表面对应，以及legacy采样不对应的回归。`git diff --check`通过。
+- 终态读取93条metrics记录，所有数字有限；best/latest均为step8315/epoch5，内嵌V1.1.14、新view及`v1_3_cache`。由checkpoint内嵌config重建模型并`load_state_dict(strict=True)`全key匹配，权重有限；60个OICM state tensor与原checkpoint逐位一致，全部OICM参数仍冻结。
+- best.pt SHA256：`1739175b789e22158b67d4c2f7b653f32f519dbba5e31f1bb4713027dac134b6`；原OICM文件SHA仍为`3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+
+**产物与回滚**
+
+- 运行目录（56MiB）：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/)。
+- [outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/config.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/config.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/train.log)。
+- 最佳：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/best.pt)；最近：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/latest.pt)。
+- 全量验收：[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/run_manifest.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/verification.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/verification.json)。
+- 轻量view（27MiB）：[data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/)、[data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/run_manifest.json](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/run_manifest.json)。
+- 计划/结果：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)、[src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md)。回滚只隔离新增配置/诊断/轻量view和本次训练输出；已有模型与产物保持可用。未启动50epoch、MANO→actual微调或RL训练。
+
+**规范反馈**
+
+当前Runner把view生成版本与训练运行版本强制相等，扩大batch或修复配置升级版本也必须重建27MiB同内容view，产生重复sidecar和误写数据谱系的风险。本次workaround为新建view并逐位核验，不修改校验。建议后续仅在本Task版本校验入口区分数据schema兼容性与运行modification_version，保留全部shape/坐标/split校验和旧checkpoint读法；涉及合同变更，需用户确认后另行实施。本轮不修改AGENTS、Skill或公共合同。活动审计要求累计dirty文件重复列入，已明确标为保留差异；未覆盖用户改动。
+
+## 2026-09-12 22:52:56 +0800 — V1.1.14 batch8短跑通过，启动三卡5epoch初步训练
+
+- timestamp: 2026-09-12 22:52:56 +0800
+- activity_id: ACT-20260912-225256-COUPLED-FIVE-EPOCH-START
+- modification_version: V1.1.14
+- type: diagnostic / experiment / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户“你扩大batch吧”“继续”，已说明一致性闸门、200步smoke及5epoch预算。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 完成V1.1.14同内容轻量view/配置FK验收、三卡短跑，再启动无扰动5epoch初步训练。模型/6维控制/旧数据/划分/cache/checkpoint、共享src/base与外部仓库不变，不训练阶段二或RL。
+- run_id: cm_decoder_v2_coupled_geometric_batch8_20260912_225225
+- run_status: RUNNING
+- command: `CUDA_VISIBLE_DEVICES=2,4,5 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 timeout --signal=INT --kill-after=30s 3600 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`
+- 初始checkpoint：decoder随机初始化，不resume任一smoke；OICM固定原v1.3 SHA。每卡batch8/global24、lr3e-4/cosine、5epoch、perturb_train=false、workers0、FP32；预算1小时，异常或超时停止。22:52:56 GPU2/4/5已用显存为14081/16292/14221MiB，只是瞬时值，不是峰值。
+- 累计未提交files: `docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`。本事件只增加运行与验证记录，既有实现不重写。
+
+**原因**
+
+采样错误已定位并隔离；需要在正确点对应下验证扩大batch的工程可行性，然后观察完整epoch。新view只满足Runner版本锁，不改变GT和split；修正版本锁的公共合同不在本次范围。
+
+**验证**
+
+- view run_id `cmdecoderv2-view-full-20260912-224828`，run_status COMPLETED。使用旧source index和既有builder，生成255/30/63分配；285条新旧q/wrist用`np.testing.assert_array_equal`逐位相同，348条geometry_root/id/frame_count/variant相同。命令与统计：[data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/run_manifest.json](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/run_manifest.json)、[data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/manifest.json](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_1_14_20260912/manifest.json)。
+- FK run_id `coupled_fk_gate_v14_20260912_224950`，run_status COMPLETED，44.695秒；重跑配置同上一活动，仅run-id改变。285条/72935帧结果完全复现：max点误差0.000491738mm，mimic和限位通过。加入训练/view版本一致及legacy对应必失败的回归测试，15 passed（4.39秒）。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950](../../research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/run_manifest.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/verification.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_v14_20260912_224950/verification.json)。
+- smoke run_id `cm_decoder_v2_coupled_batch8_smoke_20260912_225004`，run_status COMPLETED，last_step200/last_epoch1（不足一个epoch），95秒含validation；命令与上一失败尝试相同，配置已改为新view。warmup20后四段perf=270.275/269.599/268.227/265.683ms，88.80–90.33样本/秒，data_wait占46%–47%；无OOM。best_metric val/loss=0.0131651，h1 EPE14.3633mm，仅smoke不是收敛或迁移结论。
+- [outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/config.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/config.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/run_manifest.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/metrics.jsonl)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/train.log)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/checkpoints/best.pt)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/checkpoints/latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_225004/checkpoints/latest.pt)。
+- `git diff --check`通过；`python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`上一事件20路径/8链接通过，本事件交接前再审计。
+- conclusion: SUPPORTED（标签FK与batch8三卡工程可运行）；INCONCLUSIVE（初步训练、跨手及物理效果）。按1663step/epoch和约0.27s训练步长，估算5epoch约40分钟，50epoch约6–7小时，需实测完整epoch校准。
+
+**运行入口**
+
+[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/config.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/config.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/train.log)。
+计划：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)；配置：[src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml](../../configs/active/coupled_geometric_v1_batch8.yaml)。回滚为隔离新配置/脚本/view/运行，不删除旧产物。
+
+## 2026-09-12 22:44:21 +0800 — V1.1.14 更正采样配置、全量FK验收与batch8短跑启动
+
+- timestamp: 2026-09-12 22:44:21 +0800
+- activity_id: ACT-20260912-224421-COUPLED-BATCH8-START
+- modification_version: V1.1.14
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求标签到预测FK一致性后才三卡训练，并要求“你扩大batch吧”“继续”；按已批准目标修正遗漏配置。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 新增Task配置、只读验收脚本及定向测试，更新计划/版本/记录；不修改模型主干、6维控制、旧数据/划分/cache/checkpoint、共享src/base、外部仓库和其他运行。实际观测的完整native18路径保持，无扰动设置不变。
+- files: `docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`; `src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml`。列表覆盖本边界累计未提交差异；本事件只修改上述新配置、验收脚本、测试与文档。
+
+**原因**
+
+此前4个耦合训练smoke遗漏`model.surface_sampling`，模型默认`legacy_urdf`而目标是`v1_3_cache`。逐点监督不对应；此前COMPLETED只代表进程结束，学习证据重新标记`INVALID_IMPLEMENTATION`，不resume其权重、不据此评价Cm。
+受影响run_id为`cm_decoder_v2_20260912_212342`（10步）、`cm_decoder_v2_20260912_212609`（100步）、`cm_decoder_v2_20260912_215725`（20步batch8）、`cm_decoder_v2_20260912_215917`（20步batch4）；均只执行了部分epoch。
+22:01活动用“20步+整套validation”的总时间推算1–2天50epoch没有依据，撤回该估算及未计稳定训练时间的batch吞吐对比。性能monitor预热20步，这两次20步运行没有稳定perf数据。
+
+**验证**
+
+- run_id: `coupled_fk_gate_20260912_224800`；run_status: COMPLETED；实际22:43:09启动、54.906秒。全285条/72935帧/739196225点，均值`0.000016003mm`、最大`0.000491738mm`，mimic最大`5.96046e-8rad`，限位最大浮点超差`2.38419e-8rad`，均通过。结论`SUPPORTED`仅指拟合参考与配置FK对应，不是Cm学习/跨手/物理成功。
+- 验收命令：`CUDA_VISIBLE_DEVICES=5 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.dexplore_contract_audit.verify_coupled_view --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml --run-id coupled_fk_gate_20260912_224800 --device cuda --batch-size 32`。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/run_manifest.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/verification.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/verification.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/metrics.jsonl](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/metrics.jsonl)。
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py src/task/CmDecoderv2/tests/test_kinematics.py src/task/CmDecoderv2/tests/test_pointflow.py src/task/CmDecoderv2/tests/test_dataset.py`：15 passed；`git diff --check`通过。
+- run_id: `cm_decoder_v2_coupled_batch8_smoke_20260912_224424`；run_status: FAILED；22:44:27初始化失败，last_step=0/last_epoch=0，best_metric/checkpoint均不存在。Runner要求metadata版本V1.1.13等于训练V1.1.14，未加载模型或进入训练；下一步用既有builder生成同内容V1.1.14轻量view再核验，不绕过Runner合同。
+- command: `CUDA_VISIBLE_DEVICES=2,4,5 OMP_NUM_THREADS=2 OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --standalone --nproc_per_node=3 -m src.task.CmDecoderv2.train --distributed --config src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml --set name=cm_decoder_v2_coupled_batch8_smoke --set train.epochs=1 --set train.max_steps=200 --set train.log_every_steps=50`
+- [outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_224424](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_224424/)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_224424/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_batch8_smoke_20260912_224424/run_manifest.json)。初始化在BaseRunner写快照前失败，无config.json/metrics.jsonl/train.log；manifest由Agent依据终端traceback补录，保留该事实，不伪称Runner产物。
+- 计划/配置：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)、[src/task/CmDecoderv2/configs/active/coupled_geometric_v1_batch8.yaml](../../configs/active/coupled_geometric_v1_batch8.yaml)。回滚为隔离新增配置/诊断/输出，旧文件与权重不删除。
+
+## 2026-09-12 22:01:43 +0800 — V1.1.13 扩大 batch 的三卡吞吐验证
+
+- timestamp: 2026-09-12 22:01:43 +0800
+- activity_id: ACT-20260912-220143-BATCH-SCALE
+- modification_version: V1.1.13
+- type: operation / experiment / diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求扩大训练 batch。
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 只改变本次训练运行的 `data.batch_size`/`val_batch_size`，不改模型、数据、cache、split或旧运行；使用冻结 OICM v1.3 SHA `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+- run_id: `cm_decoder_v2_20260912_215725`; run_status: COMPLETED；三卡`CUDA_VISIBLE_DEVICES=0,1,6`，每卡batch=8、global batch=24，20 step+validation，`00:51`；输出：[batch8 run](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_215725/)、[metrics](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_215725/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_215725/train.log)、[checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_215725/checkpoints/latest.pt)。
+- 对照 run_id: `cm_decoder_v2_20260912_215917`; run_status: COMPLETED；每卡batch=4、global batch=12，20 step+validation，`00:49`；输出：[batch4 run](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_215917/)。batch=8 没有显存问题，且单位样本吞吐不低于batch=4，选为正式配置。
+- 结果：batch8 val loss `0.0139416`、h1 point-flow EPE `16.6417mm`；这是工程吞吐/显存 smoke，不能视为收敛结论。按当前短程速度，直接50 epoch长训可能需要约1–2天，故本活动不启动未校准的长任务。
+- **原因**：扩大 batch 后需要重新测量单步耗时；OICM的10135点流计算不一定随batch线性加速，不能仅按batch倍数推算训练时间。
+- **验证**：14项Task测试此前通过；本轮两个三卡运行均完成反传、validation和checkpoint生成；无残留训练进程。
+- files: `docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`。
+
+## 2026-09-12 21:27:35 +0800 — V1.1.13 耦合几何参考验收与三卡阶段一短程训练完成
+
+- timestamp: 2026-09-12 21:27:35 +0800
+- activity_id: ACT-20260912-212735-COUPLED-GEOMETRIC-TRAIN
+- modification_version: V1.1.13
+- type: data / code / experiment / operation / diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求保留6维控制、按RL耦合规则重定向几何、实际状态保留完整12个手指关节后再训练。
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- skills_used: research-change-control, research-experiment-workflow
+- scope: 新增耦合几何拟合、native观测FK、source/cache/view新目录和阶段一三卡运行；原始geometric/actual tensor、旧cache、旧checkpoint、split、外部dexplore/IsaacGymEnvs和共享src/base均未覆盖。
+- run_id: `coupled_geometric_v1_full_20260912_194544`; run_status: COMPLETED；660条/166337帧；5021.06秒；输出：[fitted run_manifest](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/run_manifest.json)、[summary](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/summary.json)、[independent validation](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/independent_validation.json)。
+- 适配验收：非q列和腕部逐位不变；fitted mimic最大残差`5.96e-8 rad`；指尖适配前均值35.1269mm、适配后18.9055mm、p95 34.3876mm；新参考表面残差均值1.6071mm、p95 2.7154mm。该结论是`SUPPORTED`（数据/接口修复），不是Cm效果结论。
+- run_id: `oicm-dexplore-rl-v1-3-...`（3 worker）/finalize；run_status: COMPLETED；285条、72935帧，train255/65008帧、val30/7927帧；三卡KNN和sequence validation通过。输出：[coupled cache run_manifest](../../../../../data/processed_data/coupled_geometric_cache_v1_20260912/run_manifest.json)、[cache index](../../../../../data/processed_data/coupled_geometric_cache_v1_20260912/index.json)、[view run_manifest](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_20260912/run_manifest.json)。
+- 三卡阶段一 smoke：首次脚本路径启动失败（`ModuleNotFoundError: src`，无产物）；模块启动第一次被checkpoint SHA锁定合同拒绝（无训练）；随后 `CUDA_VISIBLE_DEVICES=1,3,6` 三卡10 step+validation完成，输出：[smoke run](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212342/)。随后以`CUDA_VISIBLE_DEVICES=0,3,6`完成100 step短程训练，输出：[100-step run](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212609/)，[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212609/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212609/train.log)、[latest checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212609/checkpoints/latest.pt)已生成。
+- 100-step验证：val loss/point-flow `0.0141249`，val hand point-flow EPE `36.391mm`（h1 `16.6984mm`）；这是工程 smoke/短程优化证据，科研结论仍为`INCONCLUSIVE`，没有证明decoder收敛、跨手能力或物理任务成功，也没有启动第二阶段MANO→actual微调和RL rollout。
+- 保护边界：未修改decoder输出为12维；未把实际12维状态压成6维；未启动正式50 epoch长训；未修改任何旧输入/输出。回滚入口为隔离本次新增目录和代码，旧路径保持可用。
+- files: `docs/current_versions.yaml`; `src/task/CmDecoderv2/dataset.py`; `src/task/CmDecoderv2/kinematics.py`; `src/task/CmDecoderv2/pointflow.py`; `src/task/CmDecoderv2/docs/plan/v1.1.md`; `src/task/CmDecoderv2/docs/logs/activity_log.md`; `src/task/CmDecoderv2/docs/logs/experiment_log.md`; `src/task/CmDecoderv2/research/dexplore_contract_audit/`; `src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`; `src/task/CmDecoderv2/tests/test_pointflow.py`; `src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py`; `src/task/CmDecoderv2/tools/data/prepare_coupled_geometric_source.py`; `src/task/CmDecoderv2/tools/data/merge_coupled_view_index.py`。
+
+**原因**
+
+原始几何轨迹的12维手指状态与RL执行的6维独立控制接口不一致；直接沿用旧点云会把参数化误差混入decoder学习。新流程固定腕部，用6维驱动量展开后优化指尖/表面目标，并把物体点按新参考物体位姿重放。
+
+**验证**
+
+14项Task定向测试通过；660条输出独立 shape/finite/列保护/耦合残差验收通过；285条缓存 finalize 和 view metadata 通过；三卡10 step和100 step工程运行完成。上述训练只属于工程 smoke/短程证据，阶段一效果、阶段二微调和RL任务结论仍为INCONCLUSIVE。
+
+## 2026-09-12 19:09:54 +0800 — V1.1.13 配对和FK核验完成，正式训练在状态合同闸门暂停
+
+- timestamp: 2026-09-12 19:09:54 +0800
+- activity_id: ACT-20260912-190954-DEXPLORE-CONTRACT-END
+- modification_version: V1.1.13
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认两阶段解码训练、三卡和reference-conditioned RL适配范围；先完成必要输入检查，发现GT/状态不匹配后按闸门暂停，不擅自改变科研合同。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- worktree_dirty: true
+- scope: 本Task新增合同审计和专属测试、计划/活动/实验与指针；未修改核心模型、GT、正式split/cache、旧checkpoint、共享src/base、外部dexplore/IsaacGymEnvs、环境依赖及其他进程。
+- run_id: contract_full_20260912_191500
+- run_status: COMPLETED
+- actual_run_time: 2026-09-12 19:05:19 +0800启动，134.1109秒；独立验证在19:09:54前完成。
+- last_step: 660条/166337帧；每源5280个抽样FK状态；两源共10560。
+- last_epoch: not_applicable
+- best_metric: not_applicable（无训练/模型选择）；best_checkpoint/recent_checkpoint: not_applicable；未生成train.log。
+- conclusion: SUPPORTED（原始状态与6维固定耦合表示不等价）；REFUTED（几何重定向已经符合现有decoder耦合约束）；INCONCLUSIVE（两阶段decoder效果、Cm跨手能力及物理任务成功）。
+- 未完成的用户目标: 正式paired训练view、两阶段三卡训练、RL任务/策略适配及物理rollout均未实施或启动。需要先确认GT/状态/动作合同调整；这不是训练失败或环境不兼容。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/dexplore_contract_audit](../../research/dexplore_contract_audit/) — 新`__init__.py`、`contracts.py`、`run.py`、`verify.py`、`asset_check.py`、`README.md`、`experiment.yaml`。
+- [src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py](../../tests/test_dexplore_contract_audit.py) — 约束、最小二乘、限位、逐位字段保护、异常shape/NaN和split身份测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.13 final输入闸门和暂停条件。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 协议、全量/抽样分母、结果、局限及待批准调整。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 唯一运行时间线及本Task指针。
+
+**原因**
+
+全部660对的shape/finite/未替换列通过；canonical human/object身份和帧数一致，但MANO mesh坐标尚未核验，不能把它写成完整对齐结论。
+630条既有split保留（509/58/63），其余30条仅在诊断manifest标unassigned，不产生正式训练划分。
+几何从动关节耦合偏差均值68.7413deg，100%帧至少一个从动关节偏差>1deg；actual均值7.9929deg、对应比例76.8933%。
+保留原6维并mimic重建的抽样指尖EPE几何35.1815mm/actual5.0975mm，全手10135点均值分别2.3702/0.2674mm。
+误差不是最优几何下界；本轮不能推断Cm差的主因，也不能推断几何预训练绝无价值。
+建议下一轮重新优化受现有6维控制约束的几何目标，并区分12维实际手指观测与6维控制动作；涉及GT和输入合同，需要确认后实施，不将12个状态关节误当12个独立执行器。
+
+**验证**
+
+- `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py src/task/CmDecoderv2/tests/test_kinematics.py src/task/CmDecoderv2/tests/test_pointflow.py`：10 passed。
+- 正式命令：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.dexplore_contract_audit.run --run-id contract_full_20260912_191500`。
+- 独立核验：`CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.dexplore_contract_audit.verify src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500`：通过；原q身份、10560状态FK、独立lstsq、summary及所有保护输入SHA/stat通过。
+- 独立surface EPE最大差1.421e-6mm，tip EPE最大差1.774e-13mm；16个torch/NumPy表面样本逐点最大差0.000140mm。
+- 资产检查：`CUDA_VISIBLE_DEVICES=5 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmDecoderv2/research/dexplore_contract_audit/asset_check.py --urdf src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf --output src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/gym_asset_check.json`：通过，native18关节名称/顺序一致，physics_steps=0。第一次`-m`失败详见START事件；属于Task提前加载torch，不是conda不兼容。
+- 两条smoke run_id `contract_smoke_20260912_190500`、run_status `COMPLETED`，实际19:03:07 +0800启动、1.227秒，详见START活动及其manifest/verification；仅工程证据。
+- 产物3.9MiB，均被Git忽略。审计与资产检查进程均已退出。未提交代码。
+
+**产物**
+
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/run_manifest.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/run_manifest.json)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/config.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/config.json)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/metrics.jsonl](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/metrics.jsonl)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/run.log](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/run.log)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/summary.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/summary.json)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/paired_manifest.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/paired_manifest.json)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/state_samples.npz](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/state_samples.npz)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/verification.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/verification.json)
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/gym_asset_check.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/gym_asset_check.json)
+
+**回滚与规范反馈**
+
+仅隔离新增审计/测试与本轮文档即可回滚，不需要迁移、删除或重算任何旧数据/权重。
+本轮触发科研GT/状态合同的正常审批闸门；无目录、格式或版本规则阻碍，不修改治理规则。
+`git diff --check`通过；`audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix docs/current_versions.yaml --check-links`通过，11个变更路径、16个本地链接。审计要求的原因段标题已统一为`原因`，不改变内容。
+
+## 2026-09-12 19:05:29 +0800 — V1.1.13 两阶段训练前合同审计启动
+
+- timestamp: 2026-09-12 19:05:29 +0800
+- activity_id: ACT-20260912-190529-DEXPLORE-CONTRACT-START
+- modification_version: V1.1.13
+- type: code / diagnostic / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户在两阶段训练、三卡与reference-conditioned RL适配范围说明后回复“可以，你继续吧”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 5cf7eaa
+- worktree_dirty: true
+- scope: 本Task训练前输入合同闸门；不改旧模型/GT/split/cache、其他Task、共享src/base、外部dexplore/IsaacGymEnvs、环境依赖与运行进程。
+- run_id: contract_full_20260912_191500
+- run_status: RUNNING
+- command: `CUDA_VISIBLE_DEVICES='' OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.dexplore_contract_audit.run --run-id contract_full_20260912_191500`
+
+**文件**
+
+- [src/task/CmDecoderv2/research/dexplore_contract_audit](../../research/dexplore_contract_audit/) — 配对、状态耦合、10135点完整FK及独立核验。
+- [src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py](../../tests/test_dexplore_contract_audit.py) — 输入与约束测试。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 已批准闸门、指针和本记录。
+
+**原因**
+
+几何导出器明确`ignore_mimic_joint=True`；现有decoder保留6个finger q并强制重建从动关节，可能不能表示原始几何/实际状态。需先核验再长训，不自动投影GT或开放12维控制。
+
+**验证与产物**
+
+- `python -m pytest -q src/task/CmDecoderv2/tests/test_dexplore_contract_audit.py`（graspenv、CPU）：5 passed。
+- run_id `contract_smoke_20260912_190500`，run_status `COMPLETED`；两条/385帧/32个采样状态通过，独立NumPy FK/torch点最大差0.000144mm以内，仅工程smoke。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_smoke_20260912_190500](../../research/dexplore_contract_audit/output/contract_smoke_20260912_190500/)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_smoke_20260912_190500/run_manifest.json](../../research/dexplore_contract_audit/output/contract_smoke_20260912_190500/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_smoke_20260912_190500/verification.json](../../research/dexplore_contract_audit/output/contract_smoke_20260912_190500/verification.json)。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/run_manifest.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/run.log](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/run.log)。
+- 可选资产检查第一次`-m`入口失败：Task包提前import torch触发Isaac Gym导入顺序限制，未创建仿真；使用独立文件入口重试，不修改Task公共初始化。
+- 回滚：仅隔离新审计/测试和本轮文档增补。科研与可训练性结论等待全量核验。
 
 ## 2026-09-12 15:53:16 +0800 — V1.1.12 轨迹质量标记与候选交叉检查完成
 

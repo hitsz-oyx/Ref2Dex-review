@@ -5,6 +5,45 @@
 - current_pointer: [docs/current_versions.yaml](../current_versions.yaml)
 - historical_audit: [modification_log.md](modification_log.md)
 
+## 2026-09-13 10:29:45 +0800 — IsaacGymEnvs vendor 迁移与路径 smoke
+
+- activity_id: ACT-20260913-102945-ISAACGYM-VENDOR-MIGRATION
+- timestamp: 2026-09-13 10:29:45 +0800
+- modification_version: V1.2.15
+- type: governance / code / operation / documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认将 `/home2/wyy/oyx_ws/IsaacGymEnvs` 纳入 Ref2Dex，并采用 `third_party/IsaacGymEnvs` 的 squashed vendor 方案。
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- import_commit: e1aabc1897bd27c793a765ec58e6145fb47ee02f
+- upstream: `https://github.com/isaac-sim/IsaacGymEnvs`, `release/1.5.1`, `aeed298638a1f7b5421b38f5f3cc2d1079b6d9c3`
+- scope: 导入 upstream snapshot 到 `third_party/IsaacGymEnvs/`，不携带嵌套 `.git`；迁移现有 CmResidual 本地修改；新增 upstream provenance 说明；将 vendor smoke 的 object asset 路径切到仓库内；根 `runs/` 加入忽略。外部 checkout 保留为只读 mirror，不删除、不覆盖。
+- files: `./.gitignore`; `third_party/IsaacGymEnvs/UPSTREAM.md`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`。
+- cumulative_dirty_paths: `./.gitignore`; `third_party/IsaacGymEnvs/UPSTREAM.md`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`。
+- run_id: `cm_residual_decoder_bank_vendor_smoke_20260913_102945`
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=4 PYTHONPATH=/home2/wyy/oyx_ws/Ref2Dex:/home2/wyy/oyx_ws/Ref2Dex/third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python third_party/IsaacGymEnvs/isaacgymenvs/train.py task=CmResidualDecoderBank train=CmResidualPPO headless=True num_envs=4 max_iterations=1 pipeline=gpu sim_device=cuda:0 rl_device=cuda:0 train.params.config.minibatch_size=128`
+- output: [runs/CmResidual_13-10-29-45](../../runs/CmResidual_13-10-29-45/)、[run_manifest.json](../../runs/CmResidual_13-10-29-45/run_manifest.json)。vendor 路径下单 PPO epoch 完成，action `(12,)`、observation `(71,)`；未完成 episode，`rew=-inf` 仍是 smoke 统计伪影。
+- conclusion: SUPPORTED（vendor snapshot、路径、CmResidualDecoderBank alias 和 RL smoke 可运行）；INCONCLUSIVE（正式RL训练和物理抓取）。
+
+**原因**
+
+外部 checkout 本身已有独立 Git，但 Ref2Dex 主工作区无法直接显示其 diff。将固定 upstream 基线和当前本地任务修改纳入主仓库后，VSCode 可以在同一仓库中追踪 vendor 与本地改动，同时保留外部 mirror 作为回滚/对照来源。
+
+**验证**
+
+- `git -C /home2/wyy/oyx_ws/IsaacGymEnvs log` 确认原仓库基线及 origin；vendor `UPSTREAM.md` 记录来源、commit 和本地修改边界。
+- `py_compile`、Ref2Dex 定向测试和 vendor 路径 IsaacGymEnvs GPU smoke 通过；配置中的 object asset 已解析到 `third_party/IsaacGymEnvs/assets`。
+- vendor `runs/` 和根 `runs/` 不进入 Git；外部仓库未删除或 reset。
+
+**产物与回滚**
+
+- [third_party/IsaacGymEnvs/UPSTREAM.md](../../third_party/IsaacGymEnvs/UPSTREAM.md)
+- [vendor RL smoke](../../runs/CmResidual_13-10-29-45/)、[run_manifest.json](../../runs/CmResidual_13-10-29-45/run_manifest.json)
+- 回滚入口：保留外部 mirror；如需撤销 vendor 基线，可回到父提交 `5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a`，不触碰当前 Ref2Dex dirty 研究文件。
+
 ## 2026-09-12 13:39:26 +0800 — 跨手 Cm 路线的代码与既有证据核对
 
 - activity_id: ACT-20260912-133926-CROSS-HAND-REVIEW

@@ -55,6 +55,7 @@ src/task/*/assets/*
 # 研究/训练产物：根 outputs/ 和各 Task research/*/output/ 均不入库。
 # 根 output/ 只保留历史兼容产物，不再新增文件。
 outputs/*
+/runs/
 /output/
 src/task/*/research/**/output/
 docs/修改指导.md

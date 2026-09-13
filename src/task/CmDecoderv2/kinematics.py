@@ -27,6 +27,7 @@ QUERY_LINKS = (
 # ``finger_q`` follows Dexplore native independent order:
 # index, middle, pinky, ring, thumb-yaw, thumb-pitch.
 QUERY_LINK_Q_INDICES = np.asarray([-1, 4, 5, 5, 5, 5, 0, 0, 0, 1, 1, 1, 3, 3, 3, 2, 2, 2])
+QUERY_LINK_NATIVE_Q_INDICES = np.asarray([-1, 14, 15, 15, 15, 15, 6, 6, 6, 8, 8, 8, 12, 12, 12, 10, 10, 10])
 
 
 def expand_finger_q(finger_q: np.ndarray, wrist_native: np.ndarray | None = None) -> np.ndarray:
@@ -216,6 +217,29 @@ class InspireKinematics:
             transform = object_from_world @ links[name]
             q_index = int(QUERY_LINK_Q_INDICES[index])
             result[index, 0] = 0.0 if q_index < 0 else float(finger_q[q_index])
+            result[index, 1:4] = transform[:3, 3]
+            result[index, 4:10] = transform[:3, :2].T.reshape(-1)
+        return result
+
+    def query_features_native(
+        self, native_q: np.ndarray, object_pose_world: np.ndarray
+    ) -> np.ndarray:
+        """Compute observation link features from the complete native 18-DOF state.
+
+        This path deliberately does not expand six controls or impose mimic
+        ratios.  It is used for actual Inspire observations; six-dimensional
+        control targets continue to use :meth:`query_features`.
+        """
+        native_q = np.asarray(native_q, dtype=np.float64)
+        if native_q.shape != (NUM_NATIVE_DOFS,):
+            raise ValueError(f"Expected native_q [18], got {native_q.shape}")
+        object_from_world = np.linalg.inv(np.asarray(object_pose_world, dtype=np.float64))
+        links = self.link_transforms_native(native_q)
+        result = np.empty((len(QUERY_LINKS), 10), dtype=np.float32)
+        for index, name in enumerate(QUERY_LINKS):
+            transform = object_from_world @ links[name]
+            q_index = int(QUERY_LINK_NATIVE_Q_INDICES[index])
+            result[index, 0] = 0.0 if q_index < 0 else float(native_q[q_index])
             result[index, 1:4] = transform[:3, 3]
             result[index, 4:10] = transform[:3, :2].T.reshape(-1)
         return result

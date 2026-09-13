@@ -1,0 +1,9 @@
+name: dexplore_contract_audit
+modification_version: V1.1.13
+importance: primary
+pinned: true
+tags: [dexplore, paired-data, state-contract, preflight]
+entrypoint: src.task.CmDecoderv2.research.dexplore_contract_audit.run
+plan: ../../docs/plan/v1.1.md
+output_root: output
+description: 两阶段训练前检查18维原始状态与6维mimic状态的可表达性，不改变GT。

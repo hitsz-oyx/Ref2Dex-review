@@ -1,5 +1,108 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-13 — V1.1.14 IsaacGymEnvs CmResidual wiring smoke
+
+- modification_version: `V1.1.14`；category: code / operation / diagnostic；approval: user-approved；计划见 [plan/v1.1.md](../plan/v1.1.md)。
+- run_id: `cm_residual_isaac_smoke_20260913_001902`；run_status: `COMPLETED`；外部输出：`/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-00-18-30/nn/last_CmResidual_ep_1_rew_-inf.pth`。
+- 固定接口：`airplane_lift`；动作 `Δq6 + Δwrist_SE(3)` 共12维；冻结 decoder/OICM/base；实际 native18 q/dq、base、wrist/object/tip 观测共71维。
+- 结果：IsaacGymEnvs 任务注册、18-DOF Inspire asset、GPU PhysX、reset/step、actor forward 和单次 PPO epoch 均通过；Ref2Dex 定向测试17项通过。单epoch没有完整终止episode，`rew=-inf`仅是框架输出，不是策略效果。
+- provider 边界：本次只运行 `reference_frozen`；`decoder` 模式在 Cm-bank adapter 缺失时显式失败。root wrist 直接目标设置仅为 wiring smoke，尚未证明真实闭环动力学。
+- conclusion: `SUPPORTED`（工程框架接入）；`INCONCLUSIVE`（残差策略收敛、抓取成功、CmDecoder 在线闭环）。正式RL训练待 Cm-bank adapter 和物理状态控制接口完成后再启动。
+
+## 2026-09-12 — V1.1.14 batch8三卡几何监督5epoch初步训练
+
+- modification_version: V1.1.14；category: experiment / operation；approval: user-approved；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- run_id: `cm_decoder_v2_coupled_geometric_batch8_20260912_225225`；run_status: COMPLETED；8315步/5epoch，40分24秒；最佳epoch5，val/loss=0.009018792。
+- 假设/范围：标签FK合同通过后，扩大batch仍可稳定训练；初步观察耦合几何参考解码。不是batch2/8学习效果随机对照，也不是跨手验证。冻结OICM SHA、split、K4/10135点/2cm/KNN32不变；新初始化decoder，每卡8/global24、GPU2/4/5、seed42、FP32、workers0、lr3e-4/cosine5epoch、perturb_train=false，不使用前述无效smoke权重。
+- full FK run_id `coupled_fk_gate_v14_20260912_224950`，run_status COMPLETED；285条/72935帧通过。新旧view内容相同，版本锁要求生成新轻量view；原44GiB几何缓存复用。
+
+| epoch | val/loss | val h1表面EPE(mm) | val h1腕平移(mm) |
+|---|---:|---:|---:|
+| 1 | 0.00943987 | 11.4056 | 12.7611 |
+| 2 | 0.00947883 | 11.3262 | 12.7342 |
+| 3 | 0.00910965 | 10.9544 | 12.3610 |
+| 4 | 0.00906360 | 10.8358 | 12.2591 |
+| 5 | 0.00901879 | 10.7753 | 12.1966 |
+
+- 最终四horizon平均表面EPE25.9471mm。h1手指q MAE0.00779017rad，高于identity的0.00618874rad；腕旋转2.57239deg，高于identity的2.47760deg；腕平移12.1966mm低于identity的15.6140mm。只描述同一验证集/同一Runner聚合下的观察，不把全手指标下降解释为每个手指学好或Cm条件因果有效。
+- 训练稳定，无OOM或非有限；83段性能窗口均值266.802ms/step，数据等待占46.51%，完整epoch含验证约8.1分钟。同设置50epoch约6.7小时，仅是计算耗时外推，不保证收敛。未改数据加载并行度、损失权重或加入扰动。
+- conclusion: SUPPORTED（正确点对应下batch8/global24三卡训练可运行）；INCONCLUSIVE（完整运动解码充分性、Cm跨手、实际状态微调及物理RL成功）。后几轮收益较小且q/旋转未超过identity，不能仅凭此权重宣称RL base已经合格，也不据此否定Cm。
+- 限制：单seed、仅几何Inspire参考到耦合Inspire标签、同域val选择checkpoint、无MANO测试/实际反馈/物理rollout；现有指标是Runner按batch/mask的聚合，不作frame micro或sequence macro解释；没有把原始参考适配残差与学习误差相减。
+- 权重验收：strict load全key匹配，全部权重有限，60个OICM tensor相对原checkpoint逐位未变；best/latest的step/epoch与metrics一致。best SHA `1739175b789e22158b67d4c2f7b653f32f519dbba5e31f1bb4713027dac134b6`。
+- 输出：[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/run_manifest.json)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/metrics.jsonl)、[outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_coupled_geometric_batch8_20260912_225225/checkpoints/best.pt)。命令、日志、轻量view和验收manifest见唯一终态：[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+
+## 2026-09-12 — V1.1.14 采样配置更正与全量耦合标签验收
+
+- modification_version: `V1.1.14`；category: diagnostic / experiment；approval: user-approved；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- 更正V1.1.13耦合训练4次短跑的解释：配置缺少`surface_sampling=v1_3_cache`，默认legacy点对应与target不同，故训练指标/权重为`INVALID_IMPLEMENTATION`。保留原始记录和运行目录，不resume，不把该实现错误归因于Cm。运行结束不等于数据/模型一致性闸门通过。
+- 新配置直接选择正确采样器。run_id `coupled_fk_gate_20260912_224800`，run_status `COMPLETED`；285条train/val共72935帧完整10135点逐点比较，mean EPE `0.000016003mm`，max `0.000491738mm`；所有完整手指关节限位与独立mimic方程检查通过。此验收覆盖训练/验证参考，不包括原actual12维FK适配或MANO test。
+- conclusion: `SUPPORTED`（耦合参考标签与配置预测FK一致）；`INCONCLUSIVE`（decoder学习效果、跨手泛化、物理成功）。[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/run_manifest.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/run_manifest.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/verification.json](../../research/dexplore_contract_audit/output/coupled_fk_gate_20260912_224800/verification.json)。
+- 同时澄清V1.1.13拟合summary：18.9055mm指尖与1.6071mm表面是序列等权均值，p95 34.3876/2.7154mm是**序列均值的p95**，不是全帧误差p95。适配误差不能与学习误差直接相减。
+- 20-step旧短跑包含全套validation且未超过性能预热20步，其总时间不支持50epoch需要1–2天的估算，也不支持batch4/8稳定吞吐比较；正式速度以新配置warmup后训练perf为准。
+- 新batch8无扰动初步训练与后续实际状态适配分开，不声称已完成闭环训练。唯一运行状态：[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+
+## 2026-09-12 — V1.1.13 六维耦合几何重定向、缓存与三卡阶段一短程训练
+
+- experiment_id: `coupled-geometric-stage1-v1.1.13`; modification_version: `V1.1.13`; category: data / experiment / operation。
+- approval: user-approved；[执行计划](../plan/v1.1.md)。目标是保持6个独立手指控制量，按RL mimic规则展开到完整native姿态；实际观测FK使用完整18维native状态。
+- 参考拟合 run_id: `coupled_geometric_v1_full_20260912_194544`，run_status `COMPLETED`，660条/166337帧，5021.06秒。
+- 适配误差：原始12维几何到当前固定耦合基线指尖均值35.1269mm；优化后的耦合参考相对原始指尖均值18.9055mm、p95 34.3876mm，表面均值1.6071mm、p95 2.7154mm；fitted mimic最大残差`5.96e-8 rad`。这是参考适配误差，不能与模型学习误差做数值相减。
+- [拟合run manifest](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/run_manifest.json)、[拟合summary](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/summary.json)、[独立验收](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/independent_validation.json)。
+- 训练缓存 run_status `COMPLETED`：285条 train/val（255/30）、72935帧；与保留的63条MANO test合并为新 view。缓存 builder 的三 worker和finalize均通过 shape/finite/KNN/frame validation。[cache manifest](../../../../../data/processed_data/coupled_geometric_cache_v1_20260912/run_manifest.json)、[view manifest](../../../../../data/processed_data/cm_decoder_v2/coupled_geometric_v1_20260912/run_manifest.json)。
+- 三卡阶段一 smoke 10 steps及100-step短程训练均完成，使用冻结 OICM v1.3 checkpoint SHA `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`、KNN32/2cm/10135点。100-step run val loss `0.0141249`，val point-flow EPE `36.391mm`，h1 `16.6984mm`；输出：[100-step run](../../../../../outputs/cmdecoderv2/cm_decoder_v2_20260912_212609/)。
+- conclusion: `SUPPORTED`（6维耦合参考和完整native观测接口、目标侧几何缓存可以一致运行）；`INCONCLUSIVE`（Cm是否收敛、跨手迁移、二阶段MANO→actual微调和物理RL成功）。100-step不是正式长训，不据此报告研究效果。
+- 限制：本轮尚未生成MANO参考→actual Inspire状态的第二阶段专用paired cache，也未接入IsaacGymEnvs rollout；当前只证明阶段一数据链路和三卡训练 smoke 可运行。
+
+## 2026-09-12 — V1.1.13 DExplore几何轨迹与6维decoder状态不等价
+
+- experiment_id: dexplore-contract-audit-v1.1.13；modification_version: V1.1.13；category: diagnostic / experiment。
+- approval: user-approved；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- run_id: contract_full_20260912_191500；run_status: COMPLETED；实际2026-09-12 19:05:19 +0800启动，134.11秒。
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a；dirty=true；无checkpoint加载、训练或策略rollout。
+- conclusion: SUPPORTED（现有6维mimic状态与原始几何/实际状态存在差异）；REFUTED（几何轨迹已满足现有decoder固定耦合的前提）；INCONCLUSIVE（两阶段训练收益、Cm能力与物理任务成功）。
+
+**协议与来源**
+
+检查660条同名geometric/actual，合计166337帧。完整float32张量有限、形状一致，除`198:205`和`373:391`外逐位不变；原canonical human/object文件全部存在且帧数匹配。
+这只确认文件身份和时长，不代表MANO mesh的坐标/表面对应已验证；该步骤明确`not_checked`，未构建正式paired训练cache。
+既有归属train509/val58/test63保持，只对其余30条记录`unassigned`；审计manifest为`diagnostic_only=true, training_eligible=false`。
+
+外部`convert_grab.py`的`setup_retargeting`将18个joint作为优化变量并显式`ignore_mimic_joint=True`。
+现有decoder仅保留`[6,8,10,12,14,15]`，从动关节按`[1.05,1.05,1.05,1.05,.6,.8]`重建。
+DExplore同一关系用于PD target，但实际DOF位置不保证严格满足target耦合；**观测状态维度与可控动作维度不能混同**。
+独立Isaac Gym资产加载确认18个DOF的名称顺序和现有native映射一致；只加载资产，physics_steps=0，不证明仿真控制稳定。
+
+全帧统计从动关节相对耦合关系的绝对偏差。每条每源确定性等距抽8帧（每源5280帧），比较原始18-DOF FK与保留独立6维、限位后mimic展开的FK；保持wrist完全相同。
+表面使用现有V1.3 seed2024、10135点对应，指尖使用5个URDF tip link等权。
+另算有界线性mimic模型的关节空间最小二乘；其RMSE是这个关节空间问题的最优值，不能叫最优几何误差或物理可达性下界。
+
+| 指标 | 几何重定向 | RL实际状态 |
+|---|---:|---:|
+| 从动关节耦合绝对偏差均值（全帧，deg） | 68.7413 | 7.9929 |
+| 至少一个从动关节偏差>1deg的帧比例 | 100% | 76.8933% |
+| 当前6维重建的手指关节RMSE均值（deg） | 59.0586 | 7.1078 |
+| 关节空间最小二乘最优RMSE均值（deg） | 51.7703 | 5.1848 |
+| 原状态到6维重建的全手表面EPE均值（mm，抽样） | 2.3702 | 0.2674 |
+| 原状态到6维重建的指尖EPE均值（mm，抽样） | 35.1815 | 5.0975 |
+| 原状态到6维重建的指尖EPE p95（mm，抽样帧） | 56.0135 | 19.4209 |
+
+表面/指尖误差不是训练后的误差，也不是对所有6维预测优化后的下界。它们量化现有状态压缩实际丢失的形状；不能直接宣称几何预训练无任何价值或当前Cm因此失效。
+每源每序列恰好8个FK样本，所以抽样micro mean与序列macro mean相同；关节全帧micro/macro分开保存在summary。
+
+**判断与下一步审批边界**
+
+当前几何数据不能不加说明地作为同一6维可执行状态的GT。直接长训会混合参考解码与输出表示不匹配的误差，先暂停正式cache/三卡训练。
+建议先在本Task建立遵守现有控制耦合的几何重定向数据（重新优化，不直接将旧q裁剪后当GT）；实际状态观测保留12个手指关节，动作仍保持6个独立控制量与wrist控制。
+这些是待用户确认的GT/状态/动作合同调整，本轮未实施，也未扩展decoder输出或改动外部生成器。下一步还需明确状态参考经PD执行与教师PD动作监督的区别，不将导出的实际q误称为原策略action。
+
+**复核与证据**
+
+- 10项Task定向测试通过。独立NumPy FK核验全部10560个抽样状态；surface EPE最大差1.43e-6mm，tip EPE最大差1.78e-13mm；16个torch表面复核样本最大逐点差0.000140mm。
+- 从源张量重查所有保存q，使用`np.linalg.lstsq`独立核验闭式关节投影；检查的summary最大差3.59e-7。全部输入与受保护代码/资产stat和SHA不变。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/summary.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/summary.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/paired_manifest.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/paired_manifest.json)。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/verification.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/verification.json)、[src/task/CmDecoderv2/research/dexplore_contract_audit/output/contract_full_20260912_191500/gym_asset_check.json](../../research/dexplore_contract_audit/output/contract_full_20260912_191500/gym_asset_check.json)。
+- 唯一终态入口：[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+
 ## 2026-09-12 — V1.1.12 轨迹质量标记：参考跟踪与实际跨手兼容不能合并成同一准入条件
 
 - experiment_id: trajectory-quality-gate-v1.1.12；modification_version: V1.1.12；approval: user-approved（用户在质量准入建议后回复“继续”）；[最终计划](../plan/v1.1.md)。
@@ -770,3 +873,17 @@ viewer 的 `教师强制` 是“GT 当前 Inspire state → decoder 预测下一
   [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_smoke_20260906_105619/metrics.jsonl)、
   [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_smoke_20260906_105619/train.log)、
   [best checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_dexplore_rl_v1_1_1_smoke_20260906_105619/checkpoints/best.pt)。
+# 2026-09-13 - V1.1.14 MANO source→actual Inspire 微调（运行中）
+
+- hypothesis: 在冻结 OICM 和阶段一 decoder 初始化下，用 MANO parent geometry 作为 source、Dexplore actual Inspire 状态/几何作为 target，可学习跨手 source-to-actual 的 decoder 适配。
+- protocol: paired view `mano_actual_finetune_v1_1_14_eligible_20260913`，train=254、val=30，排除 `s2/mug_drink_2`（缺 MANO provenance）；6维独立输出，实际 target 保持完整 native 状态语义；三卡 `0,1,3`，per-device batch8/global24，20 epochs，未 resume optimizer/runner state。
+- initialization: [initial.pt](../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_20260913/checkpoints/initial.pt) copied from completed stage-one best; OICM checkpoint SHA `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+- run_id: `cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251`; run_status: `RUNNING`；step 200/31940 时 train h1 point-flow EPE=6.04841mm、loss=0.00434146。该快照不是终态，也不代表跨手或RL成功。
+- evidence: paired source/target smoke 通过；17项定向 pytest 通过；正式三进程均完成 setup 并正常加载初始化权重。
+- conclusion: `SUPPORTED`（实现和运行合同）；`INCONCLUSIVE`（微调收益、泛化、物理闭环）。终态指标、best/latest checkpoint 和独立评估待运行完成后补记。
+# 2026-09-13 - V1.1.14 当前 best.pt 的残差 RL 接口 smoke
+
+- protocol: 当前 MANO→actual 微调 best.pt（SHA `420ba5798bb668cc96bfbb266bf999bb17ef920b247410afc860245eca276201`）在 `s1/airplane_lift` paired view 上生成 `teacher_forced_one_step` decoder bank；IsaacGymEnvs 以显式 `decoder_bank` provider 读取该 bank，4 env、单 PPO epoch、GPU4。
+- result: decoder bank 432 帧/覆盖428帧；RL task 成功加载 bank、18-DOF Inspire 资产，action `(12,)`、observation `(71,)`，PPO 单迭代 exit_code=0。
+- output: 外部 `/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/`；Ref2Dex bank 在 `outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/`。
+- conclusion: `SUPPORTED_FOR_INTERFACE_SMOKE_ONLY`；`INCONCLUSIVE`（在线 decoder 闭环、残差策略训练、物理抓取）。由于单 epoch 未完成 episode，`rew=-inf` 不作策略指标。

@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from pytorch3d.transforms import axis_angle_to_matrix as _pytorch3d_axis_angle_to_matrix
 
 from src.base import BaseRunner, RunnerOutput
+from src.base.checkpoint import load_checkpoint, unwrap_model
 
 from .dataset import make_dataloaders
 
@@ -64,6 +65,16 @@ def _masked_weighted_horizon_loss(values: torch.Tensor, mask: torch.Tensor, weig
 
 
 class CmDecoderV2Runner(BaseRunner):
+    def __init__(self, cfg: Any, *args: Any, **kwargs: Any) -> None:
+        init_checkpoint = getattr(cfg.train, "init_checkpoint", None)
+        if getattr(cfg.train, "resume", None) not in {None, "", "auto"} and init_checkpoint:
+            raise ValueError("CmDecoderV2 fine-tune cannot combine train.init_checkpoint with train.resume")
+        super().__init__(cfg, *args, **kwargs)
+        if self.mode == "train" and init_checkpoint:
+            checkpoint = load_checkpoint(init_checkpoint, map_location=self.device)
+            unwrap_model(self.model).load_state_dict(checkpoint["model"], strict=True)
+            self._log_line(f"Initialized model weights from {Path(init_checkpoint).resolve()} without optimizer/runner state.")
+
     def make_dataloaders(self, data_cfg: Any, seed: int):
         return make_dataloaders(data_cfg, seed, meta_cfg=self.cfg.meta, distributed=self.distributed)
 
@@ -78,8 +89,13 @@ class CmDecoderV2Runner(BaseRunner):
         for key, value in expected.items():
             if metadata.get(key) != value:
                 raise ValueError(f"CmDecoderv2 metadata {key}={metadata.get(key)!r} != {value!r}")
-        if metadata.get("split_contract") != {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"}:
-            raise ValueError("CmDecoderv2 must train/validate on RL-Inspire and reserve MANO test for visualization")
+        split_contract = metadata.get("split_contract")
+        allowed_split_contracts = (
+            {"train": "inspire_rl", "val": "inspire_rl", "test": "mano_qualitative_only"},
+            {"train": "mano_source_actual_inspire", "val": "mano_source_actual_inspire", "test": "not_built"},
+        )
+        if split_contract not in allowed_split_contracts:
+            raise ValueError("Unsupported CmDecoderv2 split contract")
         expected_hand_stream = str(getattr(self.cfg.meta, "hand_stream_mode", "decoder"))
         if metadata.get("hand_stream_mode") != expected_hand_stream:
             raise ValueError(
