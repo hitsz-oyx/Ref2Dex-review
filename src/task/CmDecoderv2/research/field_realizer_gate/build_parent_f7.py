@@ -96,23 +96,45 @@ def build_sequence(parent: Path, output: Path, *, anchor_count: int, tau_m: floa
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sequence", default="s1/airplane_lift")
+    parser.add_argument("--all", action="store_true", help="Build entries from the paired train/val index")
+    parser.add_argument("--max-sequences", type=int)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--anchor-count", type=int, default=128)
     parser.add_argument("--tau-m", type=float, default=0.015)
     parser.add_argument("--batch-frames", type=int, default=16)
     args = parser.parse_args()
-    subject, task = args.sequence.split("/", 1)
-    parent = PARENT_ROOT / subject / task
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     base_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    result = build_sequence(parent, args.output, anchor_count=args.anchor_count, tau_m=args.tau_m, batch_frames=args.batch_frames)
+    if args.all:
+        index = json.loads((VIEW_ROOT / "index.json").read_text())
+        entries = [(split, value) for split in ("train", "val") for value in index["sequences"][split]]
+        if args.max_sequences is not None:
+            entries = entries[: max(0, int(args.max_sequences))]
+        if args.output.exists():
+            raise FileExistsError(args.output)
+        args.output.mkdir(parents=True)
+        built = []
+        for split, value in entries:
+            sequence_parent = PARENT_ROOT / str(value["subject_id"]) / f"{value['object_name']}_{value['action_name']}"
+            target = args.output / split / value["id"].replace("/", "_")
+            try:
+                built.append(build_sequence(sequence_parent, target, anchor_count=args.anchor_count, tau_m=args.tau_m, batch_frames=args.batch_frames))
+                print(f"[done] {split} {value['id']}", flush=True)
+            except FileNotFoundError as error:
+                print(f"[skip] {split} {value['id']}: {error}", flush=True)
+        result = {"mode": "all", "requested": len(entries), "built": len(built), "results": built}
+    else:
+        subject, task = args.sequence.split("/", 1)
+        parent = PARENT_ROOT / subject / task
+        result = build_sequence(parent, args.output, anchor_count=args.anchor_count, tau_m=args.tau_m, batch_frames=args.batch_frames)
     run_manifest = {
         "schema_name": "ref2dex.run_manifest_v1", "task": "CmDecoderv2",
         "modification_version": "V1.1.16", "operation": "parent_f7_cache_smoke",
         "run_id": args.output.name, "run_status": "COMPLETED", "conclusion": "SUPPORTED",
         "base_commit": base_commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)),
         "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "sequence": args.sequence, "output_directory": str(args.output.resolve()), "cache_manifest": "manifest.json",
+        "sequence": "all eligible paired entries" if args.all else args.sequence,
+        "output_directory": str(args.output.resolve()), "cache_manifest": "manifest.json",
         "command": [str(value) for value in ("python", *(__import__("sys").argv[1:]))], "result": result,
     }
     (args.output / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, ensure_ascii=False) + "\n")
