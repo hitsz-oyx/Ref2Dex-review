@@ -19,6 +19,8 @@ from src.task.InteractionDynamics.interaction_field import (
     build_soft_correspondence,
 )
 
+from .pointflow import DifferentiableInspireSurface, make_relative_transform, world_to_object
+
 
 F7_DIM: Final[int] = 7
 F7_ANCHORS: Final[int] = 128
@@ -185,9 +187,25 @@ class MatchedTemporalD2Core(nn.Module):
 class InspireFieldRealizer(nn.Module):
     """B1 realizer: oracle MANO F7 to direct Inspire action targets."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        surface_urdf: str | None = None,
+        surface_sample_count: int = 10135,
+        surface_sampling: str = "v1_3_cache",
+        surface_seed: int = 2024,
+        **kwargs: object,
+    ) -> None:
         super().__init__()
         self.core = MatchedTemporalD2Core(token_count=F7_ANCHORS, token_dim=F7_DIM, **kwargs)
+        self.point_surface = None
+        if surface_urdf is not None:
+            self.point_surface = DifferentiableInspireSurface(
+                surface_urdf,
+                sample_count=int(surface_sample_count),
+                surface_seed=int(surface_seed),
+                surface_sampling=surface_sampling,
+            )
 
     def forward(
         self,
@@ -196,11 +214,57 @@ class InspireFieldRealizer(nn.Module):
         anchor_normal: torch.Tensor,
         current_state: torch.Tensor,
         current_link_features: torch.Tensor,
+        *,
+        current_finger_q: torch.Tensor | None = None,
+        current_wrist_pose_world: torch.Tensor | None = None,
+        object_pose_world: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if anchor_pos.shape != (*f7.shape[:-1], 3) or anchor_normal.shape != anchor_pos.shape:
             raise ValueError("F7 anchor positions/normals must match [B,K,128,3]")
         geometry = torch.cat([anchor_pos, anchor_normal], dim=-1)
-        return self.core(f7, geometry, current_state, current_link_features)
+        output = self.core(f7, geometry, current_state, current_link_features)
+        states = (current_finger_q, current_wrist_pose_world, object_pose_world)
+        if any(value is not None for value in states):
+            if self.point_surface is None or any(value is None for value in states):
+                raise ValueError("point-flow output requires surface_urdf and all current pose tensors")
+            self.add_point_flow(
+                output,
+                current_finger_q=current_finger_q,
+                current_wrist_pose_world=current_wrist_pose_world,
+                object_pose_world=object_pose_world,
+            )
+        return output
+
+    def add_point_flow(
+        self,
+        output: dict[str, torch.Tensor],
+        *,
+        current_finger_q: torch.Tensor,
+        current_wrist_pose_world: torch.Tensor,
+        object_pose_world: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Attach the same differentiable point-flow contract used by CmDecoderV2."""
+        if self.point_surface is None:
+            raise RuntimeError("point flow requested but no surface_urdf was configured")
+        batch, window = output["pred_q_delta"].shape[:2]
+        current_points_world = self.point_surface(current_finger_q.float(), current_wrist_pose_world.float())
+        future_finger = current_finger_q.float()[:, None, :] + output["pred_q_delta"]
+        wrist_delta = make_relative_transform(
+            output["pred_wrist_rotvec"], output["pred_wrist_translation"]
+        )
+        future_wrist = current_wrist_pose_world.float()[:, None, :, :] @ wrist_delta
+        future_points_world = self.point_surface(
+            future_finger.reshape(batch * window, -1),
+            future_wrist.reshape(batch * window, 4, 4),
+        ).reshape(batch, window, -1, 3)
+        current_points_object = world_to_object(current_points_world, object_pose_world.float())
+        future_points_object = world_to_object(future_points_world, object_pose_world.float())
+        output.update({
+            "current_hand_points_object": current_points_object,
+            "pred_hand_points_object": future_points_object,
+            "pred_hand_flow": future_points_object - current_points_object[:, None],
+        })
+        return output
 
 
 class DirectManoHRealizer(nn.Module):
@@ -221,3 +285,40 @@ class DirectManoHRealizer(nn.Module):
         batch, window, _ = mano_h.shape
         geometry = mano_h.new_zeros((batch, window, 1, 6))
         return self.core(mano_h[:, :, None, :], geometry, current_state, current_link_features)
+
+
+class FieldRealizerModel(nn.Module):
+    """Config adapter used by the shared BaseRunner for the B1 gate."""
+
+    def __init__(self, cfg: object, **_: object) -> None:
+        super().__init__()
+        meta = cfg.meta
+        self.realizer = InspireFieldRealizer(
+            window_size=int(meta.window_size),
+            link_count=int(meta.query_link_count),
+            hidden_dim=int(cfg.hidden_dim),
+            num_heads=int(cfg.num_heads),
+            num_layers=int(cfg.num_layers),
+            feedforward_dim=int(cfg.feedforward_dim),
+            dropout=float(cfg.dropout),
+            surface_urdf=str(cfg.surface_urdf),
+            surface_sample_count=int(meta.num_hand_points),
+            surface_sampling=str(getattr(cfg, "surface_sampling", "v1_3_cache")),
+        )
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        current_state = torch.cat([
+            batch["current_finger_q"].float(),
+            batch["current_wrist_translation_object"].float(),
+            batch["current_wrist_rotation_6d_object"].float(),
+        ], dim=-1)
+        return self.realizer(
+            batch["f7"].float(),
+            batch["anchor_pos"].float(),
+            batch["anchor_normal"].float(),
+            current_state,
+            batch["current_link_features"].float(),
+            current_finger_q=batch["current_finger_q"],
+            current_wrist_pose_world=batch["current_wrist_pose_world"],
+            object_pose_world=batch["object_pose_world"],
+        )

@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .dataset import _rotation_6d
+from .dataset import _points_world_to_frame, _rotation_6d
 from .kinematics import InspireKinematics, extract_finger_q, relative_pose
 
 
@@ -47,6 +47,10 @@ class FieldRealizerDataset(Dataset):
                 "q_native": np.load(entry["q_native"], mmap_mode="r"),
                 "wrist_pose": np.load(entry["wrist_pose_world"], mmap_mode="r"),
                 "object_pose": np.load(Path(entry["geometry_root"]) / "obj_pose_world.npy", mmap_mode="r"),
+                "target_hand_points": np.load(
+                    Path(entry["geometry_root"]) / "knn_hand_points_world.npy",
+                    mmap_mode="r",
+                ),
                 "active": np.load(Path(entry["geometry_root"]) / "obj_candidate_mask_2cm.npy", mmap_mode="r"),
                 "field": np.load(cache / "field_f7.npy", mmap_mode="r"),
                 "anchors": np.load(cache / "anchors_object.npy", mmap_mode="r"),
@@ -76,11 +80,15 @@ class FieldRealizerDataset(Dataset):
         object_pose = np.asarray(item["object_pose"][start], dtype=np.float32).copy()
         current_object = np.linalg.inv(object_pose) @ current_wrist
         target_q, target_t, target_r = [], [], []
+        target_hand_points = []
         for horizon in range(1, k + 1):
             target_q.append(extract_finger_q(np.asarray(item["q_native"][start + horizon], dtype=np.float64)) - current_finger)
             relative = relative_pose(current_wrist, np.asarray(item["wrist_pose"][start + horizon], dtype=np.float64))
             target_t.append(relative[:3, 3])
             target_r.append(relative[:3, :3])
+            target_hand_points.append(
+                _points_world_to_frame(item["target_hand_points"][start + horizon], object_pose)
+            )
         field = np.asarray(item["field"][start:start + k], dtype=np.float32).copy()
         active = np.asarray(item["active"][start:start + k]).any(axis=1) if np.asarray(item["active"]).ndim == 2 else np.asarray(item["active"][start:start + k])
         anchors = np.asarray(item["anchors"], dtype=np.float32)
@@ -98,5 +106,9 @@ class FieldRealizerDataset(Dataset):
             "target_q_delta": torch.from_numpy(np.stack(target_q).astype(np.float32)),
             "target_wrist_translation": torch.from_numpy(np.stack(target_t).astype(np.float32)),
             "target_wrist_rotation": torch.from_numpy(np.stack(target_r).astype(np.float32)),
+            "target_hand_points_object": torch.from_numpy(np.stack(target_hand_points).astype(np.float32)),
+            "current_hand_points_object": torch.from_numpy(
+                _points_world_to_frame(item["target_hand_points"][start], object_pose)
+            ),
             "active_mask": torch.from_numpy(active.astype(bool)),
         }
