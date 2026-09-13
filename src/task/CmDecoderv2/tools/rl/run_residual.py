@@ -85,11 +85,14 @@ def rollout(env, output: Path, policy=None):
     with (output / "rollout_metrics.jsonl").open("w") as log:
         for step in range(env.max_episode_length):
             action = torch.zeros((env.num_envs, 12), device=env.device) if policy is None else policy(env.obs_buf)
-            obs, reward, done, info = env.step(action)
+            # Capture the state at the beginning of the control interval.  The
+            # task's step() resets done environments before returning, so a
+            # post-step query would mix terminal contacts with reset contacts.
             contact = contact_tracker.capture(env.gym, env.envs)
             contact_occupancy.append(contact["occupancy"])
             contact_count.append(contact["contact_count"])
             contact_force.append(contact["normal_force"])
+            obs, reward, done, info = env.step(action)
             active = ~finished
             returns[active] += reward[active]
             # step() auto-resets done envs, so use terminal observations/episode stats.
