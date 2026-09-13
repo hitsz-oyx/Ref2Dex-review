@@ -270,21 +270,73 @@ class InspireFieldRealizer(nn.Module):
 class DirectManoHRealizer(nn.Module):
     """D control: direct MANO-H tokens with the same action/query core."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, *, surface_urdf: str | None = None, surface_sample_count: int = 10135,
+                 surface_sampling: str = "v1_3_cache", surface_seed: int = 2024, **kwargs: object) -> None:
         super().__init__()
         self.core = MatchedTemporalD2Core(token_count=1, token_dim=MANO_H_DIM, **kwargs)
+        self.point_surface = None if surface_urdf is None else DifferentiableInspireSurface(
+            surface_urdf, sample_count=int(surface_sample_count), surface_seed=int(surface_seed),
+            surface_sampling=surface_sampling,
+        )
 
     def forward(
         self,
         mano_h: torch.Tensor,
         current_state: torch.Tensor,
         current_link_features: torch.Tensor,
+        *,
+        current_finger_q: torch.Tensor | None = None,
+        current_wrist_pose_world: torch.Tensor | None = None,
+        object_pose_world: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         if mano_h.ndim != 3 or mano_h.shape[-1] != MANO_H_DIM:
             raise ValueError("Expected mano_h [B,K,43] = wrist(9)+pose(24)+betas(10)")
         batch, window, _ = mano_h.shape
         geometry = mano_h.new_zeros((batch, window, 1, 6))
-        return self.core(mano_h[:, :, None, :], geometry, current_state, current_link_features)
+        output = self.core(mano_h[:, :, None, :], geometry, current_state, current_link_features)
+        states = (current_finger_q, current_wrist_pose_world, object_pose_world)
+        if any(value is not None for value in states):
+            if self.point_surface is None or any(value is None for value in states):
+                raise ValueError("point-flow output requires surface_urdf and all current pose tensors")
+            batch, window = output["pred_q_delta"].shape[:2]
+            current_points_world = self.point_surface(current_finger_q.float(), current_wrist_pose_world.float())
+            future_finger = current_finger_q.float()[:, None, :] + output["pred_q_delta"]
+            wrist_delta = make_relative_transform(output["pred_wrist_rotvec"], output["pred_wrist_translation"])
+            future_wrist = current_wrist_pose_world.float()[:, None, :, :] @ wrist_delta
+            future_points_world = self.point_surface(
+                future_finger.reshape(batch * window, -1), future_wrist.reshape(batch * window, 4, 4)
+            ).reshape(batch, window, -1, 3)
+            current_points_object = world_to_object(current_points_world, object_pose_world.float())
+            future_points_object = world_to_object(future_points_world, object_pose_world.float())
+            output.update({"current_hand_points_object": current_points_object,
+                           "pred_hand_points_object": future_points_object,
+                           "pred_hand_flow": future_points_object - current_points_object[:, None]})
+        return output
+
+
+class DirectManoHModel(nn.Module):
+    """Config adapter for the D direct MANO-H representation control."""
+
+    def __init__(self, cfg: object, **_: object) -> None:
+        super().__init__()
+        meta = cfg.meta
+        self.realizer = DirectManoHRealizer(
+            window_size=int(meta.window_size), link_count=int(meta.query_link_count),
+            hidden_dim=int(cfg.hidden_dim), num_heads=int(cfg.num_heads), num_layers=int(cfg.num_layers),
+            feedforward_dim=int(cfg.feedforward_dim), dropout=float(cfg.dropout),
+            surface_urdf=str(cfg.surface_urdf), surface_sample_count=int(meta.num_hand_points),
+            surface_sampling=str(getattr(cfg, "surface_sampling", "v1_3_cache")),
+        )
+
+    def forward(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        current_state = torch.cat([batch["current_finger_q"].float(),
+                                   batch["current_wrist_translation_object"].float(),
+                                   batch["current_wrist_rotation_6d_object"].float()], dim=-1)
+        return self.realizer(
+            batch["mano_h"].float(), current_state, batch["current_link_features"].float(),
+            current_finger_q=batch["current_finger_q"], current_wrist_pose_world=batch["current_wrist_pose_world"],
+            object_pose_world=batch["object_pose_world"],
+        )
 
 
 class FieldRealizerModel(nn.Module):

@@ -112,3 +112,34 @@ class FieldRealizerDataset(Dataset):
             ),
             "active_mask": torch.from_numpy(active.astype(bool)),
         }
+
+
+class DirectManoHDataset(FieldRealizerDataset):
+    """D control view: attach parent-only MANO-H to the same paired windows.
+
+    The inherited F7 arrays are retained only for shared window indexing and
+    supervision provenance; the DirectManoH model reads ``mano_h`` and never
+    consumes ``f7``.
+    """
+
+    def __init__(self, entries: list[dict[str, Any]], *, mano_h_root: str | Path, **kwargs: Any) -> None:
+        super().__init__(entries, **kwargs)
+        root = Path(mano_h_root)
+        for item, entry in zip(self.sequences, entries):
+            cache = root / entry["split"] / str(entry["id"]).replace("/", "_")
+            manifest = json.loads((cache / "manifest.json").read_text())
+            if not str(manifest.get("field_definition", "")).startswith("H="):
+                raise ValueError(f"Not a MANO-H cache: {cache}")
+            item["mano_h"] = np.load(cache / "mano_h.npy", mmap_mode="r")
+            if item["mano_h"].shape != (item["frame_count"], 43):
+                raise ValueError(f"MANO-H frame/shape mismatch for {item['id']}")
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        sequence_index, start = self.rows[index]
+        result = super().__getitem__(index)
+        result["mano_h"] = torch.from_numpy(
+            np.asarray(self.sequences[sequence_index]["mano_h"][start + 1:start + self.window_size + 1], dtype=np.float32).copy()
+        )
+        # D's model input contract is direct H; F7 remains present only as an
+        # auditable sibling source and is ignored by DirectManoHModel.
+        return result
