@@ -12,6 +12,7 @@ from src.task.CmDecoderv2.field_realizer import (
     zero_f7,
 )
 from src.task.CmDecoderv2.research.field_realizer_gate.contact_logging import extract_hand_object_contacts
+from src.task.CmDecoderv2.field_dataset import FieldRealizerDataset
 from src.task.InteractionDynamics.field_state_v20 import build_causal_field
 
 
@@ -85,3 +86,20 @@ def test_pairwise_contact_filter_does_not_use_net_force() -> None:
     assert result["records"].shape == (1,)
     assert result["mask"].tolist() == [True, False]
     assert result["normal_force"].tolist() == [2.0]
+
+
+def test_parent_f7_dataset_contract() -> None:
+    import json
+    index = json.loads(open("data/processed_data/cm_decoder_v2/mano_actual_finetune_v1_1_14_eligible_20260913/index.json", encoding="utf-8").read())
+    dataset = FieldRealizerDataset(
+        index["sequences"]["train"][:1],
+        field_root="data/processed_data/cm_decoder_v2/field_f7_parent_v1_1_16_all",
+        urdf_path="src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf",
+    )
+    sample = dataset[0]
+    assert sample["f7"].shape == (4, 128, 7)
+    assert sample["anchor_pos"].shape == (4, 128, 3)
+    assert sample["current_link_features"].shape == (18, 10)
+    assert sample["target_q_delta"].shape == (4, 6)
+    assert sample["active_mask"].shape == (4,)
+    assert all(torch.isfinite(value).all() for value in sample.values() if torch.is_floating_point(value))
