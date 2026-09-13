@@ -16,7 +16,7 @@ DEFAULT_CONFIG = "src.task.ObjectInteractionCm.config:Config"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train ObjectInteractionCm V1.1.")
+    parser = argparse.ArgumentParser(description="Train ObjectInteractionCm V1.2.1.")
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="Python config reference or YAML path.")
     parser.add_argument("--set", action="append", default=[], help="Override config with dotted key=value syntax.")
     parser.add_argument("--data", default=None, help="Optional override for data.root and data.train_path.")

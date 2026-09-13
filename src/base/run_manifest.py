@@ -258,7 +258,7 @@ def build_run_manifest(
         keys=("component_versions", "components"),
     )
     component_tree = _component_tree(components or [])
-    return {
+    manifest: dict[str, Any] = {
         "manifest_schema": "ref2dex.run.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "mode": str(mode),
@@ -266,32 +266,12 @@ def build_run_manifest(
         "run_name": str(run_name),
         "modification_version": modification_version,
         "operation_category": to_jsonable(operation_category or []),
-        "component_registry": component_registry,
         "output_dir": str(output),
         "config_source": None if config_source is None else str(Path(config_source).resolve()),
         "config_snapshot": str(Path(config_snapshot).resolve() if config_snapshot is not None else output / "config.json"),
         "metadata_snapshot": str(Path(metadata_snapshot).resolve() if metadata_snapshot is not None else output / "metadata.json"),
         "git": _git_provenance(None if repo_root is None else Path(repo_root).resolve()),
         "initial_checkpoint": None if initial_checkpoint is None else str(initial_checkpoint),
-        # ``component_tree`` is canonical; ``components`` is generated for
-        # compatibility with existing tooling and is never read from a
-        # duplicated top-level config list.
-        "components": _flatten_component_tree(component_tree),
-        "component_tree": component_tree,
-        "contract": {
-            key: to_jsonable(metadata_data[key])
-            for key in (
-                "schema_name",
-                "schema_version",
-                "coordinate_frame",
-                "num_obj_pool",
-                "num_obj_points",
-                "num_hand_points",
-                "dataset_split",
-            )
-            if key in metadata_data
-        },
-        "dataset_metadata": to_jsonable(metadata_data),
         "input_references": _reference_records(
             config_data, metadata_data, initial_checkpoint=initial_checkpoint
         ),
@@ -299,6 +279,32 @@ def build_run_manifest(
         if isinstance(config_data.get("train"), Mapping)
         else None,
     }
+    # The snapshot files are the canonical config/data-contract records.  Keep
+    # only a small static contract for quick inspection; never inline the full
+    # task metadata into the run manifest.
+    contract = {
+        key: to_jsonable(metadata_data[key])
+        for key in (
+            "schema_name",
+            "schema_version",
+            "coordinate_frame",
+            "num_obj_pool",
+            "num_obj_points",
+            "num_hand_points",
+        )
+        if key in metadata_data
+    }
+    if contract:
+        manifest["contract"] = contract
+    if component_registry:
+        manifest["component_registry"] = component_registry
+    if component_tree:
+        # ``component_tree`` is canonical; the flat list is retained only when
+        # a task actually selects components, for compatibility with readers
+        # of the older manifest shape.
+        manifest["components"] = _flatten_component_tree(component_tree)
+        manifest["component_tree"] = component_tree
+    return manifest
 
 
 def write_run_manifest(path: str | Path, manifest: Mapping[str, Any]) -> None:
@@ -333,11 +339,11 @@ def write_run_summary(
     artifact_paths: Mapping[str, str | Path] | None = None,
     repo_root: str | Path | None = None,
 ) -> None:
-    """Write a compact, user-readable terminal summary for one run.
+    """Write the legacy explicit terminal summary format.
 
-    This is deliberately a terminal snapshot, not a heartbeat or live state
-    file.  ``activity_log.md`` remains the event timeline; this JSON only
-    makes the final run result easy to inspect and link.
+    ``BaseRunner`` no longer calls this helper for new train/eval runs.  It is
+    retained for older task-specific callers and historical compatibility;
+    terminal status for shared runs belongs in ``activity_log.md``.
     """
     target = Path(path)
     output = Path(output_dir).resolve()

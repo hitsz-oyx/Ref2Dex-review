@@ -223,7 +223,9 @@ class OverfitModeTests(unittest.TestCase):
             self.assertEqual(run_manifest["manifest_schema"], "ref2dex.run.v1")
             self.assertEqual(run_manifest["mode"], "train")
             self.assertEqual(run_manifest["output_dir"], str(Path(tmpdir).resolve()))
+            self.assertNotIn("dataset_metadata", run_manifest)
             self.assertIn("train_setup", (Path(tmpdir) / "train.log").read_text(encoding="utf-8"))
+            self.assertFalse((Path(tmpdir) / "summary.json").exists())
 
     def test_correspondence_overfit_hook_respects_explicit_overrides(self) -> None:
         cfg = _corr_cfg(mode="bin")

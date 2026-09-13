@@ -1,0 +1,15 @@
+name: trajectory_quality_gate
+modification_version: V1.1.12
+importance: primary
+pinned: true
+tags: [cm, cross-hand, quality-flags, data-triage, no-training]
+entrypoint: src.task.CmDecoderv2.research.trajectory_quality_gate.run
+plan: ../../docs/plan/v1.1.md
+output: output/<run_id>/
+diagnostic_only: true
+effect: {absolute_mm: 1.0, relative: 0.25, all_transitions: 4}
+pose_profiles:
+  pose20: {position_mm: 20, rotation_deg: 15, all_frames: 5}
+  pose40: {position_mm: 40, rotation_deg: 30, all_frames: 5}
+  pose80: {position_mm: 80, rotation_deg: 60, all_frames: 5}
+limitations: 工程诊断标记非已验证准入标准；val不回流训练；参考跟踪与实际跨手兼容分别判断。

@@ -28,9 +28,12 @@ metadata:
   项目目录规范声明的 Task-local research output path。Skill 不硬编码具体仓库路径。除非用户明确指定，不覆盖已有运行。
 - 每次正式训练、评估、benchmark 或数据处理运行都生成一个小型
   `run_manifest.json`，记录 Task、`modification_version`、Git 提交、配置快照、输入数据或
-  cache manifest 及其文件基本信息、schema、坐标系、seed、初始 checkpoint 和输出入口；指导/plan
-  通过 activity 和 Markdown 路径链接关联，不在 JSON 中重复建立版本关联。
-- 每次运行完成后生成用户可读的 `summary.json`（若入口不产生指标则明确写 `N/A`），并在 activity 中链接运行目录、config、manifest、summary 和关键产物。
+  cache manifest 及其文件基本信息、schema、坐标系、seed、初始 checkpoint 和输出入口；数据合同
+  通过 `metadata_snapshot` 引用，不能把完整 `metadata` 再内嵌一份；指导/plan 通过 activity 和
+  Markdown 路径链接关联，不在 JSON 中重复建立版本关联。
+- BaseRunner 不再自动生成标准 `summary.json`。运行终态必须写入最近作用域的 activity：至少包含
+  `run_status`、最后 step/epoch（可得时）、best metric、最佳/最近 checkpoint（存在时）、运行产生的
+  `metrics.jsonl`/`train.log` 入口和失败/停止原因；历史或 Task 专属 summary 可继续保留。
 - 重要实验在 `experiment.yaml` 用 `importance: primary|reference|exploratory`、`pinned: true`
   和 `tags` 标记导航优先级；该标记不等同于科学结论，结论仍须在 experiment log 中由证据支持。
 - 数据 cache 的 manifest、训练运行的 run manifest 和实验日志职责不同：前者描述输入数据，
@@ -43,7 +46,7 @@ metadata:
 - 不要求单独的实时状态 JSON 或 heartbeat；运行启动、停止、完成、失败和人工检查结果写入最近作用域的 activity log。
 - `run_status`（`STARTED`、`RUNNING`、`COMPLETED`、`FAILED`、`STOPPED`、`UNKNOWN`）与科研 `conclusion`（`SUPPORTED`、`REFUTED`、`INCONCLUSIVE`、`INVALID_IMPLEMENTATION`）分开记录。
 - `base_commit` 必须是活动发生时可见的最近一次已提交 HEAD 哈希；未提交工作区用独立的 dirty 标记说明，不把“未提交”写成 commit 值。
-- 运行产物、activity、manifest 和 summary 的路径必须在 Agent 回复中以可点击 Markdown 链接给出。
+- 运行产物、activity、manifest、实际生成的 metrics/train log 和关键 checkpoint 的路径必须在 Agent 回复中以可点击 Markdown 链接给出。
 
 完整规则见 [long-running-tasks.md](references/long-running-tasks.md)。核心要求是：让执行工具等待，不要让模型每几秒重新推理一次来查询状态。
 

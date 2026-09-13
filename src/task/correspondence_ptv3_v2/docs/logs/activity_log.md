@@ -240,3 +240,26 @@
 - 主要热点是模型中的 object-hand 全距离 `torch.cdist`（1024×1538）以及即使权重为 0 仍构造的 contact-aux 监督 `torch.cdist`；MANO/FK 扰动是次级候选。5 cm mask、1024 点随机索引和 NAS 读取均不是当前 data-wait 瓶颈。
 - 建议优先做独立 benchmark 后再修改：关闭 contact-aux 分支、降低 validation 频率或改为按 step；不要预计算随机扰动结果，以免改变 4:4:2 数据语义。
 - conclusion: N/A（性能诊断，不形成科研效果结论）。
+
+## 2026-09-13 11:21:49 +0800 — 远端 oyx 合并并保留 V2 研究入口
+
+- activity_id: ACT-20260913-112149-CORRESPONDENCE-MERGE
+- timestamp: 2026-09-13 11:21:49 +0800
+- modification_version: V1.2.16
+- type: operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认远端优先但不删除本地 correspondence V2 版本
+- branch: oyx
+- base_commit: 0fbfcf5465a66bc07f582db91e355f3f1ee21d3b
+- merge_target: origin/oyx @ 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- run_status: COMPLETED
+
+**结果**
+
+- 保留本地 5cm object-centered 配置、V2 指导/计划、校准文件及研究脚本；远端新增内容按远端版本合入。
+- 合并无未解决冲突；训练变量、数据和 checkpoint 未启动或改写。
+
+**验证**
+
+- correspondence V2 文件均可从合并结果访问；无冲突标记。

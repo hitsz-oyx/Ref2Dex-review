@@ -1,9 +1,275 @@
 # Ref2Dex 活动记录
 
 - scope: root
-- last_updated: 2026-09-02
+- last_updated: 2026-09-12
 - current_pointer: [docs/current_versions.yaml](../current_versions.yaml)
 - historical_audit: [modification_log.md](modification_log.md)
+
+## 2026-09-13 10:29:45 +0800 — IsaacGymEnvs vendor 迁移与路径 smoke
+
+- activity_id: ACT-20260913-102945-ISAACGYM-VENDOR-MIGRATION
+- timestamp: 2026-09-13 10:29:45 +0800
+- modification_version: V1.2.15
+- type: governance / code / operation / documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认将 `/home2/wyy/oyx_ws/IsaacGymEnvs` 纳入 Ref2Dex，并采用 `third_party/IsaacGymEnvs` 的 squashed vendor 方案。
+- branch: oyx
+- base_commit: 5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a
+- import_commit: e1aabc1897bd27c793a765ec58e6145fb47ee02f
+- upstream: `https://github.com/isaac-sim/IsaacGymEnvs`, `release/1.5.1`, `aeed298638a1f7b5421b38f5f3cc2d1079b6d9c3`
+- scope: 导入 upstream snapshot 到 `third_party/IsaacGymEnvs/`，不携带嵌套 `.git`；迁移现有 CmResidual 本地修改；新增 upstream provenance 说明；将 vendor smoke 的 object asset 路径切到仓库内；根 `runs/` 加入忽略。外部 checkout 保留为只读 mirror，不删除、不覆盖。
+- files: `./.gitignore`; `third_party/IsaacGymEnvs/UPSTREAM.md`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`。
+- cumulative_dirty_paths: `./.gitignore`; `third_party/IsaacGymEnvs/UPSTREAM.md`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py`; `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml`; `third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`。
+- run_id: `cm_residual_decoder_bank_vendor_smoke_20260913_102945`
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=4 PYTHONPATH=/home2/wyy/oyx_ws/Ref2Dex:/home2/wyy/oyx_ws/Ref2Dex/third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python third_party/IsaacGymEnvs/isaacgymenvs/train.py task=CmResidualDecoderBank train=CmResidualPPO headless=True num_envs=4 max_iterations=1 pipeline=gpu sim_device=cuda:0 rl_device=cuda:0 train.params.config.minibatch_size=128`
+- output: [runs/CmResidual_13-10-29-45](../../runs/CmResidual_13-10-29-45/)、[run_manifest.json](../../runs/CmResidual_13-10-29-45/run_manifest.json)。vendor 路径下单 PPO epoch 完成，action `(12,)`、observation `(71,)`；未完成 episode，`rew=-inf` 仍是 smoke 统计伪影。
+- conclusion: SUPPORTED（vendor snapshot、路径、CmResidualDecoderBank alias 和 RL smoke 可运行）；INCONCLUSIVE（正式RL训练和物理抓取）。
+
+**原因**
+
+外部 checkout 本身已有独立 Git，但 Ref2Dex 主工作区无法直接显示其 diff。将固定 upstream 基线和当前本地任务修改纳入主仓库后，VSCode 可以在同一仓库中追踪 vendor 与本地改动，同时保留外部 mirror 作为回滚/对照来源。
+
+**验证**
+
+- `git -C /home2/wyy/oyx_ws/IsaacGymEnvs log` 确认原仓库基线及 origin；vendor `UPSTREAM.md` 记录来源、commit 和本地修改边界。
+- `py_compile`、Ref2Dex 定向测试和 vendor 路径 IsaacGymEnvs GPU smoke 通过；配置中的 object asset 已解析到 `third_party/IsaacGymEnvs/assets`。
+- vendor `runs/` 和根 `runs/` 不进入 Git；外部仓库未删除或 reset。
+
+**产物与回滚**
+
+- [third_party/IsaacGymEnvs/UPSTREAM.md](../../third_party/IsaacGymEnvs/UPSTREAM.md)
+- [vendor RL smoke](../../runs/CmResidual_13-10-29-45/)、[run_manifest.json](../../runs/CmResidual_13-10-29-45/run_manifest.json)
+- 回滚入口：保留外部 mirror；如需撤销 vendor 基线，可回到父提交 `5cf7eaaee2cff914d73ccc98aac390bd67cf8f3a`，不触碰当前 Ref2Dex dirty 研究文件。
+
+## 2026-09-12 13:39:26 +0800 — 跨手 Cm 路线的代码与既有证据核对
+
+- activity_id: ACT-20260912-133926-CROSS-HAND-REVIEW
+- timestamp: 2026-09-12 13:39:26 +0800
+- modification_version: V1.2.15（沿用根级指针，只登记跨 Task 只读诊断）
+- task_versions_reviewed: ObjectInteractionCm V1.3.2；CmDecoderv2 V1.1.7
+- type: diagnostic / documentation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求自主浏览仓库并判断如何通过 Cm 实现跨手动作表征；本轮只读代码与既有产物，追加诊断记录。
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: e7df6b46e9a3009a5b6e07c41bad5216d032a607
+- worktree_dirty: true（开始时已有根 AGENTS 删除、版本指针、ObjectInteractionCm 计划/日志及未跟踪诊断/测试）
+- scope: 跨 Task 代码与既有证据核对、下一步建议；不运行新训练/模型评估，不修改科研结论、模型、数据、split、cache、checkpoint、指导、计划或架构快照。
+- conclusion: SUPPORTED（所列代码事实和归档数值的复核）；INCONCLUSIVE（跨手可复用性、未见手型泛化和下面提出的机制假设）。
+
+**文件**
+
+- [docs/logs/activity_log.md](activity_log.md) — 仅新增本条；没有其他本轮写入。
+
+**原因**
+
+用户的目标是跨手动作表征，因此需要分别检验 effect 预测、目标手对 Cm 的依赖、跨源交换和递归执行。
+现有 object EPE 或来源分类实验不能独立替代后面三项。
+
+1. 当前相关主线是 ObjectInteractionCm → CmDecoderv2。前者由物体几何、邻近手几何和 endpoint hand flow
+   生成 `16 × 32` tokens、动态 anchor position/normal；后者冻结前者，以 `K=4` 的完整 Cm 和目标手当前
+   q/wrist/link geometry 预测运动。实际接口包含 anchors，不能只把 tokens 当作整个动作通道。
+   见 [src/task/ObjectInteractionCm/model.py](../../src/task/ObjectInteractionCm/model.py)、
+   [src/task/CmDecoderv2/model.py](../../src/task/CmDecoderv2/model.py)。
+2. ObjectInteractionCm 同时监督物体 flow 和源手 flow，默认权重均为 1；没有跨手交换/一致性损失。
+   源手重建可能要求保留 embodiment-specific motion，是待做消融的机制假设，不能仅凭代码认定它有害；
+   hand decoder 也接收手几何，部分形态信息可能由该条件提供。
+   见 [src/task/ObjectInteractionCm/config.py](../../src/task/ObjectInteractionCm/config.py)、
+   [src/task/ObjectInteractionCm/runner.py](../../src/task/ObjectInteractionCm/runner.py)。
+3. 归档的 7670 个有效样本复算得到如下 frame-micro object EPE；这支持存在预测增益，不支持已经实现跨手迁移。
+
+   | 方法 / mm | MANO | Inspire RL |
+   | --- | ---: | ---: |
+   | 平均接触手点位移 | 8.442019 | 7.163211 |
+   | 接触手点刚体拟合 | 7.772431 | 7.902781 |
+   | 当前 Cm 模型 | 7.290740 | 5.742603 |
+
+   原有 paired sequence-bootstrap 显示 MANO 上相对刚体拟合的改善 CI 跨零；不是等价证明。
+   证据：[src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/)、
+   [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/diagnosis.json)、
+   [src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl](../../src/task/ObjectInteractionCm/research/cross_source_effect/output/mechanism_v1_3_2_val_20260912_131550/metrics.jsonl)。
+4. 当前 best checkpoint 的实际 SHA256 与 V1.3 source classifier manifest 一致，均为
+   `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`。
+   有效 held-out 样本 88 个，分类准确率 `65/88=73.8636%`，AUROC `0.7531`。
+   这是 source 可分性的诊断，仍混合动作、接触、采样密度和数据来源差异；分类达到随机水平亦不能证明动作表征有效。
+   证据：[src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json](../../src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/metrics.json)、
+   [src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json](../../src/task/CmDecoderv2/research/cm_hand_source_classifier/output/cmdecoderv2-cm-source-classifier-20260910-111037/run_manifest.json)。
+5. V1.3 index 的 630 个 parent sequence 全部唯一，train 为 MANO/Inspire `254/255`、val `28/30`、
+   test `63/0`。当前缓存不是同交互的双手配对；正式 test 也不能直接提供对称的双源评估。
+   同名动作或原始 retargeting 来源不保证修正后的实际物体 effect 相同。
+   证据：[data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json](../../data/processed_data/object_interaction_cm_dexplore_rl_v1_3/index.json)、
+   [src/task/ObjectInteractionCm/docs/plan/V1.2.5.md](../../src/task/ObjectInteractionCm/docs/plan/V1.2.5.md)。
+6. 既有 `mouse_lift` Inspire 自身递归诊断中，GT 接触段 hand-position EPE 均值 `87.909 mm`，
+   hand-flow EPE `2.363 mm`；这说明该序列存在递归状态漂移，不能把所有 rollout 失败归因于换手。
+   物体位姿仍来自参考轨迹；OICM self-effect 重建并不是物理环境闭环成功的证据。
+   证据：[src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json](../../src/task/CmDecoderv2/research/inspire_rollout_effect/output/cmdecoderv2-inspire-effect-v13-contact-full-20260911-001021/diagnostic_tables.json)。
+
+**下一步建议（讨论方案，不是新的 final plan，也未执行）**
+
+- 首先固定 Inspire 目标手当前状态，验证 decoder 的动作条件依赖：正确 Cm、相同物体/相近接触条件下
+  另一真实动作的完整 Cm window、保持状态不动基线；置零完整 Cm 只作 OOD 辅助。真实 Cm 交换应把
+  tokens 与对应 anchors 一起交换并保持时间顺序，以免留下未消融的动作通道。先比较单步和短时递归，
+  用错误动作条件是否导致可解释的输出变化、正确条件是否提高误差指标判断。若仍有歧义，再训练相同预算的
+  state-only decoder；不能把“推理时置零”称为已训练 state-only baseline。
+- 随后建设小规模、可审计的跨手交换评估：目标手初始状态固定，分别输入同源 Cm、经物体状态/时间跨度/
+  实际 effect/接触可达性审查的 MANO Cm，以及不同 effect 的负对照。物体坐标系与 anchor 变换必须明确，
+  不以同名 sequence 自动建立正配对，不改正式 split。跨手成功以目标手可实现的运动、接触和物体任务效果
+  判断，目标手未来 GT 不作为输入；同一个冻结 OICM 的评分仅作诊断，最终需要独立仿真/真实执行验证。
+- 模型改动先用相同数据、训练预算与评估 stride 比较三项：现有 joint-loss Cm、去掉源手重建损失的 Cm、
+  同一局部交互 encoder 绕过 Cm 压缩的 object-effect head。前两项判断原手重建监督的作用；后者只定位
+  压缩/解码损失，不作为跨手表征候选。只有结果支持时再扩展成完整 2×2 消融或 effect/private 分支。
+  object EPE 改善需要进一步通过交换评估验证，不能自动认定迁移提高。
+- 表征目标建议为物体条件下的交互动作：保留任务 effect 与必要接触信息，把目标手运动学交给 decoder。
+  不预设每个 slot 跨样本一一对应，不直接对未对齐 slot 做 L2；也不把低 source-classification accuracy
+  或单步物体 flow 作为唯一目标，静止时的不同接触构型仍可能影响后续可执行动作。
+
+**验证**
+
+- `rg`/定向源码读取：核对 encoder、anchors、双重监督、Temporal-D2 输入及 loss；未修改运行实现。
+- `python3` 标准库只读复核：读取上述 `metrics.jsonl`，按 source 使用 `statistics.fmean` 重算四个
+  EPE 列并以 `math.isclose(abs_tol=1e-9)` 对照 `diagnosis.json`；全部通过，样本数 `3610/4060`。
+  同次调用使用 `Counter` 核验 split/variant，断言 `len(parent_ids)==len(set(parent_ids))==630`；
+  用 `hashlib.sha256` 分块读取 checkpoint 并与 classifier manifest 比较，通过；从 confusion matrix
+  复算 `65/88`，与归档 accuracy 一致。没有执行新模型评估或建立新实验 run。
+- `git diff --check -- docs/logs/activity_log.md` 和
+  `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log docs/logs/activity_log.md --worktree --scope-prefix docs/logs/activity_log.md --check-links`：通过，最新条目 13 个本地链接均可导航。
+  审计器按实现排除日志自身，报告 0 个其他变更路径；本轮日志差异另以 `git diff` 人工检查。
+- 数值核对属于既有证据复核；不将其记为新的科研实验或更新 Task experiment 结论。
+
+**回滚与规范反馈**
+
+删除本活动条目即可回滚；所有开始时已有的工作区差异保留。本轮只读诊断与 L0 记录未遇到审批阻碍；
+后续训练、配对评估与监督变体仍是建议，尚未形成新的执行计划。本轮未修改治理规则。
+
+## 2026-09-03 22:03:39 +0800 — V1.2.15 共享运行追溯与测试治理提交边界
+
+- activity_id: ACT-20260903-220339
+- timestamp: 2026-09-03 22:03:39 +0800
+- modification_version: V1.2.15
+- type: governance / code / documentation / operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求将当前更改划定范围并分次提交；BaseRunner/manifest 收缩和测试目录治理此前均已逐项确认。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2c4256d927a6c93b97ca3eb0d14df63227142ca9
+- worktree_dirty: true（根目录运行快照和 CmDecoder 历史 modification 重复条目不纳入提交）
+- scope: 共享 BaseRunner 运行产物职责、run manifest 精简、测试目录归属和相关治理文档；不修改科研模型、数据、GT、坐标系、split、checkpoint、output 或正在运行的训练进程。
+
+**文件**
+
+- [`.agents/`](../../.agents/) — 同步修改治理和实验运行 Skill 的 summary、manifest、测试范围及交接规则。
+- [`AGENTS.md`](../../AGENTS.md) — 固化任务模式、测试归属、终态 activity 和路径导航合同。
+- [`docs/`](../) — 更新文档导航、目录规范、交接清单、根架构/记忆和 V1.2.15 最终计划。
+- [`src/base/`](../../src/base/) — 取消 BaseRunner 标准 `summary.json` 自动生成，并精简新 `run_manifest.json`。
+- [`tests/`](../../tests/) — 增加根 legacy 测试归类清单，并补充 manifest/BaseRunner 回归断言。
+- [`docs/logs/activity_log.md`](activity_log.md) — 登记共享变更、验证和本次提交边界。
+
+**原因**
+
+将已经批准并验证的共享治理/基础设施更改与 Task 实现、实验活动和生成产物分开提交，保证每个提交可独立审计和回滚；根目录运行快照不属于源码，废弃的 `modification_log.md` 不再接收重复新记录。
+
+**验证**
+
+- `python3 -m py_compile src/base/base_runner.py src/base/run_manifest.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：`320 passed, 3 skipped`；仅有既有弃用/兼容警告。
+- `audit_diff.py --staged --check-links`：通过，覆盖 `14` 个 staged 变更路径，最新条目 `6` 个本地链接可导航；`git diff --cached --check`：通过。
+- 工程回归不构成科研效果证据；`conclusion: N/A`。
+
+**回滚**
+
+可独立回退本批共享治理/BaseRunner 提交；此前的 CmDecoder 活动提交和 ObjectInteractionCm V1.2.1 Task 提交不在该回滚范围内，运行产物与训练进程无需处理。
+
+## 2026-09-03 11:34:30 +0800 — V1.2.15 收缩运行追溯与取消 BaseRunner 标准 summary
+
+- activity_id: ACT-20260903-113430
+- timestamp: 2026-09-03 11:34:30 +0800
+- modification_version: V1.2.15
+- type: governance / code / documentation / diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认取消 `summary.json`、保留 `metadata.json`、移除 manifest 中完整 `dataset_metadata`，并允许继续处理 `src/base/`。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 52f47ae7bf688e652aef0fc6b49e2ee2eea8d868
+- worktree_dirty: true（工作区另有用户/运行生成的未纳入本次范围的改动）
+- run_status: COMPLETED
+- conclusion: N/A（工程追溯与治理变更，不构成科研效果证据）
+- scope: 共享 BaseRunner 运行产物职责、run manifest 精简、metadata 字段归属说明和相关回归测试；不修改模型、数据、GT、坐标系、split、checkpoint 内容或历史运行产物。
+
+**文件**
+
+- [`src/base/base_runner.py`](../../src/base/base_runner.py) — 移除 BaseRunner 对标准 `summary.json` 的自动写入，保留配置、metadata、manifest、metrics 和 train.log 既有流程。
+- [`src/base/run_manifest.py`](../../src/base/run_manifest.py) — 新 manifest 不再内嵌完整 `dataset_metadata` 或 `dataset_split`，仅保留轻量静态 `contract`；旧 `write_run_summary` API 保留给历史/Task 专属调用方。
+- [`tests/test_run_manifest.py`](../../tests/test_run_manifest.py) — 验证新 manifest 不重复展开 metadata，兼容旧 summary writer 测试继续保留。
+- [`tests/test_overfit_diagnosis.py`](../../tests/test_overfit_diagnosis.py) — 增加 BaseRunner 新运行不产生 `summary.json` 的回归断言。
+- [`AGENTS.md`](../../AGENTS.md)、[`.agents/skills/research-change-control/SKILL.md`](../../.agents/skills/research-change-control/SKILL.md)、[`.agents/skills/research-experiment-workflow/SKILL.md`](../../.agents/skills/research-experiment-workflow/SKILL.md) — 固化终态 activity、metadata_snapshot 和 summary 兼容边界。
+- [`docs/目录规范.md`](../目录规范.md)、[`docs/ai_task_checklist.md`](../ai_task_checklist.md)、[`docs/plan/V1.2.15.md`](../plan/V1.2.15.md) — 同步 JSON 职责、终态导航、字段归属和已确认决定。
+- [`docs/logs/architecture_log.md`](architecture_log.md)、[`docs/logs/repo_memory.md`](repo_memory.md) — 更新共享运行追溯事实。
+- [`src/task/ObjectInteractionCm/docs/architecture/V1.1.md`](../../src/task/ObjectInteractionCm/docs/architecture/V1.1.md)、[`src/task/ObjectInteractionCm/docs/plan/V1.1.md`](../../src/task/ObjectInteractionCm/docs/plan/V1.1.md) — 清理当前 Task 规范中对标准 summary 的过时要求。
+- [`docs/logs/activity_log.md`](activity_log.md) — 登记本次变更及验证入口。
+
+**原因**
+
+`summary.json` 与 activity、metrics、train.log 和 checkpoint 产生终态信息重复，且完整
+`dataset_metadata` 与 `metadata.json` 重复。新运行将终态集中到 activity，manifest 只做小型 provenance
+索引并引用 metadata snapshot；历史输出和显式 Task summary 不回写、不删除。
+
+**验证**
+
+- `python3 -m py_compile src/base/base_runner.py src/base/run_manifest.py`：通过。
+- `python3 -m pytest -q tests/test_run_manifest.py tests/test_overfit_diagnosis.py`：`24 passed`。
+- `python3 -m pytest -q tests/test_framework_contracts.py tests/test_base_runner_max_steps.py tests/test_base_runner_validation.py tests/test_checkpoint_compat.py tests/test_audit_diff.py`：`25 passed`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q`：`320 passed, 3 skipped`；保留环境弃用警告，不影响本次回归。
+- `git diff --check`：通过；`audit_diff.py --worktree --check-links`：通过，覆盖 `14` 个本次变更路径，最新条目 `15` 个本地链接可导航。
+
+**回滚**
+
+回退本条列出的共享代码、规范文档和定向测试即可恢复旧的 BaseRunner summary 写入与 manifest 展开逻辑；不触碰已有运行目录、数据、cache 或 checkpoint。
+
+## 2026-09-03 10:21:27 +0800 — V1.2.15 测试目录归属规范与根测试 legacy 分类
+
+- activity_id: ACT-20260903-102127
+- timestamp: 2026-09-03 10:21:27 +0800
+- modification_version: V1.2.15
+- type: governance / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认采用“只建立规范和分类清单，暂不物理迁移旧 tests”的方案
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 7b63dc50896392023c5c0f33c7d508cbe4436b50
+- worktree_dirty: true（CmDecoder ObjectInteractionCm 另有用户未提交改动，本次不纳入）
+- scope: 测试目录所有权、验证范围和现有根 tests 的 legacy 分类；不移动、删除或改写任何现有测试文件，不改变 pytest.ini、tests/conftest.py 或科研语义
+
+**文件**
+
+- [tests/README.md](../../tests/README.md) — 记录未来 Task/process/shared/integration/governance 目录和当前 63 个根测试的逐文件归类。
+- [docs/目录规范.md](../目录规范.md) — 增加测试目录、验证范围和根 legacy 规则。
+- [docs/README.md](../README.md) — 增加测试规范导航。
+- [AGENTS.md](../../AGENTS.md) — 增加测试规范加载入口、测试所有权和按影响范围选择验证的常驻要求。
+- [.agents/skills/research-change-control/SKILL.md](../../.agents/skills/research-change-control/SKILL.md) — 要求按测试归属选择最窄验证集。
+- [docs/plan/V1.2.15.md](../plan/V1.2.15.md) — 记录用户确认的测试分类边界。
+- [docs/logs/activity_log.md](activity_log.md) — 记录本次治理事件。
+
+**原因**
+
+根 `tests/` 同时混合 Task、共享基础设施、数据处理和跨 Task 测试，导致 Task 小改动默认触发无关测试。
+本次先建立所有权和验证范围规范，保留旧文件路径以避免迁移引入 import、pytest 收集和 fixture 风险。
+
+**验证**
+
+- 逐一核对根目录现有 `63` 个 `test_*.py`，分类清单无遗漏或重复。
+- 未修改 `pytest.ini`、`tests/conftest.py` 和任何根测试内容；现有 `pytest` 行为保持不变。
+- 分类核对：`63` 个根测试无遗漏、无重复。
+- `audit_diff.py --worktree --check-links`（仅本次治理路径）：覆盖 `6` 个变更路径，`7` 个本地链接可导航；
+  `git diff --check`：通过。
+- 本次为治理/文档规范，不构成科研效果证据；`conclusion: N/A`。
 
 ## 2026-09-02 15:30:36 +0800 — V1.2.15 提交治理与运行入口改动
 
@@ -374,3 +640,29 @@
 **验证**
 
 - 合并预演确认远端与本地共有 9 个日志冲突路径；本地 status 内容已转入本 activity 与 correspondence task activity。
+
+## 2026-09-13 11:21:49 +0800 — 远端 oyx 更新合并
+
+- activity_id: ACT-20260913-112149-ROOT-MERGE
+- timestamp: 2026-09-13 11:21:49 +0800
+- modification_version: V1.2.15
+- type: operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求提交当前改动、fetch 最新远端并以远端为主合并；用户确认保留本地 correspondence V2 文件
+- branch: oyx
+- base_commit: 0fbfcf5465a66bc07f582db91e355f3f1ee21d3b
+- merge_target: origin/oyx @ 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- run_status: COMPLETED
+
+**结果与边界**
+
+- 已使用用户指定 HTTP(S) 代理完成 `git fetch --all --prune`。
+- 已执行远端优先合并；无未解决冲突、无冲突标记。远端新增 IsaacGymEnvs、CmDecoder/ObjectInteractionCm 内容进入合并结果。
+- 对远端删除但本地仍有研究价值的 correspondence V2 配置、指导/计划、校准和研究脚本保留本地版本；其余路径按远端版本处理。
+- 合并结果待提交为 merge commit；本地改动提交 `0fbfcf5` 已独立保留。
+
+**验证**
+
+- 非 vendor 暂存差异 `git diff --cached --check -- . ':!third_party/IsaacGymEnvs'` 通过。
+- `git ls-files -u` 为 0；correspondence V2 文件存在且无冲突标记。

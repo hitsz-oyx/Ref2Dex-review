@@ -1,0 +1,13 @@
+name: cross_source_effect_mechanism
+modification_version: V1.3.2
+operation_category: [diagnostic, experiment]
+importance: exploratory
+pinned: true
+tags: [no-learning, hand-motion-baseline, rigidity, error-attribution, slot-metric]
+entrypoint: src.task.ObjectInteractionCm.research.cross_source_effect.diagnose
+plan: ../../docs/plan/V1.3.md
+source_run: cross_source_effect_v1_3_1_val_20260912_112900
+controls: [mean_hand_flow, rigid_hand_fit, rigid_projection_of_prediction]
+oracle: gt_rigid_fit_residual_only
+seed: 42
+bootstrap_repeats: 2000

@@ -30,7 +30,7 @@ from .distributed import (
 )
 from .metrics import MetricAverager, MetricStat
 from .performance import PerformanceMonitor
-from .run_manifest import build_run_manifest, write_run_manifest, write_run_summary
+from .run_manifest import build_run_manifest, write_run_manifest
 from .schedulers import CosineRestartScheduler, cosine_schedule, linear_schedule
 from .utils import (
     JsonlLogger,
@@ -161,7 +161,6 @@ class BaseRunner:
         self.run_name, self.output_dir = self._resolve_run_identity()
         self.cfg.train.output_dir = str(self.output_dir)
         self._run_started_at = datetime.now(timezone.utc).isoformat()
-        self._summary_written = False
         self.seed = int(cfg.train.seed)
         self.process_seed = set_seed(self.seed + self.distributed.rank)
         self.device = resolve_device(
@@ -223,12 +222,10 @@ class BaseRunner:
             else:
                 metrics = self.evaluate_all()
         except BaseException:
-            self._write_terminal_summary(run_status="FAILED", error=traceback.format_exc())
             raise
         if self.is_primary:
             for key, value in metrics.items():
                 self._log_line(f"{key}: {value:.6g}")
-        self._write_terminal_summary(run_status="COMPLETED", metrics=metrics)
         return metrics
 
     def learn(self) -> dict[str, float]:
@@ -239,7 +236,6 @@ class BaseRunner:
             performance.start()
         try:
             metrics = self._learn_impl()
-            self._write_terminal_summary(run_status="COMPLETED", metrics=metrics)
             return metrics
         except BaseException:
             # ``train.log`` is the durable, user-facing run record.  stdout
@@ -247,7 +243,6 @@ class BaseRunner:
             # unhandled training traceback here before propagating the error.
             if self.is_primary:
                 self._log_line("Training failed:\n" + traceback.format_exc())
-            self._write_terminal_summary(run_status="FAILED", error=traceback.format_exc())
             raise
         finally:
             if performance is not None:
@@ -1068,71 +1063,6 @@ class BaseRunner:
                 metadata_snapshot=metadata_path,
             )
             write_run_manifest(manifest_path, manifest)
-
-    def _write_terminal_summary(
-        self,
-        *,
-        run_status: str,
-        metrics: dict[str, float] | None = None,
-        error: str | None = None,
-    ) -> None:
-        """Write one terminal summary without introducing live state/heartbeat files."""
-        if not self.is_primary or getattr(self, "_summary_written", False):
-            return
-        output_dir = getattr(self, "output_dir", None)
-        if output_dir is None:
-            # Lightweight control-flow tests may construct a runner via
-            # ``__new__`` without a filesystem-backed run directory.
-            return
-        output_dir = Path(output_dir)
-        summary_path = output_dir / "summary.json"
-        if summary_path.exists():
-            suffix = (
-                "eval"
-                if self.mode == "eval"
-                else "resume"
-                if getattr(self.cfg.train, "resume", None)
-                else "attempt"
-            )
-            summary_path = output_dir / f"summary_{suffix}_{self._shared_timestamp()}.json"
-        config_data = self.cfg.to_dict()
-        modification_version = config_data.get("modification_version") or self.metadata.get(
-            "modification_version"
-        )
-        try:
-            write_run_summary(
-                summary_path,
-                task=self._task_slug(),
-                run_name=self.run_name,
-                output_dir=self.output_dir,
-                mode=self.mode,
-                run_status=run_status,
-                conclusion="N/A",
-                modification_version=modification_version,
-                started_at=getattr(self, "_run_started_at", datetime.now(timezone.utc).isoformat()),
-                finished_at=datetime.now(timezone.utc).isoformat(),
-                metrics=metrics,
-                global_step=getattr(self, "global_step", None),
-                epoch=getattr(self, "_last_epoch", None),
-                best_metric=getattr(self, "best_metric", None),
-                error=error[-12000:] if error else None,
-                artifact_paths={
-                    key: value
-                    for key, value in {
-                        "config": self.metadata.get("config_snapshot_path"),
-                        "manifest": self.metadata.get("run_manifest_path"),
-                        "metrics": output_dir / "metrics.jsonl",
-                        "train_log": output_dir / "train.log",
-                        "best_checkpoint": output_dir / "checkpoints" / "best.pt",
-                        "latest_checkpoint": output_dir / "checkpoints" / "latest.pt",
-                    }.items()
-                    if value is not None
-                },
-            )
-        except Exception as exc:  # pragma: no cover - filesystem failure is environment-specific
-            self._log_line(f"Unable to write terminal summary: {exc}")
-            return
-        self._summary_written = True
 
     def _write_metadata(self, path: str | Path | None = None) -> None:
         if not self.is_primary:

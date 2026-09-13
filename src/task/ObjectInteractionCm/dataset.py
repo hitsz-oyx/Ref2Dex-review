@@ -9,7 +9,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data import DataLoader, Dataset, Sampler, default_collate
 
 from src.base.data import make_dataloader_kwargs
 from src.base.distributed import make_default_eval_sampler, make_default_train_sampler
@@ -57,6 +57,46 @@ def _nearest_distances(points: np.ndarray, object_points: np.ndarray) -> np.ndar
         return result
 
 
+def _collate_object_interaction_cm(batch: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Pad the selected hand stream only to the maximum length in this batch."""
+    if not batch:
+        raise ValueError("ObjectInteractionCm collate received an empty batch")
+    variable_keys = {
+        "hand_points",
+        "hand_normals",
+        "hand_flow",
+        "hand_valid_mask",
+        "hand_supervision_mask",
+        "hand_point_ids",
+    }
+    max_hand_points = max(int(item["hand_points"].shape[0]) for item in batch)
+    result: dict[str, Any] = {}
+    for key in batch[0]:
+        values = [item[key] for item in batch]
+        if key not in variable_keys:
+            result[key] = default_collate(values)
+            continue
+        first = values[0]
+        if not torch.is_tensor(first):
+            raise TypeError(f"Variable hand field {key!r} must contain tensors")
+        padded_shape = (len(values), max_hand_points, *tuple(first.shape[1:]))
+        fill_value = -1 if key == "hand_point_ids" else 0
+        padded = torch.full(
+            padded_shape,
+            fill_value=fill_value,
+            dtype=first.dtype,
+        )
+        for batch_index, value in enumerate(values):
+            if value.ndim < 1:
+                raise ValueError(f"Variable hand field {key!r} must have a point dimension")
+            point_count = int(value.shape[0])
+            if point_count > max_hand_points:
+                raise ValueError(f"Variable hand field {key!r} exceeds batch maximum")
+            padded[batch_index, :point_count] = value
+        result[key] = padded
+    return result
+
+
 class _SequenceView:
     """Lazy sequence-level view supporting mmap and shared/side NPZ layouts."""
 
@@ -100,8 +140,8 @@ class _SequenceView:
             self.kind = "inspire"
             geometry_dir = self.path / "geometry"
             self._meta = json.loads((geometry_dir / "manifest.json").read_text(encoding="utf-8"))
-            self.dataset_id = "inspire_f1"
-            self.source_name = "inspire_f1"
+            self.dataset_id = str(self._meta.get("dataset_id") or self._meta.get("source") or "inspire_f1")
+            self.source_name = str(self._meta.get("source") or "inspire_f1")
             self._fields = {
                 "obj": geometry_dir / "obj_points_pool_world.npy",
                 "obj_normals": geometry_dir / "obj_normals_pool_world.npy",
@@ -113,15 +153,26 @@ class _SequenceView:
             missing = [str(path) for path in required if not path.is_file()]
             if missing:
                 raise ValueError(f"{self.path}: Inspire geometry missing {missing}")
-            active_path = geometry_dir / "obj_candidate_mask_5cm_recomputed.npy"
+            active_path = geometry_dir / "obj_candidate_mask_2cm.npy"
+            if not active_path.is_file():
+                active_path = geometry_dir / "obj_candidate_mask_5cm_recomputed.npy"
             if not active_path.is_file():
                 active_path = geometry_dir / "obj_candidate_mask_5cm.npy"
             if not active_path.is_file():
                 raise ValueError(f"{self.path}: Inspire geometry missing object candidate mask")
-            self._inspire_active = np.asarray(np.load(active_path, mmap_mode="r"), dtype=bool)
-            if self._inspire_active.ndim == 2:
-                self._inspire_active = self._inspire_active.any(axis=1)
-            self._load_inspire_stream()
+            candidate_mask = np.load(active_path, mmap_mode="r")
+            if candidate_mask.dtype != np.bool_:
+                candidate_mask = np.asarray(candidate_mask, dtype=bool)
+            if candidate_mask.ndim not in (1, 2):
+                raise ValueError(f"{self.path}: invalid object candidate mask shape {candidate_mask.shape}")
+            self._inspire_candidate_mask = candidate_mask
+            self._inspire_active = candidate_mask if candidate_mask.ndim == 1 else candidate_mask.any(axis=1)
+            self._inspire_active_count = (
+                candidate_mask.sum(axis=1, dtype=np.int32)
+                if candidate_mask.ndim == 2
+                else candidate_mask.astype(np.int32)
+            )
+            self._load_inspire_stream(geometry_dir)
         else:
             raise ValueError(f"Unsupported ObjectInteractionCm sequence layout: {self.path}")
         self._finalize_metadata()
@@ -139,6 +190,25 @@ class _SequenceView:
         for stream_name, arrays in self.streams.items():
             if arrays["hand"].shape[0] != frame_count or len(arrays["active"]) != frame_count:
                 raise ValueError(f"{self.path}/{stream_name}: frame count mismatch")
+            if "knn_hand" in arrays:
+                if arrays["knn_hand"].ndim != 3 or arrays["knn_hand"].shape[0] != frame_count:
+                    raise ValueError(f"{self.path}/{stream_name}: KNN hand shape mismatch")
+                if arrays["knn_normals"].shape != arrays["knn_hand"].shape:
+                    raise ValueError(f"{self.path}/{stream_name}: KNN normal shape mismatch")
+                indices = arrays["knn_indices"]
+                if indices.ndim != 3 or indices.shape[:2] != (frame_count, 4096):
+                    raise ValueError(f"{self.path}/{stream_name}: KNN index shape mismatch")
+                if indices.dtype != np.uint16:
+                    raise ValueError(f"{self.path}/{stream_name}: KNN indices must be uint16")
+                if int(np.asarray(indices).max()) >= arrays["knn_hand"].shape[1]:
+                    raise ValueError(f"{self.path}/{stream_name}: KNN index exceeds hand point count")
+            if "hand_supervision_mask" in arrays:
+                mask = arrays["hand_supervision_mask"]
+                if mask.shape != arrays["hand"].shape[:2] or mask.dtype != np.bool_:
+                    raise ValueError(f"{self.path}/{stream_name}: hand supervision mask shape/dtype mismatch")
+            if "hand_min_distance" in arrays:
+                if arrays["hand_min_distance"].shape != (frame_count,):
+                    raise ValueError(f"{self.path}/{stream_name}: hand minimum distance shape mismatch")
         raw_values = np.asarray(raw)
         if not np.isfinite(raw_values).all():
             raise ValueError(f"{self.path}: invalid raw_frame_id")
@@ -201,15 +271,39 @@ class _SequenceView:
                 raise ValueError(f"{self.path}/{side}: hand normals shape mismatch")
             self.streams[side] = arrays
 
-    def _load_inspire_stream(self) -> None:
-        geometry_dir = self.path / "geometry"
+    def _load_inspire_stream(self, geometry_dir: Path | None = None) -> None:
+        geometry_dir = geometry_dir or (self.path / "geometry")
         hand = np.load(geometry_dir / "hand_points_world.npy", mmap_mode="r")
         normals = np.load(geometry_dir / "hand_normals_world.npy", mmap_mode="r")
         if hand.ndim != 3 or hand.shape[1:] != (self.expected_hand_points, 3):
             raise ValueError(f"{self.path}: expected Inspire hand_points [T,{self.expected_hand_points},3]")
         if normals.shape != hand.shape:
             raise ValueError(f"{self.path}: Inspire hand normals shape mismatch")
-        self.streams = {"inspire_f1": {"hand": hand, "hand_normals": normals, "active": self._inspire_active}}
+        arrays: dict[str, Any] = {
+            "hand": hand,
+            "hand_normals": normals,
+            "active": self._inspire_active,
+            "interaction_mask": self._inspire_candidate_mask,
+        }
+        knn_paths = {
+            "knn_hand": geometry_dir / "knn_hand_points_world.npy",
+            "knn_normals": geometry_dir / "knn_hand_normals_world.npy",
+            "knn_indices": geometry_dir / "obj_knn_indices.npy",
+        }
+        if any(path.is_file() for path in knn_paths.values()):
+            if not all(path.is_file() for path in knn_paths.values()):
+                raise ValueError(f"{self.path}: incomplete offline KNN geometry")
+            arrays["knn_hand"] = np.load(knn_paths["knn_hand"], mmap_mode="r")
+            arrays["knn_normals"] = np.load(knn_paths["knn_normals"], mmap_mode="r")
+            arrays["knn_indices"] = np.load(knn_paths["knn_indices"], mmap_mode="r")
+            arrays["knn_k"] = int(self._meta.get("knn_k", arrays["knn_indices"].shape[-1]))
+            supervision_path = geometry_dir / "hand_supervision_mask_2cm.npy"
+            if supervision_path.is_file():
+                arrays["hand_supervision_mask"] = np.load(supervision_path, mmap_mode="r")
+            min_distance_path = geometry_dir / "hand_min_object_distance_m.npy"
+            if min_distance_path.is_file():
+                arrays["hand_min_distance"] = np.load(min_distance_path, mmap_mode="r")
+        self.streams = {self.source_name: arrays}
 
     @property
     def sides(self) -> dict[str, dict[str, Any]]:
@@ -232,9 +326,49 @@ class _SequenceView:
     def candidate_active(self, frame: int) -> bool:
         return any(bool(stream["active"][frame]) for stream in self.streams.values())
 
+    def candidate_count(self, frame: int) -> int:
+        """Number of active points in the full 4096 pool (union across streams)."""
+        if self.kind == "inspire" and hasattr(self, "_inspire_active_count"):
+            return int(np.asarray(self._inspire_active_count[frame]).item())
+        counts = [np.asarray(stream["active"][frame], dtype=bool) for stream in self.streams.values()]
+        if not counts:
+            return 0
+        return int(np.logical_or.reduce(counts, axis=0).sum())
+
     def hand(self, side: str, frame: int) -> tuple[np.ndarray, np.ndarray]:
         arrays = self.streams[side]
         return np.asarray(arrays["hand"][frame], dtype=np.float32), np.asarray(arrays["hand_normals"][frame], dtype=np.float32)
+
+    def has_offline_knn(self, side: str | None = None) -> bool:
+        name = side or next(iter(self.streams))
+        return "knn_hand" in self.streams[name]
+
+    def knn_hand(self, side: str, frame: int) -> tuple[np.ndarray, np.ndarray]:
+        arrays = self.streams[side]
+        if "knn_hand" not in arrays:
+            raise KeyError(f"{self.path}/{side}: offline KNN hand stream is unavailable")
+        return (
+            np.asarray(arrays["knn_hand"][frame], dtype=np.float32),
+            np.asarray(arrays["knn_normals"][frame], dtype=np.float32),
+        )
+
+    def knn_indices(self, side: str, frame: int) -> np.ndarray:
+        arrays = self.streams[side]
+        if "knn_indices" not in arrays:
+            raise KeyError(f"{self.path}/{side}: offline KNN indices are unavailable")
+        return np.asarray(arrays["knn_indices"][frame], dtype=np.uint16)
+
+    def hand_supervision(self, side: str, frame: int) -> np.ndarray | None:
+        value = self.streams[side].get("hand_supervision_mask")
+        if value is None:
+            return None
+        return np.asarray(value[frame], dtype=bool)
+
+    def hand_min_distance(self, side: str, frame: int) -> float | None:
+        value = self.streams[side].get("hand_min_distance")
+        if value is None:
+            return None
+        return float(np.asarray(value[frame]).item())
 
     def hands(self, frame: int) -> list[tuple[str, np.ndarray, np.ndarray]]:
         return [
@@ -254,6 +388,10 @@ class ObjectInteractionCmDataset(Dataset):
         num_obj_points: int = 1024,
         num_hand_points: int = 1538,
         max_hand_points: int | None = None,
+        max_knn_hand_points: int | None = None,
+        hand_stream_mode: str = "decoder",
+        knn_k: int | None = None,
+        hand_supervision_radius_m: float = 0.03,
         base_seed: int = 42,
         min_stride: int = 1,
         max_stride: int = 10,
@@ -267,6 +405,15 @@ class ObjectInteractionCmDataset(Dataset):
         self.num_obj_points = int(num_obj_points)
         self.num_hand_points = int(num_hand_points)
         self.max_hand_points = int(max_hand_points or (self.num_hand_points * 2))
+        self.max_knn_hand_points = int(max_knn_hand_points or 0)
+        self.hand_stream_mode = str(hand_stream_mode or "decoder").strip().lower()
+        self.knn_k = int(knn_k or 0)
+        if self.hand_stream_mode not in {"decoder", "unique_knn_edges"}:
+            raise ValueError(
+                "hand_stream_mode must be 'decoder' or 'unique_knn_edges', "
+                f"got {self.hand_stream_mode!r}"
+            )
+        self.hand_supervision_radius_m = float(hand_supervision_radius_m)
         self.base_seed = int(base_seed)
         self.min_stride = int(min_stride)
         self.max_stride = int(max_stride)
@@ -280,6 +427,12 @@ class ObjectInteractionCmDataset(Dataset):
             raise ValueError("num_obj_points must lie in [1,4096]")
         if self.max_hand_points <= 0 or self.max_hand_points < self.num_hand_points:
             raise ValueError("max_hand_points must be >= num_hand_points and positive")
+        if self.max_knn_hand_points < 0:
+            raise ValueError("max_knn_hand_points must be non-negative")
+        if self.knn_k < 0:
+            raise ValueError("knn_k must be non-negative")
+        if self.hand_supervision_radius_m <= 0.0:
+            raise ValueError("hand_supervision_radius_m must be positive")
         if self.min_stride <= 0 or self.max_stride < self.min_stride:
             raise ValueError("Require 0 < min_stride <= max_stride")
         if self.fixed_stride is not None and not self.min_stride <= self.fixed_stride <= self.max_stride:
@@ -297,7 +450,30 @@ class ObjectInteractionCmDataset(Dataset):
             view = _SequenceView(path, expected_hand_points=self.num_hand_points)
             if source_name:
                 view.source_name = source_name
+            if self.hand_stream_mode == "unique_knn_edges" and not view.has_offline_knn():
+                raise ValueError(
+                    f"{path}: hand_stream_mode='unique_knn_edges' requires offline KNN geometry"
+                )
+            if view.has_offline_knn():
+                knn_count = next(iter(view.streams.values()))["knn_hand"].shape[1]
+                cache_knn_k = int(next(iter(view.streams.values())).get("knn_k", 0) or 0)
+                if cache_knn_k <= 0:
+                    cache_knn_k = int(next(iter(view.streams.values()))["knn_indices"].shape[-1])
+                if self.knn_k == 0:
+                    self.knn_k = cache_knn_k
+                elif self.knn_k != cache_knn_k:
+                    raise ValueError(
+                        f"{path}: configured knn_k={self.knn_k} does not match cache knn_k={cache_knn_k}"
+                    )
+                if self.max_knn_hand_points and knn_count > self.max_knn_hand_points:
+                    raise ValueError(
+                        f"{path}: KNN hand points {knn_count} exceed max_knn_hand_points "
+                        f"{self.max_knn_hand_points}"
+                    )
+                self.max_knn_hand_points = max(self.max_knn_hand_points, int(knn_count))
             self.sequences.append(view)
+        if self.knn_k == 0:
+            self.knn_k = 8
         self.rows: list[tuple[int, int]] = []
         for sequence_index, sequence in enumerate(self.sequences):
             stride_values = self._stride_values(sequence.source_name)
@@ -356,35 +532,115 @@ class ObjectInteractionCmDataset(Dataset):
         hand_points_parts: list[np.ndarray] = []
         hand_normals_parts: list[np.ndarray] = []
         hand_future_parts: list[np.ndarray] = []
-        stream_names: list[str] = []
+        offline_knn_indices: np.ndarray | None = None
+        offline_knn_side: str | None = None
+        offline_knn_points_real: np.ndarray | None = None
+        offline_knn_normals_real: np.ndarray | None = None
+        offline_knn_future_real: np.ndarray | None = None
         for stream_name, _, _ in sequence.hands(current):
-            current_world, current_normals_world = sequence.hand(stream_name, current)
-            future_world, _ = sequence.hand(stream_name, future)
-            hand_points_parts.append(_world_to_frame(current_world, pose))
-            hand_normals_parts.append(_normal_world_to_frame(current_normals_world, pose))
-            hand_future_parts.append(_world_to_frame(future_world, pose))
-            stream_names.append(stream_name)
-        hand_points_real = np.concatenate(hand_points_parts, axis=0)
-        hand_normals_real = np.concatenate(hand_normals_parts, axis=0)
-        hand_future_real = np.concatenate(hand_future_parts, axis=0)
-        real_hand_count = int(hand_points_real.shape[0])
-        if real_hand_count > self.max_hand_points:
-            raise ValueError(
-                f"{sequence.path}: available hand points {real_hand_count} exceed max_hand_points {self.max_hand_points}"
+            if sequence.has_offline_knn(stream_name):
+                if offline_knn_side is not None:
+                    raise ValueError(
+                        f"{sequence.path}: multiple offline KNN streams are not supported in one sample"
+                    )
+                knn_world, knn_normals_world = sequence.knn_hand(stream_name, current)
+                knn_future_world, _ = sequence.knn_hand(stream_name, future)
+                offline_knn_points_real = _world_to_frame(knn_world, pose)
+                offline_knn_normals_real = _normal_world_to_frame(knn_normals_world, pose)
+                offline_knn_future_real = _world_to_frame(knn_future_world, pose)
+                offline_knn_indices = sequence.knn_indices(stream_name, current)[selected].astype(np.int64)
+                offline_knn_side = stream_name
+            else:
+                current_world, current_normals_world = sequence.hand(stream_name, current)
+                future_world, _ = sequence.hand(stream_name, future)
+                hand_points_parts.append(_world_to_frame(current_world, pose))
+                hand_normals_parts.append(_normal_world_to_frame(current_normals_world, pose))
+                hand_future_parts.append(_world_to_frame(future_world, pose))
+
+        if self.hand_stream_mode == "unique_knn_edges":
+            if (
+                offline_knn_side is None
+                or offline_knn_indices is None
+                or offline_knn_points_real is None
+                or offline_knn_normals_real is None
+                or offline_knn_future_real is None
+            ):
+                raise ValueError(f"{sequence.path}: unique KNN hand stream is unavailable")
+            knn_count = int(offline_knn_points_real.shape[0])
+            if offline_knn_indices.ndim != 2 or offline_knn_indices.shape != (self.num_obj_points, self.knn_k):
+                raise ValueError(f"{sequence.path}: sampled offline KNN index shape mismatch")
+            edge_points = offline_knn_points_real[offline_knn_indices]
+            edge_distances = np.linalg.norm(edge_points - object_points[:, None, :], axis=-1)
+            edge_valid = edge_distances <= self.hand_supervision_radius_m
+            valid_global_ids = np.asarray(offline_knn_indices[edge_valid], dtype=np.int64)
+            unique_global_ids = np.unique(valid_global_ids) if valid_global_ids.size else np.empty((0,), dtype=np.int64)
+            if unique_global_ids.size:
+                hand_global_ids = unique_global_ids
+                hand_valid = np.ones((len(hand_global_ids),), dtype=bool)
+            else:
+                # Keep one invalid row so all-invalid samples remain batchable.
+                hand_global_ids = np.zeros((1,), dtype=np.int64)
+                hand_valid = np.zeros((1,), dtype=bool)
+            hand_points = offline_knn_points_real[hand_global_ids].astype(np.float32, copy=False)
+            hand_normals = offline_knn_normals_real[hand_global_ids].astype(np.float32, copy=False)
+            hand_future = offline_knn_future_real[hand_global_ids].astype(np.float32, copy=False)
+            lookup = np.full((knn_count,), -1, dtype=np.int64)
+            if unique_global_ids.size:
+                lookup[unique_global_ids] = np.arange(len(unique_global_ids), dtype=np.int64)
+            local_edge_indices = lookup[offline_knn_indices]
+            if np.any(local_edge_indices[edge_valid] < 0):
+                raise RuntimeError(f"{sequence.path}: valid KNN edge points were not mapped to unique hand IDs")
+            local_edge_indices = np.where(edge_valid, local_edge_indices, 0).astype(np.int64, copy=False)
+            hand_mask = hand_valid.copy()
+            real_hand_count = int(hand_valid.sum())
+            min_distance_mm = float(edge_distances.min() * 1000.0)
+        else:
+            if not hand_points_parts:
+                raise ValueError(f"{sequence.path}: decoder hand stream is unavailable")
+            hand_points_real = np.concatenate(hand_points_parts, axis=0)
+            hand_normals_real = np.concatenate(hand_normals_parts, axis=0)
+            hand_future_real = np.concatenate(hand_future_parts, axis=0)
+            real_hand_count = int(hand_points_real.shape[0])
+            if real_hand_count > self.max_hand_points:
+                raise ValueError(
+                    f"{sequence.path}: available hand points {real_hand_count} exceed max_hand_points {self.max_hand_points}"
+                )
+            hand_points = np.zeros((self.max_hand_points, 3), dtype=np.float32)
+            hand_normals = np.zeros_like(hand_points)
+            hand_future = np.zeros_like(hand_points)
+            hand_points[:real_hand_count] = hand_points_real
+            hand_normals[:real_hand_count] = hand_normals_real
+            hand_future[:real_hand_count] = hand_future_real
+            hand_valid = np.zeros((self.max_hand_points,), dtype=bool)
+            hand_valid[:real_hand_count] = True
+            full_object_points = _world_to_frame(object_world, pose)
+            cached_hand_mask = (
+                sequence.hand_supervision(offline_knn_side, current)
+                if offline_knn_side is not None
+                else None
             )
-        hand_points = np.zeros((self.max_hand_points, 3), dtype=np.float32)
-        hand_normals = np.zeros_like(hand_points)
-        hand_future = np.zeros_like(hand_points)
-        hand_points[:real_hand_count] = hand_points_real
-        hand_normals[:real_hand_count] = hand_normals_real
-        hand_future[:real_hand_count] = hand_future_real
-        hand_valid = np.zeros((self.max_hand_points,), dtype=bool)
-        hand_valid[:real_hand_count] = True
-        full_object_points = _world_to_frame(object_world, pose)
-        hand_distances = _nearest_distances(hand_points_real, full_object_points)
-        hand_mask = np.zeros((self.max_hand_points,), dtype=bool)
-        hand_mask[:real_hand_count] = hand_distances < 0.03
-        return {
+            if cached_hand_mask is not None:
+                if cached_hand_mask.shape != (real_hand_count,):
+                    raise ValueError(
+                        f"{sequence.path}: cached hand supervision shape {cached_hand_mask.shape} "
+                        f"!= {(real_hand_count,)}"
+                    )
+                hand_distances = None
+            else:
+                hand_distances = _nearest_distances(hand_points_real, full_object_points)
+            hand_mask = np.zeros((self.max_hand_points,), dtype=bool)
+            if cached_hand_mask is not None:
+                hand_mask[:real_hand_count] = cached_hand_mask
+                cached_min_distance = sequence.hand_min_distance(offline_knn_side, current)
+                if cached_min_distance is None:
+                    cached_min_distance = float(_nearest_distances(hand_points_real, full_object_points).min())
+                min_distance_mm = float(cached_min_distance * 1000.0)
+            else:
+                assert hand_distances is not None
+                hand_mask[:real_hand_count] = hand_distances < self.hand_supervision_radius_m
+                min_distance_mm = float(hand_distances.min() * 1000.0)
+
+        sample = {
             "obj_points": torch.from_numpy(object_points),
             "obj_normals": torch.from_numpy(object_normals),
             "obj_flow_gt": torch.from_numpy(object_future - object_points),
@@ -394,7 +650,10 @@ class ObjectInteractionCmDataset(Dataset):
             "hand_flow": torch.from_numpy(hand_future - hand_points),
             "hand_valid_mask": torch.from_numpy(hand_valid),
             "hand_supervision_mask": torch.from_numpy(hand_mask),
-            "min_hand_object_distance_mm": torch.tensor(float(hand_distances.min() * 1000.0), dtype=torch.float32),
+            "hand_point_ids": torch.from_numpy(
+                hand_global_ids if self.hand_stream_mode == "unique_knn_edges" else np.arange(len(hand_points), dtype=np.int64)
+            ),
+            "min_hand_object_distance_mm": torch.tensor(min_distance_mm, dtype=torch.float32),
             "raw_frame_id": torch.tensor(raw, dtype=torch.int64),
             "next_raw_frame_id": torch.tensor(int(np.asarray(sequence.array("raw"))[future]), dtype=torch.int64),
             "stride": torch.tensor(stride, dtype=torch.int64),
@@ -402,7 +661,43 @@ class ObjectInteractionCmDataset(Dataset):
             "dataset_id": sequence.dataset_id,
             "source": sequence.source_name,
             "hand_valid_points": torch.tensor(real_hand_count, dtype=torch.int64),
+            "full_active_count": torch.tensor(sequence.candidate_count(current), dtype=torch.int64),
         }
+        if offline_knn_side is not None and self.hand_stream_mode == "decoder":
+            assert offline_knn_points_real is not None
+            assert offline_knn_normals_real is not None
+            assert offline_knn_future_real is not None
+            knn_count = int(offline_knn_points_real.shape[0])
+            if knn_count > self.max_knn_hand_points:
+                raise ValueError(
+                    f"{sequence.path}: available KNN hand points {knn_count} exceed "
+                    f"max_knn_hand_points {self.max_knn_hand_points}"
+                )
+            if offline_knn_indices is None or offline_knn_indices.shape[0] != self.num_obj_points:
+                raise ValueError(f"{sequence.path}: sampled offline KNN index shape mismatch")
+            knn_points = np.zeros((self.max_knn_hand_points, 3), dtype=np.float32)
+            knn_normals = np.zeros_like(knn_points)
+            knn_future = np.zeros_like(knn_points)
+            knn_points[:knn_count] = offline_knn_points_real
+            knn_normals[:knn_count] = offline_knn_normals_real
+            knn_future[:knn_count] = offline_knn_future_real
+            knn_valid = np.zeros((self.max_knn_hand_points,), dtype=bool)
+            knn_valid[:knn_count] = True
+            sample.update({
+                "knn_hand_points": torch.from_numpy(knn_points),
+                "knn_hand_normals": torch.from_numpy(knn_normals),
+                "knn_hand_flow": torch.from_numpy(knn_future - knn_points),
+                "knn_hand_valid_mask": torch.from_numpy(knn_valid),
+                "knn_edge_indices": torch.from_numpy(offline_knn_indices),
+                "knn_hand_valid_points": torch.tensor(knn_count, dtype=torch.int64),
+            })
+        elif self.hand_stream_mode == "unique_knn_edges":
+            sample.update({
+                "knn_edge_indices": torch.from_numpy(local_edge_indices),
+                "knn_edge_valid_mask": torch.from_numpy(edge_valid),
+                "knn_hand_valid_points": torch.tensor(real_hand_count, dtype=torch.int64),
+            })
+        return sample
 
 
 def _read_split_sequences(split_json: Path, root: Path, key: str) -> list[Path]:
@@ -474,7 +769,11 @@ def _plain_mapping(value: Any) -> dict[str, Any]:
 
 def _resolve_index_entries(index_path: Path, split: str) -> list[dict[str, str]]:
     payload = json.loads(index_path.read_text(encoding="utf-8"))
-    if payload.get("schema_name") != "ref2dex_object_interaction_cm_index_v1_1":
+    supported_schemas = {
+        "ref2dex_object_interaction_cm_index_v1_1",
+        "ref2dex_object_interaction_cm_index_v1_2",
+    }
+    if payload.get("schema_name") not in supported_schemas:
         raise ValueError(f"Unsupported ObjectInteractionCm index schema: {payload.get('schema_name')!r}")
     entries = payload.get("sequences", {}).get(split, [])
     if not isinstance(entries, list) or not entries:
@@ -507,6 +806,8 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         root = Path(root_value).resolve()
         all_paths = ObjectInteractionCmDataset(
             root, num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
+            hand_stream_mode=str(getattr(meta_cfg, "hand_stream_mode", "decoder")),
+            knn_k=int(getattr(meta_cfg, "knn_k", 8)),
             min_stride=int(data_cfg.min_stride), max_stride=int(data_cfg.max_stride), active_only=False
         )._discover_sequences()
         split_json = getattr(data_cfg, "split_json_path", None)
@@ -533,6 +834,10 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     common = dict(
         num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
         max_hand_points=int(getattr(meta_cfg, "max_hand_points", int(meta_cfg.num_hand_points) * 2)),
+        max_knn_hand_points=int(getattr(meta_cfg, "max_knn_hand_points", 0) or 0),
+        hand_stream_mode=str(getattr(meta_cfg, "hand_stream_mode", "decoder")),
+        knn_k=int(getattr(meta_cfg, "knn_k", 8)),
+        hand_supervision_radius_m=float(getattr(meta_cfg, "hand_supervision_radius_m", 0.03)),
         base_seed=int(seed), min_stride=int(data_cfg.min_stride), max_stride=int(data_cfg.max_stride),
         active_only=bool(getattr(data_cfg, "active_only", True)), source_stride_values=source_stride_values,
     )
@@ -555,15 +860,24 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         else:
             sampler = shard_sampler_for_distributed(sampler, distributed=distributed, drop_last=False, pad=True)
     kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
-    kwargs.update(batch_size=int(data_cfg.batch_size), shuffle=sampler is None, sampler=sampler)
+    kwargs.update(
+        batch_size=int(data_cfg.batch_size),
+        shuffle=sampler is None,
+        sampler=sampler,
+        collate_fn=_collate_object_interaction_cm,
+    )
     train_loader = DataLoader(train_dataset, **kwargs)
 
     def eval_loader(dataset):
         if dataset is None:
             return None
         eval_kwargs = make_dataloader_kwargs(data_cfg, seed, drop_last=False)
-        eval_kwargs.update(batch_size=int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size), shuffle=False,
-                           sampler=None if distributed is None else make_default_eval_sampler(dataset, distributed=distributed))
+        eval_kwargs.update(
+            batch_size=int(getattr(data_cfg, "val_batch_size", None) or data_cfg.batch_size),
+            shuffle=False,
+            sampler=None if distributed is None else make_default_eval_sampler(dataset, distributed=distributed),
+            collate_fn=_collate_object_interaction_cm,
+        )
         return DataLoader(dataset, **eval_kwargs)
 
     val_loader, test_loader = eval_loader(val_dataset), eval_loader(test_dataset)
@@ -582,12 +896,28 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
                 source_view = ObjectInteractionCmDataset(Path("."), sequence_entries=entries, fixed_stride=eval_stride, **common)
                 test_loaders[f"test/{source}/"] = eval_loader(source_view)
     metadata = {
-        "schema_name": "ref2dex_object_interaction_cm_v1_1",
+        "schema_name": (
+            "ref2dex_object_interaction_cm_v1_3"
+            if str(getattr(meta_cfg, "hand_stream_mode", "decoder")) == "unique_knn_edges"
+            else "ref2dex_object_interaction_cm_v1_1"
+        ),
         "coordinate_frame": "object_pose_t",
         "num_obj_pool": 4096,
         "num_obj_points": int(meta_cfg.num_obj_points),
         "num_hand_points": int(meta_cfg.num_hand_points),
         "max_hand_points": int(getattr(meta_cfg, "max_hand_points", int(meta_cfg.num_hand_points) * 2)),
+        "max_knn_hand_points": int(getattr(meta_cfg, "max_knn_hand_points", 0) or 0),
+        "hand_stream_mode": str(getattr(meta_cfg, "hand_stream_mode", "decoder")),
+        "hand_padding": (
+            "batch_max_dynamic"
+            if str(getattr(meta_cfg, "hand_stream_mode", "decoder")) == "unique_knn_edges"
+            else "dataset_fixed"
+        ),
+        "hand_selection": (
+            "unique_hand_ids_from_valid_knn_edges"
+            if str(getattr(meta_cfg, "hand_stream_mode", "decoder")) == "unique_knn_edges"
+            else "decoder_stream"
+        ),
         "knn_k": int(getattr(meta_cfg, "knn_k", 8)),
         "interaction_radius_m": float(getattr(meta_cfg, "interaction_radius_m", 0.05)),
         "frame_filter_distance_m": float(getattr(meta_cfg, "frame_filter_distance_m", 0.05)),

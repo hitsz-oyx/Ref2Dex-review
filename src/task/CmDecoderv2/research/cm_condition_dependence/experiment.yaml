@@ -1,0 +1,10 @@
+name: cm_condition_dependence
+modification_version: V1.1.8
+importance: exploratory
+pinned: false
+tags: [cm, conditioning, inspire, frozen, control, short-rollout]
+entrypoint: src.task.CmDecoderv2.research.cm_condition_dependence.run
+plan: ../../docs/plan/v1.1.md
+output: output/<run_id>/
+hypothesis: 正确的完整 Cm 比另一真实动作的 Cm 更能支持目标 Inspire 单步和短时运动解码。
+limitations: 同源冻结验证诊断；不证明跨手迁移、source invariance 或物理闭环成功。

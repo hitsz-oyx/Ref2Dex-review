@@ -90,17 +90,19 @@ python .agents/skills/research-change-control/scripts/audit_diff.py \
 
 ## 验证与交接
 
-- 先运行最窄且有意义的测试；共享代码或合同变更再扩大验证范围。
+- 先按仓库提供的测试目录/验证范围规范选择最窄且有意义的测试；Task 内变更优先只运行对应 Task
+  的测试，触及共享代码或合同时再加共享/集成测试；不因一个 Task 的小改动默认运行其他无关 Task
+  的测试。
 - 在 activity 记录中写出确切的验证命令和结果。
 - 只要产生或更新 plan、activity、实验产物、运行目录或 manifest，activity 和最终回复都必须提供
   可点击的 Markdown 路径；显示文本使用项目根目录相对路径，不得只给文件名或裸路径。仓库内
   Markdown 的链接目标按该文档的位置解析；聊天回复的目标使用当前客户端支持的本地文件链接格式，
   不把仓库文档中的 `../` target 原样复制到聊天中。
 - 最终回复中的本地路径或路径链接与前后中文、标点之间使用半角空格分隔，例如
-  `活动记录： [docs/logs/activity_log.md](docs/logs/activity_log.md) 。`；路径位于独立列表项时不要求
-  为行首、行尾额外填充空格。
+  在“活动记录：”与链接、链接与句号之间各留一个半角空格；路径位于独立列表项时不要求为行首、
+  行尾额外填充空格。
 - `STARTED` / `RUNNING` 事件若引用尚未生成的目标，必须在同一行标记 `PENDING`；其余本地链接在
   交接时必须已经存在。不要为了满足导航要求链接每个批量产物，只链接运行目录、manifest、配置、
-  summary、关键 checkpoint 和支撑结论的图表/数据。
+  实际生成的 metrics、train log、关键 checkpoint 和支撑结论的图表/数据；标准 BaseRunner 运行不再要求 summary。
 - 提交前检查 `git status`、`git diff` 和 staged diff。显式 stage 目标路径，绝不带入无关的用户改动。
 - 除非用户明确要求，不提交生成数据、缓存、checkpoint 和输出。

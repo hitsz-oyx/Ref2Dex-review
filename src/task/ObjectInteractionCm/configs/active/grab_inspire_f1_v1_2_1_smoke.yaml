@@ -1,0 +1,64 @@
+_base_: src.task.ObjectInteractionCm.config:Config
+
+name: object_interaction_cm_grab_inspire_f1_v1_2_1_smoke
+
+meta:
+  num_obj_pool: 4096
+  num_obj_points: 1024
+  num_hand_points: 1538
+  max_hand_points: 3076
+  processing_dim: 128
+  cm_dim: 32
+  num_cm_tokens: 16
+  slot_iters: 3
+  knn_k: 8
+  interaction_radius_m: 0.05
+  hand_supervision_radius_m: 0.03
+  scale_manifest_path: data/processed_data/object_interaction_cm_v1_2_1/scales_train.json
+  sample_loss_mask: true
+  dummy_token_policy: zero
+  sampling_retry_attempts: 0
+
+data:
+  index_path: data/processed_data/object_interaction_cm_v1_1/index.json
+  batch_size: 2
+  val_batch_size: 2
+  test_batch_size: 2
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+  min_stride: 1
+  max_stride: 20
+  eval_stride: 2
+  grab_stride_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  inspire_stride_values: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+  source_probabilities:
+    grab: 0.5
+    inspire_f1: 0.5
+  active_only: true
+
+train:
+  device: cuda
+  epochs: 1
+  max_steps: 2
+  lr: 0.0003
+  weight_decay: 0.0001
+  amp: false
+  compile: false
+  eval_every_epochs: null
+  skip_eval: true
+  save_every_epochs: null
+  save_every_steps: null
+  log_every_steps: 1
+  metric_for_best: val/obj/flow_epe_mm
+  lower_is_better: true
+  description: "V1.2.1 engineering smoke: D128 masked SlotAttn and additive decoders."
+
+performance:
+  mode: "off"
+
+wandb:
+  enable: false
+  mode: offline
+  project: ref2dex
+  tags: [object-interaction-cm, smoke, v1.2.1]
