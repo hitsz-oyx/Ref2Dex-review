@@ -114,4 +114,5 @@ isaacgym_task_map = {
     "Trifinger": Trifinger,
     "CmResidual": CmResidual,
     "CmResidualDecoderBank": CmResidual,
+    "CmResidualOnline": CmResidual,
 }

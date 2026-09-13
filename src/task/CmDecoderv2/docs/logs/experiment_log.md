@@ -1,5 +1,44 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-13 - V1.1.15 接触起点残差抬升 pilot
+
+- 假设：把 episode 初始化切到原参考轨迹第50帧、避开远距离接近阶段后，冻结 Cm base 上的残差策略是否能改善物体抬升。
+- 固定：`s1/airplane_lift` train 单序列、decoder epoch14 best、OICM/奖励/动作参数化/PPO 超参不变、64env、seed42、100更新/204800 samples。source 从第50帧截取378个窗口，valid比例0.8756614；不提供未来 Inspire 目标动作。
+- source run：[contact50 source](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json)；gate run：[contact50 gate](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/gate.json)。
+
+| 64个同初态 episode | 零残差 | epoch100残差，独立重载 |
+| --- | ---: | ---: |
+| 平均累计回报 | -258.1657 | -341.9249 |
+| 平均最大抬升 | 2.4400 mm | 2.7103 mm |
+| 最大抬升 | 2.4401 mm | 15.5768 mm |
+| 瞬时抬升>8cm成功率 | 0/64 | 0/64 |
+
+- 训练输出：[contact50 PPO](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/)、[metrics](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/metrics.jsonl)、[train log](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/train.log)、[最终checkpoint](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth)。重载结果：[evaluation](../../../../../outputs/cmdecoderv2/rl_online_eval_contact50_v15_20260913/evaluation.json)。
+- 解释：gate说明接触起点和在线闭环接口有效；100更新没有达到8cm抬升，故“接触起点已解决抬升”被否定。残差策略的最大单次抬升略高于base，但平均值仅高0.27mm，尚不足以支持Cm带来有效抓持控制的结论。
+- conclusion: `SUPPORTED`（source截取、物理gate、PPO保存/恢复）；`REFUTED`（本预算内已学会抬升）；`INCONCLUSIVE`（更长训练、奖励设计、接触动力学和Cm实际贡献）。不把该pilot扩展为泛化结果。
+
+## 2026-09-13 - V1.1.15 在线冻结 base 与单序列残差 PPO pilot
+
+- modification_version: V1.1.15；operation_category: code / experiment / operation；approval: user-approved；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- 假设：在真实airplane/table与实际状态反馈下，冻结Cm base上的12维残差短训能否提高单序列抬升成功率。只检查train `s1/airplane_lift`，不是held-out测试。
+- 固定：decoder epoch14 SHA `0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494`；OICM SHA `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`；K4、30Hz、frame0固定实际native18/object/table初始化、64env、seed42、原奖励/8cm瞬时lift阈值。仅PPO参数更新，100迭代/204800样本，GPU7/graspenv，约123.14秒含训练后回放。
+- 训练run_id: `rl_online_ppo_airplane_v15_20260913`；run_status: COMPLETED。CPU9测试、4/64env完整物理gate通过；正式状态和失败尝试见唯一时间线 [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+- 工程证据：Gym/native按名称映射；15mm腕残差产生15.006mm实际位移；64env FK最大位置差1.1341e-6m，query差1.2517e-6；reset隔离和冻结权重逐位检查通过。物理状态不是6维耦合参考重建。
+
+| 64个同初态episode | 零残差 | epoch100残差（重新加载） |
+| --- | ---: | ---: |
+| 平均原始累计回报 | -1317.6615 | -912.3494 |
+| 平均最大抬升/mm | 1.18053 | 1.18042 |
+| 瞬时抬升>8cm成功率 | 0/64 | 0/64 |
+
+- 训练滚动episode回报从epoch25约-1409.16升到epoch94约-755.38；这是PPO探索策略的滚动训练统计，不是验证集指标，也不能与表中确定性回放直接混用。按该统计保存的best为epoch94/frame192512；最终epoch100/frame204800。所有保存policy模型tensor有限。
+- epoch100内存模型回放回报-912.4229；独立进程重新加载相同checkpoint回报-912.3494，均0/64成功。只证明恢复/完整回放可运行和近似一致，不声称逐位确定性。
+- source artifact的frame0窗口4个Cm均invalid，第一个至少1个valid的窗口为50、全4个valid为53（0-based）；原初始化腕部距物体中心1.5238m。在线provider延续原core前向，不添加未批准的hold/oracle接近轨迹；invalid窗口的raw输出不能解释为有物理意义的Cm。
+- 首个env非末帧轨迹中，腕物中心距离均值从零残差1.531m降至残差1.061m，最小仍0.643m；这一观察与回报改善主要来自接近项相符，但不是所有env的接触率统计。不能据短训无lift判定Cm不可用，也不能据回报上升声称学会抓取。
+- conclusion: SUPPORTED（在线冻结base、物理接口、PPO更新和保存/恢复）；REFUTED（本次100更新策略已学会抬升）；INCONCLUSIVE（接触起点后的残差可学性、Cm跨手和泛化）。64个相同初态env不是64种独立泛化条件。
+- 下一步建议仅讨论：先确认并设置原轨迹的有效接触起点，隔离接近与抓持/抬升，再做同预算base/残差对照；不立即把本次frame0条件扩大长训，也不修改Cm主干。该初始化变更尚未执行。
+- 证据：[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl)、[training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json)、[重新加载评估](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/evaluation.json)。
+
 ## 2026-09-13 — V1.1.14 IsaacGymEnvs CmResidual wiring smoke
 
 - modification_version: `V1.1.14`；category: code / operation / diagnostic；approval: user-approved；计划见 [plan/v1.1.md](../plan/v1.1.md)。

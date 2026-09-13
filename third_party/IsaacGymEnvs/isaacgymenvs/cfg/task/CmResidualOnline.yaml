@@ -1,0 +1,44 @@
+name: CmResidualOnline
+physics_engine: ${..physics_engine}
+env:
+  numEnvs: ${resolve_default:64,${...num_envs}}
+  envSpacing: 2.0
+  episodeLength: 428
+  controlFrequencyInv: 2
+  clipObservations: 10.0
+  clipActions: 1.0
+  residualQScale: 0.08
+  residualRootTranslationScale: 0.015
+  residualRootRotationScale: 0.20
+  distanceRewardScale: 2.0
+  liftRewardScale: 20.0
+  actionPenaltyScale: 0.01
+  successLift: 0.08
+  tipLinks: [index_tip, middle_tip, pinky_tip, ring_tip, thumb_tip]
+  asset:
+    assetRoot: src/task/CmDecoderv2/assets
+    assetFileName: inspire_hand_new/inspire_hand_right.urdf
+    objectAssetRoot: src/task/CmDecoderv2/assets/dexplore_objects
+task:
+  randomize: false
+  randomization_params: {}
+basePolicy:
+  mode: online_decoder
+  decoderConfig: src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml
+  decoderCheckpoint: outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/best.pt
+  decoderCheckpointSha256: 0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494
+  sourceManifest: outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json
+sim:
+  dt: 0.016666666666666666
+  substeps: 2
+  up_axis: z
+  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  gravity: [0.0, 0.0, -9.81]
+  physx:
+    num_threads: ${....num_threads}
+    solver_type: 1
+    use_gpu: ${contains:"cuda",${....sim_device}}
+    num_position_iterations: 8
+    num_velocity_iterations: 1
+    num_subscenes: ${....num_subscenes}
+    max_gpu_contact_pairs: 8388608
