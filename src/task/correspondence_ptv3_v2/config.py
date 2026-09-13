@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 class Config(TaskConfig):
     name = "correspondence_ptv3_v2"
     runner_class = "src.task.correspondence_ptv3_v2.runner.CorrespondencePTV3V2Runner"
-    modification_version = "V1.2.12"
+    modification_version = "V1.2.16"
     operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):
@@ -189,6 +189,9 @@ class Config(TaskConfig):
         # entry and applies an equal-domain sampler instead of frame-count
         # weighting the concatenated directory.
         domain_paths: list[dict[str, str]] = []
+        # Optional normalized per-domain batch weights. When omitted,
+        # DomainBalancedSampler keeps equal-domain behavior for compatibility.
+        domain_sampling_weights: list[float] = []
         group_val_by_sequence = True
         sequence_locality_shuffle = True
         blacklist_path = None

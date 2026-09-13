@@ -905,9 +905,15 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         batch["gt_normals"] = torch.cat([gt_obj_normals, hand_gt_normals.to(batch["gt_normals"].dtype)], dim=1)
         batch["runtime_obj_valid_mask"] = valid_mask
         batch["runtime_obj_selected_idx"] = selected
-        batch["point_valid_mask"] = torch.cat(
-            [valid_mask, torch.ones((batch_size, num_hand), dtype=torch.bool, device=device)], dim=1
-        )
+        hand_valid_mask = batch.get("hand_valid_mask")
+        if hand_valid_mask is None:
+            hand_valid_mask = torch.ones(
+                (batch_size, num_hand), dtype=torch.bool, device=device
+            )
+        else:
+            hand_valid_mask = hand_valid_mask.to(device=device, dtype=torch.bool)
+        batch["hand_valid_mask"] = hand_valid_mask
+        batch["point_valid_mask"] = torch.cat([valid_mask, hand_valid_mask], dim=1)
         return
 
         # Fix #5: per-sample side list. The dataset emits one string per
@@ -1290,6 +1296,20 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         obj_valid_mask = batch["runtime_obj_valid_mask"].bool()
         random_edge_idx = batch["random_edge_idx"].long()
         random_edge_valid_mask = batch["random_edge_valid_mask"].bool()
+        hand_valid_mask = batch.get("hand_valid_mask")
+        if hand_valid_mask is None:
+            hand_valid_mask = torch.ones(
+                gt_hand.shape[:2], dtype=torch.bool, device=gt_hand.device
+            )
+        else:
+            hand_valid_mask = hand_valid_mask.bool()
+        safe_hand_idx = random_edge_idx.clamp_min(0)
+        random_hand_valid = torch.gather(
+            hand_valid_mask.unsqueeze(1).expand(-1, gt_obj.shape[1], -1),
+            dim=-1,
+            index=safe_hand_idx,
+        )
+        random_edge_valid_mask = random_edge_valid_mask & random_hand_valid
 
         batch["random_edge_contact_target"] = self._build_random_edge_target(
             gt_obj=gt_obj,
@@ -1301,6 +1321,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
             gt_obj=gt_obj,
             gt_hand=gt_hand,
             obj_valid_mask=obj_valid_mask,
+            hand_valid_mask=hand_valid_mask,
             contact_seed_list=contact_seed_list,
         )
         batch["contact_edge_idx"] = contact_edge_idx
@@ -1452,6 +1473,7 @@ class CorrespondencePTV3V2Runner(BaseRunner):
         gt_obj: torch.Tensor,
         gt_hand: torch.Tensor,
         obj_valid_mask: torch.Tensor,
+        hand_valid_mask: torch.Tensor,
         contact_seed_list: list[int],
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch_size, num_obj, _ = gt_obj.shape
@@ -1481,12 +1503,13 @@ class CorrespondencePTV3V2Runner(BaseRunner):
                 num_hand=num_hand,
                 device=gt_obj.device,
             )
+            hand_row_valid = hand_valid_mask[:, None, :]
             masks = (
-                row_valid & (target > self._CONTACT_POSITIVE_EPS) & (target <= 0.25),
-                row_valid & (target > 0.25) & (target <= 0.50),
-                row_valid & (target > 0.50) & (target <= 0.75),
-                row_valid & (target > 0.75),
-                row_valid & (dist >= neg_min) & (dist < neg_max) & (target <= 0.0),
+                row_valid & hand_row_valid & (target > self._CONTACT_POSITIVE_EPS) & (target <= 0.25),
+                row_valid & hand_row_valid & (target > 0.25) & (target <= 0.50),
+                row_valid & hand_row_valid & (target > 0.50) & (target <= 0.75),
+                row_valid & hand_row_valid & (target > 0.75),
+                row_valid & hand_row_valid & (dist >= neg_min) & (dist < neg_max) & (target <= 0.0),
             )
             widths = (*quotas, hard_negative_quota)
             write_col = 0

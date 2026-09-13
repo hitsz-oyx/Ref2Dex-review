@@ -606,6 +606,14 @@ class CorrStaticDatasetV2(Dataset):
                 np.sqrt(np.mean((robot_points - hand_points) ** 2))
             )
         hand_min_dist = _resolve_hand_to_obj_min_dist(data, frame_idx=frame_idx)
+        if int(hand_min_dist.numel()) != int(self.num_hand_points):
+            raise ValueError(
+                f"{path}: hand_to_obj_min_dist has {int(hand_min_dist.numel())} entries, "
+                f"but num_hand_points={self.num_hand_points}."
+            )
+        # Keep all clean hand points within the interaction window. The fixed
+        # tensor width remains 1538 for batching; invalid slots are masked.
+        hand_valid_mask = (hand_min_dist <= self.interaction_max_distance_m).bool()
         aug_seed = stable_frame_seed(
             base_seed=self.base_seed,
             seq_id=seq_id,
@@ -696,7 +704,7 @@ class CorrStaticDatasetV2(Dataset):
         gt_points = np.concatenate([geometry.gt_obj_points, geometry.gt_hand_points], axis=0)
         gt_normals = np.concatenate([geometry.gt_obj_normals, geometry.gt_hand_normals], axis=0)
         point_valid_mask = np.concatenate(
-            [obj_valid, np.ones((self.num_hand_points,), dtype=bool)],
+            [obj_valid, hand_valid_mask.numpy()],
             axis=0,
         )
 
@@ -710,6 +718,7 @@ class CorrStaticDatasetV2(Dataset):
             "random_edge_idx": torch.from_numpy(random_edge_idx).long(),
             "random_edge_valid_mask": torch.from_numpy(random_edge_valid),
             "hand_min_dist": hand_min_dist.float(),
+            "hand_valid_mask": hand_valid_mask,
             "contact_seed": torch.tensor(contact_seed, dtype=torch.long),
             "num_obj_points": torch.tensor(self.num_obj_points, dtype=torch.long),
             "num_hand_points": torch.tensor(self.num_hand_points, dtype=torch.long),
@@ -938,12 +947,10 @@ class DomainBalancedSampler(Sampler[int]):
         world_size: int = 1,
         drop_last: bool = True,
         sequence_locality: bool = True,
+        domain_sampling_weights: tuple[float, ...] | list[float] | None = None,
     ) -> None:
-        if batch_size <= 0 or batch_size % len(dataset.datasets) != 0:
-            raise ValueError(
-                "Domain-balanced training requires batch_size divisible by the number "
-                f"of domains ({len(dataset.datasets)}), got {batch_size}."
-            )
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {batch_size}.")
         if not 0 <= rank < world_size:
             raise ValueError(f"rank must be in [0, {world_size}), got {rank}.")
         self.dataset = dataset
@@ -953,15 +960,39 @@ class DomainBalancedSampler(Sampler[int]):
         self.world_size = int(world_size)
         self.drop_last = bool(drop_last)
         self.sequence_locality = bool(sequence_locality)
-        self.domain_quota = self.batch_size // len(dataset.datasets)
+        if domain_sampling_weights in (None, (), []):
+            weights = np.ones(len(dataset.datasets), dtype=np.float64)
+        else:
+            weights = np.asarray(domain_sampling_weights, dtype=np.float64)
+            if weights.shape != (len(dataset.datasets),) or not np.all(np.isfinite(weights)):
+                raise ValueError(
+                    "domain_sampling_weights must contain one finite value per domain, "
+                    f"got {domain_sampling_weights!r} for {len(dataset.datasets)} domains."
+                )
+            if np.any(weights <= 0.0):
+                raise ValueError("domain_sampling_weights must be strictly positive.")
+        normalized = weights / weights.sum()
+        raw_quotas = normalized * self.batch_size
+        quotas = np.floor(raw_quotas).astype(np.int64)
+        remainder = int(self.batch_size - int(quotas.sum()))
+        if remainder > 0:
+            order = np.argsort(-(raw_quotas - quotas))
+            quotas[order[:remainder]] += 1
+        if np.any(quotas <= 0):
+            raise ValueError(
+                "Each domain must receive at least one sample per batch; "
+                f"batch_size={self.batch_size}, weights={normalized.tolist()}."
+            )
+        self.domain_quotas = tuple(int(q) for q in quotas.tolist())
+        self.domain_sampling_weights = tuple(float(x) for x in normalized.tolist())
         # ``steps_per_epoch`` is defined in global batches.  Each rank emits
         # one local quota, so account for world_size here; otherwise DDP
         # advances the epoch after roughly ``world_size`` dataset passes.
         self.steps_per_epoch = max(
             1,
             max(
-                math.ceil(len(domain) / (self.domain_quota * self.world_size))
-                for domain in dataset.datasets
+                math.ceil(len(domain) / (quota * self.world_size))
+                for domain, quota in zip(dataset.datasets, self.domain_quotas)
             ),
         )
         self.epoch = 0
@@ -1029,7 +1060,8 @@ class DomainBalancedSampler(Sampler[int]):
                     namespace="sampler",
                 )
             )
-            stream_count = self.steps_per_epoch * self.domain_quota * self.world_size
+            domain_quota = self.domain_quotas[domain_idx]
+            stream_count = self.steps_per_epoch * domain_quota * self.world_size
             if self.sequence_locality:
                 streams.append(self._sequence_local_indices(domain, stream_count, rng))
             else:
@@ -1037,9 +1069,10 @@ class DomainBalancedSampler(Sampler[int]):
 
         for step in range(self.steps_per_epoch):
             for domain_idx, stream in enumerate(streams):
-                global_start = step * self.domain_quota * self.world_size
-                local_start = global_start + self.rank * self.domain_quota
-                local_indices = stream[local_start : local_start + self.domain_quota]
+                domain_quota = self.domain_quotas[domain_idx]
+                global_start = step * domain_quota * self.world_size
+                local_start = global_start + self.rank * domain_quota
+                local_indices = stream[local_start : local_start + domain_quota]
                 offset = offsets[domain_idx]
                 yield from (int(value) + offset for value in local_indices)
 
@@ -1561,6 +1594,9 @@ def _make_domain_balanced_dataloaders(
         world_size=world_size,
         drop_last=bool(data_cfg.drop_last),
         sequence_locality=bool(getattr(data_cfg, "sequence_locality_shuffle", True)),
+        domain_sampling_weights=tuple(
+            getattr(data_cfg, "domain_sampling_weights", ()) or ()
+        ),
     )
     loader_seed = int(seed) + rank
     train_loader = DataLoader(
@@ -1576,7 +1612,7 @@ def _make_domain_balanced_dataloaders(
         "test_path": None,
         "num_train_samples": len(combined_dataset),
         "num_val_samples": sum(item["num_val_samples"] for item in metadata_domains),
-        "domain_sampling": "equal",
+        "domain_sampling": list(sampler.domain_sampling_weights),
         "domain_ids": domain_ids,
         "domain_steps_per_epoch": sampler.steps_per_epoch,
         "domains": metadata_domains,

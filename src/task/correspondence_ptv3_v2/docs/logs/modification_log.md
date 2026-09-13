@@ -832,3 +832,25 @@ HOCap 原始数据不是当前 loader 直接接受的 Stage 3 schema；先完成
 - 所有文件包含 Stage3 必需字段；物体池 `(N,4096,3)`、手点 `(N,1538,3)`、距离 `(N,1538)`、hand-root pose `(N,4,4)` 均通过 shape 和 finite 检查。
 - 物体和手部法线单位长度检查通过。
 - `CorrStaticDatasetV2` clean loader 扫描 28 个文件并成功读取样本；coordinate frame 为 `hand_root`，dataset id 为 `hocap`。
+## 2026-09-03 — 新增 GRAB+HRDexDB 5 cm object-centered 训练协议
+
+- branch: `oyx`
+- post-commit: working tree
+- scope: task 内部
+
+**文件**
+- `src/task/correspondence_ptv3_v2/dataset.py` — 生成并传递 `hand_valid_mask`；支持加权 domain-balanced batch sampler。
+- `src/task/correspondence_ptv3_v2/model.py` — 双向几何特征和手点特征尊重手点有效 mask。
+- `src/task/correspondence_ptv3_v2/runner.py` — runtime 重采样、随机监督边和 contact 辅助候选应用手点 mask。
+- `src/task/correspondence_ptv3_v2/config.py` — 增加 domain sampling weights 配置字段。
+- `src/task/correspondence_ptv3_v2/configs/mixed_grab_hrdexdb_object_centered_5cm.yaml` — 新训练配置：1024 object points、5 cm 手点、无 contact loss、4:4:2 扰动。
+- `src/task/correspondence_ptv3_v2/docs/指导/V2.md`、`docs/plan/V2.md` — 记录本轮研究指导和 final plan。
+- `docs/current_versions.yaml` 及 Task logs — 更新版本、架构、决策和修改记录。
+
+**改动原因**
+
+落实用户确认的 GRAB + HRDexDB 五域 object-centered 训练语义，同时保持旧配置和旧 checkpoint 接口兼容。
+
+**验证**
+
+配置/NAS 首 batch smoke：五域可加载，domain quotas 为 `[20,5,5,5,5]`，batch shape 为 `(40,2562,3)`，手点有效数随帧变化；correspondence 定向测试 `59 passed`。

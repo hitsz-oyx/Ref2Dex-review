@@ -196,6 +196,13 @@ class StaticHOCPTv3V2(nn.Module):
         obj_normals = normals[:, : self.num_obj_points]
         hand_points = points[:, self.num_obj_points : expected_total]
         hand_normals = normals[:, self.num_obj_points : expected_total]
+        hand_valid_mask = batch.get("hand_valid_mask")
+        if hand_valid_mask is None:
+            hand_valid_mask = torch.ones(
+                hand_points.shape[:2], device=hand_points.device, dtype=torch.bool
+            )
+        else:
+            hand_valid_mask = hand_valid_mask.bool()
 
         obj_feat, hand_feat = self._build_point_features(
             obj_points=obj_points,
@@ -203,6 +210,7 @@ class StaticHOCPTv3V2(nn.Module):
             hand_points=hand_points,
             hand_normals=hand_normals,
             obj_valid_mask=obj_valid_mask,
+            hand_valid_mask=hand_valid_mask,
         )
         coord = torch.cat([obj_points, hand_points], dim=1)
         feat = torch.cat([obj_feat, hand_feat], dim=1)
@@ -238,6 +246,7 @@ class StaticHOCPTv3V2(nn.Module):
         hand_points: torch.Tensor,
         hand_normals: torch.Tensor,
         obj_valid_mask: torch.Tensor,
+        hand_valid_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         obj_extra, hand_extra = self._compute_bidirectional_opposite_cloud_features(
             obj_points=obj_points,
@@ -245,6 +254,7 @@ class StaticHOCPTv3V2(nn.Module):
             hand_points=hand_points,
             hand_normals=hand_normals,
             obj_valid_mask=obj_valid_mask,
+            hand_valid_mask=hand_valid_mask,
         )
         obj_type = obj_points.new_zeros(obj_points.shape[0], obj_points.shape[1], 2)
         obj_type[..., 0] = 1.0
@@ -253,6 +263,7 @@ class StaticHOCPTv3V2(nn.Module):
         obj_feat = torch.cat([obj_points, obj_type, obj_normals, obj_extra], dim=-1)
         hand_feat = torch.cat([hand_points, hand_type, hand_normals, hand_extra], dim=-1)
         obj_feat = obj_feat * obj_valid_mask.unsqueeze(-1).float()
+        hand_feat = hand_feat * hand_valid_mask.unsqueeze(-1).float()
         return obj_feat, hand_feat
 
     @staticmethod
@@ -263,12 +274,8 @@ class StaticHOCPTv3V2(nn.Module):
         hand_points: torch.Tensor,
         hand_normals: torch.Tensor,
         obj_valid_mask: torch.Tensor,
+        hand_valid_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        hand_valid_mask = torch.ones(
-            hand_points.shape[:2],
-            device=hand_points.device,
-            dtype=torch.bool,
-        )
         distance = torch.cdist(obj_points, hand_points)
         obj_extra = StaticHOCPTv3V2._compute_directional_cloud_features(
             query_points=obj_points,
@@ -284,7 +291,7 @@ class StaticHOCPTv3V2(nn.Module):
             opposite_points=obj_points,
             query_to_opposite_distance=distance.transpose(1, 2),
             opposite_valid_mask=obj_valid_mask,
-            query_valid_mask=None,
+            query_valid_mask=hand_valid_mask,
         )
         return obj_extra, hand_extra
 

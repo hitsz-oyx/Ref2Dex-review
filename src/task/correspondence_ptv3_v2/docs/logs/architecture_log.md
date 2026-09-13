@@ -1,6 +1,13 @@
 # correspondence_ptv3_v2 architecture log
 
-- last_updated: 2026-09-01
+- last_updated: 2026-09-03
+
+## V2 训练契约（2026-09-03）
+
+- 新配置 `configs/mixed_grab_hrdexdb_object_centered_5cm.yaml` 使用 object-centered 坐标，完整物体池运行时均匀采样 1024 点。
+- Dataset 依据 clean `hand_to_obj_min_dist <= 0.05 m` 生成 `hand_valid_mask`；固定 1538 手点槽位保留 batch schema，padding/无效槽位从 point-valid mask、双向几何特征和监督边中排除。
+- Domain sampler 支持显式权重；本配置为 GRAB 0.5、HRDexDB human/Inspire DFTP/Inspire F1/Allegro V5 各 0.125。
+- V2 训练只优化 `cross_edge_random`；`cross_edge_contact_aux` 与 `hand_contact` 权重为 0。手腕根、手姿态、clean 采用互斥 4:4:2 扰动，物体不扰动。
 
 ## 当前入口边界（V1.2.12）
 

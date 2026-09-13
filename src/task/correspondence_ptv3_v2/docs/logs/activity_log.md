@@ -1,9 +1,9 @@
 # correspondence_ptv3_v2 活动记录
 
 - scope: task:correspondence_ptv3_v2
-- last_updated: 2026-09-01
+- last_updated: 2026-09-06
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
-- related: [架构](architecture_log.md)、[仓库记忆](repo_memory.md)、[实验](experiment_log.md)、[历史修改](modification_log.md)、[当前指导](../指导/V1.md)
+- related: [架构](architecture_log.md)、[仓库记忆](repo_memory.md)、[实验](experiment_log.md)、[历史修改](modification_log.md)、[当前指导](../指导/V2.md)
 
 ## 2026-09-01 21:12:26 +0800 — V1.2.15 活动记录切换
 
@@ -82,3 +82,161 @@
 - 阻塞 / 风险: 协议 E 仍仅覆盖 s01 min11，且 checkpoint 选择、global batch 与样本曝光量不统一。旧 run 日志 step 27980 后中断，但最近完整 checkpoint 仅到 step 22748，因此 5232 step 未保留为模型状态。全量 ARCTIC Stage 2/3 完成状态仍需核验。HOCap 当前只覆盖 subject_1，接触距离由几何派生且结果为 micro 聚合，不等同于正式多主体 benchmark。
 - 下一步: 核验全量 ARCTIC Stage 2/3 产物，决定是否按原配置恢复 mixed 训练。HOCap 仍只作外部测试，不加入训练。
 - 证据与相关文档: 合并后全量 pytest `282 passed, 3 skipped`；[EXP-012](experiment_log.md#exp-012--纯-grab-nopca-在-hocap-subject_1-的外部测试)；[EXP-011](experiment_log.md#exp-011--协议-e10-mm-mano-min11-三条件评估)；HOCap 结果 `output/research/hocap_subject1_grab_nopca_20260824/full_object_only.json`；[协议 E 结果](../../result/arctic_min11_mano_protocol_e_10mm_compare_20260823.md)。
+
+## 2026-09-03 23:49:07 +0800 — 停止七域 object-centered 训练
+
+- activity_id: ACT-20260903-234907-CORRESPONDENCE-STOP
+- timestamp: 2026-09-03 23:49:07 +0800
+- modification_version: V1.2.12
+- type: training / operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求先停止当前训练
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- worktree_dirty_before_record: false
+- run_id: correspondence_ptv3_v2_grab_arctic_hrdexdb_oakink2_object_centered_20260902_065152
+- run_status: STOPPED
+- tmux_session: expanded_object_centered_train_20260902_rerun
+- devices: CUDA_VISIBLE_DEVICES=2,3
+
+**终止与恢复证据**
+
+- 向目标 tmux 会话发送一次 `SIGINT`，两个 DDP rank 及 DataLoader worker 均已退出；未影响其他 tmux 会话或 GPU 任务。
+- 停止前日志最后完整训练记录约为 step 156240 / epoch 1。
+- 最新可恢复 checkpoint：`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_arctic_hrdexdb_oakink2_object_centered_20260902_065152/checkpoints/step_000155000_epoch_000001.pt`；`latest.pt` 与其同时生成。
+- 运行日志：`/mnt/ugreen_nas/storage/Ref2Dex_storage/logs/expanded_object_centered_train_20260902_rerun.log`。
+- conclusion: N/A（本条仅记录运行终止，不形成科研结论）。
+
+## 2026-09-04 00:05:00 +0800 — V2 配置与 mask 契约完成 smoke
+
+- activity_id: ACT-20260904-000500-CORRESPONDENCE-V2-SMOKE
+- timestamp: 2026-09-04 00:05:00 +0800
+- modification_version: V1.2.16
+- type: implementation / validation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户确认六项 V2 训练语义，并允许在改动过大时新建版本；本次保持原 Task 接口兼容
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- run_status: READY_FOR_TRAINING
+- config: `configs/mixed_grab_hrdexdb_object_centered_5cm.yaml`
+
+**证据**
+
+- 配置成功加载；五个 NAS 域均可索引，训练样本计数为 GRAB 295243、HRDexDB human 73025、Inspire DFTP 280897、Inspire F1 179911、Allegro V5 126630。
+- weighted sampler 解析为 `[0.5, 0.125, 0.125, 0.125, 0.125]`，batch size 40 的 local quotas 为 `[20, 5, 5, 5, 5]`。
+- 真实首 batch shape 为 points `(40, 2562, 3)`、point-valid `(40, 2562)`、hand-valid `(40, 1538)`、object points `1024`；首批手点有效数示例为 932–1223。
+- correspondence 定向测试：`59 passed`；全仓库集合测试受环境缺少 `viser`/`pytorch3d` 阻塞，非本次改动引入。
+- conclusion: smoke 通过，尚未启动完整训练。
+
+## 2026-09-04 00:11:36 +0800 — 启动 V2 正式训练
+
+- activity_id: ACT-20260904-001136-CORRESPONDENCE-V2-TRAIN
+- timestamp: 2026-09-04 00:11:36 +0800
+- modification_version: V1.2.16
+- type: training / operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认 V2 六项配置并明确要求继续训练
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- run_status: RUNNING
+- run_id: correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136
+- tmux_session: grab_hrdexdb_5cm_object_centered_train_20260904
+- devices: CUDA_VISIBLE_DEVICES=2,3
+- output_dir: `outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136`
+- log: `/mnt/ugreen_nas/storage/Ref2Dex_storage/logs/grab_hrdexdb_5cm_object_centered_train_20260904.log`
+- train_setup: per-device batch 40、global batch 80、total steps 1404500、warmup 42135、每 5000 step 保存
+
+**启动前证据**
+
+- 1-step smoke 已完成并清理残留 smoke 进程；正式训练仅占用 GPU 2/3。
+- 正式日志已完成 W&B 初始化和 MANO layer 初始化，两个 DDP rank 显存约 43 GB，未见 OOM 或异常退出。
+
+## 2026-09-04 16:49:23 +0800 — contact-aux 分支隔离 benchmark
+
+- activity_id: ACT-20260904-164923-CORRESPONDENCE-CONTACT-AUX-BENCH
+- timestamp: 2026-09-04 16:49:23 +0800
+- modification_version: V1.2.16
+- type: diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求在不改变正式训练的前提下测量关闭 contact-aux 的收益；仅使用 GPU 1 隔离合成 benchmark
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- worktree_dirty: true
+- run_id: correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136
+- run_status: RUNNING
+
+**benchmark 证据**
+
+- B=40、1024 object、1538 hand 的 `_build_contact_supervision_edges`：`20.322 ms`；空分支：`0.037 ms`；可避免 `20.285 ms`（该子阶段 99.8%）。
+- 合成 B=8 的 StaticHOCPTv3V2 forward：带 80 条 contact-aux edge 为 `108.135 ms`，空 contact edge 为 `104.321 ms`，可避免 `3.814 ms`（forward 3.5%）。该比例不直接等同于完整训练 step，但方向与当前日志一致。
+- 正式训练未停止、未改动；benchmark 使用 GPU 1，正式训练继续使用 GPU 2/3。
+- conclusion: N/A（隔离性能诊断，不形成科研效果结论）。
+
+## 2026-09-06 21:24:45 +0800 — 停止 V2 GRAB+HRDexDB 训练
+
+- activity_id: ACT-20260906-212445-CORRESPONDENCE-V2-STOP
+- timestamp: 2026-09-06 21:24:45 +0800
+- modification_version: V1.2.16
+- type: operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求停止当前训练
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- worktree_dirty: true
+- run_id: correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136
+- run_status: STOPPED
+- tmux_session: grab_hrdexdb_5cm_object_centered_train_20260904
+- scope: 仅停止该 run 的 DDP 进程和 tmux 会话；不修改 checkpoint、输出、配置或其他 GPU 进程
+- command: `CUDA_VISIBLE_DEVICES=2,3 python -m torch.distributed.run --standalone --nproc_per_node=2 src/task/correspondence_ptv3_v2/train.py --config src/task/correspondence_ptv3_v2/configs/mixed_grab_hrdexdb_object_centered_5cm.yaml`
+- output: [运行目录](../../../../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136)；[run manifest](../../../../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136/run_manifest.json)；[最新 checkpoint](../../../../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136/checkpoints/step_000420000_epoch_000015.pt)
+
+**原因**
+
+按用户要求停止当前 V2 GRAB+HRDexDB 训练，并保留最近完整 checkpoint 供后续恢复或评估。
+
+**验证**
+
+- 正常发送一次 `SIGINT`，两个 DDP rank、DataLoader worker 和目标 tmux 会话均已退出；GPU 2/3 均恢复为 0 MiB、0% utilization。
+- 停止前最后训练记录为 step 421350 / epoch 15，处于 epoch 边界验证阶段。
+- 最新完整可恢复状态为 `step_000420000_epoch_000015.pt`，`latest.pt` 与其同时生成；停止后的约 1350 step 未形成 checkpoint。
+- 终止日志：`/mnt/ugreen_nas/storage/Ref2Dex_storage/logs/grab_hrdexdb_5cm_object_centered_train_20260904.log`。
+- conclusion: INCONCLUSIVE（人工停止；本次操作不解释模型效果）。
+
+## 2026-09-04 15:42:43 +0800 — V2 训练耗时与 cache 诊断
+
+- activity_id: ACT-20260904-154243-CORRESPONDENCE-V2-PERF-DIAG
+- timestamp: 2026-09-04 15:42:43 +0800
+- modification_version: V1.2.16
+- type: diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户请求分析训练耗时和可预处理 cache；本次仅读检查，不改变运行变量
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: a7c5b04f7f6797c78e232c2d0425f3a9694f7078
+- worktree_dirty: true
+- run_id: correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136
+- run_status: RUNNING
+
+**诊断证据**
+
+- 最近 400 个训练 step 平均 `561.27 ms/step`，`data_wait` 平均 `0.3373 ms`，占比 `0.000601`；GPU 2/3 利用率约 95–100%。
+- 当前约 step 93980；完整训练共 1404500 step，按当前计算速度仅优化器 step 就约 219 小时。每 5000 step checkpoint 间隔约 46–47 分钟。
+- 每 epoch 28090 step；epoch 结束还会对 10 个 domain validation loader 做评估，边界日志显示单个 epoch 额外约十几分钟。
+- 已有 uncompressed array cache 约 213 GB（GRAB 44G，HRDexDB 四域合计 169G）；NAS 挂载剩余约 52 TB。新增 cache 不会明显改善当前 step 速度。
+
+**结论边界**
+
+- 主要热点是模型中的 object-hand 全距离 `torch.cdist`（1024×1538）以及即使权重为 0 仍构造的 contact-aux 监督 `torch.cdist`；MANO/FK 扰动是次级候选。5 cm mask、1024 点随机索引和 NAS 读取均不是当前 data-wait 瓶颈。
+- 建议优先做独立 benchmark 后再修改：关闭 contact-aux 分支、降低 validation 频率或改为按 step；不要预计算随机扰动结果，以免改变 4:4:2 数据语义。
+- conclusion: N/A（性能诊断，不形成科研效果结论）。
