@@ -1,5 +1,31 @@
 # CmResidual 活动记录
 
+## 2026-09-15 01:49:51 +0800 — 三卡训练资源调整后保持运行
+
+- activity_id: `ACT-20260915-014951-CMRESIDUAL-TRAIN-3GPU-RETRY`
+- timestamp: `2026-09-15 01:49:51 +0800`
+- modification_version: `V1.1.1`
+- operation_category: `operation`、`experiment`
+- change_level: `L3`
+- approval: `user-approved`（沿用三卡并行训练授权）
+- branch: `oyx`
+- base_commit: `03ea264`
+- run_id: `cmresidual_dexplore_gpu0_s101`、`cmresidual_dexplore_gpu1_s102_cpu_sim_retry2`、`cmresidual_dexplore_gpu3_s103_cpu_sim_retry2`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`
+
+**状态**
+
+- GPU0 使用 GPU PhysX，已运行至约 epoch 110/1000。
+- GPU1/GPU3 的 GPU PhysX 在初始化阶段触发 Isaac Gym allocator error 700；未继续使用故障模式，改为 CPU PhysX + 对应 GPU 上的 PPO 网络，两个 retry2 进程已分别运行至 epoch 26/30。
+- 失败尝试保留在 `outputs/CmResidual/cmresidual_dexplore_gpu{1,3}_s{102,103}*` 的 manifest/log 中，未覆盖重试目录。
+- 当前三组 PID 与完整命令记录在各自 `run_manifest.json`；终态前不得把运行标为完成。
+
+**验证与边界**
+
+- GPU0、CPU smoke 和三组当前运行均使用 `inspire.pth` SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- 本条记录的是运行状态，不把 epoch/reward 作为科研结论；正式结论须等待独立评估和完整指标。
+
 ## 2026-09-15 01:37:55 +0800 — 三卡并行训练启动
 
 - activity_id: `ACT-20260915-013755-CMRESIDUAL-TRAIN-3GPU`
