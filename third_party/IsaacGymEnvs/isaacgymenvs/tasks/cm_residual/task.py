@@ -179,6 +179,7 @@ class CmResidual(VecTask):
     def reset_idx(self, env_ids):
         if len(env_ids) == 0:
             return
+        env_ids = env_ids.to(self.device)
         roots = torch.cat([self.hand_indices[env_ids], self.object_indices[env_ids]]).contiguous()
         self.actor_root_state[roots.long()] = self.initial_root_states[roots.long()]
         self.dof_pos[env_ids] = native_to_sim(self.initial_native.expand(len(env_ids), -1), self.sim_indices)
