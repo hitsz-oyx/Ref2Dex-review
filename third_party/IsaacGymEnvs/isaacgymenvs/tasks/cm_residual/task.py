@@ -2,20 +2,24 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 
 import numpy as np
 import torch
 from isaacgym import gymapi, gymtorch
 
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from src.task.CmDecoderv2.kinematics import QUERY_LINKS
-from src.task.CmDecoderv2.rl.online_base import sha256
-from src.task.CmDecoderv2.rl.residual_contract import (
-    coupled_finger_bounds, inverse_pose, matrix_pose, native_sim_indices, native_to_sim,
-    pose_matrix, sim_to_native,
-)
+from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_pose,
+                       native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .cm_adapter import CmOnlineTarget
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class CmResidual(VecTask):

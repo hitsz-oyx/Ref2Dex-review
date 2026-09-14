@@ -15,9 +15,9 @@ env:
   successLift: 0.08
   tipLinks: [index_tip, middle_tip, pinky_tip, ring_tip, thumb_tip]
   asset:
-    assetRoot: src/task/CmDecoderv2/assets
+    assetRoot: /home2/wyy/oyx_ws/Ref2Dex/src/task/CmDecoderv2/assets
     assetFileName: inspire_hand_new/inspire_hand_right.urdf
-    objectAssetRoot: third_party/IsaacGymEnvs/assets
+    objectAssetRoot: /home2/wyy/oyx_ws/dexplore/dexplore/data/assets/mjcf
     objectAssetFileName: urdf/objects/cube_multicolor.urdf
 
 task:
