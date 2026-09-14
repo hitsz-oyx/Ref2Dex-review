@@ -238,3 +238,32 @@
 
 - 未修改旧 coupled-geometric sidecar、CmDecoder/CmResidual legacy 配置、vendor adapter、`src/base/`、外部 DExplore checkout、checkpoint 或训练输出；未启动物理 gate/PPO。
 - 回滚入口：删除新 ignored artifact 目录，并回退本条 builder/test、plan/README 和 activity 差异；旧输入与旧 reference 不受影响。
+
+
+## 2026-09-14 22:02:00 +0800 — D1 contact flag source audit
+
+- activity_id: `ACT-20260914-220200-CMRESIDUAL-CONTACT-AUDIT`
+- timestamp: `2026-09-14 22:02:00 +0800`
+- modification_version: `V1.0.1`
+- operation_category: `diagnostic`、`documentation`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求继续；仅检查现有 source/parent cache 的 contact 字段，不修改数据或运行配置。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `6d54106`
+- worktree_dirty: `true`
+- scope: coupled geometric source、cm_object_v2 parent cache 和其 manifest；只读。
+- run_id: `cmresidual_contact_flag_audit_20260914_220200`
+- run_status: `COMPLETED`
+- conclusion: `INCONCLUSIVE`
+
+**验证**
+
+- source geometry manifest 只包含 pose、surface、frame mapping 和 q provenance，没有 raw contact/touch flag。
+- parent cache 的 `right/candidate_active_5cm.npy` 语义为生成的 5 cm 几何候选 mask，不是传感器或标注 contact flag，不能代替接触真值。
+- 未修改 cache、artifact、checkpoint、配置或运行进程。
+
+**回滚**
+
+- 本条仅为诊断记录；删除本条即可回滚。
