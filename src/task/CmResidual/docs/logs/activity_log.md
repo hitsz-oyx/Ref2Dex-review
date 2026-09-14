@@ -258,6 +258,15 @@
 - run_status: `COMPLETED`
 - conclusion: `INCONCLUSIVE`
 
+**文件**
+
+- [D1 manifest](../../../../data/processed_data/cm_residual/reference_tracking_v1/s1_airplane_lift/manifest.json) — 对照现有 artifact 的接触字段状态。
+- [source geometry manifest](../../../../data/processed_data/coupled_geometric_source_v1_20260912/sequences/train/inspire_rl/s1_airplane_lift/geometry/manifest.json) — 输入 schema 与字段清单。
+
+**原因**
+
+- D1 的接触保留门要求 raw contact flag；现有 source/parent cache 没有该标注，几何候选 mask 不能替代它，因此维持 `INCONCLUSIVE`。
+
 **验证**
 
 - source geometry manifest 只包含 pose、surface、frame mapping 和 q provenance，没有 raw contact/touch flag。
