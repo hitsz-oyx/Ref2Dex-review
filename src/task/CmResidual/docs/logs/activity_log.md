@@ -10,6 +10,7 @@
 - approval: `user-approved`（沿用三卡并行训练授权）
 - branch: `oyx`
 - base_commit: `03ea264`
+- scope: three-run DExplore residual PPO operation; manifests/logs under `outputs/CmResidual/`; no source/cache/checkpoint mutation.
 - run_id: `cmresidual_dexplore_gpu0_s101`、`cmresidual_dexplore_gpu1_s102_cpu_sim_retry2`、`cmresidual_dexplore_gpu3_s103_cpu_sim_retry2`
 - run_status: `RUNNING`
 - conclusion: `INCONCLUSIVE`
