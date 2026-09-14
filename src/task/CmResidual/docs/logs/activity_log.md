@@ -1,5 +1,41 @@
 # CmResidual 活动记录
 
+## 2026-09-15 01:37:55 +0800 — 三卡并行训练启动
+
+- activity_id: `ACT-20260915-013755-CMRESIDUAL-TRAIN-3GPU`
+- timestamp: `2026-09-15 01:37:55 +0800`
+- modification_version: `V1.1.1`
+- operation_category: `operation`、`experiment`
+- change_level: `L3`（三卡并行 PPO 长任务）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“直接完成整条链路，然后用三张空闲的卡并行训练”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `a22223e7c35570e79a53e165ff6ad5e1dc5f17d2`
+- worktree_dirty: `true`（根目录既有文档差异未纳入运行）
+- scope: vendor CmResidual DExplore package；外部 `inspire.pth` 只读；三次独立 seed、独立输出目录。
+- run_id: `cmresidual_dexplore_gpu0_s101`、`cmresidual_dexplore_gpu1_s102`、`cmresidual_dexplore_gpu3_s103`
+- run_status: `STARTED`
+- conclusion: `INCONCLUSIVE`（运行尚未结束；训练结果不能由启动状态推断）
+
+**运行合同**
+
+- command template: `PYTHONPATH=/home2/wyy/isaac-gym/isaacgym/python:/home2/wyy/oyx_ws/Ref2Dex:/home2/wyy/oyx_ws/Ref2Dex/third_party/IsaacGymEnvs python3 isaacgymenvs/train.py task=CmResidual headless=True force_render=False pipeline=gpu sim_device=cuda:<gpu> rl_device=cuda:<gpu> graphics_device_id=<gpu> task.env.numEnvs=256 max_iterations=1000 seed=<seed> task.basePolicy.checkpoint=/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth train.params.config.horizon_length=32 train.params.config.minibatch_size=2048`
+- GPU/seed mapping: `cuda:0/101`、`cuda:1/102`、`cuda:3/103`；三次运行不共享 checkpoint 或 optimizer。
+- base checkpoint SHA256: `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- outputs: `outputs/CmResidual/cmresidual_dexplore_gpu{0,1,3}_s{101,102,103}/`；日志与 manifest 在各自目录，均为 `PENDING` 直至进程生成。
+
+**启动证据**
+
+- 三张卡启动前显存/利用率检查：GPU0 `2553 MiB/0%`、GPU1 `776 MiB/0%`、GPU3 `1997 MiB/0%`；GPU2/4/5/6 正在使用，GPU7 保留作故障回退。
+- 单卡 GPU0 1-iteration smoke 已完成（8 envs）；CPU 1-iteration smoke 也完成。正式三卡运行不继承 smoke checkpoint。
+- 终态必须补写 `last_step`/`last_epoch`、best/latest checkpoint、`train.log`、`metrics.jsonl`（若生成）和失败/停止原因。
+
+**保护边界与回滚**
+
+- 不修改外部 DExplore checkout、`inspire.pth`、旧 reference/cache、用户既有根/CmDecoderv2 dirty diff。
+- 停止入口：按 run_id 单独终止对应 PID；删除各自 ignored output 目录即可回滚运行产物。
+
 ## 2026-09-15 01:08:43 +0800 — V1.1 DExplore 18D package contract
 
 - activity_id: `ACT-20260915-010843-CMRESIDUAL-V11-PACKAGE`
