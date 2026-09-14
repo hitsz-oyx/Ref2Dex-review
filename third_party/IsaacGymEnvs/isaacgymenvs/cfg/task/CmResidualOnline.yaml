@@ -3,31 +3,34 @@ physics_engine: ${..physics_engine}
 env:
   numEnvs: ${resolve_default:64,${...num_envs}}
   envSpacing: 2.0
-  episodeLength: 428
+  episodeLength: 2000
   controlFrequencyInv: 2
+  numObservations: 1442
+  numActions: 18
   clipObservations: 10.0
   clipActions: 1.0
-  residualQScale: 0.08
-  residualRootTranslationScale: 0.015
-  residualRootRotationScale: 0.20
-  distanceRewardScale: 2.0
   liftRewardScale: 20.0
+  distanceRewardScale: 2.0
   actionPenaltyScale: 0.01
   successLift: 0.08
   tipLinks: [index_tip, middle_tip, pinky_tip, ring_tip, thumb_tip]
   asset:
     assetRoot: src/task/CmDecoderv2/assets
     assetFileName: inspire_hand_new/inspire_hand_right.urdf
-    objectAssetRoot: src/task/CmDecoderv2/assets/dexplore_objects
+    objectAssetRoot: third_party/IsaacGymEnvs/assets
+    objectAssetFileName: urdf/objects/cube_multicolor.urdf
+
 task:
   randomize: false
   randomization_params: {}
+
 basePolicy:
-  mode: online_decoder
-  decoderConfig: src/task/CmDecoderv2/configs/active/mano_actual_finetune_v1_batch8.yaml
-  decoderCheckpoint: outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/best.pt
-  decoderCheckpointSha256: 0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494
-  sourceManifest: outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json
+  mode: dexplore
+  checkpoint: ${oc.env:DEXPLORE_CHECKPOINT,checkpoint/inspire.pth}
+  checkpointSha256: ''
+  cmFeatureDim: 128
+  cmEmaDecay: 0.995
+
 sim:
   dt: 0.016666666666666666
   substeps: 2

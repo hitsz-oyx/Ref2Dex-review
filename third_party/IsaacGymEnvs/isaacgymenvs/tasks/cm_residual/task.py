@@ -1,4 +1,4 @@
-"""Inspire/airplane residual task with a frozen online Cm decoder."""
+"""Inspire residual task with a frozen DExplore teacher and Cm residual."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,30 +9,35 @@ from isaacgym import gymapi, gymtorch
 
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from src.task.CmDecoderv2.kinematics import QUERY_LINKS
-from src.task.CmDecoderv2.pointflow import make_relative_transform
-from src.task.CmDecoderv2.rl.online_base import OnlineCmBase, sha256
+from src.task.CmDecoderv2.rl.online_base import sha256
 from src.task.CmDecoderv2.rl.residual_contract import (
-    OBSERVATION_DIM, coupled_finger_bounds, expand_native_targets,
-    inverse_pose, matrix_pose, native_sim_indices, native_to_sim, pose_matrix,
-    sim_to_native, wrist_native_target,
+    coupled_finger_bounds, inverse_pose, matrix_pose, native_sim_indices, native_to_sim,
+    pose_matrix, sim_to_native,
 )
+from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
+from .cm_adapter import CmOnlineTarget
 
 
 class CmResidual(VecTask):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless,
                  virtual_screen_capture=False, force_render=False):
         self.cfg = cfg
-        if cfg["basePolicy"]["mode"] != "online_decoder":
-            raise ValueError("Legacy reference/bank modes were smoke-only. Use CmResidualOnline with a locked source manifest.")
-        self.base = OnlineCmBase(cfg["basePolicy"], sim_device)
-        self.max_episode_length = self.base.window_count
-        cfg["env"].update(numObservations=OBSERVATION_DIM, numActions=12, numStates=0,
+        if cfg["basePolicy"]["mode"] != "dexplore":
+            raise ValueError("CmResidual now requires the frozen DExplore teacher (mode=dexplore).")
+        self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
+                                             cfg["basePolicy"].get("checkpointSha256"))
+        self.cm = CmOnlineTarget(OBSERVATION_DIM, int(cfg["basePolicy"].get("cmFeatureDim", 128)),
+                                 float(cfg["basePolicy"].get("cmEmaDecay", 0.995)))
+        # The package no longer depends on the legacy 12D OnlineCmBase contract.
+        self.base = None
+        self.max_episode_length = int(cfg["env"].get("episodeLength", 2000))
+        cfg["env"].update(numObservations=OBSERVATION_DIM, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
-        self.initial_native = self.base.data["initial_native_q"].float()
-        self.initial_object = matrix_pose(self.base.data["initial_object_pose"].float())
-        self.initial_table = self.base.data["initial_table_pose"].float()
-        self.initial_links = self.base.data["initial_link_poses"].float()
-        self.zero_base_inverse = self.base.data["zero_base_inverse"].float()
+        self.initial_native = torch.zeros(18, device=sim_device)
+        self.initial_object = torch.tensor([0., 0., 0., 0., 0., 0., 1.], device=sim_device)
+        self.initial_table = torch.tensor([0., 0., 0., 0., 0., 0., 1.], device=sim_device)
+        self.initial_links = torch.eye(4, device=sim_device).repeat(len(QUERY_LINKS), 1, 1)
+        self.zero_base_inverse = torch.eye(4, device=sim_device)
         super().__init__(cfg, rl_device, sim_device, graphics_device_id, headless,
                          virtual_screen_capture, force_render)
         self.actor_root_state = gymtorch.wrap_tensor(self.gym.acquire_actor_root_state_tensor(self.sim)).view(-1, 13)
@@ -55,7 +60,13 @@ class CmResidual(VecTask):
         self.base_q = torch.zeros((self.num_envs, 6), device=self.device)
         self.base_wrist = torch.eye(4, device=self.device).repeat(self.num_envs, 1, 1)
         self.applied_wrist = self.base_wrist.clone()
-        self.prev_actions = torch.zeros((self.num_envs, 12), device=self.device)
+        self.base_action = torch.zeros((self.num_envs, ACTION_DIM), device=self.device)
+        self.prev_actions = torch.zeros((self.num_envs, ACTION_DIM), device=self.device)
+        self.pd_action_scale = self.native_upper - self.native_lower
+        self.pd_action_scale[:3] = 1.0
+        self.pd_action_scale[3:6] = np.pi
+        self.pd_action_offset = torch.zeros_like(self.native_lower)
+        self.pd_action_offset[6:] = self.native_lower[6:]
         self.fresh_reset = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.initial_object_z = torch.full((self.num_envs,), self.initial_object[2].item(), device=self.device)
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
@@ -86,7 +97,7 @@ class CmResidual(VecTask):
     def _create_envs(self):
         asset = self.cfg["env"]["asset"]
         object_root = Path(asset["objectAssetRoot"]).resolve()
-        for name, expected in self.base.manifest["asset_sha256"].items():
+        for name, expected in self.cfg["env"].get("assetSha256", {}).items():
             if sha256(object_root / name) != expected:
                 raise ValueError(f"Scene asset checksum mismatch: {name}")
         options = gymapi.AssetOptions()
@@ -187,15 +198,20 @@ class CmResidual(VecTask):
             raise FloatingPointError("Non-finite residual action")
         actions = actions.to(self.device).clamp(-1, 1)
         self.prev_actions.copy_(actions)
-        env = self.cfg["env"]
-        q6 = (self.base_q + float(env["residualQScale"]) * actions[:, :6]).clamp(self.q_lower, self.q_upper)
-        self.applied_wrist = self.base_wrist @ make_relative_transform(
-            float(env["residualRootRotationScale"]) * actions[:, 9:12],
-            float(env["residualRootTranslationScale"]) * actions[:, 6:9])
         current = sim_to_native(self.dof_pos, self.sim_indices)
-        targets = expand_native_targets(q6)
-        targets[:, :6] = wrist_native_target(self.applied_wrist, self.zero_base_inverse, current[:, :6])
-        targets[:, :3] = targets[:, :3].clamp(self.native_lower[:3], self.native_upper[:3])
+        final_action = (self.base_action + actions).clamp(-1, 1)
+        # Exact DExplore Inspire mapping: wrist is 0:6, fingers are 6:18.
+        finger_action = (1.0 + final_action[:, 6:]) / 2.0
+        pd_action = torch.cat((final_action[:, :6], finger_action), dim=-1)
+        targets = self.pd_action_offset + self.pd_action_scale * pd_action
+        targets[:, :6] = targets[:, :6] + current[:, :6]
+        targets[:, 7] = targets[:, 6] * 1.05
+        targets[:, 9] = targets[:, 8] * 1.05
+        targets[:, 11] = targets[:, 10] * 1.05
+        targets[:, 13] = targets[:, 12] * 1.05
+        targets[:, 16] = targets[:, 15] * 0.6
+        targets[:, 17] = targets[:, 15] * 0.8
+        targets = targets.clamp(self.native_lower, self.native_upper)
         self.native_targets.copy_(targets)
         self.sim_targets.copy_(native_to_sim(targets, self.sim_indices))
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.sim_targets))
@@ -206,7 +222,7 @@ class CmResidual(VecTask):
         velocity = sim_to_native(self.dof_vel, self.sim_indices)
         links = self.actual_link_poses()
         obj = pose_matrix(self.actor_root_state[self.object_indices.long(), :7])
-        q, wrist = self.base.predict(self.progress_buf, native, links, obj)
+        q, wrist = native[:, :6], links[:, 0]
         self.base_q.copy_(q)
         self.base_wrist.copy_(wrist)
         wrist_delta = matrix_pose(inverse_pose(links[:, 0]) @ wrist)
@@ -217,10 +233,14 @@ class CmResidual(VecTask):
             tips = tips.clone()
             tips[self.fresh_reset] = self.initial_links[tip_queries, :3, 3]
         tip_offsets = (tips - obj[:, None, :3, 3]).reshape(self.num_envs, 15)
-        obs = torch.cat([native, velocity, q, wrist_delta, object_delta, tip_offsets], dim=-1)
+        legacy_obs = torch.cat([native, velocity, q, wrist_delta, object_delta, tip_offsets], dim=-1)
+        # Preserve the DExplore 1442D tensor contract; unavailable reference fields are explicit zeros.
+        obs = torch.zeros((self.num_envs, OBSERVATION_DIM), device=self.device)
+        obs[:, :legacy_obs.shape[-1]] = legacy_obs
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
+        self.base_action.copy_(self.teacher.act(self.obs_buf))
         return self.obs_buf
 
     def compute_reward(self):

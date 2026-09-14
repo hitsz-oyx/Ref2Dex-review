@@ -1,5 +1,48 @@
 # CmResidual 活动记录
 
+## 2026-09-15 01:08:43 +0800 — V1.1 DExplore 18D package contract
+
+- activity_id: `ACT-20260915-010843-CMRESIDUAL-V11-PACKAGE`
+- timestamp: `2026-09-15 01:08:43 +0800`
+- modification_version: `V1.1.0`
+- operation_category: `governance`、`architecture`、`code`、`documentation`
+- change_level: `L3`（vendor Task package、公共 import、checkpoint/obs/action contract）
+- approval: `user-approved`
+- approval_basis: 用户明确确认取消 vendor `logs*` 忽略、使用冻结 DExplore `inspire.pth`、同步 1442D obs 和原生 18D action，并按既定 Cm online/target 方案执行。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9654d657702a8a8da5f6c02c2ddd52dd1b2e7d54`
+- worktree_dirty: `true`（保留既有根/CmDecoderv2 用户差异，未覆盖、未暂存）
+- scope: `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/`、vendor configs、vendor `.gitignore`、V1.1 plan；旧数据、checkpoint、output 和 `src/base/` 未修改。
+- conclusion: `SUPPORTED`（工程接口 smoke；不代表 PPO 效果或科研结论）
+
+**文件与变更**
+
+- [V1.1 计划](../plan/V1.1.md) — 锁定 DExplore teacher、1442D obs、18D residual/action、Cm online/target、回滚和验证边界。
+- [DExplore base policy](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/base_policy.py) — 加载并冻结 `inspire.pth`，校验网络形状与 running stats。
+- [Cm adapter](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/cm_adapter.py) — target 冻结、PPO block EMA 和 replay feature 接口。
+- [Residual actor](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/residual_policy.py) — 将冻结 teacher 与 Cm feature 拼接，输出有界 18D residual action。
+- [Task package](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 18D residual 与 DExplore PD/mimic 合成；`__init__.py` 保持 `CmResidual` import 入口。
+- [架构记录](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/docs/logs/architecture_log.md) — 追加 V1.1 用户确认快照；vendor `logs*` 忽略已删除。
+
+**验证**
+
+- `python3 -m py_compile third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/*.py`：通过。
+- 直接加载 `inspire.pth` 并前向零输入：输出 shape `(2,18)`，值域在 `[-1,1]`；checkpoint SHA256=`8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- `CmOnlineTarget(1442)` smoke：online/target feature shape 均为 `(2,128)`，通过。
+- 未启动 Isaac Gym、PPO 或长时运行；因此本条不产生 `run_id`，也不宣称训练收益。
+
+**原因**
+
+- 旧入口是 12D CmDecoder residual，无法直接承载 DExplore teacher 的 18D wrist+finger action，也无法
+  复用其 1442D policy observation。将同名脚本转换为 package 后，base checkpoint、Cm 生命周期和
+  DExplore action mapping 有独立可测试边界，训练入口继续使用原 `tasks` 注册表。
+
+**保护边界与回滚**
+
+- 未提交外部 DExplore checkout、`inspire.pth`、旧 reference/cache/output/checkpoint、共享 `src/base/` 或用户已有 dirty diff。
+- 回滚入口：回退本条 V1.1 文件/配置和 package 迁移提交，恢复旧 `tasks/cm_residual.py` 与 `.gitignore` 的 `logs*` 规则。
+
 ## 2026-09-14 18:41:47 +0800 — 建立 canonical Task 并完成首轮 reference 连续性诊断
 
 - activity_id: `ACT-20260914-184147-CMRESIDUAL-GOVERNANCE-D0`
