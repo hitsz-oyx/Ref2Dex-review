@@ -982,3 +982,10 @@ viewer 的 `教师强制` 是“GT 当前 Inspire state → decoder 预测下一
 - evidence: [B1 结果报告](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md)、[B1 run_manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/run_manifest.json)、[终态 conditions run_manifest](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/run_manifest.json)、[终态 evaluation](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/evaluation.json)。
 
 - limitation: contact50 正式 physics Gate 尚未完成。GPU pipeline 下 `GymGetEnvRigidContacts` 在 simulation start 后被 Isaac Gym 明确拒绝，返回空 structured contacts；因此不能把 net contact force 或空 pairwise 输出当作 hand-object 接触结论。D 目前仅完成 284 条 MANO-H source cache，尚未完成满足 geometry parity 的正式训练。
+
+## 2026-09-14 — V1.1.16 D Direct MANO-H 实际 cache 前向 smoke
+
+- run_id: `field_direct_mano_h_smoke_v116_20260914_102000`；run_status=`COMPLETED`；使用一条真实 paired train window，RTX 3090 前向约 `0.238 s`。
+- MANO-H `[4,43]` 成功进入 DirectManoHModel，输出 q/wrist 和 `[1,4,10135,3]` point-flow，全部 finite。
+- conclusion: `SUPPORTED`（D 的真实 cache/model 工程接线）；`INCONCLUSIVE`（D 尚未加入与 B1 对等的当前 object anchors/geometry，未进行正式训练或物理 rollout）。
+- evidence: [smoke.json](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/smoke.json)、[run_manifest](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/run_manifest.json)。
