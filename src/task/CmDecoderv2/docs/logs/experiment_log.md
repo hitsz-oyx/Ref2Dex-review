@@ -970,3 +970,15 @@ viewer 的 `教师强制` 是“GT 当前 Inspire state → decoder 预测下一
 - result: decoder bank 432 帧/覆盖428帧；RL task 成功加载 bank、18-DOF Inspire 资产，action `(12,)`、observation `(71,)`，PPO 单迭代 exit_code=0。
 - output: 外部 `/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/`；Ref2Dex bank 在 `outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/`。
 - conclusion: `SUPPORTED_FOR_INTERFACE_SMOKE_ONLY`；`INCONCLUSIVE`（在线 decoder 闭环、残差策略训练、物理抓取）。由于单 epoch 未完成 episode，`rew=-inf` 不作策略指标。
+
+## 2026-09-14 — V1.1.16 B1 终态及 F7 敏感性诊断
+
+- experiment_id: `cmdecoderv2-field-realizer-gate-v1.1.16`
+- modification_version: `V1.1.16`
+- hypothesis: 在冻结训练合同下，object-indexed F7 是否被 Inspire FieldRealizer 用作动作条件，并具备可检验的增量控制价值。
+- B1 training: `cm_decoder_v2_field_realizer_v1_1_16_20260913_224249`，20 epochs / 86460 steps，GPU7，run_status=`COMPLETED`；best epoch19/step82137，val loss `0.0124190375`，point-flow EPE `32.0424307 mm`；latest epoch20 EPE `32.0400469 mm`。
+- final offline conditions: `field_conditions_best_v116_20260914_010500`，best checkpoint SHA256 `caaf37736d0bbcb72bf8087dcc6e06b2dcc12c391cb5cfaa9caed0182f490dc7`，4254 val windows（active horizon 16260，h1 4065）。B1 EPE `31.951362 mm`；C0（F7=0）`31.951363 mm`；Cs（anchor shuffle）`31.951362 mm`。相对 B1 的 q 变化分别为 `2.72e-5 rad` 和 `6.36e-7 rad`，说明当前 Realizer 对 F7 几乎不敏感。
+- conclusion: `SUPPORTED`（B1 训练、验证、终态 checkpoint 和离线敏感性运行完成）；`INCONCLUSIVE`（不能据此判定 F7 在物理控制中无价值，也不能完成 A/R/B1/D 的 representation attribution）。
+- evidence: [B1 结果报告](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md)、[B1 run_manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/run_manifest.json)、[终态 conditions run_manifest](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/run_manifest.json)、[终态 evaluation](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/evaluation.json)。
+
+- limitation: contact50 正式 physics Gate 尚未完成。GPU pipeline 下 `GymGetEnvRigidContacts` 在 simulation start 后被 Isaac Gym 明确拒绝，返回空 structured contacts；因此不能把 net contact force 或空 pairwise 输出当作 hand-object 接触结论。D 目前仅完成 284 条 MANO-H source cache，尚未完成满足 geometry parity 的正式训练。
