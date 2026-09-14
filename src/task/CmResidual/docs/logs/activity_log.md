@@ -21,6 +21,19 @@
 - 失败尝试保留在 `outputs/CmResidual/cmresidual_dexplore_gpu{1,3}_s{102,103}*` 的 manifest/log 中，未覆盖重试目录。
 - 当前三组 PID 与完整命令记录在各自 `run_manifest.json`；终态前不得把运行标为完成。
 
+**scope**
+
+- 三组运行 manifest 和日志分别位于 [GPU0 run](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu0_s101/run_manifest.json)、[GPU1 retry run](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/run_manifest.json) 和 [GPU3 retry run](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/run_manifest.json)。
+
+**验证**
+
+- 启动后检查确认三个 PID 仍在运行；GPU0/GPU1/GPU3 分别有训练进程和对应显存占用。GPU1/GPU3 的 CPU PhysX retry 已通过 30 个以上 epoch，无 CUDA allocator error。
+- 各目录的 [GPU0 train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu0_s101/train.log)、[GPU1 train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/train.log)、[GPU3 train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/train.log) 持续写入；终态字段尚未产生。
+
+**原因**
+
+- GPU1/GPU3 的 GPU PhysX 在当前节点触发固定的 allocator error 700，继续重试同一模式没有证据会恢复；保留 GPU0 GPU PhysX，同时将另外两组切到 CPU PhysX、GPU PPO，以维持三卡并行且避免反复触发非法内存访问。
+
 **验证与边界**
 
 - GPU0、CPU smoke 和三组当前运行均使用 `inspire.pth` SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
