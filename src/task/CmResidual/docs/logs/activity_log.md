@@ -11,9 +11,18 @@
 - branch: `oyx`
 - base_commit: `8265e4d`
 - worktree_dirty: `true`（保留根目录及 CmDecoderv2 既有差异）
+- scope: 三个独立 `outputs/CmResidual/cmresidual_dexplore_v2_gpu*_s*/` 运行目录及其 manifest、train.log、checkpoint；既有差异 `docs/current_versions.yaml`、`docs/logs/activity_log.md`、`docs/项目总览.md`、`src/task/CmDecoderv2/docs/logs/activity_log.md` 保留且未暂存。
 - run_id: `cmresidual_dexplore_v2_gpu0_s201`、`cmresidual_dexplore_v2_gpu1_s202`、`cmresidual_dexplore_v2_gpu3_s203`
 - run_status: `COMPLETED`（三组均正常达到 `max_epochs=1000`，无 traceback）
 - conclusion: `INCONCLUSIVE`（工程训练完成；未做独立评估，不能推出策略效果）
+
+**原因**
+
+- 修复后的三卡运行需要独立工作目录和终态证据；三组均达到 max_epochs，故可结束运行并登记 checkpoint。
+
+**验证**
+
+- 三份 train.log 均包含 `MAX EPOCHS NUM!` 且不含 `Traceback`；manifest 与 checkpoint 已逐一重载核对。
 
 **终态产物**
 
@@ -40,7 +49,7 @@
 - branch: `oyx`
 - base_commit: `8265e4d`
 - worktree_dirty: `true`（保留根目录及 CmDecoderv2 既有差异）
-- scope: 三个独立 `outputs/CmResidual/cmresidual_dexplore_v2_gpu*_s*/` 运行目录；代码和配置来自提交 `8265e4d`
+- scope: 三个独立 `outputs/CmResidual/cmresidual_dexplore_v2_gpu*_s*/` 运行目录；代码和配置来自提交 `8265e4d`；工作区既有差异 `docs/current_versions.yaml`、`docs/logs/activity_log.md`、`docs/项目总览.md`、`src/task/CmDecoderv2/docs/logs/activity_log.md` 保留且未暂存。
 - run_id: `cmresidual_dexplore_v2_gpu0_s201`、`cmresidual_dexplore_v2_gpu1_s202`、`cmresidual_dexplore_v2_gpu3_s203`
 - run_status: `RUNNING`
 - conclusion: `INCONCLUSIVE`（训练进行中，尚无科研结论）
