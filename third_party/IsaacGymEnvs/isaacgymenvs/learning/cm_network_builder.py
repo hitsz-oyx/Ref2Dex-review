@@ -1,4 +1,4 @@
-"""rl_games network with a trainable Cm online feature and frozen target."""
+"""rl_games network consuming frozen, simulator-generated OI-Cm context."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,7 +10,7 @@ from rl_games.algos_torch import network_builder
 class CmBuilder(network_builder.A2CBuilder):
     class Network(network_builder.A2CBuilder.Network):
         def __init__(self, params, **kwargs):
-            self.cm_feature_dim = int(params.get("cm_feature_dim", 128))
+            self.cm_feature_dim = int(params.get("cm_feature_dim", 32))
             super().__init__(params, **kwargs)
             obs_dim = kwargs.get("input_shape")[0]
             checkpoint = str(params.get("oi_cm_checkpoint", "") or "").strip()
@@ -20,9 +20,11 @@ class CmBuilder(network_builder.A2CBuilder):
             self.cm_feature_dim = int(getattr(self.oi_cm, "feature_dim", 32))
             for parameter in self.oi_cm.parameters():
                 parameter.requires_grad_(False)
-            self._replace_first(self.actor_mlp, obs_dim + self.cm_feature_dim * 2)
+            # The task appends the frozen OI-Cm context after the 1442-D teacher
+            # observation.  Keep the full policy observation width unchanged here.
+            self._replace_first(self.actor_mlp, obs_dim)
             if self.separate:
-                self._replace_first(self.critic_mlp, obs_dim + self.cm_feature_dim * 2)
+                self._replace_first(self.critic_mlp, obs_dim)
 
         @staticmethod
         def _load_oi_cm(path: Path):
@@ -47,25 +49,9 @@ class CmBuilder(network_builder.A2CBuilder):
             raise RuntimeError("CmBuilder requires a non-empty MLP")
 
         def _cm_input(self, obs):
-            # Reconstruct compact hand/object point streams from the synchronized
-            # DExplore observation and run the released OI-Cm model.  The frozen
-            # representation is supplied to both actor and critic; no PPO gradient
-            # is allowed into OI-Cm.
-            b = obs.shape[0]
-            obj = obs[:, :48].reshape(b, 16, 3)
-            hand = obs[:, 48:96].reshape(b, 16, 3)
-            flow = obs[:, 96:144].reshape(b, 16, 3)
-            normal = obs.new_zeros((b, 16, 3)); normal[..., 2] = 1.0
-            batch = {
-                "obj_points": obj, "obj_normals": normal,
-                "obj_valid_mask": torch.ones((b, 16), dtype=torch.bool, device=obs.device),
-                "hand_points": hand, "hand_normals": normal, "hand_flow": flow,
-                "hand_valid_mask": torch.ones((b, 16), dtype=torch.bool, device=obs.device),
-            }
-            with torch.no_grad():
-                output = self.oi_cm(batch)
-                feature = output["cm_tokens"].mean(dim=1)
-            return torch.cat((obs, feature, feature), dim=-1)
+            # Geometry and frozen OI-Cm inference happen in the simulator task;
+            # the resulting context is carried after the 1442-D teacher prefix.
+            return obs
 
         def forward(self, obs_dict):
             obs = obs_dict['obs']
@@ -92,8 +78,7 @@ class CmBuilder(network_builder.A2CBuilder):
             return self.value_act(self.value(c_out))
 
         def get_aux_loss(self):
-            # The online feature receives PPO gradients through actor and critic;
-            # target synchronization is explicit and has no extra reward term.
+            # OI-Cm is frozen; there is no auxiliary online/target loss.
             return {}
 
     def build(self, name, **kwargs):

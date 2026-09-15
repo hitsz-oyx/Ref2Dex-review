@@ -6,14 +6,14 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.1.4`
+- `modification_version`: `V1.2.0`
 - 阶段：DExplore reference-conditioned base 与冻结 OI-Cm 接入
-- 计划状态：`final`（[V1.1 计划](plan/V1.1.md)）
+- 计划状态：`final`（[V1.2 计划](plan/V1.2.md)）
 - 方向审批：用户已确认 canonical owner、`s1/airplane_lift` 单轨迹范围、累计 base residual、联合 RSI、
   gate/pilot 优先和长训另行批准；并确认旧 sidecar 不覆盖、使用固定 wrist SE(3) 映射且逐帧只优化 q6 的
   constrained retarget 新 reference 方向
 - 执行审批：用户已批准 367 帧主区间、plan 定稿及 D1 builder/new artifact/offline validation
-- 当前状态：reference provider 已接入 `+1/+16` phase，OI-Cm V1.3 checkpoint 以冻结特征接入 actor/critic；物理抓取能力仍需独立评估
+- 当前状态：reference provider 已接入 `+1/+16` phase，OI-Cm V1.3 使用仿真器 URDF 表面几何、真实 link velocity/contact 和 object-effect 特征接入 actor/critic；物理抓取能力仍需独立评估
 - 执行边界：未把训练回报视为抓取结论；后续 online/target replay 更新需另行验证
 
 ## 文档入口

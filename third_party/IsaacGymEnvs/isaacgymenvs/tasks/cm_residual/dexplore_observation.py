@@ -57,6 +57,13 @@ def build_dexplore_observation(native_q: torch.Tensor, native_dq: torch.Tensor,
         object_twist = torch.zeros((b, 6), device=link_poses.device, dtype=link_poses.dtype)
     if ref_object_twist is None:
         ref_object_twist = object_twist
+    expected_links = link_poses.shape[:2]
+    for name, value in (("ref_link_poses", ref_link_poses), ("ref_link_vel", ref_link_vel),
+                        ("ref_link_ang_vel", ref_link_ang_vel)):
+        if value.shape[:2] != expected_links:
+            raise ValueError(f"{name} shape {tuple(value.shape)} does not match link shape {tuple(link_poses.shape)}")
+    if ref_contact.shape != contact_forces.shape[:2]:
+        raise ValueError(f"ref_contact shape {tuple(ref_contact.shape)} does not match contact shape {tuple(contact_forces.shape)}")
     root = link_poses[:, 0]
     ref_root = ref_link_poses[:, 0]
     root_pos = root[:, :3, 3]

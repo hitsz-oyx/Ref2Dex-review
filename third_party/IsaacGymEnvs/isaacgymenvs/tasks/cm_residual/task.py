@@ -12,9 +12,9 @@ from isaacgymenvs.tasks.base.vec_task import VecTask
 from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_pose,
                        native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
-from .cm_adapter import CmOnlineTarget
 from .dexplore_observation import build_dexplore_observation
 from .reference_provider import ReferenceProvider
+from .cm_geometry import SurfaceGeometry
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -33,12 +33,12 @@ class CmResidual(VecTask):
         self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
                                              cfg["basePolicy"].get("checkpointSha256"))
         self.reference = ReferenceProvider(cfg["reference"]["path"], sim_device)
-        self.cm = CmOnlineTarget(OBSERVATION_DIM, int(cfg["basePolicy"].get("cmFeatureDim", 128)),
-                                 float(cfg["basePolicy"].get("cmEmaDecay", 0.995)))
-        # The package no longer depends on the legacy 12D OnlineCmBase contract.
-        self.base = None
+        self.base_observation_dim = OBSERVATION_DIM
+        self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
+        self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
+        self.cm_context_dim = self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
         self.max_episode_length = int(cfg["env"].get("episodeLength", 2000))
-        cfg["env"].update(numObservations=OBSERVATION_DIM, numActions=ACTION_DIM, numStates=0,
+        cfg["env"].update(numObservations=OBSERVATION_DIM + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
         self.initial_native = torch.zeros(18, device=sim_device)
         self.initial_object = torch.tensor([0., 0., 0., 0., 0., 0., 1.], device=sim_device)
@@ -77,6 +77,16 @@ class CmResidual(VecTask):
         self.fresh_reset = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.initial_object_z = torch.full((self.num_envs,), self.initial_object[2].item(), device=self.device)
         self.reference_index = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
+        asset = self.cfg["env"]["asset"]
+        hand_urdf = Path(asset["assetRoot"]) / asset["assetFileName"]
+        object_name = asset.get("objectAssetFileName", "airplane.urdf")
+        object_urdf = Path(asset["objectAssetRoot"]) / object_name
+        self.cm_geometry = SurfaceGeometry(
+            hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
+            object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+            hand_count=int(cfg["basePolicy"].get("cmHandPoints", 1538)), device=self.device)
+        self.cm_context = torch.zeros((self.num_envs, self.cm_context_dim), device=self.device)
+        self.oi_cm = self._load_oi_cm(cfg["basePolicy"].get("oiCmCheckpoint", ""))
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -84,6 +94,25 @@ class CmResidual(VecTask):
         self._refresh_state()
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.compute_observations()
+
+    @staticmethod
+    def _load_oi_cm(checkpoint):
+        checkpoint = str(checkpoint or "").strip()
+        if not checkpoint:
+            raise ValueError("CmResidual requires basePolicy.oiCmCheckpoint for semantic OI-Cm features")
+        path = Path(checkpoint).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"OI-Cm checkpoint not found: {path}")
+        from types import SimpleNamespace
+        from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        cfg = payload.get("config", {})
+        meta = SimpleNamespace(**cfg.get("meta", {}))
+        meta.modification_version = cfg.get("modification_version", "V1.3")
+        model = ObjectInteractionCmModel(meta).eval()
+        model.load_state_dict(payload["model"], strict=True)
+        for parameter in model.parameters(): parameter.requires_grad_(False)
+        return model.to("cpu")
 
     def create_sim(self):
         self.up_axis_idx = 2
@@ -131,7 +160,7 @@ class CmResidual(VecTask):
         obj_options.vhacd_params.max_convex_hulls = 20
         obj_options.vhacd_params.max_num_vertices_per_ch = 16
         obj_options.vhacd_params.resolution = 50000
-        obj = self.gym.load_asset(self.sim, str(object_root), "airplane.urdf", obj_options)
+        obj = self.gym.load_asset(self.sim, str(object_root), asset.get("objectAssetFileName", "airplane.urdf"), obj_options)
         table_options = gymapi.AssetOptions()
         table_options.fix_base_link = True
         table_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
@@ -251,22 +280,38 @@ class CmResidual(VecTask):
         contact = self.rigid_body_state[:, self.query_indices, 7:10][:, contact_indices]
         # DExplore consumes genuinely phase-indexed short/long reference targets.
         idx = self.reference_index
-        _, ref_dq_1, ref_links_1, ref_obj_1, _phase_1, ref_obj_twist_1 = self.reference.frame(idx, 1)
-        _, ref_dq_16, ref_links_16, ref_obj_16, _phase_16, ref_obj_twist_16 = self.reference.frame(idx, 16)
+        _, ref_dq_1, ref_links_1, ref_obj_1, _phase_1, ref_obj_twist_1, ref_vel_1, ref_ang_1 = self.reference.frame(idx, 1)
+        _, ref_dq_16, ref_links_16, ref_obj_16, _phase_16, ref_obj_twist_16, ref_vel_16, ref_ang_16 = self.reference.frame(idx, 16)
+        current_obj_twist = self.actor_root_state[self.object_indices.long(), 7:13]
+        ref_contact_1 = self.cm_geometry.contact_targets(ref_links_1, ref_obj_1)
+        ref_contact_16 = self.cm_geometry.contact_targets(ref_links_16, ref_obj_16)
         ref_links_1 = ref_links_1[:, key_indices]
         ref_links_16 = ref_links_16[:, key_indices]
-        current_obj_twist = self.actor_root_state[self.object_indices.long(), 7:13]
         obs_1 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
-                                             ref_links_1, torch.zeros_like(key_vel), torch.zeros_like(key_ang_vel),
-                                             ref_obj_1, torch.zeros_like(contact), current_obj_twist, ref_obj_twist_1)
+                                             ref_links_1, ref_vel_1[:, key_indices], ref_ang_1[:, key_indices],
+                                             ref_obj_1, ref_contact_1, current_obj_twist, ref_obj_twist_1)
         obs_16 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
-                                              ref_links_16, torch.zeros_like(key_vel), torch.zeros_like(key_ang_vel),
-                                              ref_obj_16, torch.zeros_like(contact), current_obj_twist, ref_obj_twist_16)
-        obs = torch.cat((obs_1, obs_16), dim=-1)
+                                              ref_links_16, ref_vel_16[:, key_indices], ref_ang_16[:, key_indices],
+                                              ref_obj_16, ref_contact_16, current_obj_twist, ref_obj_twist_16)
+        base_obs = torch.cat((obs_1, obs_16), dim=-1)
+        obj_points, obj_normals = self.cm_geometry.object(obj)
+        hand_points, hand_normals = self.cm_geometry.hand(links)
+        hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
+        with torch.no_grad():
+            cm_out = self.oi_cm({"obj_points": obj_points.cpu(), "obj_normals": obj_normals.cpu(),
+                                 "obj_valid_mask": torch.ones(obj_points.shape[:2], dtype=torch.bool),
+                                 "hand_points": hand_points.cpu(), "hand_normals": hand_normals.cpu(),
+                                 "hand_flow": hand_flow.cpu(),
+                                 "hand_valid_mask": torch.ones(hand_points.shape[:2], dtype=torch.bool)})
+        tokens = cm_out["cm_tokens"].to(self.device)
+        anchors = cm_out["cm_anchor_pos"].to(self.device)
+        effect = cm_out["pred_obj_flow"].mean(dim=1).to(self.device)
+        self.cm_context.copy_(torch.cat((tokens.flatten(1), anchors.flatten(1), effect), dim=-1))
+        obs = torch.cat((base_obs, self.cm_context), dim=-1)
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
-        self.base_action.copy_(self.teacher.act(self.obs_buf))
+        self.base_action.copy_(self.teacher.act(base_obs.clamp(-self.clip_obs, self.clip_obs)))
         return self.obs_buf
 
     def compute_reward(self):

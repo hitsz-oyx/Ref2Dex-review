@@ -34,6 +34,7 @@ class ReferenceProvider:
         self.object = torch.as_tensor(payload["object_pose_world_ref"], dtype=torch.float32, device=self.device)
         self.object_twist = torch.as_tensor(payload["object_twist_world_ref"], dtype=torch.float32, device=self.device)
         self.phase = torch.as_tensor(payload["phase"], dtype=torch.float32, device=self.device)
+        self.dt = float(meta.get("control_dt", 1.0 / 30.0))
         if self.q.ndim != 2 or self.q.shape[1] != 18 or self.links.ndim != 4 or self.links.shape[1] != 25:
             raise ValueError("Reference q/link dimensions do not match Inspire contract")
         names = tuple(meta.get("link_order", ()))
@@ -41,6 +42,28 @@ class ReferenceProvider:
             raise ValueError("Reference manifest link_order is incompatible with QUERY_LINKS")
         self.query_indices = torch.as_tensor([names.index(name) for name in QUERY_LINKS], device=self.device)
         self.length = int(self.q.shape[0])
+        self.link_velocity = self._finite_difference(self.links[:, :, :3, 3])
+        self.link_ang_velocity = self._angular_velocity(self.links[:, :, :3, :3])
+
+    def _finite_difference(self, values):
+        velocity = torch.zeros_like(values)
+        if self.length > 1:
+            velocity[1:-1] = (values[2:] - values[:-2]) / (2.0 * self.dt)
+            velocity[0] = (values[1] - values[0]) / self.dt
+            velocity[-1] = (values[-1] - values[-2]) / self.dt
+        return velocity
+
+    def _angular_velocity(self, rotations):
+        velocity = torch.zeros((self.length, rotations.shape[1], 3), device=rotations.device, dtype=rotations.dtype)
+        if self.length <= 1:
+            return velocity
+        relative = rotations[1:] @ rotations[:-1].transpose(-1, -2)
+        skew = torch.stack((relative[..., 2, 1] - relative[..., 1, 2],
+                            relative[..., 0, 2] - relative[..., 2, 0],
+                            relative[..., 1, 0] - relative[..., 0, 1]), dim=-1) / (2.0 * self.dt)
+        velocity[1:] = skew
+        velocity[0] = skew[0]
+        return velocity
 
     def frame(self, indices: torch.Tensor, offset: int = 0) -> tuple[torch.Tensor, ...]:
         idx = indices.to(self.device, dtype=torch.long).clamp(0, self.length - 1)
@@ -48,4 +71,6 @@ class ReferenceProvider:
         return (self.q.index_select(0, idx), self.dq.index_select(0, idx),
                 self.links.index_select(0, idx).index_select(1, self.query_indices),
                 self.object.index_select(0, idx), self.phase.index_select(0, idx),
-                self.object_twist.index_select(0, idx))
+                self.object_twist.index_select(0, idx),
+                self.link_velocity.index_select(0, idx).index_select(1, self.query_indices),
+                self.link_ang_velocity.index_select(0, idx).index_select(1, self.query_indices))

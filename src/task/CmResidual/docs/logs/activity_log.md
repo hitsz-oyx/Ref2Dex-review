@@ -147,6 +147,51 @@
 
 # CmResidual 活动记录
 
+## 2026-09-15 12:58:28 +0800 — 按指导 V1.2 修正几何与冻结 OI-Cm 链路
+
+- activity_id: `ACT-20260915-125828-CMRESIDUAL-V12-FIX`
+- timestamp: `2026-09-15 12:58:28 +0800`
+- modification_version: `V1.2.0`
+- operation_category: `architecture`、`code`、`documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确认可 [V1.2 最终计划](../plan/V1.2.md) 并要求开始修改。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `c73190c1b8a3b1bb0dd4770d78ca8bca2d3694cf`
+- worktree_dirty: `true`（保留指导文件及其他既有差异）
+- scope: `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/`、CmResidual 配置、CmResidual 计划/README、版本指针及定向测试。
+
+**文件**
+
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/cm_geometry.py` — 从当前 hand/object URDF visual mesh 确定性采样点/法向，按实测 link/object pose 变换，生成 hand flow 与 reference contact。
+- `src/task/CmResidual/docs/指导/V1.2.md` — 用户提供的本版本研究指导，作为本次修正依据。
+- `src/task/CmResidual/tests/test_reference_contract.py` — 增加几何点云形状、法向和 flow 合同测试。
+- `reference_provider.py` — 增加 reference link linear/angular velocity（固定 `dt=1/30` 差分）。
+- `task.py` — 移除 `CmOnlineTarget`，使用真实 reference velocity/contact 和冻结 OI-Cm 输出（slot、anchor、object effect）作为策略上下文；teacher 仅读取 1442-D 前缀。
+- `third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py` — 消费 task 生成的冻结 OI-Cm context，不再从 DExplore 向量伪造点云或重复 pooled token。
+- `cm_adapter.py`、`residual_policy.py`、package 导出 — 删除废弃 online/target 路径。
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml` — 统一 airplane 资产入口，声明 OI-Cm checkpoint 与几何采样参数。
+- [V1.2 最终计划](../plan/V1.2.md)、[Task README](../README.md)、[版本指针](../../../../../docs/current_versions.yaml) — 同步执行状态。
+
+**原因**
+
+V1.1.4 将 DExplore tracking-state 切片重解释为 OI-Cm 点云，并向 reference observation 传入全零 velocity/contact；这只能证明形状兼容，不能证明语义有效。V1.2 将几何和 reference 字段改为来自当前 URDF、仿真状态及 reference pose 的可追溯计算，并把 interaction slots、anchors 和 object-effect 暴露给 actor/critic。
+
+**验证**
+
+- `python3 -m py_compile third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/*.py third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_*.py`：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：`3 passed`。
+- `git diff --check`：通过；`dexplore_observation.py` 对 reference link/contact shape 增加 fail-closed 断言。
+- CPU 单环境 `max_iterations=1` smoke（`horizon_length=4`、`minibatch_size=4`）完成，观测空间为 `2005`（1442-D teacher prefix + 563-D frozen context），无 traceback；运行入口为 [run_manifest.json](../../../../../outputs/CmResidual/smoke_v12_20260915_125828/run_manifest.json)，日志为 [train.log](../../../../../outputs/CmResidual/smoke_v12_20260915_125828/train.log)，checkpoint 为 `third_party/IsaacGymEnvs/runs/CmResidual_15-13-01-55/nn/last_CmResidual_ep_1_rew__1.89_.pth`。
+- smoke 仅是工程 wiring/finite/冻结合同证据，科研结论为 `INCONCLUSIVE`；未启动长训。
+
+**保护边界与回滚**
+
+- 未修改原始数据、reference.npz、OI-Cm/DExplore checkpoint、外部 DExplore 工作树、历史 outputs/cache/checkpoint 或其他 Task。
+- 回滚入口为恢复本次代码、配置和文档差异至 `c73190c`；历史产物未删除。
+
 ## 2026-09-15 09:18:52 +0800 — 三卡训练终态复核及实现无效更正
 
 - activity_id: `ACT-20260915-091852-CMRESIDUAL-TERMINAL-AUDIT`

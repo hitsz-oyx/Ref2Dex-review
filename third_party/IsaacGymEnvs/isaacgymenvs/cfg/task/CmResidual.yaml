@@ -5,7 +5,7 @@ env:
   envSpacing: 2.0
   episodeLength: 2000
   controlFrequencyInv: 2
-  numObservations: 1442
+  numObservations: 2005
   numActions: 18
   clipObservations: 10.0
   clipActions: 1.0
@@ -18,7 +18,7 @@ env:
     assetRoot: /home2/wyy/oyx_ws/Ref2Dex/src/task/CmDecoderv2/assets
     assetFileName: inspire_hand_new/inspire_hand_right.urdf
     objectAssetRoot: /home2/wyy/oyx_ws/dexplore/dexplore/data/assets/mjcf
-    objectAssetFileName: urdf/objects/cube_multicolor.urdf
+    objectAssetFileName: airplane.urdf
 
 task:
   randomize: false
@@ -28,8 +28,11 @@ basePolicy:
   mode: dexplore
   checkpoint: ${oc.env:DEXPLORE_CHECKPOINT,checkpoint/inspire.pth}
   checkpointSha256: ''
-  cmFeatureDim: 128
-  cmEmaDecay: 0.995
+  oiCmCheckpoint: ${oc.env:OI_CM_CHECKPOINT,}
+  cmFeatureDim: 32
+  cmNumSlots: 16
+  cmObjectPoints: 1024
+  cmHandPoints: 1538
 reference:
   path: ${oc.env:CMRESIDUAL_REFERENCE,data/processed_data/cm_residual/reference_tracking_v1/s1_airplane_lift/reference.npz}
 
