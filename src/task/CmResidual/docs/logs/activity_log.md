@@ -1,3 +1,32 @@
+## 2026-09-15 10:07:48 +0800 — 修复后三卡训练完成
+
+- activity_id: `ACT-20260915-181500-CMRESIDUAL-TRAIN-3GPU-V2-END`
+- timestamp: `2026-09-15 10:07:48 +0800`
+- modification_version: `V1.1.3`
+- operation_category: `operation`、`experiment`、`documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `8265e4d`
+- worktree_dirty: `true`（保留根目录及 CmDecoderv2 既有差异）
+- run_id: `cmresidual_dexplore_v2_gpu0_s201`、`cmresidual_dexplore_v2_gpu1_s202`、`cmresidual_dexplore_v2_gpu3_s203`
+- run_status: `COMPLETED`（三组均正常达到 `max_epochs=1000`，无 traceback）
+- conclusion: `INCONCLUSIVE`（工程训练完成；未做独立评估，不能推出策略效果）
+
+**终态产物**
+
+- GPU0：manifest [outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/run_manifest.json)，日志 [train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/train.log)，最近 checkpoint [last_CmResidual_ep_900_rew_-33.907387.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/runs/CmResidual_15-09-42-05/nn/last_CmResidual_ep_900_rew_-33.907387.pth)，最佳 checkpoint [CmResidual.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/runs/CmResidual_15-09-42-05/nn/CmResidual.pth)，checkpoint 内 best `last_mean_rewards=29.805084`（epoch 599）。
+- GPU1：manifest [outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/run_manifest.json)，日志 [train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/train.log)，最近 checkpoint [last_CmResidual_ep_900_rew_8.34217.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/runs/CmResidual_15-09-42-05/nn/last_CmResidual_ep_900_rew_8.34217.pth)，最佳 checkpoint [CmResidual.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/runs/CmResidual_15-09-42-05/nn/CmResidual.pth)，checkpoint 内 best `last_mean_rewards=25.777279`（epoch 719）。
+- GPU3：manifest [outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/run_manifest.json)，日志 [train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/train.log)，最近 checkpoint [last_CmResidual_ep_900_rew_2.2933483.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/runs/CmResidual_15-09-42-05/nn/last_CmResidual_ep_900_rew_2.2933483.pth)，最佳 checkpoint [CmResidual.pth](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/runs/CmResidual_15-09-42-05/nn/CmResidual.pth)，checkpoint 内 best `last_mean_rewards=18.345146`（epoch 959）。
+
+**验证与边界**
+
+- 三份日志均包含 `MAX EPOCHS NUM!` 且无 `Traceback`；三份 checkpoint 均可用 CPU `torch.load` 重载并包含 model/optimizer/epoch/frame。
+- reward 仅是训练期滑动回报，不是成功率；没有生成 `metrics.jsonl`，因此本条不声明科研假设成立。
+- 未修改旧运行、外部 DExplore checkout、`inspire.pth`、原始数据和用户既有 dirty diff。
+
 ## 2026-09-15 09:45:45 +0800 — 修复后三卡并行训练启动
 
 - activity_id: `ACT-20260915-094545-CMRESIDUAL-TRAIN-3GPU-V2`
