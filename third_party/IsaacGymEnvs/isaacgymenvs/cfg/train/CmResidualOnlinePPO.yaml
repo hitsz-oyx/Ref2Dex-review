@@ -1,0 +1,7 @@
+defaults:
+  - CmResidualPPO
+  - _self_
+
+params:
+  config:
+    name: ${resolve_default:CmResidualOnline,${....experiment}}

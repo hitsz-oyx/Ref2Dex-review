@@ -1,3 +1,84 @@
+## 2026-09-15 16:53:16 +0800 — CmResidual V1.3 zero-residual gate 失败并停止
+
+- activity_id: `ACT-20260915-165316-CMRESIDUAL-V13-ZERO-END`
+- timestamp: `2026-09-15 16:53:16 +0800`
+- modification_version: `V1.3.2`
+- type: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（用户在 V1.3 计划交接后明确回复“你直接开始执行吧”）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `95d5aea25a8d75306982d4266d1040911fd25efa`
+- worktree_dirty: `true`（只保留并隔离用户提供且未跟踪的 `指导/V1.2.md`、`指导/V1.3.md`）
+- scope: V1.3 最终计划列出的 CmResidual task/config/network、Task-local test/eval 工具、Task 文档与版本指针；不含 checkpoint、reference/schema/reward、用户指导、其他 Task、共享 `src/base/` 或 PPO 训练
+- run_id: `cmresidual_zero_v13_20260915_164405`
+- run_status: `FAILED`
+- last_step: `367`
+- last_epoch: `null`
+- best_metric: `max_lift_m=0.0885452628`（无接触条件下的观测量，不作为抓取成绩）
+- checkpoint: `null`
+- exit_reason: 367 步 metrics 完整写入后，Isaac Gym `destroy_sim` 超过 7 分钟未返回；进程以 `SIGTERM` 停止。rollout 同时出现全程 contact occupancy=0 与 mean tip distance=1.421636 m，行为 gate 无效。
+- conclusion: `SUPPORTED`（zero-residual target parity 与 finite 工程不变量）；`INVALID_IMPLEMENTATION`（完整 zero-residual gate）；`INCONCLUSIVE`（PPO、抓取效果与科研假设）
+
+**原因**
+
+- 用户指导 V1.3 要求先修复真实输入、contact 观测和 residual 权限，再以严格零残差验证 frozen DExplore 行为；当前 reference 不具备训练资格，因此 gate 是本次批准范围的终点。
+
+**实际修改范围**
+
+- 计划与记录：[最终计划 V1.3](../plan/V1.3.md)、[Task README](../README.md)、[活动记录](activity_log.md)、[实验记录](experiment_log.md)、[版本指针](../../../../../docs/current_versions.yaml)。
+- 配置：[CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml)、[CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml)、[CmResidualPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml)、[CmResidualOnlinePPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualOnlinePPO.yaml)。
+- 实现：[task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[action_mapping.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py)、[dexplore_observation.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/dexplore_observation.py)、[reference_provider.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py)、[cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py)。
+- 验证工具与测试：[eval_zero_residual.py](../../tools/eval_zero_residual.py)、[test_reference_contract.py](../../tests/test_reference_contract.py)。
+
+**验证**
+
+- canonical/online 两个入口已对齐 2005-D observation、32-D/16-slot OI-Cm、真实输入路径和 SHA256；Task 是唯一 OI-Cm owner，并验证 checkpoint 元数据与 scale manifest。
+- DExplore contact 已改取 net contact force；residual 在 base target 转换后按 0.015 m / 0.20 rad / 0.08 rad 施加，mimic 与 joint-limit clamp 保持。
+- `python3 -m py_compile ...`：通过；`PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：`8 passed`；两个 task/train alias 的 Hydra compose：通过；`git diff --check`：通过。
+- 运行产物：[运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/eval.log)。
+
+**停止、保护边界与回滚**
+
+- 按 [最终计划 V1.3](../plan/V1.3.md) 的失败停止条件，没有启动 PPO，也没有自动修改 reference/schema/reward/初始化语义。reference manifest 仍为 `training_eligible=false`。
+- 未修改 DExplore/OI-Cm checkpoint、reference、cache、历史 outputs、用户指导、其他 Task 或共享 `src/base/`；失败运行保留为只读审计证据。
+- 回滚入口为 base commit `95d5aea25a8d75306982d4266d1040911fd25efa`、本条列出的显式修改文件与独立运行目录；不删除或覆盖既有产物。
+
+## 2026-09-15 16:44:05 +0800 — CmResidual V1.3 修正完成并启动零残差评估
+
+- activity_id: `ACT-20260915-164405-CMRESIDUAL-V13-ZERO-START`
+- timestamp: `2026-09-15 16:44:05 +0800`
+- modification_version: `V1.3.2`
+- type: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`（contact 观测与 physical residual 合同、真实 checkpoint/reference 校验和 Isaac Gym 评估）
+- approval: `user-approved`（用户在 V1.3 计划交接后明确回复“你直接开始执行吧”）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `95d5aea25a8d75306982d4266d1040911fd25efa`
+- worktree_dirty: `true`（保留用户提供且未跟踪的 `指导/V1.2.md`、`指导/V1.3.md`，不修改、不暂存）
+- scope: [最终计划 V1.3](../plan/V1.3.md)、CmResidual task/config/network、Task-local tests 与 zero-residual 工具；不含 reference/schema/reward、checkpoint、其他 Task、共享 `src/base/` 或 PPO 训练
+- run_id: `cmresidual_zero_v13_20260915_164405`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v13_20260915_164405`
+- output: [运行目录（PENDING）](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405)、[run_manifest.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/run_manifest.json)、[metrics.jsonl（PENDING）](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/metrics.jsonl)、[eval.log（PENDING）](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/eval.log)
+- conclusion: `INCONCLUSIVE`（评估运行中；工程 smoke 不作为 PPO 或抓取效果结论）
+
+**已完成的实现与启动前验证**
+
+- 两个注册配置入口已锁定 32-D OI-Cm、真实输入及其 SHA256；Task 成为唯一 OI-Cm checkpoint owner，并 fail closed 校验 checkpoint 元数据与 scale manifest。
+- DExplore contact 改取 Isaac Gym net contact force；18-D residual 改为 DExplore target 转换后的 0.015 m / 0.20 rad / 0.08 rad 有界物理修正，zero residual 与原 base-only 映射逐元素相同。
+- `python3 -m py_compile ...` 通过；`PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests` 为 `8 passed`；canonical 与 online alias 的 Hydra compose 均得到 2005-D observation。
+- 当前 reference manifest 的 `training_eligible=false` 未被修改；本次只运行 zero-residual gate，不启动 PPO。
+
+**保护边界与回滚**
+
+- 不修改或覆盖 DExplore/OI-Cm checkpoint、reference、cache、历史 outputs、用户指导和其他 dirty diff。
+- 代码回滚入口为 base commit `95d5aea25a8d75306982d4266d1040911fd25efa` 与 [最终计划 V1.3](../plan/V1.3.md) 中列出的显式文件；运行产物位于独立新目录。
+
 ## 2026-09-15 11:43:48 +0800 — 按指导 V1.1 修订 reference 与 OI-Cm 链路
 
 - activity_id: `ACT-20260915-114348-CMRESIDUAL-V11-REVISE`

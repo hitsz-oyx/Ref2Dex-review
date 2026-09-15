@@ -12,6 +12,14 @@ import torch
 IG_INDICES = (0, 3, 6, 9, 12, 15)
 
 
+def select_contact_forces(net_contact_force: torch.Tensor, query_indices,
+                          contact_indices) -> torch.Tensor:
+    """Select the five DExplore contact bodies from Isaac Gym net forces."""
+    query = torch.as_tensor(query_indices, dtype=torch.long, device=net_contact_force.device)
+    contact = torch.as_tensor(contact_indices, dtype=torch.long, device=net_contact_force.device)
+    return net_contact_force.index_select(1, query).index_select(1, contact)
+
+
 def _rot6(matrix: torch.Tensor) -> torch.Tensor:
     return matrix[..., :3, :2].transpose(-1, -2).reshape(*matrix.shape[:-2], 6)
 

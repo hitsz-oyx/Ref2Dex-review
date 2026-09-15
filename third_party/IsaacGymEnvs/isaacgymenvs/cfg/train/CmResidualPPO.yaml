@@ -8,7 +8,6 @@ params:
     name: cm_actor_critic
     separate: True
     cm_feature_dim: 32
-    oi_cm_checkpoint: ${oc.env:OI_CM_CHECKPOINT,}
     space:
       continuous:
         mu_activation: None

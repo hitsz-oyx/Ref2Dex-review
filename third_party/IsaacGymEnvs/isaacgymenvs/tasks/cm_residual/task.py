@@ -11,8 +11,9 @@ from isaacgym import gymapi, gymtorch
 from isaacgymenvs.tasks.base.vec_task import VecTask
 from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_pose,
                        native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
+from .action_mapping import compose_physical_residual
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
-from .dexplore_observation import build_dexplore_observation
+from .dexplore_observation import build_dexplore_observation, select_contact_forces
 from .reference_provider import ReferenceProvider
 from .cm_geometry import SurfaceGeometry
 
@@ -32,11 +33,16 @@ class CmResidual(VecTask):
             raise ValueError("CmResidual now requires the frozen DExplore teacher (mode=dexplore).")
         self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
                                              cfg["basePolicy"].get("checkpointSha256"))
-        self.reference = ReferenceProvider(cfg["reference"]["path"], sim_device)
+        self.reference = ReferenceProvider(cfg["reference"]["path"], sim_device,
+                                           cfg["reference"].get("sha256"))
         self.base_observation_dim = OBSERVATION_DIM
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
         self.cm_context_dim = self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
+        residual_cfg = cfg["residual"]
+        self.residual_translation_scale = float(residual_cfg["translationScaleM"])
+        self.residual_rotation_scale = float(residual_cfg["rotationScaleRad"])
+        self.residual_finger_scale = float(residual_cfg["fingerScaleRad"])
         self.max_episode_length = int(cfg["env"].get("episodeLength", 2000))
         cfg["env"].update(numObservations=OBSERVATION_DIM + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
@@ -69,11 +75,9 @@ class CmResidual(VecTask):
         self.applied_wrist = self.base_wrist.clone()
         self.base_action = torch.zeros((self.num_envs, ACTION_DIM), device=self.device)
         self.prev_actions = torch.zeros((self.num_envs, ACTION_DIM), device=self.device)
-        self.pd_action_scale = self.native_upper - self.native_lower
-        self.pd_action_scale[:3] = 1.0
-        self.pd_action_scale[3:6] = np.pi
-        self.pd_action_offset = torch.zeros_like(self.native_lower)
-        self.pd_action_offset[6:] = self.native_lower[6:]
+        self.residual_requested_delta = torch.zeros_like(self.native_targets)
+        self.residual_applied_delta = torch.zeros_like(self.native_targets)
+        self.residual_saturation = torch.zeros_like(self.native_targets)
         self.fresh_reset = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.initial_object_z = torch.full((self.num_envs,), self.initial_object[2].item(), device=self.device)
         self.reference_index = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
@@ -86,7 +90,15 @@ class CmResidual(VecTask):
             object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
             hand_count=int(cfg["basePolicy"].get("cmHandPoints", 1538)), device=self.device)
         self.cm_context = torch.zeros((self.num_envs, self.cm_context_dim), device=self.device)
-        self.oi_cm = self._load_oi_cm(cfg["basePolicy"].get("oiCmCheckpoint", ""))
+        self.current_contact_forces = torch.zeros((self.num_envs, 5, 3), device=self.device)
+        oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
+        self.oi_cm_checkpoint = str(oi_cm_path)
+        self.oi_cm_checkpoint_sha256 = sha256(oi_cm_path) if oi_cm_path.is_file() else ""
+        self.oi_cm = self._load_oi_cm(
+            oi_cm_path, cfg["basePolicy"].get("oiCmCheckpointSha256"),
+            feature_dim=self.cm_dim, num_slots=self.cm_slots,
+            object_points=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+            hand_points=int(cfg["basePolicy"].get("cmHandPoints", 1538)))
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -96,19 +108,41 @@ class CmResidual(VecTask):
         self.compute_observations()
 
     @staticmethod
-    def _load_oi_cm(checkpoint):
-        checkpoint = str(checkpoint or "").strip()
-        if not checkpoint:
+    def _load_oi_cm(checkpoint, expected_sha256, *, feature_dim, num_slots,
+                    object_points, hand_points):
+        checkpoint = Path(checkpoint)
+        if not str(checkpoint).strip():
             raise ValueError("CmResidual requires basePolicy.oiCmCheckpoint for semantic OI-Cm features")
-        path = Path(checkpoint).expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(f"OI-Cm checkpoint not found: {path}")
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"OI-Cm checkpoint not found: {checkpoint}")
+        digest = sha256(checkpoint)
+        if expected_sha256 and digest != str(expected_sha256).lower():
+            raise ValueError(f"OI-Cm checkpoint SHA256 mismatch: {digest} != {expected_sha256}")
         from types import SimpleNamespace
         from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
-        payload = torch.load(path, map_location="cpu", weights_only=False)
-        cfg = payload.get("config", {})
-        meta = SimpleNamespace(**cfg.get("meta", {}))
-        meta.modification_version = cfg.get("modification_version", "V1.3")
+        payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        checkpoint_cfg = payload.get("config", {})
+        meta_values = checkpoint_cfg.get("meta", {})
+        expected = {
+            "feature_dim": int(feature_dim),
+            "num_cm_tokens": int(num_slots),
+            "num_obj_points": int(object_points),
+            "num_hand_points": int(hand_points),
+        }
+        for name, value in expected.items():
+            if int(meta_values.get(name, -1)) != value:
+                raise ValueError(
+                    f"OI-Cm {name} mismatch: {meta_values.get(name)!r} != {value}")
+        meta_values = dict(meta_values)
+        scale_manifest = Path(str(meta_values.get("scale_manifest_path", ""))).expanduser()
+        if not scale_manifest.is_absolute():
+            repository_root = Path(__file__).resolve().parents[5]
+            scale_manifest = repository_root / scale_manifest
+        if not scale_manifest.is_file():
+            raise FileNotFoundError(f"OI-Cm scale manifest not found: {scale_manifest}")
+        meta_values["scale_manifest_path"] = str(scale_manifest.resolve())
+        meta = SimpleNamespace(**meta_values)
+        meta.modification_version = checkpoint_cfg.get("modification_version", "V1.3")
         model = ObjectInteractionCmModel(meta).eval()
         model.load_state_dict(payload["model"], strict=True)
         for parameter in model.parameters(): parameter.requires_grad_(False)
@@ -222,6 +256,9 @@ class CmResidual(VecTask):
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         self.prev_actions[env_ids] = 0
+        self.residual_requested_delta[env_ids] = 0
+        self.residual_applied_delta[env_ids] = 0
+        self.residual_saturation[env_ids] = 0
         self.episode_return[env_ids] = 0
         self.episode_max_lift[env_ids] = 0
         self.initial_object_z[env_ids] = self.initial_object[2]
@@ -238,19 +275,14 @@ class CmResidual(VecTask):
         actions = actions.to(self.device).clamp(-1, 1)
         self.prev_actions.copy_(actions)
         current = sim_to_native(self.dof_pos, self.sim_indices)
-        final_action = (self.base_action + actions).clamp(-1, 1)
-        # Exact DExplore Inspire mapping: wrist is 0:6, fingers are 6:18.
-        finger_action = (1.0 + final_action[:, 6:]) / 2.0
-        pd_action = torch.cat((final_action[:, :6], finger_action), dim=-1)
-        targets = self.pd_action_offset + self.pd_action_scale * pd_action
-        targets[:, :6] = targets[:, :6] + current[:, :6]
-        targets[:, 7] = targets[:, 6] * 1.05
-        targets[:, 9] = targets[:, 8] * 1.05
-        targets[:, 11] = targets[:, 10] * 1.05
-        targets[:, 13] = targets[:, 12] * 1.05
-        targets[:, 16] = targets[:, 15] * 0.6
-        targets[:, 17] = targets[:, 15] * 0.8
-        targets = targets.clamp(self.native_lower, self.native_upper)
+        targets, details = compose_physical_residual(
+            self.base_action, actions, current, self.native_lower, self.native_upper,
+            translation_scale_m=self.residual_translation_scale,
+            rotation_scale_rad=self.residual_rotation_scale,
+            finger_scale_rad=self.residual_finger_scale)
+        self.residual_requested_delta.copy_(details["requested_delta"])
+        self.residual_applied_delta.copy_(details["applied_delta"])
+        self.residual_saturation.copy_(details["saturation"])
         self.native_targets.copy_(targets)
         self.sim_targets.copy_(native_to_sim(targets, self.sim_indices))
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.sim_targets))
@@ -277,7 +309,8 @@ class CmResidual(VecTask):
         key_vel = self.rigid_body_state[:, self.query_indices, 7:10][:, key_indices]
         key_ang_vel = self.rigid_body_state[:, self.query_indices, 10:13][:, key_indices]
         contact_indices = torch.as_tensor([7, 10, 16, 13, 4], device=self.device)
-        contact = self.rigid_body_state[:, self.query_indices, 7:10][:, contact_indices]
+        contact = select_contact_forces(self.contact_force, self.query_indices, contact_indices)
+        self.current_contact_forces.copy_(contact)
         # DExplore consumes genuinely phase-indexed short/long reference targets.
         idx = self.reference_index
         _, ref_dq_1, ref_links_1, ref_obj_1, _phase_1, ref_obj_twist_1, ref_vel_1, ref_ang_1 = self.reference.frame(idx, 1)
@@ -334,6 +367,12 @@ class CmResidual(VecTask):
                                       "max_lift_m": self.episode_max_lift[done].clone()}
         self.extras.update(lift_mean=lift.mean(), tip_distance_mean=distance.mean(),
                           residual_rms=self.prev_actions.square().mean().sqrt(),
+                          residual_translation_m_rms=self.residual_applied_delta[:, :3].square().mean().sqrt(),
+                          residual_rotation_rad_rms=self.residual_applied_delta[:, 3:6].square().mean().sqrt(),
+                          residual_finger_rad_rms=self.residual_applied_delta[:, [6, 8, 10, 12, 14, 15]].square().mean().sqrt(),
+                          residual_target_delta_max=self.residual_applied_delta.abs().amax(),
+                          residual_saturation_ratio=self.residual_saturation.mean(),
+                          contact_occupancy=(self.current_contact_forces.abs().amax(-1) > 0.1).float().mean(),
                           success_rate=self.successful_episodes / max(1, self.completed_episodes))
 
     def post_physics_step(self):

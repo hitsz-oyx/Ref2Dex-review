@@ -1,8 +1,6 @@
 """rl_games network consuming frozen, simulator-generated OI-Cm context."""
 from __future__ import annotations
 
-from pathlib import Path
-import torch
 from torch import nn
 from rl_games.algos_torch import network_builder
 
@@ -13,32 +11,11 @@ class CmBuilder(network_builder.A2CBuilder):
             self.cm_feature_dim = int(params.get("cm_feature_dim", 32))
             super().__init__(params, **kwargs)
             obs_dim = kwargs.get("input_shape")[0]
-            checkpoint = str(params.get("oi_cm_checkpoint", "") or "").strip()
-            if not checkpoint:
-                raise ValueError("CmResidual requires network.oi_cm_checkpoint for the frozen OI-Cm model")
-            self.oi_cm = self._load_oi_cm(Path(checkpoint).expanduser().resolve())
-            self.cm_feature_dim = int(getattr(self.oi_cm, "feature_dim", 32))
-            for parameter in self.oi_cm.parameters():
-                parameter.requires_grad_(False)
             # The task appends the frozen OI-Cm context after the 1442-D teacher
             # observation.  Keep the full policy observation width unchanged here.
             self._replace_first(self.actor_mlp, obs_dim)
             if self.separate:
                 self._replace_first(self.critic_mlp, obs_dim)
-
-        @staticmethod
-        def _load_oi_cm(path: Path):
-            if not path.is_file():
-                raise FileNotFoundError(f"OI-Cm checkpoint not found: {path}")
-            from types import SimpleNamespace
-            from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
-            payload = torch.load(path, map_location="cpu", weights_only=False)
-            cfg = payload.get("config", {})
-            meta = SimpleNamespace(**cfg.get("meta", {}))
-            meta.modification_version = cfg.get("modification_version", "V1.3")
-            model = ObjectInteractionCmModel(meta)
-            model.load_state_dict(payload["model"], strict=True)
-            return model.eval()
 
         @staticmethod
         def _replace_first(module: nn.Sequential, input_dim: int):

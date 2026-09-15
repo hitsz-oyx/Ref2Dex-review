@@ -5,7 +5,7 @@ env:
   envSpacing: 2.0
   episodeLength: 2000
   controlFrequencyInv: 2
-  numObservations: 1442
+  numObservations: 2005
   numActions: 18
   clipObservations: 10.0
   clipActions: 1.0
@@ -18,7 +18,7 @@ env:
     assetRoot: /home2/wyy/oyx_ws/Ref2Dex/src/task/CmDecoderv2/assets
     assetFileName: inspire_hand_new/inspire_hand_right.urdf
     objectAssetRoot: /home2/wyy/oyx_ws/dexplore/dexplore/data/assets/mjcf
-    objectAssetFileName: urdf/objects/cube_multicolor.urdf
+    objectAssetFileName: airplane.urdf
 
 task:
   randomize: false
@@ -26,10 +26,23 @@ task:
 
 basePolicy:
   mode: dexplore
-  checkpoint: ${oc.env:DEXPLORE_CHECKPOINT,checkpoint/inspire.pth}
-  checkpointSha256: ''
-  cmFeatureDim: 128
-  cmEmaDecay: 0.995
+  checkpoint: ${oc.env:DEXPLORE_CHECKPOINT,/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth}
+  checkpointSha256: 8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553
+  oiCmCheckpoint: ${oc.env:OI_CM_CHECKPOINT,/home2/wyy/oyx_ws/Ref2Dex/outputs/objectinteractioncm/object_interaction_cm_dexplore_rl_v1_3_20260910_020856/checkpoints/best.pt}
+  oiCmCheckpointSha256: 3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283
+  cmFeatureDim: 32
+  cmNumSlots: 16
+  cmObjectPoints: 1024
+  cmHandPoints: 1538
+
+reference:
+  path: ${oc.env:CMRESIDUAL_REFERENCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_residual/reference_tracking_v1/s1_airplane_lift/reference.npz}
+  sha256: a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1
+
+residual:
+  translationScaleM: 0.015
+  rotationScaleRad: 0.20
+  fingerScaleRad: 0.08
 
 sim:
   dt: 0.016666666666666666

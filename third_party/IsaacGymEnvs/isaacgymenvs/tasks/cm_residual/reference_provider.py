@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
 import numpy as np
 import torch
@@ -12,14 +13,24 @@ from .contract import QUERY_LINKS
 class ReferenceProvider:
     """Load one audited reference sequence and serve phase-indexed tensors."""
 
-    def __init__(self, path: str | Path, device: torch.device | str):
+    def __init__(self, path: str | Path, device: torch.device | str,
+                 expected_sha256: str | None = None):
         self.path = Path(path).expanduser().resolve()
         if not self.path.is_file():
             raise FileNotFoundError(f"Reference artifact not found: {self.path}")
-        manifest = self.path.with_name("manifest.json")
-        if not manifest.is_file():
-            raise FileNotFoundError(f"Reference manifest not found: {manifest}")
-        meta = json.loads(manifest.read_text())
+        digest = hashlib.sha256()
+        with self.path.open("rb") as stream:
+            for block in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(block)
+        self.sha256 = digest.hexdigest()
+        if expected_sha256 and self.sha256 != str(expected_sha256).lower():
+            raise ValueError(f"Reference SHA256 mismatch: {self.sha256} != {expected_sha256}")
+        self.manifest_path = self.path.with_name("manifest.json")
+        if not self.manifest_path.is_file():
+            raise FileNotFoundError(f"Reference manifest not found: {self.manifest_path}")
+        meta = json.loads(self.manifest_path.read_text())
+        self.metadata = meta
+        self.training_eligible = bool(meta.get("training_eligible", False))
         if meta.get("coordinate_frame") != "world" or meta.get("quaternion_order") != "xyzw":
             raise ValueError("Reference must use world-frame xyzw poses")
         payload = np.load(self.path, allow_pickle=False)
