@@ -1,3 +1,37 @@
+## 2026-09-15 09:45:45 +0800 — 修复后三卡并行训练启动
+
+- activity_id: `ACT-20260915-094545-CMRESIDUAL-TRAIN-3GPU-V2`
+- timestamp: `2026-09-15 09:45:45 +0800`
+- modification_version: `V1.1.3`
+- operation_category: `operation`、`experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（长时三卡训练）
+- approval: `user-approved`（用户明确要求修复后开始训练并使用三张卡）
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `8265e4d`
+- worktree_dirty: `true`（保留根目录及 CmDecoderv2 既有差异）
+- scope: 三个独立 `outputs/CmResidual/cmresidual_dexplore_v2_gpu*_s*/` 运行目录；代码和配置来自提交 `8265e4d`
+- run_id: `cmresidual_dexplore_v2_gpu0_s201`、`cmresidual_dexplore_v2_gpu1_s202`、`cmresidual_dexplore_v2_gpu3_s203`
+- run_status: `RUNNING`
+- conclusion: `INCONCLUSIVE`（训练进行中，尚无科研结论）
+
+**启动参数**
+
+- 三组均使用 `task.env.numEnvs=64`、`max_iterations=1000`、`horizon_length=32`、`minibatch_size=2048`、`pipeline=cpu`；PPO 分别使用 `cuda:0`、`cuda:1`、`cuda:3`。
+- 基础策略 checkpoint 为 `/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth`，SHA256=`8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+
+**运行证据**
+
+- GPU0 manifest：[outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/run_manifest.json)，日志：[train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu0_s201/train.log)。
+- GPU1 manifest：[outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/run_manifest.json)，日志：[train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu1_s202/train.log)。
+- GPU3 manifest：[outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/run_manifest.json)，日志：[train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_v2_gpu3_s203/train.log)。
+- 启动后约 3 分钟检查：三个 PID 仍存活，分别已达到约 epoch 111、190、191；各目录已生成运行 checkpoint。
+
+**边界**
+
+- 三组均采用独立工作目录，rl_games 的 `runs/` 不共享；未触碰旧运行、外部 DExplore checkout、checkpoint 和用户既有 dirty diff。终态前保持 `RUNNING`，完成后补充 last epoch、best/last checkpoint、日志和结论。
+
 ## 2026-09-15 09:40:00 +0800 — DExplore 1442 维观测与 Cm PPO 链路修复
 
 - activity_id: `ACT-20260915-094000-CMRESIDUAL-FIX`
