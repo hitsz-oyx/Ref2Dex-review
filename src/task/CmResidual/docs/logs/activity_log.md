@@ -1,3 +1,44 @@
+## 2026-09-15 11:43:48 +0800 — 按指导 V1.1 修订 reference 与 OI-Cm 链路
+
+- activity_id: `ACT-20260915-114348-CMRESIDUAL-V11-REVISE`
+- timestamp: `2026-09-15 11:43:48 +0800`
+- modification_version: `V1.1.4`
+- operation_category: `architecture`、`code`、`documentation`
+- task_mode: `change`
+- change_level: `L3`（DExplore 观测语义、外部 checkpoint 接入和 actor/critic 输入合同）
+- approval: `user-approved`（用户要求按照 `指导/V1.1.md` 修订当前代码）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `13b57f6`
+- worktree_dirty: `true`（保留其他既有差异；未覆盖用户修改）
+- scope: `src/task/CmResidual/docs/指导/V1.1.md`、`src/task/CmResidual/docs/plan/V1.1.md`、`third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/`、`third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`、`third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`、`third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py`、`src/task/CmResidual/docs/README.md`、`docs/current_versions.yaml`、`docs/项目总览.md`
+- run_id: `smoke_v11_20260915c`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（工程 smoke；不代表直接抓取或科研效果成立）
+
+**原因**
+
+- 指导 V1.1 指出旧实现重复当前观测、使用通用 MLP 伪装 Cm，无法验证 reference-conditioned DExplore 与 OI-Cm 的作用，因此先修正输入和表征合同。
+
+**修改**
+
+- [指导 V1.1](../指导/V1.1.md) 与 [计划 V1.1](../plan/V1.1.md) 作为本次设计与执行入口；[Task README](../README.md)、[版本指针](../../../../../docs/current_versions.yaml) 和 [项目总览](../../../../../docs/项目总览.md) 已同步。
+- [smoke 日志](../../../../../outputs/CmResidual/smoke_v11_20260915c/train.log) 记录真实 reference 与 OI-Cm 的验证输出。
+- 新增 `ReferenceProvider`，校验 world/xyzw reference manifest，并按 `+1/+16` 返回 q、link pose、object twist 和 phase。
+- DExplore 721-D offset 使用 reference pose/object state 的差分字段；两个 offset 不再复制当前状态。
+- PPO network 加载 ObjectInteractionCm V1.3 `best.pt`，从同步观测构造 hand/object point-flow 输入，冻结 OI-Cm，pooled Cm token 同时输入 actor/critic；不再使用 `MLP(obs)` 作为 Cm。
+- V1.1 plan 改为与 `指导/V1.1.md` 配对，并明确首个有效实验冻结 OI-Cm。
+
+**验证**
+
+- `python3 -m py_compile third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/*.py third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_*.py`：通过。
+- 真实 reference + OI-Cm checkpoint 的 CPU 单环境 PPO `max_iterations=1`：epoch 1 完成，无 traceback，生成 `outputs/CmResidual/smoke_v11_20260915c/train.log`。
+- 721-D builder 独立 shape/finite 检查：通过。
+
+**保护边界与回滚**
+
+- 未修改 `inspire.pth`、OI-Cm checkpoint、外部 DExplore checkout、训练输出或原始数据；未启动新的长训。回滚入口为本次代码/配置提交及本条 activity。
+
 ## 2026-09-15 10:07:48 +0800 — 修复后三卡训练完成
 
 - activity_id: `ACT-20260915-181500-CMRESIDUAL-TRAIN-3GPU-V2-END`

@@ -30,6 +30,8 @@ basePolicy:
   checkpointSha256: ''
   cmFeatureDim: 128
   cmEmaDecay: 0.995
+reference:
+  path: ${oc.env:CMRESIDUAL_REFERENCE,data/processed_data/cm_residual/reference_tracking_v1/s1_airplane_lift/reference.npz}
 
 sim:
   dt: 0.016666666666666666

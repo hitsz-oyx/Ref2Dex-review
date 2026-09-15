@@ -13,7 +13,8 @@ from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_
                        native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .cm_adapter import CmOnlineTarget
-from .dexplore_observation import build_two_offset_observation
+from .dexplore_observation import build_dexplore_observation
+from .reference_provider import ReferenceProvider
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -31,6 +32,7 @@ class CmResidual(VecTask):
             raise ValueError("CmResidual now requires the frozen DExplore teacher (mode=dexplore).")
         self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
                                              cfg["basePolicy"].get("checkpointSha256"))
+        self.reference = ReferenceProvider(cfg["reference"]["path"], sim_device)
         self.cm = CmOnlineTarget(OBSERVATION_DIM, int(cfg["basePolicy"].get("cmFeatureDim", 128)),
                                  float(cfg["basePolicy"].get("cmEmaDecay", 0.995)))
         # The package no longer depends on the legacy 12D OnlineCmBase contract.
@@ -74,6 +76,7 @@ class CmResidual(VecTask):
         self.pd_action_offset[6:] = self.native_lower[6:]
         self.fresh_reset = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
         self.initial_object_z = torch.full((self.num_envs,), self.initial_object[2].item(), device=self.device)
+        self.reference_index = torch.zeros(self.num_envs, device=self.device, dtype=torch.long)
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -194,6 +197,7 @@ class CmResidual(VecTask):
         self.episode_max_lift[env_ids] = 0
         self.initial_object_z[env_ids] = self.initial_object[2]
         self.fresh_reset[env_ids] = True
+        self.reference_index[env_ids] = 0
         hand_ids = self.hand_indices[env_ids].contiguous()
         self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.actor_root_state), gymtorch.unwrap_tensor(roots), len(roots))
         self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(hand_ids), len(hand_ids))
@@ -245,7 +249,20 @@ class CmResidual(VecTask):
         key_ang_vel = self.rigid_body_state[:, self.query_indices, 10:13][:, key_indices]
         contact_indices = torch.as_tensor([7, 10, 16, 13, 4], device=self.device)
         contact = self.rigid_body_state[:, self.query_indices, 7:10][:, contact_indices]
-        obs = build_two_offset_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact)
+        # DExplore consumes genuinely phase-indexed short/long reference targets.
+        idx = self.reference_index
+        _, ref_dq_1, ref_links_1, ref_obj_1, _phase_1, ref_obj_twist_1 = self.reference.frame(idx, 1)
+        _, ref_dq_16, ref_links_16, ref_obj_16, _phase_16, ref_obj_twist_16 = self.reference.frame(idx, 16)
+        ref_links_1 = ref_links_1[:, key_indices]
+        ref_links_16 = ref_links_16[:, key_indices]
+        current_obj_twist = self.actor_root_state[self.object_indices.long(), 7:13]
+        obs_1 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
+                                             ref_links_1, torch.zeros_like(key_vel), torch.zeros_like(key_ang_vel),
+                                             ref_obj_1, torch.zeros_like(contact), current_obj_twist, ref_obj_twist_1)
+        obs_16 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
+                                              ref_links_16, torch.zeros_like(key_vel), torch.zeros_like(key_ang_vel),
+                                              ref_obj_16, torch.zeros_like(contact), current_obj_twist, ref_obj_twist_16)
+        obs = torch.cat((obs_1, obs_16), dim=-1)
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
@@ -277,6 +294,7 @@ class CmResidual(VecTask):
     def post_physics_step(self):
         self.fresh_reset[:] = False
         self.progress_buf += 1
+        self.reference_index = (self.reference_index + 1).clamp_max(self.reference.length - 1)
         self.compute_observations()
         self.compute_reward()
 
