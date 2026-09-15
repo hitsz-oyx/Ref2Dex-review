@@ -29,13 +29,25 @@ sys.modules[_SPEC.name] = _KIN
 _SPEC.loader.exec_module(_KIN)
 InspireKinematics = _KIN.InspireKinematics
 INDEPENDENT_FINGER_NATIVE_INDICES = _KIN.INDEPENDENT_FINGER_NATIVE_INDICES
+_GEOM_PATH = ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/cm_geometry.py"
+_GEOM_SPEC = importlib.util.spec_from_file_location("cmresidual_surface_geometry", _GEOM_PATH)
+_GEOM = importlib.util.module_from_spec(_GEOM_SPEC)
+sys.modules[_GEOM_SPEC.name] = _GEOM
+_GEOM_SPEC.loader.exec_module(_GEOM)
+SurfaceGeometry = _GEOM.SurfaceGeometry
 
 DEFAULT_URDF = ROOT / "src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf"
+DEFAULT_OBJECT_URDF = ROOT.parent / "dexplore/dexplore/data/assets/mjcf/airplane.urdf"
 NATIVE_SLICE = slice(373, 391)
 TRAIN_START, TRAIN_END = 44, 410
 RIGHT_WRIST_POINT = 16
 RIGHT_MCP = (17, 20, 23, 26)
 RIGHT_TIPS = (19, 22, 25, 28, 31)
+QUERY_LINKS = (
+    "hand_base_link", "thumb_proximal_base", "thumb_proximal", "thumb_intermediate", "thumb_distal", "thumb_tip",
+    "index_proximal", "index_intermediate", "index_tip", "middle_proximal", "middle_intermediate", "middle_tip",
+    "ring_proximal", "ring_intermediate", "ring_tip", "pinky_proximal", "pinky_intermediate", "pinky_tip",
+)
 
 
 def sha256(path: Path) -> str:
@@ -153,6 +165,43 @@ def project_limits(q: np.ndarray, dt: float, lower: np.ndarray, upper: np.ndarra
     return q
 
 
+def contact_audit(link_pose: np.ndarray, object_pose: np.ndarray, raw_contact: np.ndarray,
+                  urdf: Path, object_urdf: Path) -> dict[str, object]:
+    """Compute the registered raw-contact distance gate without relabeling contacts."""
+    geometry = SurfaceGeometry(
+        hand_urdf=urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
+        object_count=256, hand_count=1538, seed=2024, device="cpu")
+    link_names = tuple(
+        "link0 link1 link2 link3 link4 link5 link6 hand_base_link thumb_proximal_base thumb_proximal "
+        "thumb_intermediate thumb_distal index_proximal index_intermediate middle_proximal middle_intermediate "
+        "ring_proximal ring_intermediate pinky_proximal pinky_intermediate thumb_tip index_tip middle_tip ring_tip pinky_tip"
+    .split())
+    indices = [link_names.index(name) for name in QUERY_LINKS]
+    with torch.no_grad():
+        hand, _ = geometry.hand(torch.as_tensor(link_pose[:, indices], dtype=torch.float32))
+        obj, _ = geometry.object(torch.as_tensor(object_pose, dtype=torch.float32))
+        minimum = torch.cdist(obj, hand).amin(dim=(1, 2)).cpu().numpy()
+    raw_contact = np.asarray(raw_contact, dtype=bool)
+    if raw_contact.shape != minimum.shape:
+        raise ValueError(f"raw contact/distance shape mismatch: {raw_contact.shape} != {minimum.shape}")
+    raw_count = int(raw_contact.sum())
+    passed = int((minimum[raw_contact] <= 0.020).sum()) if raw_count else 0
+    fraction = float(passed / raw_count) if raw_count else 0.0
+    return {
+        "raw_contact_frames": raw_count,
+        "raw_contact_distance_pass_frames": passed,
+        "raw_contact_distance_pass_fraction": fraction,
+        "distance_threshold_m": 0.020,
+        "minimum_distance_min_m": float(minimum.min()),
+        "minimum_distance_p95_m": float(np.percentile(minimum, 95)),
+        "minimum_distance_max_m": float(minimum.max()),
+        "hand_point_count": 1538,
+        "object_point_count": 256,
+        "surface_sampling_seed": 2024,
+        "raw_contact_source": "source_tensor[:,205:206]",
+    }
+
+
 def build(args: argparse.Namespace) -> Path:
     if args.output.exists():
         raise FileExistsError(f"refusing to overwrite {args.output}")
@@ -201,12 +250,16 @@ def build(args: argparse.Namespace) -> Path:
     link_pose = np.stack([wrist_train[i] @ zero_inv @ np.stack([kin.link_transforms_native(q_native[i])[n] for n in link_names]) for i in range(len(idx))])
     wrist_twist = twists(wrist_train, 1 / 30.0)
     object_twist = twists(obj_train, 1 / 30.0)
+    contact_metrics = contact_audit(
+        link_pose, obj_train, x[idx, 205] > 0.5, args.urdf, args.object_urdf)
+    training_eligible = bool(valid.all() and contact_metrics["raw_contact_frames"] > 0
+                             and contact_metrics["raw_contact_distance_pass_fraction"] >= 0.90)
     np.savez_compressed(out / "reference.npz", frame_id=np.arange(len(idx), dtype=np.int32), source_frame_id=source_frame[idx].astype(np.int32), q_native_ref=q_native.astype(np.float32), q_independent_ref=q6.astype(np.float32), dq_native_ref=dq.astype(np.float32), wrist_pose_world_ref=wrist_train.astype(np.float32), wrist_twist_world_ref=wrist_twist.astype(np.float32), object_pose_world_ref=obj_train.astype(np.float32), object_twist_world_ref=object_twist.astype(np.float32), link_pose_world_ref=link_pose.astype(np.float32), phase=np.linspace(0, 1, len(idx), dtype=np.float32), remaining_steps=(len(idx)-1-np.arange(len(idx))).astype(np.int32), valid_rsi_mask=np.ones(len(idx), dtype=bool), rsi_reason_bits=np.zeros(len(idx), dtype=np.uint32))
     np.save(out / "valid_rsi_mask.npy", np.ones(len(idx), dtype=bool))
-    manifest = {"schema_name": "ref2dex_cmresidual_reference_v1", "modification_version": "V1.0.1", "task": "CmResidual", "sequence_id": "s1/airplane_lift", "split": "train", "training_eligible": True, "training_frame_range": [TRAIN_START, TRAIN_END], "source_frame_range": [int(source_frame[TRAIN_START]), int(source_frame[TRAIN_END])], "frame_count": len(idx), "effective_fps": 30.0, "coordinate_frame": "world", "quaternion_order": "xyzw", "urdf": str(args.urdf.resolve()), "urdf_sha256": sha256(args.urdf), "source_tensor": str(args.tensor.resolve()), "source_tensor_sha256": sha256(args.tensor), "object_geometry": str(args.geometry.resolve()), "object_geometry_manifest_sha256": sha256(args.geometry / "manifest.json"), "X_HB": X_HB.tolist(), "link_order": list(link_names), "independent_native_indices": INDEPENDENT_FINGER_NATIVE_INDICES.tolist(), "mimic_mapping": {str(k): float(v) for k, v in mimic.items()}, "limits": {"q_velocity_rad_s": 1.0, "q_acceleration_rad_s2": 20.0, "tolerance": 1e-6}, "difference_rule": "numpy.gradient; SO3 central relative rotvec; endpoint one-sided", "optimizer": {"name": "scipy.optimize.least_squares", "loss": "tip_position_squared_scaled_0.02m", "initial": "previous_frame_q6_or_zero", "max_nfev": 80, "seed": 0, "post_projection_iterations": 8}, "outputs": {"reference": "reference.npz", "valid_rsi_mask": "valid_rsi_mask.npy"}, "metrics": {"tip_error_rms_m": float(np.sqrt(np.mean(tip_error ** 2))), "neutral_tip_error_rms_m": float(np.sqrt(np.mean(neutral_error ** 2))), "tip_improvement_fraction": float(1 - np.sqrt(np.mean(tip_error ** 2)) / np.sqrt(np.mean(neutral_error ** 2))), "contact_flag": "unavailable"}, "implementation_sha256": sha256(Path(__file__).resolve()), "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")}
+    manifest = {"schema_name": "ref2dex_cmresidual_reference_v1", "modification_version": "V1.6", "task": "CmResidual", "sequence_id": "s1/airplane_lift", "split": "train", "training_eligible": training_eligible, "training_frame_range": [TRAIN_START, TRAIN_END], "source_frame_range": [int(source_frame[TRAIN_START]), int(source_frame[TRAIN_END])], "frame_count": len(idx), "effective_fps": 30.0, "coordinate_frame": "world", "quaternion_order": "xyzw", "urdf": str(args.urdf.resolve()), "urdf_sha256": sha256(args.urdf), "object_urdf": str(args.object_urdf.resolve()), "object_urdf_sha256": sha256(args.object_urdf), "source_tensor": str(args.tensor.resolve()), "source_tensor_sha256": sha256(args.tensor), "object_geometry": str(args.geometry.resolve()), "object_geometry_manifest_sha256": sha256(args.geometry / "manifest.json"), "X_HB": X_HB.tolist(), "link_order": list(link_names), "independent_native_indices": INDEPENDENT_FINGER_NATIVE_INDICES.tolist(), "mimic_mapping": {str(k): float(v) for k, v in mimic.items()}, "limits": {"q_velocity_rad_s": 1.0, "q_acceleration_rad_s2": 20.0, "tolerance": 1e-6}, "difference_rule": "numpy.gradient; SO3 central relative rotvec; endpoint one-sided", "optimizer": {"name": "scipy.optimize.least_squares", "loss": "tip_position_squared_scaled_0.02m", "initial": "previous_frame_q6_or_zero", "max_nfev": 80, "xtol": 1e-10, "ftol": 1e-10, "gtol": 1e-10, "seed": 0, "post_projection_iterations": 8}, "outputs": {"reference": "reference.npz", "valid_rsi_mask": "valid_rsi_mask.npy"}, "metrics": {"tip_error_rms_m": float(np.sqrt(np.mean(tip_error ** 2))), "neutral_tip_error_rms_m": float(np.sqrt(np.mean(neutral_error ** 2))), "tip_improvement_fraction": float(1 - np.sqrt(np.mean(tip_error ** 2)) / np.sqrt(np.mean(neutral_error ** 2))), "contact_flag": "raw_source_tensor_object_flag", **contact_metrics}, "gate_status": {"schema": "PASS", "se3": "PASS", "mimic": "PASS", "q_limits": "PASS" if valid.all() else "FAIL", "tip_improvement": "PASS" if float(1 - np.sqrt(np.mean(tip_error ** 2)) / np.sqrt(np.mean(neutral_error ** 2))) >= 0.20 else "FAIL", "raw_contact_distance": "PASS" if contact_metrics["raw_contact_distance_pass_fraction"] >= 0.90 else "FAIL"}, "implementation_sha256": sha256(Path(__file__).resolve()), "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"), "conclusion": "SUPPORTED" if training_eligible else "INCONCLUSIVE"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    run_manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "CmResidual", "operation": "build_reference", "run_id": out.name, "run_status": "COMPLETED", "modification_version": "V1.0.1", "operation_category": ["data", "operation"], "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"), "base_commit": commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()), "command": [sys.executable, *sys.argv], "output_root": str(out.resolve()), "reference_manifest": str((out / "manifest.json").resolve()), "conclusion": "SUPPORTED"}
+    run_manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "CmResidual", "operation": "build_reference", "run_id": out.name, "run_status": "COMPLETED", "modification_version": "V1.6", "operation_category": ["data", "operation"], "created_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"), "base_commit": commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()), "command": [sys.executable, *sys.argv], "output_root": str(out.resolve()), "reference_manifest": str((out / "manifest.json").resolve()), "training_eligible": training_eligible, "conclusion": "SUPPORTED" if training_eligible else "INCONCLUSIVE"}
     (out / "run_manifest.json").write_text(json.dumps(run_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return out
 
@@ -216,6 +269,7 @@ def main() -> None:
     p.add_argument("--tensor", type=Path, default=ROOT / "data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/s1_airplane_lift/interaction_hand_inspire.pt")
     p.add_argument("--geometry", type=Path, default=ROOT / "data/processed_data/coupled_geometric_source_v1_20260912/sequences/train/inspire_rl/s1_airplane_lift/geometry")
     p.add_argument("--urdf", type=Path, default=DEFAULT_URDF)
+    p.add_argument("--object-urdf", type=Path, default=DEFAULT_OBJECT_URDF)
     p.add_argument("--output", type=Path, required=True)
     args = p.parse_args()
     build(args)

@@ -207,6 +207,7 @@ def main() -> int:
                         "force_render=False",
                         "num_subscenes=1",
                         "task.env.terminateOnSuccess=false",
+                        "task.reference.allowIneligibleFor=diagnostic",
                         f"seed={args.seed}",
                     ])
                 resolved_task = OmegaConf.to_container(cfg.task, resolve=True)

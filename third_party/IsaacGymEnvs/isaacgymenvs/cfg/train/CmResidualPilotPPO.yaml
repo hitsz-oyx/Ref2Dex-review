@@ -1,0 +1,14 @@
+defaults:
+  - CmResidualPPO
+  - _self_
+
+params:
+  config:
+    name: CmResidualPilot
+    full_experiment_name: CmResidualPilot
+    max_epochs: 2
+    horizon_length: 32
+    minibatch_size: 2048
+    mini_epochs: 4
+    save_best_after: 0
+    save_frequency: 1

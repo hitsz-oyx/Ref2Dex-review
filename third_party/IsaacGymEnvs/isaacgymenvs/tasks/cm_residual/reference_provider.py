@@ -23,6 +23,20 @@ from .dexplore_observation import (
 REFERENCE_DIM = 428
 SOURCE_WIDTH = 598
 FPS = 30.0
+INELIGIBLE_REFERENCE_USES = frozenset(("diagnostic", "ppo_pilot"))
+
+
+def validate_reference_usage(training_eligible: bool, allow_ineligible_for: str) -> str:
+    """Fail closed unless an ineligible reference has an approved narrow use."""
+    usage = str(allow_ineligible_for).strip()
+    if usage and usage not in INELIGIBLE_REFERENCE_USES:
+        raise ValueError(
+            f"reference.allowIneligibleFor must be one of {sorted(INELIGIBLE_REFERENCE_USES)}, got {usage!r}")
+    if not training_eligible and not usage:
+        raise ValueError(
+            "Reference manifest has training_eligible=false; set reference.allowIneligibleFor "
+            "explicitly to diagnostic or ppo_pilot for an approved limited run")
+    return usage
 
 
 def _sha256(path: Path) -> str:

@@ -14,7 +14,7 @@ from .contract import (QUERY_LINKS, coupled_finger_bounds, native_sim_indices,
 from .action_mapping import compose_physical_residual
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .dexplore_observation import build_dexplore_observation
-from .reference_provider import ReferenceProvider
+from .reference_provider import ReferenceProvider, validate_reference_usage
 from .cm_geometry import SurfaceGeometry
 
 
@@ -57,6 +57,9 @@ class CmResidual(VecTask):
             frame_start=int(reference_cfg["frameStart"]),
             frame_end=int(reference_cfg["frameEnd"]),
             object_mesh=object_mesh)
+        self.reference_usage = validate_reference_usage(
+            self.reference.training_eligible,
+            reference_cfg.get("allowIneligibleFor", ""))
         self.base_observation_dim = OBSERVATION_DIM
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))

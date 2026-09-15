@@ -212,6 +212,12 @@ def test_legacy_reference_and_reset_use_dexplore_source_tensor():
     assert provider.object_points.shape == (256, 3)
     assert provider.first_contact_index == 16
     assert provider.training_eligible is False
+    assert module.validate_reference_usage(False, "diagnostic") == "diagnostic"
+    assert module.validate_reference_usage(False, "ppo_pilot") == "ppo_pilot"
+    with pytest.raises(ValueError, match="training_eligible=false"):
+        module.validate_reference_usage(False, "")
+    with pytest.raises(ValueError, match="allowIneligibleFor"):
+        module.validate_reference_usage(False, "training")
     torch.testing.assert_close(q[0], source[44, 373:391], rtol=0.0, atol=0.0)
     torch.testing.assert_close(dq[0], (source[44, 373:391] - source[43, 373:391]) * 30.0)
     torch.testing.assert_close(object_state[0, :7], source[44, 198:205], rtol=0.0, atol=0.0)
@@ -240,6 +246,27 @@ def test_legacy_reference_and_reset_use_dexplore_source_tensor():
     assert all(torch.isfinite(value).all() for value in (position, rotation, velocity, angular))
 
 
+def test_eligible_corrected_reference_records_raw_contact_gate():
+    manifest_path = Path(
+        "data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/manifest.json")
+    source_path = Path(
+        "data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/"
+        "s1_airplane_lift/interaction_hand_inspire.pt")
+    if not (manifest_path.is_file() and source_path.is_file()):
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    source = torch.load(source_path, map_location="cpu", weights_only=True)
+    assert source.shape[1] == 598
+    assert torch.all((source[44:411, 205] == 0) | (source[44:411, 205] == 1))
+    assert manifest["training_eligible"] is True
+    metrics = manifest["metrics"]
+    assert metrics["raw_contact_source"] == "source_tensor[:,205:206]"
+    assert metrics["raw_contact_frames"] == 296
+    assert metrics["raw_contact_distance_pass_frames"] == 295
+    assert metrics["raw_contact_distance_pass_fraction"] >= 0.90
+    assert manifest["gate_status"]["raw_contact_distance"] == "PASS"
+
+
 def test_observation_matches_unmodified_dexplore_source():
     script = Path("src/task/CmResidual/tests/dexplore_golden_parity.py")
     result = subprocess.run(
@@ -265,7 +292,9 @@ def test_v14_configs_lock_real_inputs_and_dimensions():
         assert config["basePolicy"]["cmNumSlots"] == 16
         assert config["basePolicy"]["oiCmCheckpointSha256"] == "3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283"
         assert config["reference"]["sha256"] == "a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1"
+        assert "reference_tracking_v2/s1_airplane_lift/reference.npz" in config["reference"]["path"]
         assert config["reference"]["profile"] == "dexplore_legacy_parity"
+        assert config["reference"]["allowIneligibleFor"] == ""
         assert config["reference"]["sourceTensorSha256"] == "19b110dc81c4928b4f3e6197d8549b011fd48a8157e75fd06668bd306dc396cf"
         assert config["reference"]["frameStart"] == 44
         assert config["reference"]["frameEnd"] == 410
@@ -286,6 +315,23 @@ def test_v14_configs_lock_real_inputs_and_dimensions():
             "rotationScaleRad": 0.20,
             "fingerScaleRad": 0.08,
         }
+
+
+def test_v15_pilot_config_is_a_two_update_wiring_smoke():
+    path = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPilotPPO.yaml")
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert config["defaults"] == ["CmResidualPPO", "_self_"]
+    pilot = config["params"]["config"]
+    assert pilot == {
+        "name": "CmResidualPilot",
+        "full_experiment_name": "CmResidualPilot",
+        "max_epochs": 2,
+        "horizon_length": 32,
+        "minibatch_size": 2048,
+        "mini_epochs": 4,
+        "save_best_after": 0,
+        "save_frequency": 1,
+    }
 
 
 def test_real_oi_cm_checkpoint_contract_when_available():

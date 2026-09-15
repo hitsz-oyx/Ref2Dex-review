@@ -1,3 +1,515 @@
+## 2026-09-15 21:55:00 +0800 — V1.5.4 PPO wiring pilot 通过
+
+- activity_id: `ACT-20260915-215500-CMRESIDUAL-V154-PPO-SUPPORTED`
+- timestamp: `2026-09-15 21:55:00 +0800`
+- modification_version: `V1.5.4`
+- operation_category: `code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准删除 `num_subscenes=1` override，并按原 GPU5/seed42/64 env × 2 updates 预算复跑。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（保留接手前 V1.5 dirty diff；未覆盖或暂存用户指导）
+- scope: pilot wrapper 删除 `num_subscenes=1`，使用 canonical `num_subscenes=4`；buffer `8388608/5.0`、GPU5、seed42、64 env × 2 updates、horizon32、minibatch2048 和输入 SHA 冻结
+- run_id: `cmresidual_ppo_pilot_v154_20260915_214302`
+- run_status: `COMPLETED`
+- last_step: `4096`
+- last_epoch: `2`
+- best_metric: `deterministic_reload_action_max_abs_diff=0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/rlgames/nn/last_CmResidualPilot_ep_2_rew__5.84_.pth](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/rlgames/nn/last_CmResidualPilot_ep_2_rew__5.84_.pth)
+- output: [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/config.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/config.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/run_manifest.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/train.log)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/checkpoint_validation.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/initialization_smoke.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/initialization_smoke.json)
+- exit_reason: 固定两次 update 完成，进程正常退出
+- conclusion: `SUPPORTED`（PPO wiring smoke）；`INCONCLUSIVE`（residual 科研效果、收敛和抓取改善）
+
+**文件**
+
+- [src/task/CmResidual/tools/run_ppo_pilot.py](../../tools/run_ppo_pilot.py) — 本轮修改/记录。
+- [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/README.md](../README.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 本轮修改/记录。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 本轮修改/记录。
+
+**原因**
+
+- 删除 `num_subscenes=1` 后，1-env prepare smoke 成功；64 env pilot 完成 2 epochs。相对 V1.5.3 失败运行，resolved config 只改变顶层/PhysX `num_subscenes 1→4` 与两项已批准 buffer 值，输入 references 和 budget 不变。
+
+**验证**
+
+- 1-env initialization smoke：`COMPLETED`，无 SIGSEGV，日志见 [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/initialization_smoke.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/initialization_smoke.log)。
+- 64 env × 2 updates：完成 episode，model/optimizer/normalizer/action 全部 finite；event scalar 完整。
+- checkpoint 独立 CPU 双构造重载 deterministic mean action 最大差 `0.0`；SHA256 和 epoch/frame 见 [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/checkpoint_validation.json)。
+- `metrics.jsonl` 两行 epoch 指标见 [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl)；最终 residual RMS `0.7315449`、saturation ratio `0.0034722`，仅为 wiring smoke 观测。
+- Task pytest `12 passed`、py_compile、`git diff --check` 和 activity link audit 通过。
+
+**保护边界与回滚**
+
+- 未修改 reward、18D action、reference、checkpoint 初始值、资产、actor 属性、共享 base、外部 DExplore 或其他 Task；未启动长训或效果实验。
+- 回滚只恢复 wrapper 的 `num_subscenes=1` 行及本轮版本/文档记录；保留 V1.5.3 失败运行和本次 ignored 输出。
+
+## 2026-09-15 21:43:02 +0800 — V1.5.4 删除 num_subscenes=1 后 pilot 启动
+
+- activity_id: `ACT-20260915-214302-CMRESIDUAL-V154-PPO`
+- timestamp: `2026-09-15 21:43:02 +0800`
+- modification_version: `V1.5.4`
+- operation_category: `code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: GPU prepare_sim 二分诊断后，用户明确回复“可以”，批准删除 pilot wrapper 的 `num_subscenes=1` override，并按 GPU5/seed42/64 env × 2 updates 单次复跑。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（保留接手前 V1.5 dirty diff；未覆盖或暂存用户指导）
+- scope: 仅删除 pilot wrapper 的 `num_subscenes=1` override，保留 buffer `8388608/5.0`；GPU5、seed42、64 env × 2 updates、horizon32、minibatch2048 和全部输入冻结
+- run_id: `cmresidual_ppo_pilot_v154_20260915_214302`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs /usr/bin/python3 src/task/CmResidual/tools/run_ppo_pilot.py --run-id cmresidual_ppo_pilot_v154_20260915_214302 --activity-id ACT-20260915-214302-CMRESIDUAL-V154-PPO --gpu 5 --seed 42`
+- output: [outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302)（PENDING）；[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/run_manifest.json)（PENDING）；[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/config.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/config.json)（PENDING）；[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/metrics.jsonl)（PENDING）；[outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v154_20260915_214302/train.log)（PENDING）
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**文件**
+
+- [src/task/CmResidual/tools/run_ppo_pilot.py](../../tools/run_ppo_pilot.py) — 本轮修改/记录。
+- [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/README.md](../README.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本轮修改/记录。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 本轮修改/记录。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 本轮修改/记录。
+
+**原因**
+
+- V1.5.3 与同 buffer、同 GPU、同预算仍在 prepare_sim 崩溃；二分诊断显示 `num_subscenes=1` 为高可信触发条件。移除 wrapper override，使 canonical `num_subscenes=4` 生效；GPU PhysX 会自行强制单场景。
+
+**验证**
+
+- `py_compile`、Task pytest `12 passed`、`git diff --check` 通过。
+- resolved config 比较预期只含顶层/PhysX 子字段 `num_subscenes 1→4` 与两项 buffer 差异；先执行 1-env prepare smoke，再执行固定预算 pilot。
+
+**保护边界与回滚**
+
+- 不修改 reward、18D action、reference、checkpoint、资产、actor 属性、共享 base、外部 DExplore 或其他 Task；失败即停止，不切卡、不切 CPU、不追加运行。
+
+## 2026-09-15 21:33:09 +0800 — V1.5.4 GPU prepare_sim 二分诊断
+
+- activity_id: `ACT-20260915-213309-CMRESIDUAL-V154-PREPARE-DIAGNOSTIC`
+- timestamp: `2026-09-15 21:33:09 +0800`
+- modification_version: `V1.5.3`
+- operation_category: `diagnostic`、`operation`、`documentation`
+- task_mode: `run-only/operation -> read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求开始定位 GPU PhysX 崩溃；本条只归档已完成的只读诊断，不修改代码、配置或研究变量。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: GPU5、seed42、buffer `8388608/5.0`、1 env、0 PPO update；hand/hand+table/hand+object/full actor 二分和 `num_subscenes=4` 对照
+- run_id: `cmresidual_prepare_probe_v154_20260915_2120`
+- run_status: `COMPLETED`
+- output: [outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120)、[outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/run_manifest.json)
+- conclusion: `SUPPORTED`（`num_subscenes=1` 在 prepare_sim 崩溃、`num_subscenes=4` 越过 prepare_sim 的工程诊断证据）；`INCONCLUSIVE`（最终修复和科研效果）
+
+**文件**
+
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 记录本次诊断。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 记录证据和结论上限。
+
+**原因**
+
+- hand、hand+table、hand+object、full 四种 actor 组合均在 `Subscene 0 has 1 articulations` 后 SIGSEGV，资产组合不是必要条件。
+- 同一输入将 `num_subscenes` 改为 `4` 后未再 SIGSEGV，进入 rl_games 的 batch/minibatch 校验；DExplore 原始入口默认 `subscenes=0`，当前 wrapper 强制 `num_subscenes=1`。
+
+**验证**
+
+- [outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand.log](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand.log)、[outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand_table.log](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand_table.log)、[outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand_object.log](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/hand_object.log)、[outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/full.log](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/full.log)：四种 actor 二分均同一崩溃边界。
+- [outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/subscenes4_probe.log](../../../../../outputs/CmResidual/cmresidual_prepare_probe_v154_20260915_2120/subscenes4_probe.log)：`num_subscenes=4` 越过 prepare_sim，随后因 1 env 的 batch size 32 不可被 minibatch 2048 整除而退出；这不是 PhysX 崩溃。
+- 临时阶段/aggregate/asset 探针均已恢复；当前生产 task 文件只保留接手前 V1.5 变更。
+
+**保护边界与回滚**
+
+- 未修改训练代码、物理参数、actor 属性、reference、checkpoint、数据或共享基础设施；证据目录为 ignored 输出。
+- 本条为诊断记录，删除本条和对应 ignored 输出即可回滚。
+
+## 2026-09-15 21:09:57 +0800 — CmResidual V1.5.3 缩小 buffer 后仍发生原生段错误
+
+- activity_id: `ACT-20260915-210957-CMRESIDUAL-V153-PPO-FAILED`
+- timestamp: `2026-09-15 21:09:57 +0800`
+- modification_version: `V1.5.3`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation -> read-only/diagnostic`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求阅读会话 `01a0a426-da25-7b93-bf6d-8eb4bd05c3c3`“然后继续”；该会话末尾具体方案为仅覆盖两项 buffer、GPU5/seed 42/64 env × 2 updates 复跑一次。先将范围写入 [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md)，本次未扩展失败后的运行预算。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（接手时的 V1.5 dirty diff 和用户指导保留；本轮没有 stage 或 commit）
+- scope: 仅 pilot wrapper 的 PhysX 容量与版本追溯、同卡同 seed 同预算单次复跑、六个明确文件的文档闭环
+- run_id: `cmresidual_ppo_pilot_v153_20260915_210542`
+- run_status: `FAILED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs /usr/bin/python3 src/task/CmResidual/tools/run_ppo_pilot.py --run-id cmresidual_ppo_pilot_v153_20260915_210542 --activity-id ACT-20260915-210542-CMRESIDUAL-V153-PPO --gpu 5 --seed 42`
+- last_step: `null`
+- last_epoch: `null`
+- best_metric: `null`
+- checkpoint: `null`（没有 checkpoint 或 TensorBoard event）
+- exit_reason: 子进程于 `2026-09-15T21:05:54+08:00` 以 `SIGSEGV (-11)` 退出；wrapper 退出码为 `1`，日志止于 `GPU Pipeline: enabled`，无完成 PPO update 的证据
+- output: [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542)；[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/config.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/config.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/run_manifest.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/metrics.jsonl)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/train.log)
+- conclusion: `INVALID_IMPLEMENTATION`（Gate B 仍失败）；`REFUTED`（仅采用 `8388608 / 5.0` 足以修复本次启动的假设）；`INCONCLUSIVE`（精确根因和 residual 科研效果）
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md) — 记录 V1.5.3 两项容量覆盖、授权来源与单次复跑边界。
+- [src/task/CmResidual/tools/run_ppo_pilot.py](../../tools/run_ppo_pilot.py) — 仅增加两条 pilot PhysX CLI override，并更新运行版本和默认 activity 标识。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新当前失败状态和诊断边界。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 追加本次启动、终态、验证和产物导航。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 记录单变量范围复跑证据与假设结论。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 仅将 CmResidual 指针推进为 V1.5.3。
+
+**原因**
+
+- 旧 pilot 使用 `41943040 / 25.0`；本次只在独立 wrapper 使用 DExplore 小批量 export 的 `8388608 / 5.0`。
+  同 GPU5、解释器、seed、预算和输入条件下依然失败，说明该容量缩小不足以修复；不能进一步推导为所有显存/PhysX 问题均被排除。
+- resolved config 的递归比较只发现两项 buffer 差异，输入 path/size/mtime/SHA256 完全相同；子进程实际保存的
+  [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/hydra/runs/CmResidualPilot_15-21-05-47/config.yaml](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/hydra/runs/CmResidualPilot_15-21-05-47/config.yaml) 也包含两项新值。对照证据：[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/config_comparison.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/config_comparison.json)。
+- 原生日志没有足够的分阶段输出或 backtrace，不能据最后一行定位到某个 allocator、`create_sim`、asset/actor
+  创建或 `prepare_sim` 调用，更不能归因为 residual 数学逻辑或 GPU5 硬件损坏。
+- 只读源码对照发现 DExplore `base_task.py` 本身也在 `create_sim` 前创建 CUDA buffer，因此“提前初始化 CUDA”
+  本身不足以构成差异归因。DExplore 使用 actor aggregate，而当前 CmResidual 没有；这仅是后续可检查的初始化
+  差异，未经崩溃栈验证不认定为根因。下一步应先做有阶段输出与原生栈的初始化诊断，另行确认运行边界。
+
+**验证**
+
+- `python3 -m py_compile src/task/CmResidual/tools/run_ppo_pilot.py`：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：`12 passed in 6.26s`。
+- pilot `_resolved_config` 对旧 `config.json` 做递归比较：仅两项 buffer 不同；实际输入 SHA、GPU5、seed 42、
+  64 env、2 epochs、horizon 32、minibatch 2048 不变。
+- 终态 JSON、Hydra config 和所有实际产物可重载；`metrics.jsonl` 仅有失败状态行，不能当作训练曲线。
+  checkpoint/event 数为 `0/0`，GPU5 回落至 `6 MiB / 0%`，`/proc` 检查无残留 pilot 子进程。
+- 接手时其余 12 个 dirty/untracked 文件 SHA256 未变：[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/terminal_checks.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/terminal_checks.json)。
+- `git diff --check` 与 latest activity 的六个显式路径 `audit_diff.py --worktree --check-links`：交接前执行并留存
+  [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/validation.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/validation.log)。
+
+**保护边界与回滚**
+
+- 不修改 reward、18D action、mimic、reference/eligibility、DExplore/OI-Cm 权重、canonical 配置、共享 `src/base/`、
+  外部 DExplore、其他 Task 或任何旧运行。失败后没有继续训练、切卡、切 CPU、调参或复跑。
+- 回滚仅撤回本轮六文件增量；接手前原稿位于 [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/before](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/before)，逐文件增量见
+  [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/changes.patch](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/continuation_evidence/changes.patch)。不能用整体 reset/revert 丢掉先前 V1.5 未提交成果。
+- 规范反馈：无格式、目录、版本、日志或审批阻碍；按已确认计划的失败停止边界结束本次运行，不修改治理规则。
+
+## 2026-09-15 21:05:42 +0800 — CmResidual V1.5.3 同卡缩小 PhysX buffer 复跑启动
+
+- activity_id: `ACT-20260915-210542-CMRESIDUAL-V153-PPO`
+- timestamp: `2026-09-15 21:05:42 +0800`
+- modification_version: `V1.5.3`
+- operation_category: `code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 指定会话末尾已交接两项 buffer 覆盖、GPU5/seed 42/64 env × 2 updates 单次复跑方案；用户要求阅读该会话“然后继续”，据此续接，并在 [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md) 记录授权依据。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（保留接手时全部 V1.5 未提交实现与用户指导）
+- scope: 仅 pilot wrapper 覆盖 buffer 为 `8388608 / 5.0` 和版本追溯；GPU5、seed 42、64 env × 2 updates、horizon 32、minibatch 2048 及其他配置冻结
+- run_id: `cmresidual_ppo_pilot_v153_20260915_210542`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs /usr/bin/python3 src/task/CmResidual/tools/run_ppo_pilot.py --run-id cmresidual_ppo_pilot_v153_20260915_210542 --activity-id ACT-20260915-210542-CMRESIDUAL-V153-PPO --gpu 5 --seed 42`
+- output: [outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/config.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/config.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/run_manifest.json)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/metrics.jsonl)、[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542/train.log)（PENDING）；[outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v153_20260915_210542)（PENDING）
+- conclusion: `INCONCLUSIVE`（等待单次复跑终态）
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.5.md](../plan/V1.5.md)
+- [src/task/CmResidual/tools/run_ppo_pilot.py](../../tools/run_ppo_pilot.py)
+- [src/task/CmResidual/docs/README.md](../README.md)
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md)
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md)
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+
+**原因**
+
+- V1.5.2 在任何 update 前出现 SIGSEGV。仅检验 DExplore 小批量 export 的 buffer 容量设置是否足以解决同卡初始化崩溃，不改变 solver、reward、reference、checkpoint 或 PPO 数学逻辑。
+
+**验证**
+
+- `python3 -m py_compile src/task/CmResidual/tools/run_ppo_pilot.py` 通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：`12 passed in 6.26s`。
+- 通过 pilot `_resolved_config` 和旧 config 递归比较，仅两项 buffer 不同；`git diff --check` 通过。
+- 启动前 GPU5 `6 MiB / 0%`，无残留 pilot 进程；仍使用前次的 `/usr/bin/python3`。
+
+**回滚**
+
+- 只撤回上述六个文件的本次增量，接手前原稿已单独备份；不回退或覆盖先前 V1.5 dirty diff，不修改用户指导、其他 Task、`src/base/`、数据或旧输出。失败即停止，不切卡、不追加运行。
+
+## 2026-09-15 20:55:20 +0800 — CmResidual V1.5.2 PPO wiring pilot 在 epoch 0 前失败
+
+- activity_id: `ACT-20260915-205520-CMRESIDUAL-V152-PPO-FAILED`
+- timestamp: `2026-09-15 20:55:20 +0800`
+- modification_version: `V1.5.2`
+- operation_category: `diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `run-only/operation -> read-only/diagnostic`
+- change_level: `L3`
+- approval: `user-approved`（[V1.5 最终计划](../plan/V1.5.md) 的固定两次 update pilot；失败后按停止条件只读诊断，未复跑）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: [V1.5 最终计划](../plan/V1.5.md) 所列准入、gate/pilot 工具、Task config/test、文档和版本指针；physical GPU 5（进程内 `cuda:0`）、seed 42、64 env、2 PPO updates、horizon 32、minibatch 2048；失败后的源码、历史日志、GPU 状态和 Python/CUDA 环境只读诊断
+- run_id: `cmresidual_ppo_pilot_v15_20260915_204915`
+- run_status: `FAILED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/run_ppo_pilot.py --run-id cmresidual_ppo_pilot_v15_20260915_204915 --activity-id ACT-20260915-204915-CMRESIDUAL-V152-PPO-PILOT --gpu 5`
+- last_step: `null`
+- last_epoch: `null`
+- best_metric: `null`
+- checkpoint: `null`（训练更新前失败，未生成 checkpoint 或 TensorBoard event）
+- exit_reason: 训练子进程在 GPU PhysX 创建阶段以 `SIGSEGV`（return code `-11`）退出
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/train.log)、[Hydra config](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/hydra/runs/CmResidualPilot_15-20-50-00/config.yaml)
+- conclusion: `INVALID_IMPLEMENTATION`（Gate B 未进入 PPO update）；`INCONCLUSIVE`（residual 学习、收敛和抓取效果）
+
+**文件**
+
+- `src/task/CmResidual/docs/指导/V1.5.md`
+- `src/task/CmResidual/docs/plan/V1.5.md`
+- `src/task/CmResidual/docs/README.md`
+- `src/task/CmResidual/docs/logs/activity_log.md`
+- `src/task/CmResidual/docs/logs/experiment_log.md`
+- `src/task/CmResidual/tests/test_reference_contract.py`
+- `src/task/CmResidual/tools/eval_zero_residual.py`
+- `src/task/CmResidual/tools/eval_nonzero_residual.py`
+- `src/task/CmResidual/tools/run_ppo_pilot.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml`
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPilotPPO.yaml`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py`
+- `docs/current_versions.yaml`
+
+**原因**
+
+- 日志完成 Isaac Gym binding 和 gymtorch 加载，只输出到 `+++ Using GPU PhysX`、`Physics Device: cuda:0`、
+  `GPU Pipeline: enabled`，随后进程段错误；没有 `Started to train`、epoch、checkpoint 或 TensorBoard event。
+- 启动前及退出后 physical GPU 5 分别仅占约 `6 MiB`，全部 8 张卡均为 RTX 3090；系统 Python 与
+  `graspenv` 均为 PyTorch `2.4.1+cu121`，因此没有证据支持普通显存占用、不同 Torch/CUDA 栈或 residual
+  数值计算导致本次失败。
+- 历史同任务证据显示旧配置下 GPU0 可完成 GPU PhysX，而 GPU1/GPU3 在 64 env 首次 rollout 触发 PhysX
+  allocator error 700；当前失败同样发生在 epoch 0 前，但因为 Python stdout 缓冲且 core dump 被禁用，不能
+  从本次日志确认同一原生调用栈。
+- 当前配置直接给小规模 pilot 使用 `max_gpu_contact_pairs=41943040` 和
+  `default_buffer_size_multiplier=25.0`。外部 DExplore 的受版本控制源码只在小批量 `export_rl` 路径把它们
+  降为 `8388608` 和 `5.0`，并明确记录大缓冲可能耗尽 24-GB GPU、表现为异步 illegal access。该差异与本次
+  崩溃阶段一致，是当前最高可信根因假设；未经同卡、同预算、仅缩小 PhysX buffer 的复跑，仍不能标记为已证实。
+
+**验证**
+
+- V1.5 实现完成后，`py_compile` 通过；Task-local pytest 为 `12 passed`；pilot Hydra compose 确认 64 env、
+  2 epochs、horizon 32、minibatch 2048 和显式 `ppo_pilot` 准入；`git diff --check` 通过。
+- 失败 manifest 终态字段及其 `config_snapshot`、`metrics`、`log` 入口存在性断言通过；GPU5 退出后没有残留训练
+  进程或显存占用。系统禁止 core dump 且当前用户无 kernel journal 权限，因此没有原生 backtrace。
+
+**停止边界与回滚**
+
+- 按最终计划“任一 gate 失败即停止”，没有自动复跑、切换 GPU/CPU PhysX、增加预算或修改 reward、action、
+  reference、checkpoint、外部 DExplore 和 `src/base/`。
+- 如用户批准修订，最小下一步是在独立 pilot 配置中采用 DExplore 小批量值并保持 GPU5、seed 42、64 env ×
+  2 updates 和其余变量不变；失败运行永久保留且不覆盖。代码回滚入口仍为 base commit
+  `9167f8d5bc550b058d61d8904546ef67f2719770`。
+
+## 2026-09-15 20:49:15 +0800 — CmResidual V1.5.2 PPO wiring pilot 启动
+
+- activity_id: `ACT-20260915-204915-CMRESIDUAL-V152-PPO-PILOT`
+- timestamp: `2026-09-15 20:49:15 +0800`
+- modification_version: `V1.5.2`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（[V1.5 最终计划](../plan/V1.5.md)；Gate A 已通过）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: physical GPU 5（进程内 `cuda:0`）、seed 42、64 env、2 PPO updates、horizon 32、minibatch 2048、从随机 residual policy 初始化；显式 `reference.allowIneligibleFor=ppo_pilot`；不含长训、超参搜索、效果对照或科学变量修改
+- run_id: `cmresidual_ppo_pilot_v15_20260915_204915`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/run_ppo_pilot.py --run-id cmresidual_ppo_pilot_v15_20260915_204915 --activity-id ACT-20260915-204915-CMRESIDUAL-V152-PPO-PILOT --gpu 5`
+- output: [运行目录（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915)、[run_manifest.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/run_manifest.json)、[config.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/config.json)、[metrics.jsonl（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/metrics.jsonl)、[train.log（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/train.log)、[checkpoint validation（PENDING）](../../../../../outputs/CmResidual/cmresidual_ppo_pilot_v15_20260915_204915/checkpoint_validation.json)
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**原因**
+
+- Gate A 已满足进入最小 PPO wiring smoke 的全部前置条件；本次只执行用户批准的 2-update 上限。
+
+**验证**
+
+- 启动前 GPU 5 显存占用 `6 MiB`、利用率 0%；resolved pilot config 已通过 64 env/2 epochs/32 horizon/2048 minibatch 检查。
+
+## 2026-09-15 20:49:14 +0800 — 修订后的 V1.5.1 非零 residual gate 通过
+
+- activity_id: `ACT-20260915-204914-CMRESIDUAL-V151-NONZERO-SUPPORTED`
+- timestamp: `2026-09-15 20:49:14 +0800`
+- modification_version: `V1.5.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（[V1.5 最终计划](../plan/V1.5.md) 的修订 gate）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: CPU PhysX、seed 42、4 env × 32 steps、zero/zero/+0.25/-0.25 residual；PPO 尚未启动
+- run_id: `cmresidual_nonzero_v15_rerun_20260915_204817`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_nonzero_residual.py --run-id cmresidual_nonzero_v15_rerun_20260915_204817 --activity-id ACT-20260915-204817-CMRESIDUAL-V151-NONZERO-RERUN`
+- last_step: `32`
+- last_epoch: `null`
+- best_metric: `final_signed_response_separation=0.3832877874`（工程响应量）
+- checkpoint: `null`
+- exit_reason: 达到固定 32 步预算且全部 Gate A 条件通过，进程正常退出
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/eval.log)
+- conclusion: `SUPPORTED`（非零 residual physical target 工程合同）；`INCONCLUSIVE`（PPO 与科研效果）
+
+**原因**
+
+- runtime mimic、requested delta、ignored mimic delta、zero target delta、saturation、joint limit 与 indexed reset isolation 的最大误差均为 0；非零 applied delta 约为 `0.05`，正负 residual 的末步 DOF 响应分离为 `0.383288`。
+
+**验证**
+
+- 32 步 observation/reward/target/object pose 全部 finite，reset count=0，无 simulator error；独立 PhysX trajectory 差异只作诊断，未用于 gate。
+
+## 2026-09-15 20:48:17 +0800 — 修订判据后的 V1.5.1 非零 residual gate 启动
+
+- activity_id: `ACT-20260915-204817-CMRESIDUAL-V151-NONZERO-RERUN`
+- timestamp: `2026-09-15 20:48:17 +0800`
+- modification_version: `V1.5.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（用户在首次 gate 证据交接后明确回复“确定”，批准 [V1.5 最终计划](../plan/V1.5.md) 中的修订判据与同预算复跑）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: CPU PhysX、seed 42、4 env × 32 steps、固定 zero/zero/+0.25/-0.25 residual；runtime mimic contract 与 indexed-reset isolation；不含 PPO、reward/scale/schema/reference/checkpoint 修改
+- run_id: `cmresidual_nonzero_v15_rerun_20260915_204817`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_nonzero_residual.py --run-id cmresidual_nonzero_v15_rerun_20260915_204817 --activity-id ACT-20260915-204817-CMRESIDUAL-V151-NONZERO-RERUN`
+- output: [运行目录（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817)、[run_manifest.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/run_manifest.json)、[config.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/config.json)、[metrics.jsonl（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/metrics.jsonl)、[eval.log（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_rerun_20260915_204817/eval.log)
+- conclusion: `INCONCLUSIVE`（运行中；PPO 尚未启动）
+
+**原因**
+
+- 首次 gate 证明 residual 控制路径局部成立，但验收脚本使用了错误的 mimic 常量和无效的跨 PhysX trajectory 等值判据；本次只修正验收实现，不改变 action、reward、reference 或预算。
+
+**验证**
+
+- 修订后 `py_compile`、Task-local `pytest`（`12 passed`）和 `git diff --check` 通过。
+
+## 2026-09-15 20:38:45 +0800 — CmResidual V1.5.1 首次非零 residual gate 未通过并停止
+
+- activity_id: `ACT-20260915-203845-CMRESIDUAL-V151-NONZERO-END`
+- timestamp: `2026-09-15 20:38:45 +0800`
+- modification_version: `V1.5.1`
+- type: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（[V1.5 指导](../指导/V1.5.md) 与 [V1.5 最终计划](../plan/V1.5.md)）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（V1.5 已批准实现和记录尚未提交；用户既有 V1.2/V1.3/V1.4 指导未修改）
+- scope: V1.5 fail-closed reference override、Task config/test、Gate A/PPO pilot 工具和本次 4 env × 32 steps Gate A；没有运行 PPO，没有修改 reward、scale、18D schema、reference/eligibility、checkpoint、外部 DExplore、其他 Task 或 `src/base/`
+- run_id: `cmresidual_nonzero_v15_20260915_203620`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_nonzero_residual.py --run-id cmresidual_nonzero_v15_20260915_203620 --activity-id ACT-20260915-203620-CMRESIDUAL-V151-NONZERO`
+- last_step: `32`
+- last_epoch: `null`
+- best_metric: `final_signed_response_separation=0.3832877874`（工程响应量，不是效果指标）
+- checkpoint: `null`
+- exit_reason: 完成 32 步预算后，gate 因两个验收实现问题返回非零；按停止条件未启动 PPO
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/eval.log)
+- conclusion: `SUPPORTED`（requested delta、零 residual 旁路、joint limits、finite 与非零响应的局部合同）；`INVALID_IMPLEMENTATION`（本次完整 Gate A 验收工具）；`INCONCLUSIVE`（PPO 与科研效果）
+
+**文件**
+
+- [V1.5 指导](../指导/V1.5.md)、[V1.5 最终计划](../plan/V1.5.md)、[Task config 目录](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/)、[pilot config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPilotPPO.yaml)、[CmResidual 实现目录](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/)、[Task tests](../../tests/)、[Task tools](../../tools/)。
+
+**原因**
+
+- 实测 requested delta 误差、ignored mimic requested delta、零 residual target delta、saturation 和 joint-limit error 均为 0；非零 applied delta 为约 `0.05`，正负环境末步状态分离为 `0.3833`，说明 residual 确实进入 physical target。
+- gate 脚本把 ring mimic scale 写成 corrected-reference manifest 的 `1.18`，而当前已批准 DExplore runtime 合同为 `1.05`，形成最高 `0.18056` 的伪 mismatch。
+- gate 又要求两个独立 PhysX 环境的完整接触后 trajectory 逐位相同；首步 DOF state 差仅 `4.29e-6`，随后接触动力学分叉，完整 state/velocity 比较增至 `18.32`。这不等同于 residual 跨 env 污染；直接隔离证据 `zero_target_delta_max=0` 已通过，但修改该验收口径需要重新确认最终计划。
+
+**验证**
+
+- 运行前 `py_compile`、Task-local `pytest`（`12 passed`）、pilot Hydra compose 和 `git diff --check` 通过。
+- Gate A 的 32 步 observation/reward/target/object pose 全部 finite、reset count=0；PPO pilot 未启动，未生成或修改 checkpoint。
+
+## 2026-09-15 20:36:20 +0800 — CmResidual V1.5.1 固定非零 residual gate 启动
+
+- activity_id: `ACT-20260915-203620-CMRESIDUAL-V151-NONZERO`
+- timestamp: `2026-09-15 20:36:20 +0800`
+- modification_version: `V1.5.1`
+- type: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认将本轮要求整理为 [V1.5 指导](../指导/V1.5.md)，并同意 [V1.5 最终计划](../plan/V1.5.md) 所列“固定非零 gate 通过后再运行 64 env × 2 updates PPO pilot”的范围。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（V1.5 已批准实现和记录尚未提交；用户已有 V1.2/V1.3/V1.4 指导保持未跟踪且未修改）
+- scope: [V1.5 最终计划](../plan/V1.5.md) 的 fail-closed reference override、Task config/test、非零 gate 和 PPO pilot 工具；Gate A 固定 CPU PhysX、seed 42、4 env × 32 steps，不修改 reward、scale、18D schema、reference/eligibility、checkpoint 或外部 DExplore
+- run_id: `cmresidual_nonzero_v15_20260915_203620`
+- run_status: `STARTED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_nonzero_residual.py --run-id cmresidual_nonzero_v15_20260915_203620 --activity-id ACT-20260915-203620-CMRESIDUAL-V151-NONZERO`
+- output: [运行目录（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620)、[run_manifest.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/run_manifest.json)、[config.json（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/config.json)、[metrics.jsonl（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/metrics.jsonl)、[eval.log（PENDING）](../../../../../outputs/CmResidual/cmresidual_nonzero_v15_20260915_203620/eval.log)
+- conclusion: `INCONCLUSIVE`（运行中；PPO 尚未启动）
+
+**原因**
+
+- zero-residual baseline 已通过；本 gate 验证有权 residual 的 requested/applied physical delta、mimic/limit、零对照和跨环境隔离，避免把 PPO 首次运行同时当作控制实现测试。
+
+**验证**
+
+- 运行前 `py_compile`、Task-local `pytest`（`12 passed`）、pilot Hydra compose 和 `git diff --check` 均通过。
+
+## 2026-09-15 20:16:01 +0800 — 非零 residual gate 与 PPO pilot 前置边界诊断
+
+- activity_id: `ACT-20260915-201601-CMRESIDUAL-V142-PREP-DIAGNOSTIC`
+- timestamp: `2026-09-15 20:16:01 +0800`
+- modification_version: `V1.4.2`
+- type: `diagnostic`、`documentation`
+- operation_category: `diagnostic`、`documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`（用户要求先做非零 residual 工程门禁，再进入小规模 PPO pilot；本条只核对现有合同，不修改实现或启动运行）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`（仅有用户提供的三个未跟踪指导文件；本次诊断开始时 tracked worktree 干净）
+- scope: [V1.4 最终计划](../plan/V1.4.md)、[CmResidual task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[residual mapping](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py)、[PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml) 与 corrected-reference manifest；不改代码、配置、reference/eligibility、reward、action schema 或 checkpoint，不启动仿真和 PPO
+- conclusion: `SUPPORTED`（下述现有代码/配置事实）；`INCONCLUSIVE`（非零 residual gate 与 PPO pilot 尚未运行）
+
+**文件**
+
+- [活动记录](activity_log.md) — 只新增本次前置诊断；未创建或修改 plan/指导、实现和运行产物。
+
+**原因**
+
+- V1.4 最终计划明确排除 PPO；新方向需要新的指导/plan 边界，不能静默复用 V1.4.2 运行。
+- 现有 18D residual action 中只有 wrist 6D 与独立 finger indices `[6,8,10,12,14,15]` 进入 requested delta；其余 6 个 mimic action 输出没有直接 target 权限，但仍进入 action penalty。这是既有 V1.3 合同，若要改为 12D 会改变 action/checkpoint schema。
+- `ReferenceProvider` 读取 corrected manifest 的 `training_eligible=false`，但 task/train 入口没有 fail-closed 检查；直接启动 PPO 会用 legacy DExplore source 构造训练 observation/reset，同时只把 corrected artifact 当作审计 metadata。
+
+**验证**
+
+- 只读核对 `action_mapping.py`、`task.py`、`CmResidualPPO.yaml`、V1.0/V1.3/V1.4 plan 和 corrected `manifest.json`；当前 manifest 的 `training_eligible=false`、PPO 默认 `max_epochs=1000`、`horizon_length=32`、`minibatch_size=2048`。
+- 本次没有运行 smoke、仿真或训练，不产生工程或科研效果结论。用户提供的指导文件、既有 outputs、数据和 checkpoint 均未修改。
+
 ## 2026-09-15 19:19:53 +0800 — CmResidual V1.4.2 上游 parity 修正与最终零残差门禁完成
 
 - activity_id: `ACT-20260915-191707-CMRESIDUAL-V142-ZERO-FINAL`
@@ -919,3 +1431,108 @@ V1.1.4 将 DExplore tracking-state 切片重解释为 OI-Cm 点云，并向 refe
 **回滚**
 
 - 本条仅为诊断记录；删除本条即可回滚。
+## 2026-09-15 23:17:54 +0800 — V1.6 corrected reference 训练准入通过
+
+- activity_id: `ACT-20260915-231754-CMRESIDUAL-V16-REFERENCE-ELIGIBLE`
+- timestamp: `2026-09-15 23:17:54 +0800`
+- modification_version: `V1.6`
+- operation_category: `data`、`code`、`config`、`diagnostic`、`documentation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户要求使用具备训练资格的 corrected reference，并授权其余技术决策；采用已批准的 V1.0 D1 门禁。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: CmResidual corrected reference eligibility；保留旧 v1、source/cache、checkpoint、旧运行和用户已有 dirty diff。
+- run_id: `cmresidual_reference_v2_build_20260915_231227`
+- run_status: `COMPLETED`
+
+**文件**
+
+- [V1.6 指导](../指导/V1.6.md) — 记录用户目标和保护边界。
+- [V1.6 最终计划](../plan/V1.6.md) — 固定 raw contact 与 20 mm 距离准入合同。
+- [builder](../../tools/data/build_reference.py) — 读取 source tensor `205:206` raw object contact，并用固定 URDF/采样参数执行距离门。
+- [contract tests](../../tests/test_reference_contract.py) — 增加 raw contact 列合同和 eligible manifest 回归断言。
+- [CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml)、[CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) — 默认切换到 v2 artifact。
+- [v2 reference manifest](../../../../../data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/manifest.json) — `training_eligible=true`。
+- [v2 run manifest](../../../../../data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/run_manifest.json) — 数据构建运行证据。
+
+**接手时既有未提交改动（本次未重写）**
+
+- `docs/current_versions.yaml`
+- `src/task/CmResidual/docs/README.md`
+- `src/task/CmResidual/docs/logs/experiment_log.md`
+- `src/task/CmResidual/tools/eval_zero_residual.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py`
+
+**原因**
+
+旧 v1 曾因 geometry manifest 未声明接触而保持 `training_eligible=false`。只读审计确认 source tensor 的固定列合同提供 raw object contact；主区间 296 个 raw-contact 帧中 295 个 corrected hand/object surface minimum distance `<=0.020 m`，比例 `0.9966216216`，达到预注册 `0.90` 门槛。未使用 5 cm candidate mask 重新标注接触，也未覆盖旧产物。
+
+**验证**
+
+- builder 完成并生成 367 帧 v2 artifact；schema、SE(3)、mimic、q-limit、tip-improvement、raw-contact-distance gates 全部 `PASS`。
+- `training_eligible=true`；`raw_contact_frames=296`、`raw_contact_distance_pass_frames=295`、`raw_contact_distance_pass_fraction=0.9966216216`。
+- `PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：`13 passed`。
+- `python3 -m py_compile src/task/CmResidual/tools/data/build_reference.py`：通过；`git diff --check`：通过。
+- 工程/data-contract 结论：`SUPPORTED`；正式训练效果、收敛和抓取结论：尚未产生，保持 `INCONCLUSIVE`。
+
+**保护边界与回滚**
+
+- 未修改旧 v1 reference、source tensor、geometry cache、checkpoint、共享 `src/base/`、外部 DExplore checkout 或既有运行输出。
+- 回滚入口：删除 ignored `data/processed_data/cm_residual/reference_tracking_v2/`，撤回 V1.6 显式代码/config/文档增量；旧 v1 仍可用作历史诊断。
+## 2026-09-15 23:37:04 +0800 — V1.7 正式 PPO 训练启动
+
+- activity_id: `ACT-20260915-234500-CMRESIDUAL-V17-PPO-FORMAL`
+- timestamp: `2026-09-15 23:37:04 +0800`
+- modification_version: `V1.7`
+- operation_category: `experiment`、`operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求使用具备训练资格的 corrected reference，并授权其余训练参数自主确定；V1.6 reference gate 已通过。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`
+- worktree_dirty: `true`
+- scope: V1.7 formal PPO；v2 eligible reference、seed42、GPU5、64 env、1000 epochs、canonical reward/action/checkpoints。
+- run_id: `cmresidual_ppo_formal_v17_20260915_2345`
+- run_status: `RUNNING`
+- last_epoch: `2`（TensorBoard 已写入；终态字段 `PENDING`）
+
+**文件**
+
+- [V1.7 指导](../指导/V1.7.md) — 训练目标和保护边界。
+- [V1.7 最终计划](../plan/V1.7.md) — 固定输入、预算、停止条件和回滚。
+- [formal runner](../../tools/run_ppo_formal.py) — 读取 v2 manifest，`allowIneligibleFor` 为空；smoke 已通过。
+- [formal output](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/) — 当前运行目录。
+- [config.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/config.json) — 已生成。
+- [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json) — `RUNNING`。
+- [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/metrics.jsonl) — `PENDING`，终态生成。
+- [train.log](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/train.log) — 已生成。
+- [checkpoint](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/) — `PENDING`，终态生成。
+
+**验证**
+
+- V1.6 v2 manifest：`training_eligible=true`；运行时 metadata snapshot 已指向 v2。
+- 1-env、0-update initialization smoke：`COMPLETED` / `SUPPORTED`，确认 GPU PhysX 初始化、reference 准入和任务构造通过。
+- 正式训练已越过 GPU `prepare_sim`，TensorBoard 已记录第 1 个 epoch；截至本条未出现 non-finite 或 simulator error。
+- 训练效果、收敛和抓取科研结论在终态前保持 `INCONCLUSIVE`。
+
+**原因**
+
+v2 corrected reference 已通过 raw-contact 距离准入，正式训练因此可以在 fail-closed 配置下启动；本次不使用旧 pilot checkpoint，也不放宽 reference eligibility。
+
+**接手时既有未提交改动（本次未重写）**
+
+- `docs/current_versions.yaml`
+- `src/task/CmResidual/docs/README.md`
+- `src/task/CmResidual/docs/logs/experiment_log.md`
+- `src/task/CmResidual/tests/test_reference_contract.py`
+- `src/task/CmResidual/tools/data/build_reference.py`
+- `src/task/CmResidual/tools/eval_zero_residual.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml`
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py`
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py`

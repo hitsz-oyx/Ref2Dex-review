@@ -41,7 +41,8 @@ basePolicy:
   cmHandPoints: 1538
 reference:
   profile: dexplore_legacy_parity
-  path: ${oc.env:CMRESIDUAL_REFERENCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_residual/reference_tracking_v1/s1_airplane_lift/reference.npz}
+  allowIneligibleFor: ""
+  path: ${oc.env:CMRESIDUAL_REFERENCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/reference.npz}
   sha256: a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1
   sourceTensor: ${oc.env:CMRESIDUAL_DEXPLORE_SOURCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/s1_airplane_lift/interaction_hand_inspire.pt}
   sourceTensorSha256: 19b110dc81c4928b4f3e6197d8549b011fd48a8157e75fd06668bd306dc396cf
