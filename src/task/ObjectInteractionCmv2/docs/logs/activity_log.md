@@ -167,3 +167,46 @@
 - `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCmv2/tests -q`：`3 passed`。
 - `/home/wbcd/miniconda3/envs/graspenv/bin/python .agents/skills/research-change-control/scripts/audit_diff.py --worktree --scope-prefix src/task/ObjectInteractionCmv2 --scope-prefix docs/current_versions.yaml --check-links`：通过。
 - 回滚：删除独立运行目录和新增闭环文件，将版本指针恢复为 `V1.0.1`；NAS 原始数据、旧 Task 和既有输出不动。
+
+## 2026-09-15 08:21:48 +0000 — V1.0.2 新分支提交并推送
+
+- activity_id: `ACT-20260915-082148`
+- timestamp: `2026-09-15 08:21:48 +0000`
+- modification_version: `V1.0.2`
+- type: `operation / governance`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求新建分支、提交当前工作并使用指定 HTTP/HTTPS 代理推送，随后连续要求继续。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `710d2ca1426013bd5d928e03595451d265804bdb`
+- worktree_dirty: `true`（保留本任务之外的 `ObjectInteractionCm` / `Cm` 用户改动）
+- run_id: `git-push-objectinteractioncmv2-v1.0.2-20260915T082148Z`
+- run_status: `COMPLETED`
+- scope: 只提交 `ObjectInteractionCmv2` Task 和 `docs/current_versions.yaml` 中该 Task 的两行指针，并推送到新的 origin 分支；不提交、覆盖或回滚其他工作区改动。
+
+**提交与远端**
+
+- implementation_commit: `710d2ca1426013bd5d928e03595451d265804bdb`（`实现 ObjectInteractionCmv2 小规模训练闭环`）。
+- remote_ref: `origin/feature/objectinteractioncmv2-v1.0.2`。
+- [`ObjectInteractionCmv2 Task`](../../) — 本次实现、指导、架构、final plan、测试与活动记录。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 本提交只包含 `ObjectInteractionCmv2: V1.0.2`；`ObjectInteractionCm: V1.4.2` 仍作为未暂存用户改动保留。
+- [`run_manifest.json`](../../../../../outputs/objectinteractioncmv2/oakink2_pilot_20260915T0505Z/run_manifest.json) — 已完成 OakInk2 pilot 的运行合同；运行产物被 Git 忽略，未纳入提交。
+
+**原因**
+
+按用户要求为已完成的 V1.0.2 工作建立独立、可审阅且不夹带其他 Task 改动的远端分支。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest src/task/ObjectInteractionCmv2/tests -q`：`3 passed`。
+- `audit_diff.py --staged --check-links`：首个提交前通过，activity 与 12 个受审计变更路径一致，9 个本地链接有效。
+- `git push -u origin feature/objectinteractioncmv2-v1.0.2`：在用户指定的四个代理环境变量下成功，新建远端分支并设置 upstream。
+- `git ls-remote --heads origin refs/heads/feature/objectinteractioncmv2-v1.0.2`：远端首次推送 SHA 与 `710d2ca1426013bd5d928e03595451d265804bdb` 一致。
+
+**保护边界、结论与回滚**
+
+- 未提交 `ObjectInteractionCm`、`Cm`、旧输出、OakInk2 原始数据或被忽略的 checkpoint/metrics；未执行 reset、revert、删除或 force push。
+- Git 分支、提交与远端可达性属于工程操作 `SUPPORTED`；OakInk2 pilot 的科研效果仍为 `INCONCLUSIVE`。
+- 回滚入口为父提交 `85e70edffa85d8d1698a3e8adb22e111033cb892`；若需删除远端分支或回退提交，必须另行确认，不能影响当前保留的用户改动。
