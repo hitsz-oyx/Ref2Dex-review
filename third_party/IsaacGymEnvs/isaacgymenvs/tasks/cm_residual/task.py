@@ -9,13 +9,26 @@ import torch
 from isaacgym import gymapi, gymtorch
 
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_pose,
-                       native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
+from .contract import (QUERY_LINKS, coupled_finger_bounds, native_sim_indices,
+                       native_to_sim, pose_matrix, sim_to_native)
 from .action_mapping import compose_physical_residual
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
-from .dexplore_observation import build_dexplore_observation, select_contact_forces
+from .dexplore_observation import build_dexplore_observation
 from .reference_provider import ReferenceProvider
 from .cm_geometry import SurfaceGeometry
+
+
+DEXPLORE_KEY_BODIES = (
+    "hand_base_link", "index_proximal", "index_intermediate", "index_tip",
+    "middle_proximal", "middle_intermediate", "middle_tip",
+    "pinky_proximal", "pinky_intermediate", "pinky_tip",
+    "ring_proximal", "ring_intermediate", "ring_tip",
+    "thumb_proximal_base", "thumb_intermediate", "thumb_tip",
+)
+DEXPLORE_CONTACT_BODIES = (
+    "index_intermediate", "middle_intermediate", "pinky_intermediate",
+    "ring_intermediate", "thumb_distal",
+)
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -33,8 +46,17 @@ class CmResidual(VecTask):
             raise ValueError("CmResidual now requires the frozen DExplore teacher (mode=dexplore).")
         self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
                                              cfg["basePolicy"].get("checkpointSha256"))
-        self.reference = ReferenceProvider(cfg["reference"]["path"], sim_device,
-                                           cfg["reference"].get("sha256"))
+        asset = cfg["env"]["asset"]
+        reference_cfg = cfg["reference"]
+        object_name = asset.get("objectAssetFileName", "airplane.urdf")
+        object_mesh = Path(asset["objectAssetRoot"]) / "objects" / Path(object_name).stem / f"{Path(object_name).stem}.obj"
+        self.reference = ReferenceProvider(
+            reference_cfg["path"], sim_device, reference_cfg.get("sha256"),
+            source_tensor=reference_cfg["sourceTensor"],
+            source_sha256=reference_cfg["sourceTensorSha256"],
+            frame_start=int(reference_cfg["frameStart"]),
+            frame_end=int(reference_cfg["frameEnd"]),
+            object_mesh=object_mesh)
         self.base_observation_dim = OBSERVATION_DIM
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
@@ -46,11 +68,11 @@ class CmResidual(VecTask):
         self.max_episode_length = int(cfg["env"].get("episodeLength", 2000))
         cfg["env"].update(numObservations=OBSERVATION_DIM + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
-        self.initial_native = torch.zeros(18, device=sim_device)
-        self.initial_object = torch.tensor([0., 0., 0., 0., 0., 0., 1.], device=sim_device)
-        self.initial_table = torch.tensor([0., 0., 0., 0., 0., 0., 1.], device=sim_device)
-        self.initial_links = torch.eye(4, device=sim_device).repeat(len(QUERY_LINKS), 1, 1)
-        self.zero_base_inverse = torch.eye(4, device=sim_device)
+        self.initial_native = self.reference.robot_q[0].clone()
+        self.initial_native_velocity = self.reference.robot_dq[0].clone()
+        self.initial_object = self.reference.object_state[0, :7].clone()
+        self.initial_object_twist = self.reference.object_state[0, 7:13].clone()
+        self.initial_table = self.reference.table_pose.clone()
         super().__init__(cfg, rl_device, sim_device, graphics_device_id, headless,
                          virtual_screen_capture, force_render)
         self.actor_root_state = gymtorch.wrap_tensor(self.gym.acquire_actor_root_state_tensor(self.sim)).view(-1, 13)
@@ -62,9 +84,18 @@ class CmResidual(VecTask):
         self.initial_root_states = self.actor_root_state.clone()
         self.hand_indices = torch.as_tensor(self.hand_indices, device=self.device, dtype=torch.int32)
         self.object_indices = torch.as_tensor(self.object_indices, device=self.device, dtype=torch.int32)
+        self.table_indices = torch.as_tensor(self.table_indices, device=self.device, dtype=torch.int32)
         self.sim_indices = torch.as_tensor(self.sim_indices, device=self.device, dtype=torch.long)
         self.query_indices = torch.as_tensor(self.query_indices, device=self.device, dtype=torch.long)
         self.tip_indices = torch.as_tensor(self.tip_indices, device=self.device, dtype=torch.long)
+        self.key_body_indices = torch.as_tensor(self.key_body_indices, device=self.device, dtype=torch.long)
+        self.contact_body_indices = torch.as_tensor(self.contact_body_indices, device=self.device, dtype=torch.long)
+        (self.initial_body_pos, self.initial_body_rot,
+         self.initial_body_vel, self.initial_body_ang_vel) = self.reference.reset_body_state(
+             Path(asset["assetRoot"]) / asset["assetFileName"], self.hand_body_names)
+        initial_query_state = torch.cat((self.initial_body_pos, self.initial_body_rot), dim=-1).index_select(
+            0, self.query_indices)
+        self.initial_links = pose_matrix(initial_query_state)
         self.native_lower = sim_to_native(torch.as_tensor(self.sim_lower, device=self.device), self.sim_indices)
         self.native_upper = sim_to_native(torch.as_tensor(self.sim_upper, device=self.device), self.sim_indices)
         self.q_lower, self.q_upper = coupled_finger_bounds(self.native_lower, self.native_upper)
@@ -151,9 +182,12 @@ class CmResidual(VecTask):
     def create_sim(self):
         self.up_axis_idx = 2
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
+        plane_cfg = self.cfg["env"]["plane"]
         plane = gymapi.PlaneParams()
         plane.normal = gymapi.Vec3(0, 0, 1)
-        plane.static_friction = plane.dynamic_friction = 0.9
+        plane.static_friction = float(plane_cfg["staticFriction"])
+        plane.dynamic_friction = float(plane_cfg["dynamicFriction"])
+        plane.restitution = float(plane_cfg["restitution"])
         self.gym.add_ground(self.sim, plane)
         self._create_envs()
 
@@ -175,11 +209,28 @@ class CmResidual(VecTask):
         options.fix_base_link = True
         options.disable_gravity = True
         options.collapse_fixed_joints = False
-        options.default_dof_drive_mode = gymapi.DOF_MODE_POS
+        options.max_angular_velocity = 100.0
+        options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
         options.angular_damping = 0.01
         hand = self.gym.load_asset(self.sim, str(Path(asset["assetRoot"]).resolve()), asset["assetFileName"], options)
         names = list(self.gym.get_asset_dof_names(hand))
         self.sim_indices = native_sim_indices(names)
+        self.hand_body_names = tuple(self.gym.get_asset_rigid_body_names(hand))
+        self.hand_num_bodies = self.gym.get_asset_rigid_body_count(hand)
+        self.query_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in QUERY_LINKS]
+        self.tip_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in self.cfg["env"]["tipLinks"]]
+        self.key_body_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in DEXPLORE_KEY_BODIES]
+        self.contact_body_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in DEXPLORE_CONTACT_BODIES]
+        self.tracking_root_body_index = self.gym.find_asset_rigid_body_index(hand, "link6")
+        self.root_body_index = self.gym.find_asset_rigid_body_index(hand, "hand_base_link")
+        required = (self.query_indices + self.tip_indices + self.key_body_indices +
+                    self.contact_body_indices + [self.tracking_root_body_index, self.root_body_index])
+        if min(required) < 0:
+            raise ValueError("Missing Inspire body required by the DExplore observation contract")
+        if (self.tracking_root_body_index, self.root_body_index) != (6, 7):
+            raise ValueError(
+                "Released DExplore observation hard-codes link6/hand_base at body indices 6/7; "
+                f"asset returned {self.tracking_root_body_index}/{self.root_body_index}")
         props = self.gym.get_asset_dof_properties(hand)
         props["driveMode"][:] = gymapi.DOF_MODE_POS
         props["stiffness"][self.sim_indices] = [200.0] * 6 + [100.0] * 12
@@ -197,37 +248,30 @@ class CmResidual(VecTask):
         obj = self.gym.load_asset(self.sim, str(object_root), asset.get("objectAssetFileName", "airplane.urdf"), obj_options)
         table_options = gymapi.AssetOptions()
         table_options.fix_base_link = True
+        table_options.density = 100000
         table_options.default_dof_drive_mode = gymapi.DOF_MODE_NONE
         table = self.gym.load_asset(self.sim, str(object_root), "table.urdf", table_options)
-        self.query_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in QUERY_LINKS]
-        self.tip_indices = [self.gym.find_asset_rigid_body_index(hand, name) for name in self.cfg["env"]["tipLinks"]]
-        if min(self.query_indices + self.tip_indices) < 0:
-            raise ValueError("Missing Inspire observation link")
         self.num_bodies = sum(self.gym.get_asset_rigid_body_count(a) for a in (hand, obj, table))
-        self.hand_indices, self.object_indices, self.envs = [], [], []
+        self.hand_indices, self.object_indices, self.table_indices, self.envs = [], [], [], []
         spacing = float(self.cfg["env"]["envSpacing"])
         for index in range(self.num_envs):
             env = self.gym.create_env(self.sim, gymapi.Vec3(-spacing, -spacing, 0), gymapi.Vec3(spacing, spacing, spacing), int(np.sqrt(self.num_envs)))
             h = self.gym.create_actor(env, hand, gymapi.Transform(), "inspire", index, 1, 0)
             self.gym.set_actor_dof_properties(env, h, props)
-            # Match Dexplore's filters using body-to-shape ranges, not body IDs.
+            # Preserve the released Inspire shape-index/body-name lookup
+            # exactly; the historical indexing is part of checkpoint physics.
             shapes = self.gym.get_actor_rigid_shape_properties(env, h)
             body_names = self.gym.get_actor_rigid_body_names(env, h)
-            ranges = self.gym.get_actor_rigid_body_shape_indices(env, h)
-            for name, span in zip(body_names, ranges):
-                value = 3 if ("thumb" in name and "distal" in name) or ("thumb" not in name and "intermediate" in name) else 2
-                for shape in shapes[span.start:span.start + span.count]:
-                    shape.filter, shape.friction = value, 0.9
+            for shape_index, shape in enumerate(shapes):
+                name = body_names[shape_index]
+                shape.filter = 3 if (("thumb" in name and "distal" in name)
+                                     or ("thumb" not in name and "intermediate" in name)) else 2
             self.gym.set_actor_rigid_shape_properties(env, h, shapes)
             o = self.gym.create_actor(env, obj, self._gym_pose(self.initial_object), "airplane", index, 0, 1)
             t = self.gym.create_actor(env, table, self._gym_pose(self.initial_table), "table", index, 1, 2)
-            for actor in (o, t):
-                shapes = self.gym.get_actor_rigid_shape_properties(env, actor)
-                for shape in shapes:
-                    shape.friction = 0.9
-                self.gym.set_actor_rigid_shape_properties(env, actor, shapes)
             self.hand_indices.append(self.gym.get_actor_index(env, h, gymapi.DOMAIN_SIM))
             self.object_indices.append(self.gym.get_actor_index(env, o, gymapi.DOMAIN_SIM))
+            self.table_indices.append(self.gym.get_actor_index(env, t, gymapi.DOMAIN_SIM))
             self.envs.append(env)
 
     def _refresh_state(self):
@@ -237,21 +281,21 @@ class CmResidual(VecTask):
         self.gym.refresh_net_contact_force_tensor(self.sim)
 
     def actual_link_poses(self):
-        poses = pose_matrix(self.rigid_body_state[:, self.query_indices, :7])
-        # Gym recomputes rigid-body FK on simulate; use exact reset-state FK only
-        # until that first physics step, then exclusively use measured link poses.
-        poses[self.fresh_reset] = self.initial_links
-        return poses
+        return pose_matrix(self.rigid_body_state[:, self.query_indices, :7])
 
     def reset_idx(self, env_ids):
         if len(env_ids) == 0:
             return
         env_ids = env_ids.to(self.device)
         roots = torch.cat([self.hand_indices[env_ids], self.object_indices[env_ids]]).contiguous()
-        self.actor_root_state[roots.long()] = self.initial_root_states[roots.long()]
-        self.dof_pos[env_ids] = native_to_sim(self.initial_native.expand(len(env_ids), -1), self.sim_indices)
-        self.dof_vel[env_ids] = 0
-        self.native_targets[env_ids] = self.initial_native
+        hand_ids = self.hand_indices[env_ids]
+        object_ids = self.object_indices[env_ids]
+        self.actor_root_state[hand_ids.long()] = self.initial_root_states[hand_ids.long()]
+        initial_native, initial_velocity, initial_object = self.reference.reset_state(len(env_ids))
+        self.actor_root_state[object_ids.long()] = initial_object
+        self.dof_pos[env_ids] = native_to_sim(initial_native, self.sim_indices)
+        self.dof_vel[env_ids] = native_to_sim(initial_velocity, self.sim_indices)
+        self.native_targets[env_ids] = initial_native
         self.sim_targets[env_ids] = self.dof_pos[env_ids]
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
@@ -261,10 +305,10 @@ class CmResidual(VecTask):
         self.residual_saturation[env_ids] = 0
         self.episode_return[env_ids] = 0
         self.episode_max_lift[env_ids] = 0
-        self.initial_object_z[env_ids] = self.initial_object[2]
+        self.initial_object_z[env_ids] = initial_object[:, 2]
         self.fresh_reset[env_ids] = True
         self.reference_index[env_ids] = 0
-        hand_ids = self.hand_indices[env_ids].contiguous()
+        hand_ids = hand_ids.contiguous()
         self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.actor_root_state), gymtorch.unwrap_tensor(roots), len(roots))
         self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.dof_state), gymtorch.unwrap_tensor(hand_ids), len(hand_ids))
         self.gym.set_dof_position_target_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self.sim_targets), gymtorch.unwrap_tensor(hand_ids), len(hand_ids))
@@ -290,43 +334,50 @@ class CmResidual(VecTask):
     def compute_observations(self):
         self._refresh_state()
         native = sim_to_native(self.dof_pos, self.sim_indices)
-        velocity = sim_to_native(self.dof_vel, self.sim_indices)
-        links = self.actual_link_poses()
-        obj = pose_matrix(self.actor_root_state[self.object_indices.long(), :7])
-        q, wrist = native[:, :6], links[:, 0]
-        self.base_q.copy_(q)
-        self.base_wrist.copy_(wrist)
-        wrist_delta = matrix_pose(inverse_pose(links[:, 0]) @ wrist)
-        object_delta = matrix_pose(inverse_pose(links[:, 0]) @ obj)
-        tips = self.rigid_body_state[:, self.tip_indices, :3]
-        if self.fresh_reset.any():
-            tip_queries = [QUERY_LINKS.index(name) for name in self.cfg["env"]["tipLinks"]]
-            tips = tips.clone()
-            tips[self.fresh_reset] = self.initial_links[tip_queries, :3, 3]
-        tip_offsets = (tips - obj[:, None, :3, 3]).reshape(self.num_envs, 15)
-        key_indices = torch.as_tensor([0, 6, 7, 8, 9, 10, 11, 15, 16, 17, 12, 13, 14, 1, 3, 5], device=self.device)
-        key_poses = links[:, key_indices]
-        key_vel = self.rigid_body_state[:, self.query_indices, 7:10][:, key_indices]
-        key_ang_vel = self.rigid_body_state[:, self.query_indices, 10:13][:, key_indices]
-        contact_indices = torch.as_tensor([7, 10, 16, 13, 4], device=self.device)
-        contact = select_contact_forces(self.contact_force, self.query_indices, contact_indices)
+        hand_state = self.rigid_body_state[:, :self.hand_num_bodies]
+        body_pos = hand_state[..., :3]
+        body_rot = hand_state[..., 3:7]
+        body_vel = hand_state[..., 7:10]
+        body_ang_vel = hand_state[..., 10:13]
+        body_contact = self.contact_force[:, :self.hand_num_bodies]
+        query_state = torch.cat((body_pos, body_rot), dim=-1).index_select(1, self.query_indices)
+        links = pose_matrix(query_state)
+        object_state = self.actor_root_state[self.object_indices.long()]
+        obj = pose_matrix(object_state[:, :7])
+        self.base_q.copy_(native[:, :6])
+        self.base_wrist.copy_(links[:, 0])
+        contact = body_contact.index_select(1, self.contact_body_indices)
         self.current_contact_forces.copy_(contact)
-        # DExplore consumes genuinely phase-indexed short/long reference targets.
+
         idx = self.reference_index
-        _, ref_dq_1, ref_links_1, ref_obj_1, _phase_1, ref_obj_twist_1, ref_vel_1, ref_ang_1 = self.reference.frame(idx, 1)
-        _, ref_dq_16, ref_links_16, ref_obj_16, _phase_16, ref_obj_twist_16, ref_vel_16, ref_ang_16 = self.reference.frame(idx, 16)
-        current_obj_twist = self.actor_root_state[self.object_indices.long(), 7:13]
-        ref_contact_1 = self.cm_geometry.contact_targets(ref_links_1, ref_obj_1)
-        ref_contact_16 = self.cm_geometry.contact_targets(ref_links_16, ref_obj_16)
-        ref_links_1 = ref_links_1[:, key_indices]
-        ref_links_16 = ref_links_16[:, key_indices]
-        obs_1 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
-                                             ref_links_1, ref_vel_1[:, key_indices], ref_ang_1[:, key_indices],
-                                             ref_obj_1, ref_contact_1, current_obj_twist, ref_obj_twist_1)
-        obs_16 = build_dexplore_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact,
-                                              ref_links_16, ref_vel_16[:, key_indices], ref_ang_16[:, key_indices],
-                                              ref_obj_16, ref_contact_16, current_obj_twist, ref_obj_twist_16)
+        ref_now = self.reference.frame(idx)
+        obs_1 = build_dexplore_observation(
+            body_pos, body_rot, body_vel, body_ang_vel, body_contact,
+            object_state, self.reference.frame(idx, 1), self.reference.object_points,
+            self.key_body_indices, self.contact_body_indices,
+            root_body_id=self.root_body_index,
+            tracking_root_body_id=self.tracking_root_body_index)
+        obs_16 = build_dexplore_observation(
+            body_pos, body_rot, body_vel, body_ang_vel, body_contact,
+            object_state, self.reference.frame(idx, 16), self.reference.object_points,
+            self.key_body_indices, self.contact_body_indices,
+            root_body_id=self.root_body_index,
+            tracking_root_body_id=self.tracking_root_body_index)
         base_obs = torch.cat((obs_1, obs_16), dim=-1)
+        self.reference_root_position_error_m = (
+            body_pos[:, self.tracking_root_body_index] - ref_now[:, 4:7]).norm(dim=-1)
+        self.reference_object_position_error_m = (
+            object_state[:, :3] - ref_now[:, 106:109]).norm(dim=-1)
+        ref_contact = ref_now[:, 168:184][:, [3, 6, 9, 12, 15]]
+        self.reference_contact_occupancy = ref_contact.mean(dim=-1)
+        self.reset_native_error_max = (native - self.initial_native).abs().amax(dim=-1)
+        self.reset_wrist_position_error_m = (
+            body_pos[:, self.root_body_index] - self.initial_body_pos[self.root_body_index]).norm(dim=-1)
+        self.reset_object_position_error_m = (
+            object_state[:, :3] - self.initial_object[:3]).norm(dim=-1)
+        table_state = self.actor_root_state[self.table_indices.long()]
+        self.reset_table_position_error_m = (
+            table_state[:, :3] - self.initial_table[:3]).norm(dim=-1)
         obj_points, obj_normals = self.cm_geometry.object(obj)
         hand_points, hand_normals = self.cm_geometry.hand(links)
         hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
@@ -344,7 +395,7 @@ class CmResidual(VecTask):
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
-        self.base_action.copy_(self.teacher.act(base_obs.clamp(-self.clip_obs, self.clip_obs)))
+        self.base_action.copy_(self.teacher.act(base_obs))
         return self.obs_buf
 
     def compute_reward(self):
@@ -357,7 +408,8 @@ class CmResidual(VecTask):
         self.episode_return += self.rew_buf
         self.episode_max_lift = torch.maximum(self.episode_max_lift, lift)
         success = lift > float(env["successLift"])
-        done = success | (self.progress_buf >= self.max_episode_length)
+        done = ((success & bool(env.get("terminateOnSuccess", True))) |
+                (self.progress_buf >= self.max_episode_length))
         self.reset_buf.copy_(done.long())
         self.completed_episodes += int(done.sum().item())
         self.successful_episodes += int((success & done).sum().item())
@@ -373,6 +425,10 @@ class CmResidual(VecTask):
                           residual_target_delta_max=self.residual_applied_delta.abs().amax(),
                           residual_saturation_ratio=self.residual_saturation.mean(),
                           contact_occupancy=(self.current_contact_forces.abs().amax(-1) > 0.1).float().mean(),
+                          reference_contact_occupancy=self.reference_contact_occupancy.mean(),
+                          reference_root_position_error_m=self.reference_root_position_error_m.mean(),
+                          reference_object_position_error_m=self.reference_object_position_error_m.mean(),
+                          success_fraction=success.float().mean(),
                           success_rate=self.successful_episodes / max(1, self.completed_episodes))
 
     def post_physics_step(self):

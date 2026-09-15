@@ -33,7 +33,7 @@ def dexplore_action_to_targets(
     lower: torch.Tensor,
     upper: torch.Tensor,
 ) -> torch.Tensor:
-    """Map the released normalized Inspire action to clamped native PD targets."""
+    """Map the released normalized Inspire action to native PD targets."""
     for name, value in (("action", action), ("current_native", current_native),
                         ("lower", lower), ("upper", upper)):
         _validate(name, value)
@@ -42,13 +42,14 @@ def dexplore_action_to_targets(
     scale = scale.clone()
     scale[..., :3] = 1.0
     scale[..., 3:6] = math.pi
+    # DExplore deliberately uses a zero offset for every DOF.  Finger actions
+    # are moved to [0, 1] before applying the full URDF range.
     offset = torch.zeros_like(lower)
-    offset[..., 6:] = lower[..., 6:]
     pd_action = torch.cat((normalized[..., :6], (1.0 + normalized[..., 6:]) / 2.0), dim=-1)
     targets = offset + scale * pd_action
     targets[..., :6] = targets[..., :6] + current_native[..., :6]
     targets = apply_mimic(targets)
-    return targets.clamp(lower, upper)
+    return targets
 
 
 def compose_physical_residual(
@@ -72,9 +73,14 @@ def compose_physical_residual(
     finger_indices = list(INDEPENDENT_NATIVE)
     requested[..., finger_indices] = residual[..., finger_indices] * float(finger_scale_rad)
     unclamped = apply_mimic(base_targets + requested)
-    targets = unclamped.clamp(lower, upper)
+    clamped = unclamped.clamp(lower, upper)
+    # The released base policy does not clamp its final target.  Preserve that
+    # exact path for strict zero-residual rollouts; the safety clamp remains on
+    # every environment that actually requests a residual correction.
+    zero_residual = residual.abs().amax(dim=-1, keepdim=True) == 0
+    targets = torch.where(zero_residual, base_targets, clamped)
     applied = targets - base_targets
-    saturation = (targets != unclamped).to(targets.dtype)
+    saturation = ((clamped != unclamped) & ~zero_residual).to(targets.dtype)
     return targets, {
         "base_targets": base_targets,
         "requested_delta": requested,

@@ -1,3 +1,171 @@
+## 2026-09-15 19:19:53 +0800 — CmResidual V1.4.2 上游 parity 修正与最终零残差门禁完成
+
+- activity_id: `ACT-20260915-191707-CMRESIDUAL-V142-ZERO-FINAL`
+- timestamp: `2026-09-15 19:19:53 +0800`
+- modification_version: `V1.4.2`
+- type: `architecture`、`code`、`diagnostic`、`experiment`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（[V1.4 最终计划](../plan/V1.4.md) 的正式 gate）
+- branch: `oyx`
+- base_commit: `b1dac1c7955c9b960481279425f9e4e2e2269a98`
+- worktree_dirty: `true`（本次 V1.4 diff 尚未提交；用户提供的三个指导文件保持未跟踪且未暂存）
+- scope: [V1.4 最终计划](../plan/V1.4.md) 所列 CmResidual actor/reference/observation/action/task/config/test/eval、Task 文档与版本指针；不含 corrected reference、reward 数值、OI-Cm/residual 权限、PPO、外部 DExplore、其他 Task 或 `src/base/`
+- run_id: `cmresidual_zero_v14_final_20260915_191707`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v14_final_20260915_191707 --steps 367 --num-envs 4 --activity-id ACT-20260915-191707-CMRESIDUAL-V142-ZERO-FINAL`
+- last_step: `367`
+- last_epoch: `null`
+- best_metric: `max_lift_m=0.2123541832`（gate 行为观测量；不是独立抓取 benchmark）
+- checkpoint: `null`
+- exit_reason: 达到 4 env × 367 control-step 预算，所有 gate 条件通过，并按独立进程退出正常回收 simulator
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v14_final_20260915_191707)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_final_20260915_191707/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_final_20260915_191707/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v14_final_20260915_191707/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v14_final_20260915_191707/eval.log)
+- conclusion: `SUPPORTED`（DExplore 上游 parity、reset、zero-target、finite、近物/接触行为和运行终态）；`INCONCLUSIVE`（Cm/PPO 增益与科研效果）
+
+**原因**
+
+- 根因是 provider 把 DExplore 原语句 `body_pos[..., 6:]` 的空切片误解释为 body 维 remainder，令后 10 个关键点坐标被模到 `[0,2π)`，产生最高 `188.4956 m/s` 的伪 reference 速度并破坏 object-surface IG。
+
+**实际修改**
+
+- frozen actor 改为发布 checkpoint 的 ReLU MLP，并复现 float32 RMS normalization 与 `[-5,5]` clamp；721D builder 逐字段复现 DExplore body/object/IG，两个 offset 仍为 `+1/+16`。
+- legacy source 与 corrected reference 分离：前者按固定 SHA 和 `[44,410]` 重建 teacher/reset；后者只作 eligibility/audit，仍为 `training_eligible=false`。
+- hand/object/table reset、DExplore base target/mimic、严格 zero-residual clamp 旁路，以及 `substeps=4`、PhysX/plane/asset/shape-filter 参数已与发布源码对齐；OI-Cm、reward 和 residual 权限未改。
+- 修改路径：[版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.4 最终计划](../plan/V1.4.md)、[实验记录](experiment_log.md)、[Task tests](../../tests/)、[评估工具](../../tools/eval_zero_residual.py)、[CmResidual 实现目录](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/)、[canonical task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml)、[online task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml)。
+
+**验证**
+
+- `python3 -m py_compile ...` 通过；`PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests` 为 `11 passed`；`git diff --check` 通过。
+- 注册项目 OmegaConf resolver 后，`CmResidual` 与 `CmResidualOnline` 的 task/train Hydra compose 均通过，并确认 `numObservations=2005`、`numActions=18`、`substeps=4`、source frame `[44,410]`。
+- source-level golden test 在同一输入上直接调用未经修改的 DExplore 函数，721D 输出最大误差为 0；对真实 DExplore 首帧 state/reference 的 1442D 重建最大误差为 `2.10e-5`（CPU/GPU 浮点差）。
+- 正式 gate 初始 q/wrist/object/table 最大位置误差为 `2.09e-7`，367 步无 reset；observation/target/object pose 全程 finite，zero residual target delta 与 target saturation 始终为 0。
+- 第 16 步平均 tip distance=`0.045808 m`、实测 contact occupancy=`0.65`；全程平均/最大 contact occupancy=`0.480790/0.75`，最小 tip distance=`0.037769 m`。`success_fraction` 从第 34 步出现，最大为 1.0、末步为 0.75；success-triggered reset 在 gate 中关闭。
+
+**保护边界与回滚**
+
+- 没有启动 PPO，没有修改或覆盖 DExplore/OI-Cm checkpoint、corrected reference、cache、旧 outputs、外部 DExplore checkout、用户指导、其他 Task 或共享 runtime。
+- 回滚入口为 base commit `b1dac1c7955c9b960481279425f9e4e2e2269a98`、[V1.4 最终计划](../plan/V1.4.md) 中的显式文件和本条独立运行目录；旧失败运行保留为审计证据。
+
+## 2026-09-15 19:16:58 +0800 — legacy body reference 修正后的单环境诊断通过
+
+- activity_id: `ACT-20260915-191608-CMRESIDUAL-V142-REFERENCE-SMOKE`
+- timestamp: `2026-09-15 19:16:58 +0800`
+- modification_version: `V1.4.2`
+- operation_category: `diagnostic`、`operation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（V1.4 上游 DExplore parity 修正范围）
+- branch: `oyx`
+- base_commit: `b1dac1c7955c9b960481279425f9e4e2e2269a98`
+- run_id: `cmresidual_zero_v14_reference_smoke_20260915_191608`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v14_reference_smoke_20260915_191608 --steps 20 --num-envs 1 --activity-id ACT-20260915-191608-CMRESIDUAL-V142-REFERENCE-SMOKE`
+- last_step: `20`
+- last_epoch: `null`
+- best_metric: `max_contact_occupancy=0.8`（工程行为门指标，不是抓取成绩）
+- checkpoint: `null`
+- exit_reason: 达到 20 步诊断预算且 source 接触阶段行为门通过，正常退出
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v14_reference_smoke_20260915_191608)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_reference_smoke_20260915_191608/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v14_reference_smoke_20260915_191608/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v14_reference_smoke_20260915_191608/eval.log)
+- conclusion: `SUPPORTED`（legacy reference、近物/接触、finite、zero-target parity 和正常退出）；`INCONCLUSIVE`（完整 367 步 gate、PPO 与科研效果）
+
+**关键证据**
+
+- 第 16 步 `reference_contact_occupancy=0.4`，实测 `contact_occupancy=0.6`，平均 tip distance=`0.045783 m`；20 步内最大 contact occupancy=`0.8`。
+- 对未经修改的 DExplore 单环境首帧 state/ref 重建后，reference 最大差从 `188.4956` 降到 `3.22e-5`，完整 1442D observation 最大差为 `2.10e-5`（CPU/GPU 浮点差）。
+- observation/target/object pose 均 finite，reset_count=0，zero residual target delta=0；未启动 PPO。
+
+## 2026-09-15 19:05:16 +0800 — DExplore physics parity 单环境诊断未通过
+
+- activity_id: `ACT-20260915-190424-CMRESIDUAL-V142-PHYSICS-SMOKE`
+- timestamp: `2026-09-15 19:05:16 +0800`
+- modification_version: `V1.4.2`
+- operation_category: `diagnostic`、`operation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`（V1.4 上游 DExplore parity 修正范围）
+- branch: `oyx`
+- base_commit: `b1dac1c7955c9b960481279425f9e4e2e2269a98`
+- run_id: `cmresidual_zero_v14_physics_smoke_20260915_190424`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v14_physics_smoke_20260915_190424 --steps 20 --num-envs 1 --activity-id ACT-20260915-190424-CMRESIDUAL-V142-PHYSICS-SMOKE`
+- last_step: `20`
+- last_epoch: `null`
+- best_metric: `min_tip_distance_m=0.1342651`
+- checkpoint: `null`
+- exit_reason: 达到 20 步诊断预算并正常退出；第 16 个 source 接触帧仍未近物或接触
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v14_physics_smoke_20260915_190424)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_physics_smoke_20260915_190424/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v14_physics_smoke_20260915_190424/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v14_physics_smoke_20260915_190424/eval.log)
+- conclusion: `INVALID_IMPLEMENTATION`（physics parity 本身未消除行为偏离）；`INCONCLUSIVE`（科研效果）
+
+**诊断证据**
+
+- 同步 simulator 后第 16 步 `reference_contact_occupancy=0.4`，但 `contact=0`、平均 tip distance=`0.473640 m`。
+- 将未经修改的 DExplore 单环境首帧 state/ref 保存到临时诊断目录，再用本地 provider+builder 重建；最大 observation 差为 `188.4955`，定位到 provider 对原源码空切片 `body_pos[..., 6:]` 的错误解释，而不是物理参数。
+
+## 2026-09-15 18:52:36 +0800 — CmResidual V1.4.2 首次正式零残差门禁未通过
+
+- activity_id: `ACT-20260915-184916-CMRESIDUAL-V142-ZERO`
+- timestamp: `2026-09-15 18:52:36 +0800`
+- modification_version: `V1.4.2`
+- type: `experiment`、`operation`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`（DExplore legacy reference/reset 和 4 env × 367 步正式门禁）
+- approval: `user-approved`（[V1.4 最终计划](../plan/V1.4.md) 已明确列出本 gate，用户回复“可以，你直接开始修改”）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `b1dac1c7955c9b960481279425f9e4e2e2269a98`
+- worktree_dirty: `true`（V1.4 已批准实现尚未提交；用户指导保持未跟踪且不暂存）
+- scope: CPU PhysX、seed 42、4 env × 367 steps、严格全零 residual；不含 PPO、参数更新、reward/参考/schema 变更
+- run_id: `cmresidual_zero_v14_20260915_184916`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v14_20260915_184916 --steps 367 --num-envs 4 --activity-id ACT-20260915-184916-CMRESIDUAL-V142-ZERO`
+- last_step: `367`
+- last_epoch: `null`
+- best_metric: `max_lift_m=0.0004970878`（没有接触，不作为抓取成绩）
+- checkpoint: `null`
+- exit_reason: 达到 367 步预算并通过独立进程退出正常回收；行为 gate 在 source 首次接触帧未达到近物/接触条件
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v14_20260915_184916)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_20260915_184916/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_20260915_184916/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v14_20260915_184916/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v14_20260915_184916/eval.log)
+- conclusion: `SUPPORTED`（367 步、finite、reset 对齐、zero-target parity 和正常退出）；`INVALID_IMPLEMENTATION`（source 接触阶段行为 gate）；`INCONCLUSIVE`（PPO 和科研效果）
+
+**结果、后续诊断与停止边界**
+
+- 初始 q/wrist/object/table 位置误差最大为 `1.31e-7`；367 步无 reset，observation/target/object pose finite，zero residual target delta 和 saturation ratio 均为 0，进程正常退出。
+- 第 16 个 source 接触帧的 reference contact occupancy 为 `0.4`，但实测 contact 为 0、平均 tip distance 为 `0.444138 m`；全程最大实测 contact 仍为 0。因此行为 gate 为 `false`。
+- 外部源码复核发现尚未同步 `substeps=4`、PhysX 接触参数、friction/restitution、asset angular velocity 和发布 shape-filter 行为；同时首帧离线 FK velocity 替代并非原路径。已回到 `change` 模式修正这些上游 parity 项，并保持不启动 PPO。
+
+## 2026-09-15 18:47:29 +0800 — CmResidual V1.4 单环境 smoke 完成
+
+- activity_id: `ACT-20260915-184653-CMRESIDUAL-V141-SMOKE`
+- timestamp: `2026-09-15 18:47:29 +0800`
+- modification_version: `V1.4.2`
+- type: `architecture`、`code`、`diagnostic`、`operation`、`documentation`
+- operation_category: `architecture`、`code`、`diagnostic`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L3`（DExplore checkpoint/observation、legacy reference/reset 与 zero-residual gate 合同）
+- approval: `user-approved`（用户在 V1.4 诊断和范围交接后明确回复“可以，你直接开始修改”）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `b1dac1c7955c9b960481279425f9e4e2e2269a98`
+- worktree_dirty: `true`（仅修改 [V1.4 最终计划](../plan/V1.4.md) 所列范围；保留且不暂存用户提供的 `指导/V1.2.md`、`指导/V1.3.md`、`指导/V1.4.md`）
+- scope: [V1.4 最终计划](../plan/V1.4.md) 所列 CmResidual task/config/test/eval 与 Task 文档；不含 corrected reference、reward 数值、OI-Cm/residual 权限、PPO、外部 DExplore、其他 Task 或共享 `src/base/`
+- run_id: `cmresidual_zero_v14_smoke_20260915_184653`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=third_party/IsaacGymEnvs python3 src/task/CmResidual/tools/eval_zero_residual.py --run-id cmresidual_zero_v14_smoke_20260915_184653 --steps 4 --num-envs 1 --activity-id ACT-20260915-184653-CMRESIDUAL-V141-SMOKE`
+- last_step: `4`
+- last_epoch: `null`
+- best_metric: `max_lift_m=0.0004968047`（仅为 smoke 观测量，不是抓取成绩）
+- checkpoint: `null`
+- exit_reason: 达到 4 步 smoke 预算；按计划使用独立进程退出回收 simulator，没有调用已知会阻塞的显式 `destroy_sim`
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_zero_v14_smoke_20260915_184653)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_smoke_20260915_184653/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_zero_v14_smoke_20260915_184653/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_zero_v14_smoke_20260915_184653/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v14_smoke_20260915_184653/eval.log)
+- conclusion: `SUPPORTED`（单环境初始化、finite、zero-target parity 和进程终态）；`INCONCLUSIVE`（接触、完整门禁、PPO 与科研效果）
+
+**结果与保护边界**
+
+- 初始 native q、wrist、object、table 位置误差均为 0；4 步均无 reset，最小平均 tip distance 为 `0.127061 m`，observation/target finite，zero residual target delta 与 saturation ratio 均为 0。
+- `python3 -m py_compile ...` 通过；`PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests` 为 `11 passed`；源码级 DExplore 721D golden parity 最大绝对误差为 0。
+- corrected reference 保持 `training_eligible=false`；没有启动 PPO，没有修改或覆盖 checkpoint、reference、旧运行、外部 DExplore、共享 runtime 或用户指导。
+
 ## 2026-09-15 16:53:16 +0800 — CmResidual V1.3 zero-residual gate 失败并停止
 
 - activity_id: `ACT-20260915-165316-CMRESIDUAL-V13-ZERO-END`

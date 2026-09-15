@@ -37,10 +37,10 @@ class InspireDExplorePolicy(nn.Module):
             if key not in model or tuple(model[key].shape) != shape:
                 raise ValueError(f"Unsupported DExplore checkpoint key/shape: {key}")
         self.actor = nn.Sequential(
-            nn.Linear(OBSERVATION_DIM, 1024), nn.ELU(),
-            nn.Linear(1024, 1024), nn.ELU(),
-            nn.Linear(1024, 1024), nn.ELU(),
-            nn.Linear(1024, 512), nn.ELU(),
+            nn.Linear(OBSERVATION_DIM, 1024), nn.ReLU(),
+            nn.Linear(1024, 1024), nn.ReLU(),
+            nn.Linear(1024, 1024), nn.ReLU(),
+            nn.Linear(1024, 512), nn.ReLU(),
             nn.Linear(512, ACTION_DIM),
         )
         self.actor[0].load_state_dict({"weight": model["a2c_network.actor_mlp.0.weight"], "bias": model["a2c_network.actor_mlp.0.bias"]})
@@ -54,7 +54,7 @@ class InspireDExplorePolicy(nn.Module):
         if tuple(mean.shape) != (OBSERVATION_DIM,) or tuple(var.shape) != (OBSERVATION_DIM,):
             raise ValueError("DExplore running_mean_std must be 1442-dimensional")
         self.register_buffer("running_mean", mean)
-        self.register_buffer("running_var", var.clamp_min(1e-6))
+        self.register_buffer("running_var", var)
         self.to(self.device).eval()
         for parameter in self.parameters():
             parameter.requires_grad_(False)
@@ -66,6 +66,7 @@ class InspireDExplorePolicy(nn.Module):
         if obs.shape[-1] != OBSERVATION_DIM:
             raise ValueError(f"DExplore observation must be {OBSERVATION_DIM}D, got {obs.shape[-1]}")
         normalized = (obs.to(self.device) - self.running_mean) / torch.sqrt(self.running_var + 1e-5)
+        normalized = normalized.clamp(-5.0, 5.0)
         return self.actor(normalized).clamp(-1.0, 1.0)
 
     act = forward
