@@ -1,4 +1,121 @@
+## 2026-09-15 09:40:00 +0800 — DExplore 1442 维观测与 Cm PPO 链路修复
+
+- activity_id: `ACT-20260915-094000-CMRESIDUAL-FIX`
+- timestamp: `2026-09-15 09:40:00 +0800`
+- modification_version: `V1.1.3`
+- operation_category: `code`、`documentation`
+- task_mode: `change`
+- change_level: `L2`（观测 schema、策略网络和训练注册）
+- approval: `user-approved`（用户明确要求修复问题并开始训练）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `bbb1ce28089fc202921d2660ddd45409f487a6cd`
+- worktree_dirty: `true`（保留根目录及 CmDecoderv2 既有差异）
+- scope: `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/`、`third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_*.py`、`third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualPPO.yaml`、`third_party/IsaacGymEnvs/isaacgymenvs/train.py`
+- run_id: `smoke_fixed_20260915d`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（工程 smoke；不代表科研效果成立）
+
+**修改**
+
+- 观测改为显式构造两个 DExplore 721-D offset，输出严格为 1442-D；移除旧 71-D 向量加零尾逻辑。
+- 新增 `cm_continuous`/`cm_actor_critic` 注册；Cm online 特征进入 actor/critic，target 以 EMA 更新并冻结，PPO 梯度回传 online 分支。
+- 关闭 rl_games 自动 torch.compile，规避当前 PyTorch 2.4.1 环境的编译兼容错误。
+
+**验证**
+
+- `python3 -m py_compile ...`：通过。
+- `PYTHONPATH=. python3 -m pytest -q src/task/CmResidual/tests/test_reference_contract.py`：`2 passed`。
+- CPU 单环境 `max_iterations=1`：完成 epoch 1，生成 `runs/CmResidual_15-09-38-37/nn/last_CmResidual_ep_1_rew__2.47_.pth`，无 traceback。
+
+**保护边界与回滚**
+
+- 未修改 DExplore checkout、`inspire.pth`、原始数据、旧运行或既有用户 dirty diff；新训练使用独立输出目录。回滚入口为本次代码提交及本条 activity。
+
 # CmResidual 活动记录
+
+## 2026-09-15 09:18:52 +0800 — 三卡训练终态复核及实现无效更正
+
+- activity_id: `ACT-20260915-091852-CMRESIDUAL-TERMINAL-AUDIT`
+- timestamp: `2026-09-15 09:18:52 +0800`
+- modification_version: `V1.1.2`（本次终态审计；被审计运行原标记为 `V1.1.1`）
+- operation_category: `diagnostic`、`operation`、`documentation`
+- task_mode: `run-only/operation`（终态查询与记录同步）
+- change_level: `L0`（更正状态及记录实现缺陷，不修改训练实现、数据或指标定义）
+- approval: `user-approved`（用户查询训练状态；沿用已有运行与记录授权）
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `bbb1ce28089fc202921d2660ddd45409f487a6cd`
+- worktree_dirty: `true`（保留既有四处根/CmDecoderv2 文档差异）
+- scope: `src/task/CmResidual/docs/logs/activity_log.md`、`outputs/CmResidual/cmresidual_dexplore*/run_manifest.json` 及各原 manifest 的一次性备份；没有启动训练、修改代码或 checkpoint。
+- run_status: `COMPLETED`（3 组最终尝试）；`FAILED`（6 组之前的尝试）
+- conclusion: `INVALID_IMPLEMENTATION`（相对用户要求的完整 DExplore + Cm 残差链路）
+
+**原因**
+
+- 先前将“可完成 PPO iteration”当成可以启动三卡的依据不成立。实际输入只是旧 71D 状态加 1371 个零，没有 DExplore 的两个 reference offset/layout；Cm 只被实例化，没有参与实际 PPO 的特征输入、replay 监督、梯度或 EMA 更新。
+- GPU1/GPU3 最终尝试共用 `runs/CmResidual_15-01-48-27/`，最佳 checkpoint、config 与 TensorBoard 不能视为按 seed 隔离。最初三个尝试也共用 `runs/CmResidual_15-01-39-36/`。本次保留所有文件，只按独立 stdout 路径定位唯一的终态 checkpoint。
+- 三组最终尝试均出现 `MAX EPOCHS NUM!`，终态 checkpoint 为 epoch 1000；对应进程已退出。旧 manifest 的 `RUNNING` 是未更新状态，现已更正。
+- CPU/GPU 仿真和 64/256 env 数量不同，回报不可用作受控三 seed 比较；没有独立评估。本批结果不能证明 Cm 有效或无效。
+
+**验证**
+
+- `ps -p 2510695,2535229,2535230 -o pid=,stat=,etime=,args=`：三个 PID 均不存在；全进程扫描没有 `train.py task=CmResidual`。
+- 逐一重载 9 份 manifest，读取 `train.log` 的完成标记、traceback、最后 epoch/frame 和 checkpoint 文件名；使用 CPU `torch.load` 读取 3 个终态 checkpoint 的 epoch/frame/last_mean_rewards/model keys。
+- 三个 model state_dict 均没有 Cm 参数；`rg` 检查 `CmResidualActor`、`begin_ppo_block`、`supervised_loss` 仅定义/导出，无训练调用；配置选择普通 `actor_critic`。
+- checkpoint 的 `last_mean_rewards` 是训练期历史最高回报，终态 checkpoint 文件名中的回报是最后一期滑动平均；均不是任务成功率或独立评估。stdout 的 frames 在迭代开始打印，最后累计步数以 checkpoint 的 frame 为准。
+- 原始训练未生成 `metrics.jsonl`；本次不将共享 TensorBoard 数据伪造为独立逐 seed 曲线。
+
+**文件与终态**
+
+- run_id: `cmresidual_dexplore_gpu0_s101`；run_status: `COMPLETED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `1000`；last_step: `8192000`；best_metric: `4.765340328216553`；退出依据：达到 max_epochs=1000；原启动器未记录操作系统退出码，按完成标记、checkpoint 内容及进程退出确认终态。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu0_s101](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu0_s101)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu0_s101/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu0_s101/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu0_s101/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu0_s101/train.log)。
+  最近 checkpoint：[third_party/IsaacGymEnvs/runs/CmResidual_15-01-39-36/nn/last_CmResidual_ep_1000_rew__-121.24_.pth](../../../../../third_party/IsaacGymEnvs/runs/CmResidual_15-01-39-36/nn/last_CmResidual_ep_1000_rew__-121.24_.pth)；最终训练回报：`-121.24`。
+  最佳 checkpoint：[third_party/IsaacGymEnvs/runs/CmResidual_15-01-39-36/nn/CmResidual.pth](../../../../../third_party/IsaacGymEnvs/runs/CmResidual_15-01-39-36/nn/CmResidual.pth)。
+  GPU0 的最佳文件存在；目录也曾被同秒失败的 GPU1/3 初始化，不能把共享 config.yaml 当作本组独占配置。
+- run_id: `cmresidual_dexplore_gpu1_s102`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：GPU PhysX illegal memory access；未确认根因，不视为显存不足或物理 GPU 故障。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+- run_id: `cmresidual_dexplore_gpu1_s102_cpu_sim`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：CPU 仿真 reset_idx 使用了 GPU 索引。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+- run_id: `cmresidual_dexplore_gpu1_s102_cpu_sim_retry2`；run_status: `COMPLETED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `1000`；last_step: `2048000`；best_metric: `2.997872829437256`；退出依据：达到 max_epochs=1000；原启动器未记录操作系统退出码，按完成标记、checkpoint 内容及进程退出确认终态。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_cpu_sim_retry2/train.log)。
+  最近 checkpoint：[third_party/IsaacGymEnvs/runs/CmResidual_15-01-48-27/nn/last_CmResidual_ep_1000_rew__-838.6_.pth](../../../../../third_party/IsaacGymEnvs/runs/CmResidual_15-01-48-27/nn/last_CmResidual_ep_1000_rew__-838.6_.pth)；最终训练回报：`-838.6`。
+  GPU1/3 的 CmResidual.pth、config.yaml、TensorBoard 路径相同；最佳文件归属不能仅由文件名确定。保留按本组 train.log 唯一文件名定位的终态 checkpoint。
+- run_id: `cmresidual_dexplore_gpu1_s102_retry64`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：GPU PhysX illegal memory access；未确认根因，不视为显存不足或物理 GPU 故障。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu1_s102_retry64/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+- run_id: `cmresidual_dexplore_gpu3_s103`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：GPU PhysX illegal memory access；未确认根因，不视为显存不足或物理 GPU 故障。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+- run_id: `cmresidual_dexplore_gpu3_s103_cpu_sim`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：CPU 仿真 reset_idx 使用了 GPU 索引。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+- run_id: `cmresidual_dexplore_gpu3_s103_cpu_sim_retry2`；run_status: `COMPLETED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `1000`；last_step: `2048000`；best_metric: `5.319734573364258`；退出依据：达到 max_epochs=1000；原启动器未记录操作系统退出码，按完成标记、checkpoint 内容及进程退出确认终态。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_cpu_sim_retry2/train.log)。
+  最近 checkpoint：[third_party/IsaacGymEnvs/runs/CmResidual_15-01-48-27/nn/last_CmResidual_ep_1000_rew__-70.02_.pth](../../../../../third_party/IsaacGymEnvs/runs/CmResidual_15-01-48-27/nn/last_CmResidual_ep_1000_rew__-70.02_.pth)；最终训练回报：`-70.02`。
+  GPU1/3 的 CmResidual.pth、config.yaml、TensorBoard 路径相同；最佳文件归属不能仅由文件名确定。保留按本组 train.log 唯一文件名定位的终态 checkpoint。
+- run_id: `cmresidual_dexplore_gpu3_s103_retry64`；run_status: `FAILED`；conclusion: `INVALID_IMPLEMENTATION`。
+  last_epoch: `0`；last_step: `0`；best_metric: `N/A`；退出依据：GPU PhysX illegal memory access；未确认根因，不视为显存不足或物理 GPU 故障。
+  输出：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64)；manifest：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64/run_manifest.json)；日志：[outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64/train.log](../../../../../outputs/CmResidual/cmresidual_dexplore_gpu3_s103_retry64/train.log)。
+  最佳/最近 checkpoint：未生成；last_epoch/last_step=0 表示没有完成的训练迭代记录。
+
+**保护边界与回滚**
+
+- 代码、训练配置、checkpoint、原始日志、外部 DExplore、用户四处既有 dirty diff 均未修改；未创建或恢复运行。回滚本次记录可恢复每组 `run_manifest.before_terminal_audit.json` 并删除本条活动，不删除训练产物。
+
+**规范反馈**
+
+- 已有版本指针和 Task README 仍为 `V1.0.1`，与历史运行 `V1.1.1` 不一致；V1.1 plan 还配对 V1.0 指导。当前根指针属于既有 dirty diff，本次只登记冲突，没有静默改写用户指导或治理文件。运行终态查询不因该冲突被阻塞；后续实现应同步修正受影响导航和计划配对。无需新增规则，现有隔离/manifest 规则执行不到位。
 
 ## 2026-09-15 01:49:51 +0800 — 三卡训练资源调整后保持运行
 

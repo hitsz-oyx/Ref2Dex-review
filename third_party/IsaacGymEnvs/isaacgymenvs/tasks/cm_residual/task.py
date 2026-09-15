@@ -13,6 +13,7 @@ from .contract import (QUERY_LINKS, coupled_finger_bounds, inverse_pose, matrix_
                        native_sim_indices, native_to_sim, pose_matrix, sim_to_native)
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .cm_adapter import CmOnlineTarget
+from .dexplore_observation import build_two_offset_observation
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -238,10 +239,13 @@ class CmResidual(VecTask):
             tips = tips.clone()
             tips[self.fresh_reset] = self.initial_links[tip_queries, :3, 3]
         tip_offsets = (tips - obj[:, None, :3, 3]).reshape(self.num_envs, 15)
-        legacy_obs = torch.cat([native, velocity, q, wrist_delta, object_delta, tip_offsets], dim=-1)
-        # Preserve the DExplore 1442D tensor contract; unavailable reference fields are explicit zeros.
-        obs = torch.zeros((self.num_envs, OBSERVATION_DIM), device=self.device)
-        obs[:, :legacy_obs.shape[-1]] = legacy_obs
+        key_indices = torch.as_tensor([0, 6, 7, 8, 9, 10, 11, 15, 16, 17, 12, 13, 14, 1, 3, 5], device=self.device)
+        key_poses = links[:, key_indices]
+        key_vel = self.rigid_body_state[:, self.query_indices, 7:10][:, key_indices]
+        key_ang_vel = self.rigid_body_state[:, self.query_indices, 10:13][:, key_indices]
+        contact_indices = torch.as_tensor([7, 10, 16, 13, 4], device=self.device)
+        contact = self.rigid_body_state[:, self.query_indices, 7:10][:, contact_indices]
+        obs = build_two_offset_observation(native, velocity, key_poses, key_vel, key_ang_vel, obj, contact)
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
