@@ -3036,3 +3036,216 @@ actor creation/reset rigid-body 不同步。提交前同步 README 和 experimen
 - 不暂存 `src/task/ObjectInteractionCm/docs/logs/activity_log.md`；不提交 outputs、checkpoint、processed data 或 cache。
 - airplane 默认配置与旧 V1.8/V1.9 provenance 保持兼容；DexYCB 行为均由独立 task/config opt-in。
 - 回滚入口为本次单一 Git commit；运行证据保留在忽略的 outputs 中，不随源码回滚删除。
+
+## 2026-09-16 20:50:28 +0800 — V1.10.1 control A-E10 启动
+
+- activity_id: `ACT-20260916-205028-CMRESIDUAL-V1101-CONTROL-E10`
+- timestamp: `2026-09-16 20:50:28 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户已确认 [V1.10 最终计划](../plan/V1.10.md) 并要求继续原实验；A/B T10 工程门禁均通过。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`
+- worktree_dirty: `true`（仅有未触碰的 ObjectInteractionCm 用户日志改动及本条运行记录）
+- scope: GPU5、64 env、seed42、367 steps、deterministic mean-action；显式加载 control epoch-10 checkpoint，与 B0 比较 preservation gate。
+- run_id: `cmresidual_v110_control_e10_20260916_205028`
+- run_status: `STARTED`
+- output: [outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028) — `PENDING`
+- manifest: [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/run_manifest.json) — `PENDING`
+- config: [config.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/config.json) — `PENDING`
+- metrics: [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/metrics.jsonl) — `PENDING`
+- log: [eval.log](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/eval.log) — `PENDING`
+- checkpoint: [outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)
+- checkpoint_sha256: `fdcf7e00f3d8f250686c4fb30d3527577db5eb9fbfe2e6db39be29f8b6009278`
+- baseline: [outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json)
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/eval_residual_stability.py --variant control --modification-version V1.10.1 --gpu 5 --seed 42 --num-envs 64 --steps 367 --checkpoint outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth --baseline-manifest outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json --run-id cmresidual_v110_control_e10_20260916_205028 --activity-id ACT-20260916-205028-CMRESIDUAL-V1101-CONTROL-E10`
+
+**原因**
+
+按 V1.10 最终计划在两侧 T10 门禁通过后开始固定顺序的 A-E10/B-E10；本次仅运行 A-E10，不改变协议或科研变量。
+
+**验证**
+
+- 启动前 GPU5=`6 MiB / 0%`，无 CmResidual 进程；A/B checkpoint epoch/frame=`10/20480`、finite、reload diff=`0`、sigma 冻结。
+- 两侧 checkpoint SHA256 与各自 `checkpoint_validation.json` 一致；B0 manifest 为 `COMPLETED` 且 lift/contact 均为正。
+
+**保护与回滚**
+
+- 不修改代码、配置、数据、旧 output 或无关 ObjectInteractionCm 日志；新运行目录独立保存，停止时保留证据。
+
+## 2026-09-16 21:33:56 +0800 — V1.10.1 control A-E10 完成
+
+- activity_id: `ACT-20260916-205028-CMRESIDUAL-V1101-CONTROL-E10`
+- timestamp: `2026-09-16 21:33:56 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: [V1.10 最终计划](../plan/V1.10.md) 固定的 A-E10 阶段。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`
+- worktree_dirty: `true`（本次 activity 与无关 ObjectInteractionCm 用户改动）
+- run_id: `cmresidual_v110_control_e10_20260916_205028`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 21:33:45 +0800`
+- last_step / last_epoch: `367 / 10`
+- best_metric: `mean_env_max_lift_m=0.0849745274`
+- checkpoint: [outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)
+- checkpoint_sha256: `fdcf7e00f3d8f250686c4fb30d3527577db5eb9fbfe2e6db39be29f8b6009278`
+- exit_reason: 达到批准的 367 步预算并正常退出。
+- conclusion: `SUPPORTED`（A preservation 工程 gate）；Cm utility `INCONCLUSIVE`
+
+**原因**
+
+按 V1.10 最终计划对 control epoch-10 checkpoint 执行固定 deterministic E10，并核对相对 fresh B0 的 preservation gate。
+
+**验证**
+
+- [outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/eval.log) 均存在；metrics 共 367 行。
+- `mean_env_max_lift_m=0.0849745274 m`，mean contact occupancy=`0.3152503455`；相对 [B0 manifest](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json) 的 ratio=`1.0009423090 / 1.3958301886`，两项均高于 `0.8`。
+- `max_success_fraction=0.1875`，final success rate=`1.0`；completed episode count=`357`，mean completed episode return=`6.9445565779`。这些单侧指标不证明 Cm utility。
+- manifest 为 `COMPLETED`、`last_step=367`、`last_epoch=10`、`gate_passed=true`；GPU5 退出后空闲。
+
+**保护与回滚**
+
+- 未修改训练或评估协议、checkpoint、baseline、旧 output；运行证据保留在独立 ignored 目录。
+
+## 2026-09-16 21:34:22 +0800 — V1.10.1 critic-Cm B-E10 启动
+
+- activity_id: `ACT-20260916-213422-CMRESIDUAL-V1101-CRITIC-CM-E10`
+- timestamp: `2026-09-16 21:34:22 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: [V1.10 最终计划](../plan/V1.10.md) 已获确认，A/B T10 与 A-E10 工程门禁均通过。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`
+- worktree_dirty: `true`（已记录 A 阶段活动及无关 ObjectInteractionCm 用户日志改动）
+- scope: GPU5、64 env、seed42、367 steps、deterministic mean-action；显式加载 critic-Cm epoch-10 checkpoint，与同一 B0 比较 preservation gate。
+- run_id: `cmresidual_v110_critic_cm_e10_20260916_213422`
+- run_status: `STARTED`
+- output: [outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422) — `PENDING`
+- manifest: [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/run_manifest.json) — `PENDING`
+- config: [config.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/config.json) — `PENDING`
+- metrics: [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/metrics.jsonl) — `PENDING`
+- log: [eval.log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/eval.log) — `PENDING`
+- checkpoint: [outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)
+- checkpoint_sha256: `1a12b955cd0cefcecfde3560df235beb0408ec7340784fa18250359a54776cb1`
+- baseline: [outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json)
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/eval_residual_stability.py --variant critic_cm --modification-version V1.10.1 --gpu 5 --seed 42 --num-envs 64 --steps 367 --checkpoint outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth --baseline-manifest outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json --run-id cmresidual_v110_critic_cm_e10_20260916_213422 --activity-id ACT-20260916-213422-CMRESIDUAL-V1101-CRITIC-CM-E10`
+
+**原因**
+
+A-E10 双 preservation gate 已通过，按最终计划固定顺序进入 B-E10；不改变 seed、GPU、输入或仿真协议。
+
+**验证**
+
+- A-E10 `COMPLETED`，367 行 metrics，lift/contact ratio=`1.0009423090 / 1.3958301886`；GPU5 已空闲。
+- B checkpoint epoch/frame=`10/20480`、finite、reload diff=`0`、sigma 冻结且 SHA256 与记录一致。
+
+**保护与回滚**
+
+- 不改代码、配置、数据、A/B0 output 或无关 ObjectInteractionCm 日志；新运行目录独立保存。
+
+## 2026-09-16 22:12:08 +0800 — V1.10.1 critic-Cm B-E10 完成
+
+- activity_id: `ACT-20260916-213422-CMRESIDUAL-V1101-CRITIC-CM-E10`
+- timestamp: `2026-09-16 22:12:08 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: [V1.10 最终计划](../plan/V1.10.md) 固定的 B-E10 阶段，A-E10 双 preservation gate 已通过。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`
+- worktree_dirty: `true`（本次 activity 与无关 ObjectInteractionCm 用户日志差异）
+- run_id: `cmresidual_v110_critic_cm_e10_20260916_213422`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 22:11:51 +0800`
+- last_step / last_epoch: `367 / 10`
+- best_metric: `mean_env_max_lift_m=0.0850966126`
+- checkpoint: [outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)
+- checkpoint_sha256: `1a12b955cd0cefcecfde3560df235beb0408ec7340784fa18250359a54776cb1`
+- exit_reason: 达到批准的 367 步预算并正常退出。
+- conclusion: `SUPPORTED`（B preservation 工程 gate）；Cm utility `INCONCLUSIVE`
+
+**原因**
+
+按 V1.10 最终计划对 critic-Cm epoch-10 checkpoint 执行固定 deterministic E10，并与同一 B0 及已完成 A-E10 比较。
+
+**验证**
+
+- [outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/eval.log) 均存在；metrics 共 367 行。
+- B `mean_env_max_lift_m=0.0850966126 m`、mean contact occupancy=`0.1974199628`；相对 [B0 manifest](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json) 的 ratio=`1.0023803901 / 0.8741140109`，两项均高于 `0.8`。
+- B `max_success_fraction=0.34375`，final success rate=`1.0`，completed episode count=`294`，mean completed episode return=`6.9683459470`。
+- 与 [A-E10 manifest](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/run_manifest.json) 的 `protocol` 完全相同；B−A 的 lift=`+0.0001220852 m`、contact=`−0.1178303827`，相对差=`+0.1437% / −37.3768%`。两侧 367 行 observation/target finite 均为 true。
+- manifest 为 `COMPLETED`、`last_step=367`、`last_epoch=10`、`gate_passed=true`；GPU5 退出后空闲。
+
+**保护与回滚**
+
+- V1.10 固定顺序 B0→A/B T10→A/B E10 已完成；未启动 T20、多 seed 或额外调参，未改代码、配置、数据、旧 output 或无关 ObjectInteractionCm 日志。
+- 新运行目录及其 manifest 保留作审计；本次只新增 CmResidual activity/experiment/README 记录，可从 Git diff 回退文档记录而不删除实验产物。
+
+## 2026-09-16 22:13:46 +0800 — V1.10.1 E10 配对结果归档
+
+- activity_id: `ACT-20260916-221346-CMRESIDUAL-V1101-E10-ARCHIVE`
+- timestamp: `2026-09-16 22:13:46 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`documentation`
+- task_mode: `run-only/operation`（运行终态文档归档）
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户已确认 [V1.10 最终计划](../plan/V1.10.md) 并要求继续原实验；本次归档其 A/B E10 终态。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`
+- worktree_dirty: `true`（本次三份 CmResidual 文档及未触碰的 ObjectInteractionCm 用户日志改动）
+- scope: 仅归档 V1.10 A/B E10 运行、工程 preservation 与单 seed 结论边界；不修改科研协议或实验产物。
+- run_id: `cmresidual_v110_control_e10_20260916_205028`、`cmresidual_v110_critic_cm_e10_20260916_213422`
+- run_status: A/B 均为 `COMPLETED`
+- last_step / last_epoch: A/B 均为 `367 / 10`
+- best_metric: A/B `mean_env_max_lift_m=0.0849745274 / 0.0850966126 m`
+- exit_reason: A/B 均达到批准的 367 步预算并正常退出。
+- conclusion: `SUPPORTED`（A/B preservation 工程 gate）；Cm utility `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — A/B E10 启动、终态、命令、版本、checkpoint 与产物入口。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 配对表、训练动态诊断、假设、证据与结论边界。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态更新为 E10 已完成。
+
+**原因**
+
+E10 两侧均完成；需要使 Task 入口与实验记录反映真实终态，避免仍显示“E10 未运行”。
+
+**验证**
+
+- A：[outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/eval.log)、[epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)。
+- B：[outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/run_manifest.json)、[config.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/eval.log)、[epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)。
+- A/B manifest 均为 `COMPLETED`、367 steps、epoch 10，`protocol` 与 B0 完全一致，两侧 367 行 observation/target finite 均为 true；GPU5 已空闲。
+- A/B lift/contact ratio=`1.000942/1.395830` 与 `1.002380/0.874114`，双 80% gate 均通过；B−A 的 contact=`−0.117830`、lift=`+0.000122 m`。
+- 交接前运行 `git diff --check` 与 Task-local `audit_diff.py --worktree --scope-prefix src/task/CmResidual --check-links`。
+
+**保护与回滚**
+
+- 未触碰 `src/task/ObjectInteractionCm/docs/logs/activity_log.md`、指导/plan、代码、配置、数据、cache、旧运行或 checkpoint；没有启动 T20、多 seed 或 DexYCB 新实验。
+- 回滚入口：仅还原本次三份 CmResidual 文档差异；保留两次 ignored E10 运行目录作为可复核证据。

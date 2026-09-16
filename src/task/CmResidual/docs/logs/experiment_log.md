@@ -3,6 +3,73 @@
 - scope: `task:CmResidual`
 - related: [任务入口](../README.md)、[V1.5 最终计划](../plan/V1.5.md)、[V1.4 最终计划](../plan/V1.4.md)、[V1.3 最终计划](../plan/V1.3.md)、[活动记录](activity_log.md)
 
+## 2026-09-16 — V1.10.1 deterministic A-E10 / B-E10 配对评估
+
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- approval: `user-approved`（[V1.10 最终计划](../plan/V1.10.md)）
+- terminal_activity_id: `ACT-20260916-205028-CMRESIDUAL-V1101-CONTROL-E10`、`ACT-20260916-213422-CMRESIDUAL-V1101-CRITIC-CM-E10`
+- run_id: `cmresidual_v110_control_e10_20260916_205028`、`cmresidual_v110_critic_cm_e10_20260916_213422`
+- run_status: A/B 均为 `COMPLETED`（`367/367` steps）
+- base_commit: `759e732d9c359c883c49c2b912009e357ed74bc0`（仅有运行记录及无关 ObjectInteractionCm 工作树改动）
+- initial_checkpoint: A/B 分别为各自 epoch-10 checkpoint；SHA256 见下方证据，未交叉加载
+- last_step / last_epoch: A/B 均为 `367 / 10`
+- best_metric: A/B 的 `mean_env_max_lift_m` 分别为 `0.0849745274 / 0.0850966126 m`
+- conclusion: `SUPPORTED`（两侧 preservation 工程 gate）；critic-only Cm utility `INCONCLUSIVE`
+
+**假设与冻结条件**
+
+比较仅问：在 V1.10 的同一 2005-D environment observation、1442-D actor prefix、seed42、GPU5、64 env、
+367 steps、terminate-on-success 和 deterministic mean-action 协议下，B critic 额外读取冻结的 OI-Cm 563-D
+上下文后，相对 A 是否出现可复核的单 seed 行为差异。A/B 与 fresh [B0 manifest](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json)
+的 `protocol` 完全相同；各自读取对应 T10 epoch-10 checkpoint，输入 SHA、reward、residual scale 与 B0 相同。
+两侧评估均为 367 行，observation/target finite 全为 true。训练、评估均不改变模型、数据或环境合同。
+
+**deterministic 评估结果**
+
+| 指标 | B0（zero residual） | A control | B critic-Cm | B−A | B 相对 A |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| mean env max lift（m） | 0.084895 | 0.084975 | 0.085097 | +0.000122 | +0.14% |
+| mean contact occupancy | 0.225852 | 0.315250 | 0.197420 | −0.117830 | −37.38% |
+| max success fraction | 0.31250 | 0.18750 | 0.34375 | +0.15625 | +83.33% |
+| final success rate | 1.00000 | 1.00000 | 1.00000 | 0 | 0% |
+| completed episode count | 328 | 357 | 294 | −63 | −17.65% |
+| mean completed episode return | 6.634963 | 6.944557 | 6.968346 | +0.023789 | +0.34% |
+
+- A 相对 B0 的 lift/contact preservation ratio=`1.000942 / 1.395830`；B=`1.002380 / 0.874114`。
+  两侧均超过预注册的 `0.8 / 0.8` 门槛，因此只支持“10-epoch 训练后未明显破坏该 base 行为”的工程判断。
+- B 的 contact occupancy 明显低于 A，而 lift 几乎相同；max success fraction 较高，但 completed episode
+  count 更低、tip distance mean 更高（A/B=`0.154581 / 0.220549 m`）。方向混合，不能据此宣称 B 改善抓取。
+- completed episode count 两侧均大于零，因此 mean completed episode return 可解释；其 B−A 差值仅
+  `+0.023789`。final success rate 是最后一步的运行指标，两侧同为 `1.0`，不代表全轨迹成功率相同。
+
+**T10 学习动态诊断**
+
+以下为同一训练 `metrics.jsonl` 的 epoch 1→10 值；只能描述优化过程，不直接验证 advantage 更稳定或 Cm utility。
+
+| 指标 | A control | B critic-Cm |
+| --- | ---: | ---: |
+| actor loss | −0.013783→−0.014009 | −0.014678→−0.017789 |
+| critic loss | 1.173944→0.065594 | 1.313784→0.067126 |
+| entropy | −15.905638→−15.905638 | −15.905638→−15.905638 |
+| KL | 0.003009→0.008693 | 0.002035→0.010509 |
+| learning rate | 0.000675→0.001013 | 0.000675→0.001519 |
+| residual RMS | 0.103212→0.103786 | 0.103212→0.102356 |
+| saturation ratio | 0→0.002604 | 0→0.001736 |
+| success fraction | 0.187500→0.015625 | 0.046875→0 |
+
+**结论边界**
+
+两侧运行与 preservation gate 为工程 `SUPPORTED`。A/B 只做了一个 seed、一个 airplane 场景、固定顺序的
+独立 GPU PhysX rollout；尽管启动静态 RNG/action parity 合同通过，轨迹并非逐步 bitwise 配对。
+指标方向混合，未估计跨 seed 方差或统计显著性，故 critic-only Cm utility 维持 `INCONCLUSIVE`。
+本轮按最终计划停在 E10，不执行 T20、多 seed 或额外调参；这些结果也不评价 DexYCB 泛化。
+
+**证据**
+
+- A：[运行目录](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028)、[manifest](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/metrics.jsonl)、[eval log](../../../../../outputs/CmResidual/cmresidual_v110_control_e10_20260916_205028/eval.log)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)（SHA256 `fdcf7e00f3d8f250686c4fb30d3527577db5eb9fbfe2e6db39be29f8b6009278`）
+- B：[运行目录](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422)、[manifest](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/metrics.jsonl)、[eval log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_e10_20260916_213422/eval.log)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)（SHA256 `1a12b955cd0cefcecfde3560df235beb0408ec7340784fa18250359a54776cb1`）
+
 ## 2026-09-16 — V1.10.1 paired A-control / B-critic-Cm T10
 
 - modification_version: `V1.10.1`
@@ -26,8 +93,8 @@ deterministic action 均 finite，sigma min/max=`0.099999994` 且冻结，checkp
 
 - A epoch-10：critic loss=`0.0655944`、KL=`0.00869283`、success=`0.015625`、residual RMS=`0.103786`。
 - B epoch-10：critic loss=`0.0671258`、KL=`0.0105094`、success=`0`、residual RMS=`0.102356`。
-- 这些训练诊断量不等于 deterministic preservation 或 Cm 效果证据；A-E10/B-E10 尚未运行，不能比较最终
-  抓取行为，也不能从单 seed 推断统计显著性。
+- 这些训练诊断量不等于 deterministic preservation 或 Cm 效果证据；截至本 T10 终态记录时 A-E10/B-E10
+  尚未运行，不能据此比较最终抓取行为，也不能从单 seed 推断统计显著性。后续 E10 结果见上方记录。
 
 **证据**
 

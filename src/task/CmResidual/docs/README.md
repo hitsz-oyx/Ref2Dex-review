@@ -14,13 +14,16 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   因而不能当作抓取。该单轨迹结果对“此序列成功抓取”为 `REFUTED`，对整个 DexYCB 泛化仍为 `INCONCLUSIVE`
 - 资源状态：V1.10.1 fresh B0-Cm-path 已先在 GPU5 完成并通过；V1.11 未停止、重启或修改该 run，
   V1.11.2 仅在其结束后复用空闲 GPU5
-- V1.10 状态：A-control 与 B-critic-Cm 均已从零完成 10 epochs / 20480 frames，checkpoint finite、
-  frozen sigma、reload diff、matched actor initialization 和输入 provenance 工程 gate 全部通过；A-E10/B-E10
-  尚未运行，因此 Cm utility 仍为 `INCONCLUSIVE`
+- V1.10 状态：A-control 与 B-critic-Cm 均已从零完成 10 epochs / 20480 frames；各自 checkpoint 的 finite、
+  frozen sigma、reload diff、matched actor initialization 和输入 provenance 工程 gate 全部通过。随后按最终计划
+  完成 deterministic A-E10/B-E10（GPU5、64 env、seed42、367 steps）；两侧相对 B0 的 lift/contact ratio 分别为
+  `1.000942/1.395830` 与 `1.002380/0.874114`，均通过双 80% preservation gate。B 相对 A 的 contact occupancy
+  低 `37.38%`，lift 高 `0.14%`，其他行为指标方向混合；单 seed、单场景 critic-only Cm utility 仍为
+  `INCONCLUSIVE`。详见 [V1.10 E10 实验记录](logs/experiment_log.md)。
 - 计划状态：`final`（[V1.11 计划](plan/V1.11.md)；历史计划保留）
 - 执行审批：用户批准隔离的 DexYCB 固定序列/物体、retarget、独立 config/runner 和单次 GPU6 gate；
-  后续又批准 V1.11 reset 修复/GPU5 复跑及 V1.10 B0/A-T10/B-T10；V1.10 E10、多 DexYCB 轨迹与任何
-  DexYCB 训练均未执行
+  后续又批准 V1.11 reset 修复/GPU5 复跑及 V1.10 B0/A-T10/B-T10/A-E10/B-E10。V1.10 T20、多 seed、
+  多 DexYCB 轨迹与任何 DexYCB 训练均未执行
 - V1.9 matched ablation：A/B 都构造相同 2005-D observation 并加载同一冻结 OI-Cm；actor 均只读取
   1442-D base prefix，A critic 读取 1442-D，B critic 读取完整 2005-D。合同测试支持 actor 初始化完全一致
   且 Cm 后缀不影响 actor；Gate II 进一步确认两侧均能完成 2 epochs 和 checkpoint 重载，但 critic 首层宽度
