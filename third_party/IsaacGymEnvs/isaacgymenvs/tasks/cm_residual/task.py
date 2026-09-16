@@ -61,9 +61,12 @@ class CmResidual(VecTask):
             self.reference.training_eligible,
             reference_cfg.get("allowIneligibleFor", ""))
         self.base_observation_dim = OBSERVATION_DIM
+        self.use_oi_cm_context = bool(cfg["basePolicy"].get("useOiCmContext", True))
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
-        self.cm_context_dim = self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
+        self.cm_context_dim = (
+            self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
+            if self.use_oi_cm_context else 0)
         residual_cfg = cfg["residual"]
         self.residual_translation_scale = float(residual_cfg["translationScaleM"])
         self.residual_rotation_scale = float(residual_cfg["rotationScaleRad"])
@@ -119,20 +122,25 @@ class CmResidual(VecTask):
         hand_urdf = Path(asset["assetRoot"]) / asset["assetFileName"]
         object_name = asset.get("objectAssetFileName", "airplane.urdf")
         object_urdf = Path(asset["objectAssetRoot"]) / object_name
-        self.cm_geometry = SurfaceGeometry(
-            hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
-            object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
-            hand_count=int(cfg["basePolicy"].get("cmHandPoints", 1538)), device=self.device)
         self.cm_context = torch.zeros((self.num_envs, self.cm_context_dim), device=self.device)
         self.current_contact_forces = torch.zeros((self.num_envs, 5, 3), device=self.device)
-        oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
-        self.oi_cm_checkpoint = str(oi_cm_path)
-        self.oi_cm_checkpoint_sha256 = sha256(oi_cm_path) if oi_cm_path.is_file() else ""
-        self.oi_cm = self._load_oi_cm(
-            oi_cm_path, cfg["basePolicy"].get("oiCmCheckpointSha256"),
-            feature_dim=self.cm_dim, num_slots=self.cm_slots,
-            object_points=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
-            hand_points=int(cfg["basePolicy"].get("cmHandPoints", 1538)))
+        self.cm_geometry = None
+        self.oi_cm = None
+        self.oi_cm_checkpoint = None
+        self.oi_cm_checkpoint_sha256 = None
+        if self.use_oi_cm_context:
+            self.cm_geometry = SurfaceGeometry(
+                hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
+                object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+                hand_count=int(cfg["basePolicy"].get("cmHandPoints", 1538)), device=self.device)
+            oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
+            self.oi_cm_checkpoint = str(oi_cm_path)
+            self.oi_cm_checkpoint_sha256 = sha256(oi_cm_path) if oi_cm_path.is_file() else ""
+            self.oi_cm = self._load_oi_cm(
+                oi_cm_path, cfg["basePolicy"].get("oiCmCheckpointSha256"),
+                feature_dim=self.cm_dim, num_slots=self.cm_slots,
+                object_points=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+                hand_points=int(cfg["basePolicy"].get("cmHandPoints", 1538)))
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -381,20 +389,23 @@ class CmResidual(VecTask):
         table_state = self.actor_root_state[self.table_indices.long()]
         self.reset_table_position_error_m = (
             table_state[:, :3] - self.initial_table[:3]).norm(dim=-1)
-        obj_points, obj_normals = self.cm_geometry.object(obj)
-        hand_points, hand_normals = self.cm_geometry.hand(links)
-        hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
-        with torch.no_grad():
-            cm_out = self.oi_cm({"obj_points": obj_points.cpu(), "obj_normals": obj_normals.cpu(),
-                                 "obj_valid_mask": torch.ones(obj_points.shape[:2], dtype=torch.bool),
-                                 "hand_points": hand_points.cpu(), "hand_normals": hand_normals.cpu(),
-                                 "hand_flow": hand_flow.cpu(),
-                                 "hand_valid_mask": torch.ones(hand_points.shape[:2], dtype=torch.bool)})
-        tokens = cm_out["cm_tokens"].to(self.device)
-        anchors = cm_out["cm_anchor_pos"].to(self.device)
-        effect = cm_out["pred_obj_flow"].mean(dim=1).to(self.device)
-        self.cm_context.copy_(torch.cat((tokens.flatten(1), anchors.flatten(1), effect), dim=-1))
-        obs = torch.cat((base_obs, self.cm_context), dim=-1)
+        if self.use_oi_cm_context:
+            obj_points, obj_normals = self.cm_geometry.object(obj)
+            hand_points, hand_normals = self.cm_geometry.hand(links)
+            hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
+            with torch.no_grad():
+                cm_out = self.oi_cm({"obj_points": obj_points.cpu(), "obj_normals": obj_normals.cpu(),
+                                     "obj_valid_mask": torch.ones(obj_points.shape[:2], dtype=torch.bool),
+                                     "hand_points": hand_points.cpu(), "hand_normals": hand_normals.cpu(),
+                                     "hand_flow": hand_flow.cpu(),
+                                     "hand_valid_mask": torch.ones(hand_points.shape[:2], dtype=torch.bool)})
+            tokens = cm_out["cm_tokens"].to(self.device)
+            anchors = cm_out["cm_anchor_pos"].to(self.device)
+            effect = cm_out["pred_obj_flow"].mean(dim=1).to(self.device)
+            self.cm_context.copy_(torch.cat((tokens.flatten(1), anchors.flatten(1), effect), dim=-1))
+            obs = torch.cat((base_obs, self.cm_context), dim=-1)
+        else:
+            obs = base_obs
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))

@@ -6,10 +6,14 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.7.1`
-- 阶段：V1.7 正式 PPO 训练在 `165/1000` epochs 外部中断，终态 `FAILED` / `INVALID_IMPLEMENTATION`
-- 计划状态：`final`（[V1.7 计划](plan/V1.7.md)；历史 V1.6/V1.5 计划保留）
-- 执行审批：用户批准记录 V1.7 部分结果并终态化；未批准隐式恢复、复跑或改变训练变量
+- `modification_version`: `V1.8`
+- 阶段：V1.8 B0→T10→E10→T20→E20 短程 stability gate 已完整通过
+- 计划状态：`final`（[V1.8 计划](plan/V1.8.md)；历史计划保留）
+- 执行审批：用户批准按 V1.8 最小因果方案连续执行至 E20；未批准追加训练、重复 seed 或改变研究变量
+- V1.8 safe 变体：保留 18D action，actor/critic 均关闭 OI-Cm、使用 1442-D base observation，
+  residual mean 精确零初始化，state-independent `sigma=0.1` 且在 stability gate 中冻结
+- 默认兼容路径：canonical task config 继续启用 OI-Cm 与 2005-D observation；旧训练配置未显式
+  `learn_sigma=false` 时仍保持 sigma 可学习，不改变 V1.7 checkpoint 解释
 - 当前实现：32-D 冻结 OI-Cm、2005-D observation、真实输入校验、net contact force，以及
   `0.015 m / 0.20 rad / 0.08 rad` 有界 residual 保持不变；pilot 使用 canonical GPU PhysX subscene 配置
 - 当前 gate：V1.4 zero-residual、V1.5 fixed nonzero residual 和 V1.5.4 PPO wiring 均为工程 `SUPPORTED`
@@ -19,6 +23,11 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   不能归因于 residual 方法或 OI-Cm
 - 当前结论上限：zero-residual 的单场景抓取/抬升行为为工程 `SUPPORTED`；V1.7 未完成训练和独立评估，
   residual 增益、收敛、Cm 因果与普遍抓取效果仍为 `INCONCLUSIVE`
+- V1.8 修订 B0 在 GPU5/64 env/seed42/367 steps 下完成，zero residual target parity 为工程 `SUPPORTED`；
+  `mean_env_max_lift_m=0.085096 m`、mean contact occupancy `0.193631`，对应 80% 阈值为 `0.068077 m`
+  和 `0.154905`。E10 lift/contact ratio=`1.003871/1.164776`，E20=`0.973333/1.683597`，均通过双 gate；
+  因此单 seed、单场景、20-epoch residual preservation stability 为工程 `SUPPORTED`，抓取改善、统计显著性、
+  泛化和 Cm 因果仍为 `INCONCLUSIVE`
 - 已确认 V1.3 主因是把原 DExplore 的空切片 `body_pos[..., 6:]` 误写成 body 维 remainder，制造了最高
   `188.4956 m/s` 的 reference 伪速度；同时 V1.4 对齐了 ReLU/RMS、scene reset 与 simulator 参数
 - corrected reference 已切换到 `reference_tracking_v2/s1_airplane_lift`；source raw contact 与固定 URDF 表面距离门
@@ -39,6 +48,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.6 最终执行计划](plan/V1.6.md)
 - [V1.7 用户指导](指导/V1.7.md)
 - [V1.7 最终执行计划](plan/V1.7.md)
+- [V1.8 用户指导](指导/V1.8.md)
+- [V1.8 最终执行计划](plan/V1.8.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

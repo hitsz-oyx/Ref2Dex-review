@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib.util
 import json
+import math
 import subprocess
 import sys
 import types
@@ -288,6 +289,7 @@ def test_v14_configs_lock_real_inputs_and_dimensions():
         config = yaml.safe_load((root / name).read_text(encoding="utf-8"))
         assert config["env"]["numObservations"] == 2005
         assert config["env"]["asset"]["objectAssetFileName"] == "airplane.urdf"
+        assert config["basePolicy"]["useOiCmContext"] is True
         assert config["basePolicy"]["cmFeatureDim"] == 32
         assert config["basePolicy"]["cmNumSlots"] == 16
         assert config["basePolicy"]["oiCmCheckpointSha256"] == "3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283"
@@ -332,6 +334,108 @@ def test_v15_pilot_config_is_a_two_update_wiring_smoke():
         "save_best_after": 0,
         "save_frequency": 1,
     }
+
+
+def test_v18_safe_policy_starts_at_zero_with_fixed_small_sigma():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidual",
+            "train=CmResidualSafePPO",
+            "task.basePolicy.useOiCmContext=false",
+        ])
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    continuous = params["network"]["space"]["continuous"]
+    assert continuous["mu_init"] == {"name": "const_initializer", "val": 0.0}
+    assert continuous["sigma_init"]["val"] == pytest.approx(math.log(0.1), abs=1e-15)
+    assert continuous["fixed_sigma"] is True
+    assert continuous["learn_sigma"] is False
+    assert cfg.task.basePolicy.useOiCmContext is False
+
+    builder = CmBuilder()
+    builder.load(params["network"])
+    model = ModelCmContinuous(builder).build({
+        "input_shape": (1442,),
+        "actions_num": 18,
+        "num_seqs": 1,
+        "value_size": 1,
+        "normalize_input": bool(params["config"]["normalize_input"]),
+        "normalize_value": bool(params["config"]["normalize_value"]),
+    })
+    network = model.a2c_network
+    assert network.mu.weight.count_nonzero().item() == 0
+    assert network.mu.bias.count_nonzero().item() == 0
+    assert network.sigma.requires_grad is False
+    torch.testing.assert_close(
+        network.sigma.exp(), torch.full((18,), 0.1), rtol=0.0, atol=1e-7)
+    with torch.no_grad():
+        result = model({"obs": torch.randn(3, 1442), "is_train": False})
+    torch.testing.assert_close(result["mus"], torch.zeros(3, 18), rtol=0.0, atol=0.0)
+
+
+def test_v18_preservation_gate_requires_both_lift_and_contact():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module("cm_residual_v18_eval_test", tools / "eval_residual_stability.py")
+    baseline = {"mean_env_max_lift_m": 0.08, "mean_contact_occupancy": 0.50}
+    passed = module.preservation_gate(
+        {"mean_env_max_lift_m": 0.064, "mean_contact_occupancy": 0.40}, baseline)
+    assert passed["passed"] is True
+    assert passed["lift_ratio"] == pytest.approx(0.8)
+    assert passed["contact_ratio"] == pytest.approx(0.8)
+    failed = module.preservation_gate(
+        {"mean_env_max_lift_m": 0.063, "mean_contact_occupancy": 0.50}, baseline)
+    assert failed["passed"] is False
+    with pytest.raises(ValueError, match="positive"):
+        module.preservation_gate(
+            {"mean_env_max_lift_m": 0.1, "mean_contact_occupancy": 0.1},
+            {"mean_env_max_lift_m": 0.0, "mean_contact_occupancy": 0.5})
+
+
+def test_v18_installs_only_required_isaacgym_numpy_alias():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module("cm_residual_v18_numpy_compat_test",
+                          tools / "eval_residual_stability.py")
+    import numpy as np
+
+    had_float = "float" in np.__dict__
+    previous = np.__dict__.get("float")
+    np.__dict__.pop("float", None)
+    try:
+        module._install_isaacgym_numpy_compat()
+        assert np.float is float
+    finally:
+        if had_float:
+            np.float = previous
+        else:
+            np.__dict__.pop("float", None)
+
+
+def test_v18_training_stage_overrides_rlgames_epoch_budget():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module("cm_residual_v18_training_budget_test",
+                          tools / "run_ppo_stability.py")
+    resolved = module._resolved_config([
+        "task=CmResidual",
+        "train=CmResidualSafePPO",
+        "task.basePolicy.useOiCmContext=false",
+        "train.params.config.max_epochs=10",
+    ])
+    assert resolved["max_iterations"] != 10
+    assert resolved["train"]["params"]["config"]["max_epochs"] == 10
 
 
 def test_real_oi_cm_checkpoint_contract_when_available():

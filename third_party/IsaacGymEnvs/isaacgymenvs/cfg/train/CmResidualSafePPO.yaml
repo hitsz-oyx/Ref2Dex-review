@@ -1,0 +1,25 @@
+defaults:
+  - CmResidualPPO
+  - _self_
+
+params:
+  network:
+    space:
+      continuous:
+        mu_activation: None
+        sigma_activation: None
+        mu_init:
+          name: const_initializer
+          val: 0.0
+        sigma_init:
+          name: const_initializer
+          val: -2.302585092994046
+        fixed_sigma: true
+        learn_sigma: false
+
+  config:
+    name: CmResidualSafe
+    full_experiment_name: CmResidualSafe
+    max_epochs: 20
+    save_best_after: 0
+    save_frequency: 10

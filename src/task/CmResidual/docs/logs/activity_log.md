@@ -1,3 +1,536 @@
+## 2026-09-16 12:08:34 +0800 — V1.8 safe residual 实现、gate 与提交交接
+
+- activity_id: `ACT-20260916-120834-CMRESIDUAL-V18-COMMIT`
+- timestamp: `2026-09-16 12:08:34 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`config`、`experiment`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准 V1.8 最小因果实现、B0/T10/E10/T20/E20 gate，并明确要求提交代码。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（提交前包含本 V1.8 全部已批准差异及无关的 ObjectInteractionCm 用户修改；后者明确排除）
+- scope: 汇总提交 CmResidual V1.8 指导/最终 plan、no-Cm safe residual 实现、固定 sigma、训练/评估工具、合同测试、版本指针和完整实验记录；不提交 outputs、checkpoint、cache 或其他 Task 差异。
+- conclusion: `SUPPORTED`（工程实现、单 seed 单场景 20-epoch preservation stability）；抓取改善、泛化、Cm 因果与统计显著性 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新到 V1.8。
+- [src/task/CmResidual/docs/指导/V1.8.md](../指导/V1.8.md) — 用户提供的 V1.8 研究指导。
+- [src/task/CmResidual/docs/plan/V1.8.md](../plan/V1.8.md) — 用户确认的最终计划和修订后 preservation metric。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态和结论边界。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 实现、失败处置、运行与终态时间线。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — B0/T10/E10/T20/E20 正式实验汇总。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — safe policy、gate、NumPy 和 epoch budget 合同测试。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — deterministic B0/E10/E20 evaluator。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — T10/T20 runner、budget 和 checkpoint 终态验证。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml) 和 [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) — 默认显式保留 OI-Cm 路径。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafePPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafePPO.yaml) — 零 mean、固定 `sigma=0.1` safe 配置。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — 显式 `learn_sigma=false` 冻结路径。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 1442-D no-Cm observation 路径。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009/run_manifest.json) — 最终 E20 `COMPLETED / SUPPORTED` 证据；outputs 不纳入提交。
+
+**原因**
+
+V1.7 的大探索噪声训练退化无法区分 residual 初始化与 Cm 影响。V1.8 用 no-Cm、18D、zero-mean、固定小 sigma 的最小变量组合完成同协议短 gate，并将实现、运行证据与科研结论边界一起纳入版本控制。
+
+**验证**
+
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`17 passed, 2 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- 修改/新增 Python 文件 `py_compile` 通过；`git diff --check` 通过。
+- B0/T10/E10/T20/E20 正式 run 均为 `COMPLETED / SUPPORTED`；checkpoint model/optimizer/action finite，sigma=`0.1`，reload diff=`0.0`。
+- E10 lift/contact ratio=`1.003871/1.164776`，E20=`0.973333/1.683597`，均通过 0.8 gate。
+- 提交前使用显式路径暂存并运行 staged activity/link audit；不把工程 gate 误报为抓取提升。
+
+**保护边界与回滚**
+
+- 未修改 action mapper、mimic/clamp、reward、residual scale、DExplore/OI-Cm 权重、reference/source 数据、共享 `src/base/` 或其他 Task；未提交 outputs/checkpoint。
+- Git 回滚入口为本次单一 V1.8 提交；实验产物保留在 ignored outputs 中，回滚代码不删除证据。
+
+## 2026-09-16 12:00:09 +0800 — V1.8 E20 deterministic preservation 评估通过
+
+- activity_id: `ACT-20260916-120009-CMRESIDUAL-V18-E20`
+- timestamp: `2026-09-16 12:00:09 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`
+- task_mode: `run-only/operation -> change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准继续；T20 已从唯一合格 T10 checkpoint 恢复并完成 epoch 20，checkpoint 合同通过，按最终计划执行 E20。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: 加载明确的 T20 epoch-20 checkpoint，在与 B0/E10 完全相同的 deterministic GPU5/64 env/seed42/367 steps/no-Cm 协议下执行最终 preservation gate；并将已暴露的 checkpoint gate 失败终态从矛盾的 `COMPLETED` 修正为 `FAILED`。
+- run_id: `cmresidual_v18_e20_20260916_120009`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 12:01:49 +0800`
+- last_step: `367 / 367`
+- last_epoch: `20`（被评估 checkpoint）
+- best_metric: preservation gate `lift_ratio=0.9733328208`、`contact_ratio=1.6835971901`
+- checkpoint: [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth)
+- exit_reason: 完成 E20 预算；lift/contact 双 80% gate 通过，V1.8 计划内短程 stability 序列完成。
+- conclusion: `SUPPORTED`（单 seed、单场景、20-epoch preservation stability）；抓取改善、泛化、Cm 因果与统计显著性 `INCONCLUSIVE`
+
+**文件**
+
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth) — 明确加载的 T20 checkpoint。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json) — 固定 B0 baseline。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态更新为 V1.8 stability gate 完整通过。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — B0/T10/E10/T20/E20 汇总、偏差处置和结论边界。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — checkpoint gate 失败时写入一致的 `FAILED` 终态。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009) — 完整 E20 目录。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009/run_manifest.json) — `COMPLETED / SUPPORTED` 最终 gate。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009/config.json](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009/config.json) — resolved config、checkpoint 和协议快照。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009/metrics.jsonl) — 367 行指标。
+- [outputs/CmResidual/cmresidual_v18_e20_20260916_120009/eval.log](../../../../../outputs/CmResidual/cmresidual_v18_e20_20260916_120009/eval.log) — 评估日志。
+
+**原因**
+
+E20 是 V1.8 短程 stability 的最终 gate；训练统计不用于替代该 deterministic 同协议比较。
+
+**验证**
+
+- T20 `run_status=COMPLETED`，初始/最终 epoch=`10/20`，本 stage 10 行 metrics；checkpoint reload diff `0.0`，sigma 保持 `0.1`。
+- E20 与 B0 protocol JSON 完全一致，367 行 observation/target finite。
+- `mean_env_max_lift_m=0.082827`、mean contact occupancy `0.325996`；相对 B0 ratio=`0.973333 / 1.683597`，双 gate 通过。
+- batch/time mean lift `-0.301940 m` 仅作诊断；没有追加 T30、重复 seed 或独立场景测试。
+- runner 终态分支经 `py_compile` 与 Task tests 覆盖；gate 通过仍为 `COMPLETED`，失败路径现在直接写 `FAILED`。
+
+**保护边界与回滚**
+
+- 不覆盖 B0/T10/E10/T20，不改变 checkpoint、协议或阈值；E20 后不追加未规划训练。
+- E20 使用独立目录；gate 失败则按计划终止并保留证据。
+
+## 2026-09-16 11:58:28 +0800 — V1.8 T20 checkpoint 恢复训练完成
+
+- activity_id: `ACT-20260916-115828-CMRESIDUAL-V18-T20`
+- timestamp: `2026-09-16 11:58:28 +0800`
+- modification_version: `V1.8`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准继续，E10 的 lift/contact preservation ratio 均通过 0.8 gate；按最终计划从明确的 T10 checkpoint 恢复到总 epoch 20。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: GPU5、64 env、seed42，从合格 T10 epoch-10 checkpoint 恢复到总 epoch 20；no-Cm、18D、固定 sigma/reward/scale/reference 不变。只有训练合同通过才执行 E20。
+- run_id: `cmresidual_v18_t20_20260916_115828`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 12:00:00 +0800`
+- last_step: `40960`
+- last_epoch: `20 / 20`（从 epoch 10 恢复）
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/CmResidualSafeT20/nn/last_CmResidualSafe_ep_20_rew__6.37_.pth)
+- exit_reason: 从合格 T10 checkpoint 完成 epoch 11–20；训练和 checkpoint 合同全部通过。
+- conclusion: `SUPPORTED`（T20 工程训练与 checkpoint 合同）；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth) — 唯一允许的初始 checkpoint。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828) — 完整 T20 目录。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/run_manifest.json) — `COMPLETED / SUPPORTED` 终态。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/config.json](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/config.json) — resolved config 与初始 checkpoint SHA。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/metrics.jsonl) — epoch 11–20 共 10 行指标。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/train.log](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/train.log) — 恢复训练日志。
+- [outputs/CmResidual/cmresidual_v18_t20_20260916_115828/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v18_t20_20260916_115828/checkpoint_validation.json) — epoch/frame、finite、sigma 与重载验证。
+
+**原因**
+
+E10 已证明 T10 deterministic mean policy 在同协议下保持 B0：lift ratio `1.003871`、contact ratio `1.164776`。按计划只追加 epoch 11–20，验证短程继续学习后是否仍保持该行为。
+
+**验证**
+
+- E10 `run_status=COMPLETED`，367 行 finite；protocol 与 B0 JSON 完全一致，双 gate 均通过。
+- T20 从 epoch 10 恢复并严格完成到 epoch 20，本 stage 有 10 行 metrics；model/optimizer/action finite。
+- checkpoint epoch/frame=`20/40960`、reload diff=`0.0`、sigma min/max=`0.099999994`。
+- epoch 20 training rollout residual RMS `0.107345`、success fraction `0.0`；效果判断留给 E20。
+
+**保护边界与回滚**
+
+- 不加载超预算失败 run 的 checkpoint，不从 latest 模糊选择，不覆盖 T10/E10；不改变预算或科研变量。
+- 异常或 checkpoint 合同失败时停止且不执行 E20；新 run 可独立移除。
+
+## 2026-09-16 11:56:33 +0800 — V1.8 E10 deterministic preservation 评估通过
+
+- activity_id: `ACT-20260916-115633-CMRESIDUAL-V18-E10`
+- timestamp: `2026-09-16 11:56:33 +0800`
+- modification_version: `V1.8`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准继续；修复后的 T10 已完成 10 epochs 并通过 checkpoint 重载、finite 与固定 sigma 合同，按最终计划进入 E10。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: 加载明确的 T10 epoch-10 checkpoint，在与新 B0 完全相同的 GPU5/64 env/seed42/367 steps/no-Cm 协议下执行 deterministic mean-action rollout；按 lift/contact 双 80% gate 判定，失败则不启动 T20。
+- run_id: `cmresidual_v18_e10_20260916_115633`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 11:58:16 +0800`
+- last_step: `367 / 367`
+- last_epoch: `10`（被评估 checkpoint）
+- best_metric: `mean_env_max_lift_m=0.0854256004`
+- checkpoint: [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth)
+- exit_reason: 完成 E10 预算；lift/contact ratio=`1.003871 / 1.164776`，双 80% gate 通过。
+- conclusion: `SUPPORTED`（T10 preservation stability）；抓取改善科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth) — 明确加载的 T10 checkpoint。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json) — B0 协议与 preservation baseline。
+- [outputs/CmResidual/cmresidual_v18_e10_20260916_115633](../../../../../outputs/CmResidual/cmresidual_v18_e10_20260916_115633) — 完整 E10 目录。
+- [outputs/CmResidual/cmresidual_v18_e10_20260916_115633/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_e10_20260916_115633/run_manifest.json) — `COMPLETED / SUPPORTED` 双 gate 终态。
+- [outputs/CmResidual/cmresidual_v18_e10_20260916_115633/config.json](../../../../../outputs/CmResidual/cmresidual_v18_e10_20260916_115633/config.json) — resolved config、checkpoint 和协议快照。
+- [outputs/CmResidual/cmresidual_v18_e10_20260916_115633/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_e10_20260916_115633/metrics.jsonl) — 367 行指标。
+- [outputs/CmResidual/cmresidual_v18_e10_20260916_115633/eval.log](../../../../../outputs/CmResidual/cmresidual_v18_e10_20260916_115633/eval.log) — 评估日志。
+
+**原因**
+
+训练 rollout 指标不能替代 deterministic preservation 测试。E10 只比较 checkpoint mean action 与同协议 B0 的 mean-env-max-lift/contact，阈值固定为 `0.0680769563 m / 0.1549046345`。
+
+**验证**
+
+- T10 `run_status=COMPLETED`、epoch/frame=`10/20480`、10 行 metrics；model/optimizer/action finite，checkpoint reload action diff `0.0`，sigma 为 `0.1` 且冻结。
+- E10 与 B0 protocol JSON 完全一致；所有 observation/target finite。
+- `mean_env_max_lift_m=0.085426`、mean contact occupancy `0.225536`，相对 B0 ratio=`1.003871 / 1.164776`，双 gate 通过。
+- batch/time `mean_lift_m=-0.449473` 仅为诊断量；本结果只支持 preservation stability，不证明抓取改善。
+
+**保护边界与回滚**
+
+- 不修改或覆盖 B0/T10 checkpoint，不改变评估协议，不使用 stochastic action，不启动 T20。
+- E10 使用独立目录；失败或 gate 未通过时保留证据并停止。
+
+## 2026-09-16 11:53:31 +0800 — V1.8 T10 epoch 预算与重载校验修复终态
+
+- activity_id: `ACT-20260916-115331-CMRESIDUAL-V18-T10-RETRY`
+- timestamp: `2026-09-16 11:53:31 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`
+- task_mode: `run-only/operation -> change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准继续 V1.8 gate；首个 T10 暴露 rl_games epoch override 路径错误。修复只确保既定 10-epoch 预算真实生效，经合同测试后从零重跑，不改变科研变量。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: 将 T10/T20 epoch override 从无效的根级 `max_iterations` 改为 rl_games 实际读取的 `train.params.config.max_epochs`，启动前强制校验 resolved budget；用新 run_id 从零重跑 T10，不复用超预算 run 的任何 checkpoint。
+- run_id: `cmresidual_v18_t10_retry_20260916_115331`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 11:55:27 +0800`
+- last_step: `20480`
+- last_epoch: `10 / 10`
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/CmResidualSafeT10/nn/last_CmResidualSafe_ep_10_rew__6.49_.pth)
+- exit_reason: 完成严格 10-epoch 预算；将 checkpoint model 切到 eval mode 后，重载重复 action 差为 `0.0`，全部合同通过。
+- conclusion: `SUPPORTED`（T10 工程训练与 checkpoint 合同）；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — 正确覆盖并校验 rl_games `max_epochs`。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — resolved epoch budget 合同测试。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331) — 完整 T10 目录。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/run_manifest.json) — `COMPLETED / SUPPORTED` 终态。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/config.json](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/config.json) — resolved `max_epochs=10` 与 safe-policy preflight。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/metrics.jsonl) — 10 行 epoch 指标。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/train.log](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/train.log) — 训练日志。
+- [outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v18_t10_retry_20260916_115331/checkpoint_validation.json) — epoch/frame、finite、sigma 和 deterministic reload 验证。
+
+**原因**
+
+IsaacGymEnvs 根级 `max_iterations` 没有覆盖本 safe config 显式声明的 `train.params.config.max_epochs=20`，导致首个 T10 实际跑到 epoch 20。修复直接作用于唯一消费方字段，并在创建训练子进程前拒绝任何 budget drift。
+
+**验证**
+
+- `python3 -m py_compile src/task/CmResidual/tools/run_ppo_stability.py`：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`17 passed, 2 warnings`。
+- 新合同确认根级 `max_iterations` 与训练预算解耦，`train.params.config.max_epochs=10` 才是 T10 权威值；`git diff --check` 通过。
+- 严格完成 10 epochs，TensorBoard/metrics 共 10 条；epoch/frame=`10/20480`。
+- checkpoint model/optimizer/action 均 finite；sigma min/max=`0.099999994`，deterministic reload action max abs diff=`0.0`。
+- epoch 10 training rollout：residual RMS `0.105227`、success fraction `0.0`；这些训练统计不替代 E10。
+
+**保护边界与回滚**
+
+- 不使用首个超预算 run 的 epoch-10/20 checkpoint，不覆盖其证据；不改 PPO 超参数、B0、reward、scale、输入或 GPU。
+- 回滚 runner/test 两处 budget 修复即可撤销实现变化；新 run 使用独立目录。
+
+## 2026-09-16 11:50:10 +0800 — V1.8 T10 safe residual PPO 超预算失败
+
+- activity_id: `ACT-20260916-115010-CMRESIDUAL-V18-T10`
+- timestamp: `2026-09-16 11:50:10 +0800`
+- modification_version: `V1.8`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 修订后的 B0 已通过，用户明确要求继续；按 V1.8 最终计划启动 T10，只有训练/checkpoint 合同通过后才允许 E10。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（运行使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: GPU5、64 env、seed42、10 epochs、horizon32、minibatch2048、no-Cm、18D residual，mean 精确零初始化且 sigma 固定为 `0.1`；不加载 residual checkpoint，不改变 B0、reward、scale 或 reference。
+- run_id: `cmresidual_v18_t10_20260916_115010`
+- run_status: `FAILED`
+- completed_at: `2026-09-16 11:52:13 +0800`
+- last_step: `40960`
+- last_epoch: `20 / 10 requested`
+- best_metric: `null`（runner 在预算审计失败后未接受训练指标）
+- checkpoint: `null`（产出的 epoch-10/20 文件均因 run 超预算而不准入）
+- exit_reason: resolved `train.params.config.max_epochs=20`，TensorBoard 得到 20 epochs，而 T10 只批准 10 epochs。
+- conclusion: `INVALID_IMPLEMENTATION`；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.8.md](../plan/V1.8.md) — T10 预算、合同与停止条件。
+- [outputs/CmResidual/cmresidual_v18_t10_20260916_115010](../../../../../outputs/CmResidual/cmresidual_v18_t10_20260916_115010) — 超预算失败运行目录。
+- [outputs/CmResidual/cmresidual_v18_t10_20260916_115010/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_t10_20260916_115010/run_manifest.json) — `FAILED / INVALID_IMPLEMENTATION` 终态。
+- [outputs/CmResidual/cmresidual_v18_t10_20260916_115010/config.json](../../../../../outputs/CmResidual/cmresidual_v18_t10_20260916_115010/config.json) — 直接证据：root `max_iterations=10`，rl_games `max_epochs=20`。
+- [outputs/CmResidual/cmresidual_v18_t10_20260916_115010/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_t10_20260916_115010/metrics.jsonl) — 失败状态行，不作为 epoch 指标。
+- [outputs/CmResidual/cmresidual_v18_t10_20260916_115010/train.log](../../../../../outputs/CmResidual/cmresidual_v18_t10_20260916_115010/train.log) — 20 epochs 与 checkpoint 写入日志。
+
+**原因**
+
+验证固定小探索噪声、零 mean 的 18D residual PPO 能否完成首个 10-epoch 工程训练阶段，并产出可重载、finite、sigma 保持 `0.1` 的 checkpoint，随后再由独立 E10 判断是否保持 B0 行为。
+
+**验证**
+
+- 启动前确认新 B0 manifest 为 `COMPLETED`、baseline usable 且 continuation allowed；阈值为 lift `0.0680769563 m`、contact `0.1549046345`。
+- runner `--help` 通过；GPU5 为 `8 MiB / 0%`，无 compute process。
+- runner 发现 TensorBoard 有 20 而非 10 epochs 后将 run 标为 `FAILED`；epoch-10/20 checkpoint 均不准入，未启动 E10。
+
+**保护边界与回滚**
+
+- 不覆盖 B0/V1.7 或其他 run，不加载旧 residual checkpoint，不启用 OI-Cm，不修改代码、配置或训练预算。
+- 异常、non-finite、sigma 漂移或 checkpoint 合同失败时立即停止并保留新运行证据；回滚只处理本 run。
+
+## 2026-09-16 11:41:34 +0800 — V1.8 preservation lift 修订与 B0 重跑终态
+
+- activity_id: `ACT-20260916-114134-CMRESIDUAL-V18-B0-ENVMAX`
+- timestamp: `2026-09-16 11:41:34 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`experiment`、`diagnostic`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认将不可解释的整段 batch/time mean lift gate 改为 mean per-environment maximum lift，并重跑 B0；其余协议保持不变。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（运行使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: 修订 V1.8 plan 与 evaluator 的 preservation lift 指标，增加 metric schema 锁定和合同测试；按同一 GPU5/64 env/seed42/367 steps/no-Cm/zero-residual 协议重跑 B0，不启动 T10。
+- run_id: `cmresidual_v18_b0_envmax_20260916_114134`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 11:42:59 +0800`
+- last_step: `367 / 367`
+- last_epoch: `null`
+- best_metric: `mean_env_max_lift_m=0.0850961953`
+- checkpoint: `null`
+- exit_reason: 完成修订后的 B0 预算，zero residual parity 与正 preservation baseline 均通过；按本轮边界停在 T10 之前。
+- conclusion: `SUPPORTED`（运行、zero-residual parity 与 preservation baseline）；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.8.md](../plan/V1.8.md) — 最终计划明确 `mean_env_max_lift_m` 定义与 80% gate。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — 跨 reset 累计每个环境的 rollout max lift，并写入 protocol/metrics/summary。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — preservation gate schema 更新。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态更新为新 B0 可用、T10 未启动。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 正式 B0 结果与后续固定阈值。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134) — 完整运行目录。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/run_manifest.json) — `COMPLETED` 终态、metric schema 与 continuation gate。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/config.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/config.json) — resolved config 与运行 override。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/metrics.jsonl) — 367 行逐步指标。
+- [outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/eval.log](../../../../../outputs/CmResidual/cmresidual_v18_b0_envmax_20260916_114134/eval.log) — 仿真初始化和评估日志。
+
+**原因**
+
+success reset 与未成功环境后续下落会把整段 batch/time mean lift 拉成负值，不适合作为 preservation ratio 分母。新指标对每个环境从 `0 m` 起保留 367 步内达到的最大 lift，再对 64 个环境等权平均；不改变物理、reset、reward 或训练目标。
+
+**验证**
+
+- `python3 -m py_compile src/task/CmResidual/tools/eval_residual_stability.py`：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`16 passed, 1 warning`。
+- evaluator `--help` 与 `git diff --check`：通过；GPU5 启动前为 `8 MiB / 0%`。
+- B0 完成 `367/367` steps；所有 observation/target finite，`max_residual_target_delta=0`。
+- `mean_env_max_lift_m=0.085096`、mean contact occupancy `0.193631`；二者均为正，baseline 可用。
+- 后续 80% 阈值固定为 lift `0.0680769563 m`、contact `0.1549046345`；本轮未启动 T10。
+
+**保护边界与回滚**
+
+- 未修改 reward、residual scale、action、reset、reference/source、checkpoint、GPU、OI-Cm 或训练预算；旧 B0 证据保留。
+- 回滚本次 plan/evaluator/test 差异即可恢复旧 gate；新 run 使用独立目录，不覆盖历史产物。
+
+## 2026-09-16 11:33:18 +0800 — V1.8 NumPy 兼容修复与 B0 重试终态
+
+- activity_id: `ACT-20260916-113318-CMRESIDUAL-V18-B0-RETRY`
+- timestamp: `2026-09-16 11:33:18 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`
+- task_mode: `run-only/operation -> change -> run-only/operation`
+- change_level: `L2`（Task-local L1 兼容修复 + 已批准的 L2 gate 运行）
+- approval: `user-approved`
+- approval_basis: 用户要求执行 V1.8 测试；首个 B0 在 step 0 暴露 NumPy 1.24 与 pinned Isaac Gym 的环境兼容错误。兼容修复不改变科研变量，完成定向测试后以新 run_id 重试同一 B0。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（使用已获批但尚未提交的 V1.8 实现；其他 Task 的既有用户修改未触碰）
+- scope: 仅在 Task-local evaluator 和 V1.8 training 子进程入口恢复 pinned Isaac Gym 唯一使用的 `np.float` alias；随后按原 GPU5/64 env/seed42/367 steps/no-Cm/zero-residual 协议重试 B0。
+- run_id: `cmresidual_v18_b0_retry_20260916_113318`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 11:35:01 +0800`
+- last_step: `367 / 367`
+- last_epoch: `null`
+- best_metric: `mean_lift_m=-0.4904631897`
+- checkpoint: `null`
+- exit_reason: 完成 B0 预算；因 baseline mean lift 非正，planned E10/E20 lift preservation ratio 无定义，停止后续 T10。
+- conclusion: `SUPPORTED`（运行、协议和 zero-residual parity）；`INVALID_IMPLEMENTATION`（planned lift-ratio baseline）；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — 仿真导入前安装最小 NumPy alias。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — 训练子进程用同一兼容 bootstrap，避免 T10 重现该环境错误。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — 新增 alias 范围合同测试。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 正式实验结果、指标语义与停止边界。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前阶段更新为 B0 完成、T10 阻断。
+- [outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318](../../../../../outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318) — 完整运行目录。
+- [outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/run_manifest.json) — `COMPLETED` 终态、协议、输入 SHA 和 continuation blocker。
+- [outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/config.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/config.json) — resolved config 与运行 override。
+- [outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/metrics.jsonl) — 367 行逐步指标。
+- [outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/eval.log](../../../../../outputs/CmResidual/cmresidual_v18_b0_retry_20260916_113318/eval.log) — 仿真初始化和评估日志。
+
+**原因**
+
+NumPy 1.24 已移除 `np.float`，而 pinned Isaac Gym 的 `torch_utils.py` 在导入时仍引用该 alias。修复限定在 V1.8 进程入口，不修改外部 Isaac Gym 或共享 vendor，也不改变输入、仿真、策略或指标。
+
+**验证**
+
+- `python3 -m py_compile` 覆盖两个 V1.8 工具：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`16 passed, 1 warning`。
+- `git diff --check`：通过。
+- B0 完成 `367/367` steps；所有 observation/target finite，`max_residual_target_delta=0`。
+- `mean_lift_m=-0.490463`、`max_lift_m=0.069457`、mean contact occupancy `0.206335`、mean tip distance
+  `0.175315 m`、max success fraction `0.359375`；累计 `done_count=302`。
+- planned preservation gate 需要正 baseline 才能解释比例；因此 `continuation_allowed=false`，未启动 T10。
+
+**保护边界与回滚**
+
+- 未修改 external Isaac Gym、vendor `train.py`、NumPy 环境、reward、scale、action、reference、checkpoint 或 GPU。
+- 回滚 alias helper、训练 bootstrap 和对应测试即可撤销兼容修复；首个失败 run 保留，不覆盖。
+
+## 2026-09-16 11:30:59 +0800 — V1.8 B0 同协议零残差基线失败
+
+- activity_id: `ACT-20260916-113059-CMRESIDUAL-V18-B0`
+- timestamp: `2026-09-16 11:30:59 +0800`
+- modification_version: `V1.8`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户在 V1.8 最终计划与实现完成后明确要求“现在测试一下”；按计划顺序只启动第一道 B0，不跳过 gate 启动 T10。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（运行使用已获批但尚未提交的 V1.8 实现；保留其他 Task 的既有用户修改）
+- scope: GPU5、64 env、seed42、367 control steps、`terminateOnSuccess=true`、no-Cm、全零 residual 的 same-protocol baseline；不训练、不加载 residual checkpoint、不修改研究变量。
+- run_id: `cmresidual_v18_b0_20260916_113059`
+- run_status: `FAILED`
+- completed_at: `2026-09-16 11:31:47 +0800`
+- last_step: `0 / 367`
+- best_metric: `null`
+- checkpoint: `null`
+- exit_reason: NumPy 1.24 已移除 pinned Isaac Gym `torch_utils.py` 使用的 `np.float`，仿真环境创建前抛出 `AttributeError`。
+- conclusion: `INVALID_IMPLEMENTATION`；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.8.md](../plan/V1.8.md) — 本次运行依据的最终计划。
+- [outputs/CmResidual/cmresidual_v18_b0_20260916_113059](../../../../../outputs/CmResidual/cmresidual_v18_b0_20260916_113059) — 失败运行目录。
+- [outputs/CmResidual/cmresidual_v18_b0_20260916_113059/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v18_b0_20260916_113059/run_manifest.json) — `FAILED` 终态与输入/协议快照。
+- `outputs/CmResidual/cmresidual_v18_b0_20260916_113059/metrics.jsonl` — 未进入 rollout，因此未生成且不作为链接。
+- [outputs/CmResidual/cmresidual_v18_b0_20260916_113059/eval.log](../../../../../outputs/CmResidual/cmresidual_v18_b0_20260916_113059/eval.log) — NumPy/Isaac Gym traceback。
+
+**原因**
+
+在启动任何 residual PPO 前，用与后续 E10/E20 完全一致的 GPU、环境数、seed、控制步数、reset、输入 SHA、reward 和 residual scale，建立可比较的全零 residual 基线。
+
+**验证**
+
+- 启动前确认 GPU5 显存占用 `8 MiB`、利用率 `0%`，无 compute process。
+- DExplore checkpoint、eligible v2 reference 与 legacy-parity source tensor 均存在；runner 将在初始化时复核 SHA 和协议合同。
+- runner 在仿真环境创建前终止，manifest 为 `FAILED`，`last_step=0`；没有产生 metrics 或 checkpoint，不形成科研结论。
+
+**保护边界与回滚**
+
+- 不覆盖旧 run，不加载 V1.7 residual checkpoint，不启动 T10/T20，不改变 reward、scale、action、reference 或设备。
+- 如初始化或 rollout 失败，按计划停止并保留新运行目录作为诊断证据；回滚仅移除本次新产物和 activity，不影响历史运行。
+
+## 2026-09-16 11:17:44 +0800 — V1.8 safe residual 实现与工程验证
+
+- activity_id: `ACT-20260916-111744-CMRESIDUAL-V18-SAFE-RESIDUAL`
+- timestamp: `2026-09-16 11:17:44 +0800`
+- modification_version: `V1.8`
+- operation_category: `code`、`config`、`experiment`、`diagnostic`、`documentation`
+- task_mode: `read-only/diagnostic -> change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认采用 V1.8 协商口径：18D、actor/critic 均 no-Cm、mean 精确零初始化、固定
+  `sigma=0.1`，不改 action/mimic/clamp/reward，并以 B0/T10/E10/T20/E20 同协议 gate 验证。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db`
+- worktree_dirty: `true`（接手时已有用户未跟踪的 V1.8 指导和其他 Task 的 activity 修改；均保留且未纳入本次改动）
+- scope: 定稿 V1.8 plan，实现 no-Cm safe policy、冻结小 sigma、分阶段训练/确定性评估工具和合同测试；
+  本次只实现与验证，未启动 GPU 训练或评估，未生成 run_id、run manifest 或实验产物。
+- conclusion: `SUPPORTED`（工程合同与单元测试）；`INCONCLUSIVE`（residual stability、抓取效果和 Cm 因果）
+
+**文件**
+
+- [src/task/CmResidual/docs/指导/V1.8.md](../指导/V1.8.md) — 用户提供的研究指导；本次只读且未修改。
+- [src/task/CmResidual/docs/plan/V1.8.md](../plan/V1.8.md) — 经用户确认的最终执行计划、保护边界与 gate。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态和结论边界更新到 V1.8。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — safe policy 与 preservation gate 合同测试。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — 同协议 B0/E10/E20 确定性评估与 80% gate。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — 仅允许 T10 或由 T10 checkpoint 恢复的 T20 runner。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 显式 no-Cm observation 路径。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — 显式 `learn_sigma=false` 时冻结 sigma。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafePPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafePPO.yaml) — 零 mean、固定 `sigma=0.1` 的 safe 配置。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml) 和 [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) — 默认显式保留 OI-Cm。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新到 V1.8。
+
+**原因**
+
+- V1.7 rollout 退化不足以区分 residual 初始化/探索噪声、Cm 输入或训练预算的影响。V1.8 先隔离为
+  no-Cm + zero-mean + small fixed sigma 的最小变量组合，不把当前改动解释为 Cm 改进。
+- `useOiCmContext=false` 时跳过 surface geometry、OI-Cm checkpoint 加载和推理，policy observation 为
+  1442-D base observation；默认值和 canonical task config 均保持 `true`，兼容旧 2005-D 路径。
+- safe 配置保持 18D action，mean head 权重/bias 为零，`log_sigma=ln(0.1)` 且不参与梯度更新；旧配置未
+  声明 `learn_sigma=false` 时保持原行为。
+- runner 固定 GPU5、64 env、seed42 和 eligible v2 reference；T20 必须显式接收同版本 T10 checkpoint。
+  evaluator 固定 367 steps，并要求 E10/E20 与 B0 协议一致后才比较 mean lift/contact occupancy。
+
+**验证**
+
+- `python3 -m py_compile` 覆盖 task、network builder 和两个新增工具：通过。
+- `PYTHONPATH=third_party/IsaacGymEnvs python3 -m pytest -q src/task/CmResidual/tests`：
+  `15 passed, 1 warning`；warning 为 Hydra 1.1 兼容提示。
+- 两个新增工具的 `--help`：通过；未初始化 Isaac Gym、未占用 GPU、未产生运行目录。
+- `git diff --check`：通过。
+- 未执行 GPU smoke、B0、T10/E10 或 T20/E20；工程 smoke 不构成科研效果证据，科研结论保持
+  `INCONCLUSIVE`。
+
+**保护边界与回滚**
+
+- 未修改 18D action mapper、mimic/null directions、physical residual clamp、`0.015 m / 0.20 rad / 0.08 rad`
+  scale、reward、DExplore/OI-Cm 权重、reference/source 数据、checkpoint、共享 `src/base/` 或其他 Task。
+- 未恢复 V1.7、未启动新训练/评估、未覆盖旧 run 或产物；其他 Task 的已有工作树修改保持原样。
+- Git 回滚入口为本 activity 所列 V1.8 文件差异；移除 safe 配置/工具并回退 task/builder/config/test/文档
+  差异即可恢复 V1.7 默认行为，无数据迁移或产物清理。
+
 ## 2026-09-16 10:42:38 +0800 — V1.7.1 正式 PPO 训练终态与部分结果归档
 
 - activity_id: `ACT-20260916-104238-CMRESIDUAL-V171-PPO-TERMINAL`

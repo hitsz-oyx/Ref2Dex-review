@@ -10,6 +10,9 @@ class CmBuilder(network_builder.A2CBuilder):
         def __init__(self, params, **kwargs):
             self.cm_feature_dim = int(params.get("cm_feature_dim", 32))
             super().__init__(params, **kwargs)
+            self.learn_sigma = bool(self.space_config.get("learn_sigma", True))
+            if self.fixed_sigma and not self.learn_sigma:
+                self.sigma.requires_grad_(False)
             obs_dim = kwargs.get("input_shape")[0]
             # The task appends the frozen OI-Cm context after the 1442-D teacher
             # observation.  Keep the full policy observation width unchanged here.
