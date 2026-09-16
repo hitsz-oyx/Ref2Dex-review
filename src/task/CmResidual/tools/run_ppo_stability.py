@@ -1,4 +1,4 @@
-"""Run one approved V1.8 or V1.9 residual PPO stability stage."""
+"""Run one approved V1.8, V1.9, or V1.10 residual PPO stability stage."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +23,7 @@ from eval_zero_residual import (
     _now,
     _write_json,
 )
-from eval_residual_stability import DEFAULT_REFERENCE
+from eval_residual_stability import DEFAULT_REFERENCE, _resolve_modification_version
 from run_ppo_formal import _event_metrics, _tensor_tree_finite
 
 
@@ -58,6 +58,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-epochs", type=int, choices=(2, 10, 20), required=True)
     parser.add_argument(
         "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
+    parser.add_argument(
+        "--modification-version", default="",
+        help="Explicit run provenance version; V1.10 experiments must pass V1.10.1")
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--dexplore-checkpoint", type=Path, default=DEFAULT_DEXPLORE)
     parser.add_argument("--oi-cm-checkpoint", type=Path, default=DEFAULT_OI_CM)
@@ -222,7 +225,8 @@ def _matched_actor_initialization_contract(control_params: dict, critic_cm_param
 def main() -> int:
     args = parse_args()
     is_v19 = args.variant in V19_VARIANTS
-    modification_version = "V1.9.2" if is_v19 else "V1.8"
+    modification_version = _resolve_modification_version(
+        args.variant, args.modification_version)
     variant_contract = V19_VARIANTS.get(args.variant)
     observation_dim = 2005 if is_v19 else 1442
     train_config = (

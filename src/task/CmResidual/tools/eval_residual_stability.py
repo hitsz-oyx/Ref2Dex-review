@@ -1,4 +1,4 @@
-"""Evaluate zero or checkpoint mean residuals under V1.8/V1.9 stability protocols."""
+"""Evaluate zero or checkpoint mean residuals under V1.8/V1.9/V1.10 protocols."""
 from __future__ import annotations
 
 import argparse
@@ -37,6 +37,25 @@ V19_VARIANTS = {
     "control": "CmResidualSafeCriticControlPPO",
     "critic_cm": "CmResidualSafeCriticCmPPO",
 }
+LEGACY_MODIFICATION_VERSIONS = {
+    "v18_no_cm": "V1.8",
+    "control": "V1.9.2",
+    "critic_cm": "V1.9.2",
+}
+V110_MODIFICATION_VERSION = "V1.10.1"
+
+
+def _resolve_modification_version(variant: str, requested: str = "") -> str:
+    legacy = LEGACY_MODIFICATION_VERSIONS[variant]
+    modification_version = requested or legacy
+    allowed = {legacy}
+    if variant in V19_VARIANTS:
+        allowed.add(V110_MODIFICATION_VERSION)
+    if modification_version not in allowed:
+        raise ValueError(
+            f"Unsupported modification version {modification_version!r} for {variant}; "
+            f"expected one of {sorted(allowed)}")
+    return modification_version
 
 
 def _install_isaacgym_numpy_compat() -> None:
@@ -73,6 +92,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-manifest", type=Path)
     parser.add_argument(
         "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
+    parser.add_argument(
+        "--modification-version", default="",
+        help="Explicit run provenance version; V1.10 experiments must pass V1.10.1")
     parser.add_argument("--steps", type=int, default=PROTOCOL_STEPS)
     parser.add_argument("--num-envs", type=int, default=PROTOCOL_ENVS)
     parser.add_argument("--gpu", type=int, default=5)
@@ -114,7 +136,8 @@ def _load_policy(checkpoint: Path, params: dict, device, observation_dim: int):
 def main() -> int:
     args = parse_args()
     is_v19 = args.variant in V19_VARIANTS
-    modification_version = "V1.9.2" if is_v19 else "V1.8"
+    modification_version = _resolve_modification_version(
+        args.variant, args.modification_version)
     train_config = V19_VARIANTS.get(args.variant, "CmResidualSafePPO")
     use_oi_cm_context = bool(is_v19)
     observation_dim = 2005 if is_v19 else 1442

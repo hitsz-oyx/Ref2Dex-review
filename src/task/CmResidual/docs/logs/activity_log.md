@@ -2487,3 +2487,552 @@ V1.8 只证明安全 residual 的短程保持能力。V1.9.2 将 Cm 唯一引入
 
 - 未修改 OI-Cm 模型/checkpoint、action mapper、reward、residual scale、reset、坐标系、数据/cache/schema、共享 `src/base/`、外部 DExplore、旧 outputs 或其他 Task；未提交生成 checkpoint。
 - 本次单一提交可用 `git revert <commit>` 回滚；ignored outputs 证据保持独立，不随代码回滚删除。
+## 2026-09-16 17:01:59 +0800 — V1.10.1 计划定稿与 Gate 0 通过
+
+- activity_id: `ACT-20260916-170159-CMRESIDUAL-V1101-GATE0`
+- timestamp: `2026-09-16 17:01:59 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `code`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户要求按 V1.10 指导继续，审阅计划草案后明确确认；本阶段只定稿计划、补齐运行版本追溯并执行 Gate 0，未启动 GPU 正式实验。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（包含用户提供的 V1.10 指导、本次 CmResidual 差异及无关 ObjectInteractionCm 用户修改；后者未触碰、未纳入范围）
+- scope: 定稿 V1.10 seed42 B0/T10/E10 计划；为既有 V1.9 critic-only Cm runner/evaluator 增加显式 `V1.10.1` provenance，同时保留 V1.8/V1.9.2 默认解释；完成 Task-local Gate 0，不改变模型、RNG、训练变量、数据、指标或仿真协议。
+- conclusion: `SUPPORTED`（计划内版本追溯、合同测试与 Gate 0 工程条件）；B0/T10/E10、Cm utility、抓取改善和统计显著性 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 当前指针更新为 V1.10.1。
+- [src/task/CmResidual/docs/指导/V1.10.md](../指导/V1.10.md) — 用户提供的 V1.10 研究指导，未由 Agent 改写。
+- [src/task/CmResidual/docs/plan/V1.10.md](../plan/V1.10.md) — 用户确认的最终 B0/T10/E10 执行计划、停止条件和结论边界。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新当前阶段、计划入口和 Gate 0 状态。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 记录本次修改、验证和保护边界。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — 允许 V1.10 control/critic-Cm 训练显式写入 `V1.10.1`，旧入口默认版本保持不变。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — 集中校验 variant 与允许的 provenance 版本，V1.10 评估须显式传入 `V1.10.1`。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — 覆盖 V1.10 显式版本、V1.8/V1.9.2 legacy 默认和非法组合拒绝。
+
+**原因**
+
+V1.10 只执行已通过 wiring smoke 的 critic-only Cm 对照，不应为新运行继续沿用 V1.9.2 manifest 版本，也不能通过直接替换常量破坏旧命令的默认解释。显式版本参数将运行 provenance 与算法/实验配置解耦，并在启动前拒绝 V1.8 与 V1.10.1 等非法组合。
+
+**验证**
+
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`22 passed, 6 warnings`；warnings 均为现有 Hydra 1.1 兼容提示。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_ppo_stability.py src/task/CmResidual/tools/eval_residual_stability.py`：通过。
+- 两个工具的 `--help` 均显示 `--modification-version`；合同测试确认 control/critic-Cm 可显式解析为 V1.10.1，V1.8/V1.9.2 默认值不变，非法版本组合抛出错误。
+- V1.9.2 的 actor/critic 维度、actor state parity、Cm 后缀不变性、post-build RNG 与首轮 stochastic action parity 回归通过；没有修改 builder 或训练配置。
+- `git diff --check`：通过；GPU5 查询为 `6 MiB / 24576 MiB`、利用率 `0%`，无计算进程；无遗留 CmResidual runner/evaluator/train 进程。
+- 本阶段没有训练、评估或 simulator rollout；工程 Gate 0 通过不构成 Cm 效果证据。
+
+**保护边界与回滚**
+
+- 未修改 actor/critic 构造、critic candidate 顺序、PPO 超参数、reward、residual scale、OI-Cm/DExplore checkpoint、数据/schema、共享 `src/base/`、ObjectInteractionCm、旧 output 或 checkpoint。
+- B0、A/B T10/E10、T20/E20、多 seed 和 OI-Cm V2 均未启动；outputs/checkpoint/cache 未生成或覆盖。
+- 回滚本次未提交的 V1.10.1 Task-local 工具、测试、版本指针、README、plan 和活动记录即可恢复 V1.9.2；用户提供的指导和无关 ObjectInteractionCm 差异保持不变。
+## 2026-09-16 17:06:51 +0800 — V1.10.1 fresh B0-Cm-path 启动
+
+- activity_id: `ACT-20260916-170651-CMRESIDUAL-V1101-B0`
+- timestamp: `2026-09-16 17:06:51 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认 V1.10 最终计划并明确要求开始实验；Gate 0 已通过，按固定顺序先执行 fresh B0-Cm-path。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.10.1 provenance 实现；无关 ObjectInteractionCm 用户差异未触碰）
+- scope: GPU5、64 env、seed42、367 steps、2005-D Cm 环境路径、control variant、严格全零 18-D residual；只建立 A/B 共用 preservation baseline，通过后才允许 T10。
+- run_id: `cmresidual_v110_b0_cm_path_20260916_170651`
+- run_status: `STARTED`
+- output: [outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651) — `PENDING`
+- manifest: [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json) — `PENDING`
+- metrics: [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/metrics.jsonl) — `PENDING`
+- log: [eval.log](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/eval.log) — `PENDING`
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/eval_residual_stability.py --variant control --modification-version V1.10.1 --gpu 5 --seed 42 --num-envs 64 --steps 367 --run-id cmresidual_v110_b0_cm_path_20260916_170651 --activity-id ACT-20260916-170651-CMRESIDUAL-V1101-B0`
+
+**停止条件**
+
+非正常退出、non-finite、zero-target parity 失败、lift/contact baseline 非正或协议漂移时立即停止，不启动 T10。
+## 2026-09-16 17:19:53 +0800 — DexYCB base-policy 评估可行性只读诊断
+
+- activity_id: `ACT-20260916-171953-CMRESIDUAL-DEXYCB-DIAGNOSTIC`
+- timestamp: `2026-09-16 17:19:53 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求在不停止当前 B0 的情况下确认本地 DexYCB 数据以及用它观察 base 策略效果是否存在歧义；仅执行只读盘点和合同分析。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（当前 V1.10.1 已批准差异、运行活动记录及无关 ObjectInteractionCm 用户修改；未修改数据、代码或正在运行的 B0）
+- scope: 核对本地 DexYCB raw/cache/split、已有 Cm 跨数据集评估和当前 frozen DExplore/CmResidual 输入与物理资产合同；不创建适配器、reference、仿真资产、实验计划或新运行。
+- concurrent_run_id: `cmresidual_v110_b0_cm_path_20260916_170651`
+- concurrent_run_status: `STARTED`（进程继续运行，本诊断未发送停止或交互信号）
+- conclusion: `SUPPORTED`（本地 subject-10/right DexYCB 数据与修复 cache 可用、现有 cache 不能直接作为 DExplore 物理 rollout 输入）；DexYCB base-policy 效果 `INCONCLUSIVE`
+
+**证据**
+
+- [data/raw_data/DexYCB](../../../../../data/raw_data/DexYCB) — 本地 raw 根约 22 GB，当前 capture 根为 subject-10，并包含 YCB object meshes/XML 和 calibration。
+- [data/processed_data/stage4/data/dexycb/meta.json](../../../../../data/processed_data/stage4/data/dexycb/meta.json) — 修复版 Stage4 cache：50 条 right-hand sequence、2853 帧、30 Hz、reference-camera/world frame。
+- [data/processed_data/stage4/splits/dexycb_subject10_fixed_v1/split.json](../../../../../data/processed_data/stage4/splits/dexycb_subject10_fixed_v1/split.json) — 50 条序列全部用于既有 held-out test；train 仅为 loader 占位。
+- [process/DexYCB/raw.py](../../../../../process/DexYCB/raw.py) 和 [process/DexYCB/stage4_cm.py](../../../../../process/DexYCB/stage4_cm.py) — 当前修复版 xyzw/SE(3)/MANO PCA/right-hand 转换入口。
+- [src/task/Cm/docs/logs/experiment_log.md](../../../Cm/docs/logs/experiment_log.md) — EXP-010 已评估 Cm object-flow 泛化，不是 DExplore 控制策略 rollout。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml) — 当前物理任务锁定 Inspire、airplane asset、airplane reference/source tensor。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/base_policy.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/base_policy.py) — frozen DExplore actor 要求 1442-D Inspire observation 和原 checkpoint normalization。
+
+**原因**
+
+DexYCB cache 提供人手 MANO、物体几何/位姿和 flow，不提供可直接执行的 Inspire 18-D action、DExplore 428-D reference 或 598-D source tensor。要判断 base 物理效果，至少需要冻结地定义：base 是 frozen DExplore zero-residual；选择哪些 subject-10/right 序列与物体；如何将 MANO wrist/fingers retarget 到 Inspire；如何将 YCB mesh/XML 接入 Isaac Gym 并定义桌面/reset；以及评价 reference tracking、接触、抬升还是任务成功。不同选择会改变 GT、坐标、资产和结论，属于新的 L2 数据/实验计划边界。
+
+**验证**
+
+- `du -sh data/raw_data/DexYCB data/processed_data/stage4/data/dexycb`：raw/cache 分别约 `22G/383M`。
+- cache `meta.json` 与 `manifest.csv` 核对为 50 条 sequence、50 个 right stream、2853 帧；首个 shared NPZ 为 schema `3.0.0`，包含逐帧 `obj_points_world [T,4096,3]`，不是 DExplore source tensor。
+- split JSON 明确 `num_test_streams=50`、`train_placeholder_only=true`；现有 Cm EXP-010 的 `14.92 mm` 是 object-flow EPE，不是 frozen base 的物理抓取结果。
+- 当前 `CmResidual.yaml`、`ReferenceProvider` 与 `InspireDExplorePolicy` 静态核对确认 airplane asset/reference/source 和 1442-D observation 合同均为硬约束。
+
+**保护边界**
+
+- 未改 DexYCB raw/cache/split、CmResidual/DExplore/OI-Cm、配置、指标、checkpoint 或仿真资产；未启动 DexYCB 新运行。
+- 当前 V1.10 B0 保持独立运行，不因本诊断改变其 GPU、进程、manifest 或停止条件。
+
+## 2026-09-16 17:42:20 +0800 — V1.11.1 DexYCB base-only 实现、离线构建与单次 Gate C
+
+- activity_id: `ACT-20260916-174041-CMRESIDUAL-V1111-DEXYCB`
+- timestamp: `2026-09-16 17:42:20 +0800`
+- modification_version: `V1.11.1`
+- operation_category: `code`、`data`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认 frozen DExplore、严格 zero residual、固定 `subject-10/20201022_110806/right` 与
+  `002_master_chef_can`、隔离配置/资产/output、GPU6 单次评估，并要求直接实施且不影响当前 V1.10 轨迹。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（包含已批准的 V1.10.1/V1.11.1 CmResidual 差异及无关 ObjectInteractionCm 用户修改；后者未触碰）
+- scope: 汇总当前未提交的已批准 V1.10.1 provenance 差异，并新增 V1.11.1 指导/最终计划、DexYCB builder、
+  独立 task config/alias、task actor-name 与 reference-tip metric、zero-residual evaluator、测试、版本/入口/活动/实验记录；
+  生成 reference/assets 与 GPU output 独立留存，不改 canonical airplane 配置和正在运行的 V1.10 B0。
+- run_id: `cmresidual_v111_dexycb_base_20260916_174041`
+- run_status: `COMPLETED`
+- last_step / last_epoch: `72 / null`
+- best_metric: `min_tip_distance_m=0.3027995825`（仅描述量，Gate 无效时不得解释为效果）
+- checkpoint: `null`（冻结 DExplore checkpoint 只读；不训练 residual/Cm）
+- exit_reason: 完成固定 72-step 预算；initial wrist alignment gate 失败后按计划停止，不改协议重跑。
+- conclusion: `INVALID_IMPLEMENTATION`（GPU reset wrist/FK 对齐）；DexYCB base 效果 `INCONCLUSIVE`
+
+**实现与数据**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新为 V1.11.1。
+- [src/task/CmResidual/docs/README.md](../README.md) 与 [experiment_log.md](experiment_log.md) — 当前状态和正式实验解释边界。
+- [src/task/CmResidual/docs/指导/V1.10.md](../指导/V1.10.md) 与 [V1.10 最终计划](../plan/V1.10.md) — 当前 worktree 中一并保留的上一阶段已批准输入/计划。
+- [src/task/CmResidual/docs/指导/V1.11.md](../指导/V1.11.md) 与 [最终计划](../plan/V1.11.md) — 已确认研究边界和停止条件。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py)、[eval_residual_stability.py](../../tools/eval_residual_stability.py) 与 [test_reference_contract.py](../../tests/test_reference_contract.py) — V1.10.1 已批准 provenance 支持及回归。
+- [src/task/CmResidual/tools/data/build_dexycb_base_reference.py](../../tools/data/build_dexycb_base_reference.py) — 固定 point identity、统一 SE(3)、Inspire q6 retarget、约束投影、598-D compatibility source 和独立资产构建。
+- [src/task/CmResidual/tools/eval_dexycb_base.py](../../tools/eval_dexycb_base.py) — GPU6/seed42/4 env/72 steps/strict-zero evaluator 与终态 manifest。
+- [src/task/CmResidual/tests/test_dexycb_base.py](../../tests/test_dexycb_base.py) — tip identity、wrist round-trip、独立 config、padded source 和生成 URDF 合同。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml) — 1442-D、OI-Cm disabled、独立 reference/asset 配置；canonical airplane config 未改。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) 与 [cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 新 task alias、配置化 object actor name 和只读 tracking metric；默认 airplane 行为不变。
+- [data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/manifest.json](../../../../../data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/manifest.json) — Gate A、输入 SHA、坐标变换、point identity 与 retarget 指标。
+- [data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/run_manifest.json](../../../../../data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/run_manifest.json) — 离线构建终态。
+
+**原因**
+
+DexYCB Stage4 cache 只有 MANO/object 几何与位姿，不能直接满足 frozen DExplore 的 Inspire native q、428-D
+reference、598-D source 和 Isaac 物理资产合同。本实现用隔离 adapter 补齐这些输入，同时把该 artifact 锁为
+evaluation-only；单次 Gate C 的 reset hard gate 失败后停止，避免把 wiring/初始化错误误报为跨数据集效果。
+
+**验证**
+
+Gate A/B：
+
+- 72 帧 reference 与前后 padding 后 `[74,598]` compatibility source 均 finite；frame interval=`[1,72]`，
+  `training_eligible=false`、`evaluation_eligible=true`。
+- retarget tip RMS=`0.0323858 m`，neutral RMS=`0.0475794 m`，改善=`31.9332%`；joint limit、mimic、
+  `1 rad/s`、`20 rad/s²`、首帧 object z-up 回代全部 PASS。该门只支持离线 adapter 工程合同。
+- `pytest` 覆盖 CmResidual reference/DexYCB adapter/raw：`32 passed, 9 warnings`；warnings 为既有
+  NumPy/Hydra 迁移提示。Python compile、工具 `--help`、Hydra runtime resolve、XML parse 与 `git diff --check` 通过。
+
+**Gate C 终态证据**
+
+- [outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041) — 完整隔离输出。
+- [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/run_manifest.json) — `COMPLETED / INVALID_IMPLEMENTATION` 唯一终态。
+- [config.json](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/config.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/eval.log) — resolved config、72 行指标与日志。
+- native q/object/table 初始误差=`0 / 1.11e-16 m / 0`，但 wrist body/FK 初始误差=`0.486826 m`；
+  zero residual target delta=`0` 且 observation/target/object pose 全程 finite。只读定位显示离线首帧 wrist
+  translation norm=`0.504820 m`，第一物理步 root reference error 已降为 `0.052096 m`，说明阻断点位于
+  reset 后 rigid-body/FK 初态同步合同，不允许用本 run 的 lift/contact/tracking 数值评价 base 泛化。
+
+**保护与回滚**
+
+- 未修改 canonical `CmResidual.yaml`、DExplore/OI-Cm checkpoint、base observation/action mapping、reward、
+  raw DexYCB、Stage4 cache/schema、共享 `src/base`、V1.10 runner 或其 GPU5 运行。
+- 当前 V1.10 B0 进程仍运行；V1.11 只使用 GPU6 和独立目录。按 Gate C 失败停止条件，没有修复后复跑、
+  更换轨迹/物体/阈值/checkpoint、训练 PPO/Cm 或创建多 seed 结果。
+- 代码回滚入口为 V1.11 新 builder/evaluator/config/alias/test、task.py actor-name/metric 最小差异及本次文档；
+  已生成 data/output 是独立证据，未删除且不纳入 Git。
+
+## 2026-09-16 18:17:53 +0800 — V1.11.2 DexYCB reset 同步修复与复跑前闸门
+
+- activity_id: `ACT-20260916-181753-CMRESIDUAL-V1112-RESET-FIX`
+- timestamp: `2026-09-16 18:17:53 +0800`
+- modification_version: `V1.11.2`
+- operation_category: `code`、`diagnostic`、`operation`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户在 V1.11.1 reset hard gate 失败后明确要求先修复再继续；保持同一序列、物体、reference、
+  checkpoint、seed、env 数和步数，只修 reset 初始化同步。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（保留已批准 V1.10/V1.11 差异及无关 ObjectInteractionCm 用户修改；后者未触碰）
+- scope: 仅为 DexYCB asset config 增加 opt-in actor-creation DOF 初始化，在 actor 创建时写入与 reset 相同的
+  native q/dq 和 position target；canonical airplane config 未声明该开关，旧路径保持原行为。用 1 env GPU6
+  探针验证初态，不生成正式 run；因 GPU6 随后被外部任务占用，正式 V1.11.2 Gate C 尚未启动。
+- formal_rerun: `not_started`（等待 GPU 选择确认，尚无 run_id/run_status）
+- concurrent_run_id: `cmresidual_v110_b0_cm_path_20260916_170651`
+- concurrent_run_status: `COMPLETED / SUPPORTED`（V1.11 未干预）
+- conclusion: `SUPPORTED`（reset 同步修复和定向验证）；DexYCB base 效果 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新为 V1.11.2。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新修复、资源和复跑等待状态。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 补记 V1.10 B0 终态；V1.11.1 无效运行解释不变。
+- [src/task/CmResidual/tools/eval_dexycb_base.py](../../tools/eval_dexycb_base.py) — 后续新 run 写入 V1.11.2 provenance。
+- [src/task/CmResidual/tests/test_dexycb_base.py](../../tests/test_dexycb_base.py) — 验证 DexYCB opt-in、canonical config 不启用。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml) — 仅本变体启用 `initializeDofsAtCreation=true`。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — opt-in actor 创建初态写入；默认值为 false。
+
+**原因**
+
+V1.11.1 在 tensor reset 后立即读取的 rigid-body pose 仍是 actor 创建时零 DOF 姿态；等到第一次 simulate
+才更新 FK，但 reference velocity/碰撞已使状态偏离。把批准的 initial q/dq 在 actor 创建时写入，可让 prepare_sim
+建立正确初态，同时避免为 canonical airplane 路径新增隐式 warm-up step 或改变 episode 预算。
+
+**验证**
+
+- 修复前 1-env GPU6 探针：reset wrist error=`0.4868260920 m`；一次/twice simulate 后为
+  `0.0205058455 / 0.0255725142 m`，证明不能用额外 physics step 充当精确 reset。
+- 修复后同一探针：actual root=`[-0.23049173,-0.05781597,0.44539154]`，FK expected=
+  `[-0.23049177,-0.05781598,0.44539157]`，error=`5.6864e-08 m`。
+- `pytest -q src/task/CmResidual/tests/test_dexycb_base.py src/task/CmResidual/tests/test_reference_contract.py tests/test_dexycb_raw.py`：
+  `32 passed, 9 warnings`；warnings 为既有 NumPy/Hydra 迁移提示。
+- 修改 Python 文件 `py_compile` 与 `git diff --check` 通过。
+- GPU6 当前由外部 PID `1908027/1908028` 占用约 `4.1 GiB/card` 且利用率约 `64%/73%`；未启动正式复跑。
+
+**保护与回滚**
+
+- 未改轨迹、物体、坐标、reference/source、checkpoint、seed、reward、observation/action、residual、Cm、
+  canonical `CmResidual.yaml`、V1.10 runner 或生成数据；未停止外部 GPU 任务。
+- 删除 opt-in config 字段及 task.py 对应创建时初始化块即可回滚修复；V1.11.1 失败证据保持只读。
+
+## 2026-09-16 18:28:09 +0800 — V1.11.2 DexYCB GPU5 Gate C 完成
+
+- activity_id: `ACT-20260916-182728-CMRESIDUAL-V1112-DEXYCB-GPU5`
+- timestamp: `2026-09-16 18:28:09 +0800`
+- modification_version: `V1.11.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准 reset 修复后继续，并在 GPU6 被外部双卡训练占用、V1.10 B0 已完成后明确批准
+  将同一 V1.11.2 正式协议迁移到空闲 GPU5。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（使用已批准 V1.10/V1.11 实现；无关 ObjectInteractionCm 用户修改未触碰）
+- scope: 更新 V1.11 最终计划中的 GPU 资源修订，将 evaluator 锁为 GPU5/V1.11.2，完成定向回归后以新
+  run_id 运行 frozen DExplore、4 env × 72 steps、strict zero residual；不覆盖 V1.11.1 失败证据。
+- run_id: `cmresidual_v1112_dexycb_base_gpu5_20260916_182728`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 18:27:50 +0800`
+- last_step / last_epoch: `72 / null`
+- best_metric: `min_tip_distance_m=0.2998754382`（描述量）
+- checkpoint: `null`（frozen DExplore 只读）
+- exit_reason: 完成批准的 V1.11.2 72-step GPU5 deterministic evaluation budget。
+- conclusion: `SUPPORTED`（工程 Gate C）；固定单轨迹成功抓取 `REFUTED`；DexYCB 泛化 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 当前指针保持 V1.11.2。
+- [src/task/CmResidual/docs/plan/V1.11.md](../plan/V1.11.md) — 记录用户批准的 GPU6→GPU5 资源替换；其余协议不变。
+- [src/task/CmResidual/tools/eval_dexycb_base.py](../../tools/eval_dexycb_base.py) — 锁定 GPU5 与 V1.11.2 provenance。
+- [src/task/CmResidual/docs/README.md](../README.md) 与 [experiment_log.md](experiment_log.md) — 更新工程和行为结论边界。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml)、[cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) 与 [test_dexycb_base.py](../../tests/test_dexycb_base.py) — 本次运行使用的 opt-in reset 修复及回归。
+
+**原因**
+
+V1.11.1 因 reset rigid-body/FK 不同步无法解释。V1.11.2 修复后必须用同一数据和 checkpoint 重新执行完整
+物理 gate；GPU 迁移只解决资源冲突，不改变研究变量。工程 gate 通过后，接触、距离与 tracking 数据才可用于
+回答这条固定 trajectory 是否观察到抓取，但单轨迹仍不能外推整个 DexYCB。
+
+**验证**
+
+- `pytest -q src/task/CmResidual/tests/test_dexycb_base.py src/task/CmResidual/tests/test_reference_contract.py tests/test_dexycb_raw.py`：
+  `32 passed, 9 warnings`；Python `py_compile`、evaluator `--help` 和 `git diff --check` 通过。
+- 启动前 GPU5=`6 MiB / 0%` 且无 CmResidual 进程；运行后恢复为 `6 MiB / 0%`。
+- initial native q/wrist/object/table error=`0 / 1.1733e-07 m / 1.11e-16 m / 0`；72 行 finite，
+  max residual target delta=`0`，manifest gate 四项全部通过。
+- [outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728)、
+  [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/run_manifest.json)、
+  [config.json](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/config.json)、
+  [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/metrics.jsonl)、
+  [eval.log](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/eval.log) 均存在并可导航。
+
+**保护与回滚**
+
+- 未改 trajectory、object、坐标、reference/source、checkpoint、seed、env/step budget、reward、base observation/
+  action、residual/Cm 或 canonical airplane config；未写入 V1.10 B0 和 V1.11.1 output。
+- 回滚 V1.11.2 时删除 opt-in reset block/field并恢复 evaluator GPU 锁即可；生成 outputs 作为审计证据保留。
+
+## 2026-09-16 18:39:34 +0800 — V1.10.1 control A-T10 启动
+
+- activity_id: `ACT-20260916-183934-CMRESIDUAL-V1101-CONTROL-T10`
+- timestamp: `2026-09-16 18:39:34 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续原 V1.10 实验；B0-Cm-path 已 `COMPLETED / SUPPORTED`，按最终计划固定顺序进入 A-control T10。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.10 provenance/V1.9.2 critic-only 实现，并保留 V1.11 差异；无关 ObjectInteractionCm 修改未触碰）
+- scope: GPU5、64 env、seed42、control variant、2005-D environment/1442-D actor/1442-D critic、10 epochs，
+  从零初始化且不加载任何 smoke/V1.8/residual checkpoint；本阶段只运行 A-T10，完成并通过后才允许 B-T10。
+- run_id: `cmresidual_v110_control_t10_20260916_183934`
+- run_status: `STARTED`
+- output: [outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934) — `PENDING`
+- manifest: [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/run_manifest.json) — `PENDING`
+- metrics: [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/metrics.jsonl) — `PENDING`
+- train_log: [train.log](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/train.log) — `PENDING`
+- checkpoint_validation: [checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/checkpoint_validation.json) — `PENDING`
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**命令**
+
+`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant control --modification-version V1.10.1 --max-epochs 10 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v110_control_t10_20260916_183934 --activity-id ACT-20260916-183934-CMRESIDUAL-V1101-CONTROL-T10`
+
+**原因**
+
+B0 已满足 zero-residual parity、正 lift/contact baseline 和协议 SHA gate。V1.10 固定顺序要求先训练 control A，
+防止并发资源竞争和事后选择；训练 loss/success 仅作诊断，不在 B-T10/E10 完成前形成 Cm utility 结论。
+
+**验证**
+
+- B0：`367 steps / COMPLETED / SUPPORTED`，mean-env-max lift=`0.0848945 m`、mean contact=`0.2258515`、max residual target delta=`0`。
+- 启动前相关回归最近结果为 `32 passed, 9 warnings`，runner `--help`、Python compile 与 `git diff --check` 通过。
+- GPU5 启动前=`6 MiB / 0%`，无遗留 CmResidual 进程和 V1.10 T10/E10 输出目录。
+
+**停止条件**
+
+非正常退出、epoch/frame 不等于 10/20480、non-finite、sigma 漂移/可训练、checkpoint reload diff `>1e-6`、
+variant/schema/RNG/action parity 或输入 SHA 漂移时停止，不启动 B-T10。
+
+## 2026-09-16 19:26:29 +0800 — V1.10.1 control A-T10 完成
+
+- activity_id: `ACT-20260916-183934-CMRESIDUAL-V1101-CONTROL-T10`
+- timestamp: `2026-09-16 19:26:29 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续原 V1.10 实验；本终态对应已批准最终计划中的 A-control T10。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（沿用启动时已批准实现；本次训练未修改代码或配置，且未触碰 ObjectInteractionCm 用户修改）
+- scope: GPU5、64 env、seed42、control variant、2005-D environment/1442-D actor/1442-D critic、10 epochs，
+  从零初始化，不加载历史 residual checkpoint。
+- run_id: `cmresidual_v110_control_t10_20260916_183934`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 19:26:29 +0800`
+- last_step / last_epoch: `20480 / 10`
+- best_metric: `deterministic_reload_max_abs_diff=0`（工程门禁指标）
+- checkpoint: [last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)
+- checkpoint_sha256: `fdcf7e00f3d8f250686c4fb30d3527577db5eb9fbfe2e6db39be29f8b6009278`
+- exit_reason: 达到批准的 10 epoch / 20480 frame 预算并正常退出。
+- conclusion: `SUPPORTED`（A-T10 工程门禁）；Cm utility `INCONCLUSIVE`
+
+**原因**
+
+A-T10 已满足全部工程 gate，固定顺序要求使用 matched actor initialization 训练仅 critic 可见 Cm 的 B 变体；
+本条将已完成运行落为终态，避免界面等待中断被误解为训练进程终止。
+
+**验证**
+
+- [outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934)、
+  [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/run_manifest.json)、
+  [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/metrics.jsonl)、
+  [train.log](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/train.log)、
+  [checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/checkpoint_validation.json) 均存在。
+- model、optimizer、deterministic action 均 finite；reload max-abs diff=`0`；sigma min/max=`0.099999994` 且由 safe contract 冻结。
+- safe policy contract、matched actor initialization、schema/SHA/RNG/首个随机动作 parity 全部通过；共写入 10 条 epoch metrics。
+- epoch 1→10 的诊断量：critic loss `1.17394→0.0655944`，KL `0.003009→0.00869283`，success
+  `0.1875→0.015625`，residual RMS `0.103212→0.103786`；训练量不用于单独判断 Cm 效果。
+
+**保护与回滚**
+
+- 未改 reward、observation/action、reference、数据 split、checkpoint 解释或 B/E 阶段参数；未覆盖既有 output。
+- 回滚入口为保留本次 manifest/checkpoint 作审计，不在后续 B/E 命令中引用 A checkpoint 以外的未批准产物。
+
+## 2026-09-16 19:27:29 +0800 — V1.10.1 critic-Cm B-T10 启动
+
+- activity_id: `ACT-20260916-192729-CMRESIDUAL-V1101-CRITIC-CM-T10`
+- timestamp: `2026-09-16 19:27:29 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: A-control T10 已 `COMPLETED / SUPPORTED`，按 V1.10 最终计划固定顺序进入 B-critic-Cm T10。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（使用与 A 相同的已批准实现与输入；无关 ObjectInteractionCm 用户修改未触碰）
+- scope: GPU5、64 env、seed42、critic_cm variant、2005-D environment/1442-D actor/2005-D critic、10 epochs；
+  与 A matched actor initialization，从零初始化且不加载 A 或历史 residual checkpoint。
+- run_id: `cmresidual_v110_critic_cm_t10_20260916_192729`
+- run_status: `STARTED`
+- output: [outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729) — `PENDING`
+- manifest: [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/run_manifest.json) — `PENDING`
+- metrics: [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/metrics.jsonl) — `PENDING`
+- train_log: [train.log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/train.log) — `PENDING`
+- checkpoint_validation: [checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/checkpoint_validation.json) — `PENDING`
+- conclusion: `INCONCLUSIVE`（运行中）
+
+**命令**
+
+`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant critic_cm --modification-version V1.10.1 --max-epochs 10 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v110_critic_cm_t10_20260916_192729 --activity-id ACT-20260916-192729-CMRESIDUAL-V1101-CRITIC-CM-T10`
+
+**启动检查与停止条件**
+
+- GPU5 启动前=`6 MiB / 0%` 且无遗留 CmResidual 进程；A checkpoint validation 全部通过。
+- 非正常退出、epoch/frame 不等于 10/20480、non-finite、sigma 漂移/可训练、checkpoint reload diff `>1e-6`、
+  matched actor/schema/SHA/RNG/action parity 或输入漂移时停止，不启动 E10。
+
+## 2026-09-16 20:16:22 +0800 — V1.10.1 critic-Cm B-T10 完成
+
+- activity_id: `ACT-20260916-192729-CMRESIDUAL-V1101-CRITIC-CM-T10`
+- timestamp: `2026-09-16 20:16:22 +0800`
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续原 V1.10 实验；本终态对应最终计划中的 B-critic-Cm T10。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（沿用启动时已批准实现；训练未修改代码或配置，且未触碰 ObjectInteractionCm 用户修改）
+- scope: GPU5、64 env、seed42、critic_cm variant、2005-D environment/1442-D actor/2005-D critic、10 epochs；
+  与 A matched actor initialization，从零初始化且未加载 A 或历史 residual checkpoint。
+- run_id: `cmresidual_v110_critic_cm_t10_20260916_192729`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 20:16:22 +0800`
+- last_step / last_epoch: `20480 / 10`
+- best_metric: `deterministic_reload_max_abs_diff=0`（工程门禁指标）
+- checkpoint: [last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)
+- checkpoint_sha256: `1a12b955cd0cefcecfde3560df235beb0408ec7340784fa18250359a54776cb1`
+- exit_reason: 达到批准的 10 epoch / 20480 frame 预算并正常退出。
+- conclusion: `SUPPORTED`（B-T10 工程门禁）；Cm utility `INCONCLUSIVE`
+
+**原因**
+
+A-T10 已满足全部工程 gate，固定顺序要求使用 matched actor initialization 训练仅 critic 可见 Cm 的 B 变体；
+本条将已完成运行落为终态，避免界面等待中断被误解为训练进程终止。
+
+**验证**
+
+- [outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729)、
+  [run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/run_manifest.json)、
+  [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/metrics.jsonl)、
+  [train.log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/train.log)、
+  [checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/checkpoint_validation.json) 均存在。
+- model、optimizer、deterministic action 均 finite；reload max-abs diff=`0`；sigma min/max=`0.099999994` 且冻结。
+- safe policy contract、matched actor initialization、schema/SHA/RNG/首个随机动作 parity 全部通过；共写入 10 条 epoch metrics。
+- 最终诊断量：critic loss=`0.0671258`、KL=`0.0105094`、success=`0`、residual RMS=`0.102356`、
+  saturation ratio=`0.00173611`；训练量不用于单独判断 Cm 效果。
+- 运行结束后 GPU5=`6 MiB / 0%`，无遗留 CmResidual 训练进程。
+
+**保护与下一阶段**
+
+- 未改 reward、observation/action、reference、数据 split、checkpoint 解释或 E10 参数；未覆盖 A/B0 及既有 output。
+- A-T10 与 B-T10 工程 gate 均已通过，满足最终计划进入 deterministic A-E10/B-E10 的前置条件；截至本条记录，
+  E10 尚未启动，Cm scientific conclusion 保持 `INCONCLUSIVE`。
+
+## 2026-09-16 20:26:38 +0800 — V1.10/V1.11 实现、实验记录与提交归档
+
+- activity_id: `ACT-20260916-202638-CMRESIDUAL-V1112-COMMIT`
+- timestamp: `2026-09-16 20:26:38 +0800`
+- modification_version: `V1.11.2`（同时归档已批准 V1.10.1 计划边界及运行记录）
+- operation_category: `code`、`data`、`experiment`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户逐阶段确认 V1.10/V1.11 方案、实现与运行，本次明确要求提交代码。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- worktree_dirty: `true`（提交前工作树包含本 scope 差异及无关 ObjectInteractionCm 用户修改；后者明确排除）
+- scope: 归档 V1.10 显式 provenance 与 paired T10、V1.11 固定 DexYCB base-only 构建/evaluator/reset 修复、
+  定向测试、最终计划和实验记录；不继续启动 E10，不提交数据、cache、outputs 或 checkpoint。
+- conclusion: `SUPPORTED`（实现、定向测试和已运行工程 gate）；V1.10 Cm utility `INCONCLUSIVE`；
+  V1.11 固定单轨迹抓取 `REFUTED`、DexYCB 泛化 `INCONCLUSIVE`
+
+**文件**
+
+- `docs/current_versions.yaml` — 将 CmResidual 当前指针更新到 V1.11.2。
+- `src/task/CmResidual/docs/README.md` — 汇总 V1.10/V1.11 当前状态与结论边界。
+- `src/task/CmResidual/docs/logs/activity_log.md` — 记录计划、实现、运行与终态唯一时间线。
+- `src/task/CmResidual/docs/logs/experiment_log.md` — 记录 B0、paired T10 和 DexYCB Gate 证据。
+- [V1.10 最终计划](../plan/V1.10.md) 与 [V1.11 最终计划](../plan/V1.11.md) — 已批准执行边界。
+- `src/task/CmResidual/docs/指导/V1.10.md`、`src/task/CmResidual/docs/指导/V1.11.md` — 用户研究指导。
+- `src/task/CmResidual/tests/test_reference_contract.py` — V1.10 显式版本兼容合同。
+- `src/task/CmResidual/tests/test_dexycb_base.py` — DexYCB 构建、配置、runner 和 reset 合同测试。
+- `src/task/CmResidual/tools/eval_residual_stability.py`、`src/task/CmResidual/tools/run_ppo_stability.py` —
+  V1.10.1 显式 run provenance，保留 V1.8/V1.9 legacy 默认值。
+- `src/task/CmResidual/tools/data/build_dexycb_base_reference.py` — 固定 DexYCB 序列/物体的 evaluation-only 构建器。
+- `src/task/CmResidual/tools/eval_dexycb_base.py` — frozen DExplore、strict zero residual 的固定 Gate C evaluator。
+- `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml` — 独立 opt-in DexYCB config。
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py` — 注册隔离的 DexYCB task 名。
+- `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py` — opt-in actor-creation DOF 初始化、物体名和 tip tracking 诊断。
+
+**原因**
+
+V1.10 需要把正式 B0/T10 运行与现有 V1.9 runner 通过显式版本字段关联，避免改变 legacy 默认解释；V1.11
+需要在不影响 airplane 轨迹的独立 config/runner 中检验 frozen base checkpoint 的固定 DexYCB 轨迹，并修复已证实的
+actor creation/reset rigid-body 不同步。提交前同步 README 和 experiment log，避免文档仍误报 T10 未启动。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexycb_base.py src/task/CmResidual/tests/test_reference_contract.py tests/test_dexycb_raw.py`：`32 passed, 9 warnings`。
+- `python -m py_compile`：四个本次工具脚本通过；`git diff --check` 通过。
+- V1.10 A/B T10 均 `COMPLETED / SUPPORTED`，checkpoint finite、reload diff=`0`、sigma frozen；
+  [A manifest](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/run_manifest.json) 与
+  [B manifest](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/run_manifest.json)。
+- V1.11.2 GPU5 Gate C `COMPLETED / SUPPORTED`；
+  [run manifest](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/run_manifest.json)。
+
+**保护与回滚**
+
+- 不暂存 `src/task/ObjectInteractionCm/docs/logs/activity_log.md`；不提交 outputs、checkpoint、processed data 或 cache。
+- airplane 默认配置与旧 V1.8/V1.9 provenance 保持兼容；DexYCB 行为均由独立 task/config opt-in。
+- 回滚入口为本次单一 Git commit；运行证据保留在忽略的 outputs 中，不随源码回滚删除。

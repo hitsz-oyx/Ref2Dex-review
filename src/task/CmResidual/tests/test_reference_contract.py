@@ -567,6 +567,24 @@ def test_v19_smoke_budget_and_checkpoint_frequency_are_explicit():
     assert resolved["train"]["params"]["config"]["save_frequency"] == 1
 
 
+def test_v110_run_version_is_explicit_and_preserves_legacy_defaults():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module("cm_residual_v110_version_test",
+                          tools / "eval_residual_stability.py")
+
+    assert module._resolve_modification_version("v18_no_cm") == "V1.8"
+    assert module._resolve_modification_version("control") == "V1.9.2"
+    assert module._resolve_modification_version("critic_cm") == "V1.9.2"
+    assert module._resolve_modification_version("control", "V1.10.1") == "V1.10.1"
+    assert module._resolve_modification_version("critic_cm", "V1.10.1") == "V1.10.1"
+    with pytest.raises(ValueError, match="Unsupported modification version"):
+        module._resolve_modification_version("v18_no_cm", "V1.10.1")
+    with pytest.raises(ValueError, match="Unsupported modification version"):
+        module._resolve_modification_version("control", "V1.10")
+
+
 def test_real_oi_cm_checkpoint_contract_when_available():
     checkpoint = Path(
         "outputs/objectinteractioncm/"

@@ -3,6 +3,146 @@
 - scope: `task:CmResidual`
 - related: [任务入口](../README.md)、[V1.5 最终计划](../plan/V1.5.md)、[V1.4 最终计划](../plan/V1.4.md)、[V1.3 最终计划](../plan/V1.3.md)、[活动记录](activity_log.md)
 
+## 2026-09-16 — V1.10.1 paired A-control / B-critic-Cm T10
+
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- approval: `user-approved`（[V1.10 最终计划](../plan/V1.10.md)）
+- terminal_activity_id: `ACT-20260916-183934-CMRESIDUAL-V1101-CONTROL-T10`、`ACT-20260916-192729-CMRESIDUAL-V1101-CRITIC-CM-T10`
+- run_id: `cmresidual_v110_control_t10_20260916_183934`、`cmresidual_v110_critic_cm_t10_20260916_192729`
+- run_status: A/B 均为 `COMPLETED`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`（dirty worktree 为已批准 V1.10/V1.11 实现）
+- initial_checkpoint: A/B 均为 `null`（从零初始化，未加载 smoke、V1.8 或对侧 checkpoint）
+- last_step / last_epoch: A/B 均为 `20480 / 10`
+- best_metric: A/B 的 `checkpoint_reload_action_max_abs_diff` 均为 `0`
+- conclusion: `SUPPORTED`（配对 T10 工程门禁）；Cm utility `INCONCLUSIVE`
+
+**协议与结果**
+
+A/B 固定 GPU5、64 env、seed42、horizon32、minibatch2048，均构造 2005-D environment observation，actor
+只读相同 1442-D base prefix；A critic 读取 1442-D，B critic 读取完整 2005-D。两侧 matched actor state、
+suffix/cross-variant mean、sigma、post-build CPU RNG 和首个 stochastic action parity 全部通过。模型、optimizer、
+deterministic action 均 finite，sigma min/max=`0.099999994` 且冻结，checkpoint reload diff 均为 `0`。
+
+- A epoch-10：critic loss=`0.0655944`、KL=`0.00869283`、success=`0.015625`、residual RMS=`0.103786`。
+- B epoch-10：critic loss=`0.0671258`、KL=`0.0105094`、success=`0`、residual RMS=`0.102356`。
+- 这些训练诊断量不等于 deterministic preservation 或 Cm 效果证据；A-E10/B-E10 尚未运行，不能比较最终
+  抓取行为，也不能从单 seed 推断统计显著性。
+
+**证据**
+
+- A：[manifest](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/run_manifest.json)、
+  [metrics](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/metrics.jsonl)、
+  [validation](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/checkpoint_validation.json)、
+  [log](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/train.log)、
+  [checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_control_t10_20260916_183934/CmResidualV19ControlT10/nn/last_CmResidualSafeCriticControl_ep_10_rew__7.02_.pth)
+- B：[manifest](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/run_manifest.json)、
+  [metrics](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/metrics.jsonl)、
+  [validation](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/checkpoint_validation.json)、
+  [log](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/train.log)、
+  [checkpoint](../../../../../outputs/CmResidual/cmresidual_v110_critic_cm_t10_20260916_192729/CmResidualV19CriticCmT10/nn/last_CmResidualSafeCriticCm_ep_10_rew__6.92_.pth)
+
+## 2026-09-16 — V1.11.2 DexYCB reset 修复后 GPU5 base-only Gate
+
+- modification_version: `V1.11.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`
+- approval: `user-approved`
+- terminal_activity_id: `ACT-20260916-182728-CMRESIDUAL-V1112-DEXYCB-GPU5`
+- run_id: `cmresidual_v1112_dexycb_base_gpu5_20260916_182728`
+- run_status: `COMPLETED`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`（dirty worktree 为已批准 V1.10/V1.11 实现）
+- initial_checkpoint: frozen DExplore `inspire.pth`，SHA 见 run manifest
+- checkpoint: `null`
+- last_step / last_epoch: `72 / null`
+- best_metric: `min_tip_distance_m=0.2998754382`（描述量，不是成功指标）
+- conclusion: `SUPPORTED`（工程 Gate C）；固定单轨迹成功抓取 `REFUTED`；DexYCB 泛化 `INCONCLUSIVE`
+
+**协议与修复**
+
+V1.11.1 的 tensor reset 在 actor 创建后才写 q，导致首次 rigid-body tensor 仍是零 DOF pose。V1.11.2 仅对
+DexYCB config opt-in actor-creation q/dq/target 初始化，wrist reset error 降为 `1.17e-07 m`。GPU6 被外部任务
+占用、V1.10 B0 已结束后，用户明确批准同协议迁移到空闲 GPU5；序列、物体、reference/source、checkpoint、
+seed42、4 env、72 steps 和 strict zero residual 均不变。
+
+**结果**
+
+- 运行正常退出；72 行 observation/target/object pose finite，max residual target delta=`0`，初始 native q/
+  wrist/object/table error=`0 / 1.17e-07 m / 1.11e-16 m / 0`，工程 Gate C 为 `SUPPORTED`。
+- mean/min tip distance=`1.056172/0.299875 m`；实测接触仅 12/72 steps，mean/max occupancy=
+  `0.015972/0.20`，而 reference mean occupancy=`0.636111`。
+- mean/max lift=`0.022967/0.139027 m`，但最大 lift 出现在 step 8 且 contact occupancy=`0`；接触首次出现于
+  step 11，此后 lift 持续下降。该抬升不能归因于手部抓取。
+- final step tip distance=`2.994933 m`、root/tip reference error=`2.579618/2.513221 m`、contact=`0`。
+  因此 frozen checkpoint 在这条固定 DexYCB trajectory 上没有成功跟踪或抓取；单轨迹证据不能推出所有
+  DexYCB 物体都无法抓取，也不评价 residual/Cm。
+
+证据：[run manifest](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/run_manifest.json)、
+[config](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/config.json)、
+[metrics](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/metrics.jsonl)、
+[log](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/eval.log)。
+
+## 2026-09-16 — V1.10.1 fresh B0-Cm-path baseline
+
+- modification_version: `V1.10.1`
+- operation_category: `experiment`、`operation`
+- approval: `user-approved`
+- activity_id: `ACT-20260916-170651-CMRESIDUAL-V1101-B0`
+- run_id: `cmresidual_v110_b0_cm_path_20260916_170651`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 17:48:16 +0800`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`
+- last_step / last_epoch: `367 / null`
+- checkpoint: `null`（严格 zero residual baseline）
+- best_metric: `mean_env_max_lift_m=0.0848945305`
+- conclusion: `SUPPORTED`（zero residual parity 与正 preservation baseline）；Cm utility `INCONCLUSIVE`
+
+GPU5、64 env、seed42、2005-D Cm 环境路径完成 367 steps；mean contact occupancy=`0.2258515`、
+mean tip distance=`0.1705366 m`、max residual target delta=`0`。运行未被 V1.11 的 GPU6 工作停止或修改。
+证据：[manifest](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/run_manifest.json)、
+[metrics](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/metrics.jsonl)、
+[log](../../../../../outputs/CmResidual/cmresidual_v110_b0_cm_path_20260916_170651/eval.log)。该 baseline 只允许进入
+V1.10 后续 preservation gate，不证明 Cm 改善或统计显著性。
+
+## 2026-09-16 — V1.11.1 DexYCB frozen-DExplore base-only Gate
+
+- modification_version: `V1.11.1`
+- operation_category: `data`、`experiment`、`operation`、`diagnostic`
+- approval: `user-approved`
+- terminal_activity_id: `ACT-20260916-174041-CMRESIDUAL-V1111-DEXYCB`
+- run_id: `cmresidual_v111_dexycb_base_20260916_174041`
+- run_status: `COMPLETED`
+- base_commit: `73001ed76316a3de591d90488eaac18749d7b98a`（dirty worktree 为已批准 V1.10/V1.11 实现）
+- initial_checkpoint: frozen DExplore `inspire.pth`，SHA 见 run manifest
+- checkpoint: `null`
+- last_step / last_epoch: `72 / null`
+- conclusion: `INVALID_IMPLEMENTATION`（reset wrist/FK 对齐）；DexYCB base 泛化 `INCONCLUSIVE`
+
+**假设与协议**
+
+固定使用首个合格 right sequence `subject-10/20201022_110806`、抓取物体 `002_master_chef_can`，将同一
+DexYCB→sim SE(3) 应用于 object/MANO，固定 canonical fingertip identity retarget 到 Inspire，并在独立 YCB
+物理资产中以 frozen DExplore、OI-Cm disabled、严格零 residual、GPU6、seed42、4 env × 72 steps 评估。
+lift 仅描述，不沿用 airplane `0.08 m` 成功阈值。
+
+**离线结果**
+
+Gate A/B 为工程 `SUPPORTED`：72 帧 reference 与 `[74,598]` padded source finite，retarget fingertip RMS
+`32.386 mm`，相对 neutral `47.579 mm` 改善 `31.933%`；joint/q velocity/q acceleration/坐标回代通过，
+相关测试 `32 passed`。证据见 [reference manifest](../../../../../data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/manifest.json)。
+
+**物理结果与失效解释**
+
+运行正常退出并写满 72 行；zero residual target delta 始终为 `0`，observation/target/object pose 全程 finite。
+但初始 native q/object/table 对齐通过时，wrist body 对离线 FK 仍有 `0.486826 m` 误差，违反 reset hard gate。
+因此 manifest 正确标记 `COMPLETED / INVALID_IMPLEMENTATION`；mean/max lift、tip distance、contact 和 tracking
+数值仅是无效实现下的诊断量，不可用于回答 frozen DExplore 在 DexYCB 上是否抓取或泛化。证据：
+[manifest](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/run_manifest.json)、
+[metrics](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/metrics.jsonl)、
+[log](../../../../../outputs/CmResidual/cmresidual_v111_dexycb_base_20260916_174041/eval.log)。
+
+按 [V1.11 最终计划](../plan/V1.11.md) 的失败停止条件，本轮未改变轨迹、物体、阈值或 checkpoint 重跑，
+未训练 residual/Cm，也未影响仍在 GPU5 运行的 V1.10 B0。后续若要修复 reset 同步并复跑，需重新确认范围。
+
 ## 2026-09-16 — V1.8 safe residual 20-epoch preservation stability
 
 - modification_version: `V1.8`

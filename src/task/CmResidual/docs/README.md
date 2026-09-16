@@ -6,11 +6,21 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.9.1`
-- 阶段：V1.9.2 已修复 critic 构造后的 RNG parity，新 run_id 的两侧 Gate II GPU smoke 均为工程
-  `SUPPORTED`；独立 GPU 运行的 epoch-1 trajectory 指标仍非逐值一致，已记录为非严格确定性边界，正式 T10/E10 未启动
-- 计划状态：`final`（[V1.9 计划](plan/V1.9.md)；历史计划保留）
-- 执行审批：用户批准 V1.9 实现；GPU smoke、训练、评估、重复 seed 或 Experiment C 均未启动
+- `modification_version`: `V1.11.2`
+- 阶段：V1.11.2 已将 DexYCB actor 创建 DOF state 与 reference reset 对齐，并经用户批准在空闲 GPU5 完成
+  4 env × 72 steps 修复后复跑；工程 Gate C（reset、finite、zero residual、正常退出）全部通过
+- 行为结果：固定 `subject-10/20201022_110806/right` 单轨迹没有观察到成功抓取；最小平均 tip distance=
+  `0.299875 m`，实际接触仅 12/72 steps、mean/max occupancy=`0.015972/0.20`，最大 lift 出现在无接触的 step 8，
+  因而不能当作抓取。该单轨迹结果对“此序列成功抓取”为 `REFUTED`，对整个 DexYCB 泛化仍为 `INCONCLUSIVE`
+- 资源状态：V1.10.1 fresh B0-Cm-path 已先在 GPU5 完成并通过；V1.11 未停止、重启或修改该 run，
+  V1.11.2 仅在其结束后复用空闲 GPU5
+- V1.10 状态：A-control 与 B-critic-Cm 均已从零完成 10 epochs / 20480 frames，checkpoint finite、
+  frozen sigma、reload diff、matched actor initialization 和输入 provenance 工程 gate 全部通过；A-E10/B-E10
+  尚未运行，因此 Cm utility 仍为 `INCONCLUSIVE`
+- 计划状态：`final`（[V1.11 计划](plan/V1.11.md)；历史计划保留）
+- 执行审批：用户批准隔离的 DexYCB 固定序列/物体、retarget、独立 config/runner 和单次 GPU6 gate；
+  后续又批准 V1.11 reset 修复/GPU5 复跑及 V1.10 B0/A-T10/B-T10；V1.10 E10、多 DexYCB 轨迹与任何
+  DexYCB 训练均未执行
 - V1.9 matched ablation：A/B 都构造相同 2005-D observation 并加载同一冻结 OI-Cm；actor 均只读取
   1442-D base prefix，A critic 读取 1442-D，B critic 读取完整 2005-D。合同测试支持 actor 初始化完全一致
   且 Cm 后缀不影响 actor；Gate II 进一步确认两侧均能完成 2 epochs 和 checkpoint 重载，但 critic 首层宽度
@@ -60,6 +70,10 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.8 最终执行计划](plan/V1.8.md)
 - [V1.9 用户指导](指导/V1.9.md)
 - [V1.9 最终执行计划](plan/V1.9.md)
+- [V1.10 用户指导](指导/V1.10.md)
+- [V1.10 最终执行计划](plan/V1.10.md)
+- [V1.11 用户指导](指导/V1.11.md)
+- [V1.11 最终执行计划](plan/V1.11.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

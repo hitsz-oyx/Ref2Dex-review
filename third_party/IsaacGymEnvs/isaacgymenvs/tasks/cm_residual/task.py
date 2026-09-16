@@ -248,6 +248,11 @@ class CmResidual(VecTask):
         props["damping"][self.sim_indices] = [20.0] * 6 + [10.0] * 12
         props["velocity"][:] = 7.0
         self.sim_lower, self.sim_upper = props["lower"].copy(), props["upper"].copy()
+        initialize_dofs_at_creation = bool(asset.get("initializeDofsAtCreation", False))
+        initial_sim_position = np.empty(18, dtype=np.float32)
+        initial_sim_velocity = np.empty(18, dtype=np.float32)
+        initial_sim_position[self.sim_indices] = self.initial_native.detach().cpu().numpy()
+        initial_sim_velocity[self.sim_indices] = self.initial_native_velocity.detach().cpu().numpy()
         obj_options = gymapi.AssetOptions()
         obj_options.density = 20
         obj_options.angular_damping = obj_options.linear_damping = 0.01
@@ -269,6 +274,12 @@ class CmResidual(VecTask):
             env = self.gym.create_env(self.sim, gymapi.Vec3(-spacing, -spacing, 0), gymapi.Vec3(spacing, spacing, spacing), int(np.sqrt(self.num_envs)))
             h = self.gym.create_actor(env, hand, gymapi.Transform(), "inspire", index, 1, 0)
             self.gym.set_actor_dof_properties(env, h, props)
+            if initialize_dofs_at_creation:
+                dof_state = np.zeros(18, dtype=gymapi.DofState.dtype)
+                dof_state["pos"] = initial_sim_position
+                dof_state["vel"] = initial_sim_velocity
+                self.gym.set_actor_dof_states(env, h, dof_state, gymapi.STATE_ALL)
+                self.gym.set_actor_dof_position_targets(env, h, initial_sim_position)
             # Preserve the released Inspire shape-index/body-name lookup
             # exactly; the historical indexing is part of checkpoint physics.
             shapes = self.gym.get_actor_rigid_shape_properties(env, h)
@@ -278,7 +289,8 @@ class CmResidual(VecTask):
                 shape.filter = 3 if (("thumb" in name and "distal" in name)
                                      or ("thumb" not in name and "intermediate" in name)) else 2
             self.gym.set_actor_rigid_shape_properties(env, h, shapes)
-            o = self.gym.create_actor(env, obj, self._gym_pose(self.initial_object), "airplane", index, 0, 1)
+            object_actor_name = str(asset.get("objectActorName", "airplane"))
+            o = self.gym.create_actor(env, obj, self._gym_pose(self.initial_object), object_actor_name, index, 0, 1)
             t = self.gym.create_actor(env, table, self._gym_pose(self.initial_table), "table", index, 1, 2)
             self.hand_indices.append(self.gym.get_actor_index(env, h, gymapi.DOMAIN_SIM))
             self.object_indices.append(self.gym.get_actor_index(env, o, gymapi.DOMAIN_SIM))
@@ -381,6 +393,9 @@ class CmResidual(VecTask):
             object_state[:, :3] - ref_now[:, 106:109]).norm(dim=-1)
         ref_contact = ref_now[:, 168:184][:, [3, 6, 9, 12, 15]]
         self.reference_contact_occupancy = ref_contact.mean(dim=-1)
+        reference_tips = ref_now[:, 119:167].view(self.num_envs, 16, 3)[:, [3, 6, 9, 12, 15]]
+        actual_tips = body_pos.index_select(1, self.tip_indices)
+        self.reference_tip_position_error_m = (actual_tips - reference_tips).norm(dim=-1).mean(dim=-1)
         self.reset_native_error_max = (native - self.initial_native).abs().amax(dim=-1)
         self.reset_wrist_position_error_m = (
             body_pos[:, self.root_body_index] - self.initial_body_pos[self.root_body_index]).norm(dim=-1)
@@ -442,6 +457,7 @@ class CmResidual(VecTask):
                           reference_contact_occupancy=self.reference_contact_occupancy.mean(),
                           reference_root_position_error_m=self.reference_root_position_error_m.mean(),
                           reference_object_position_error_m=self.reference_object_position_error_m.mean(),
+                          reference_tip_position_error_m=self.reference_tip_position_error_m.mean(),
                           success_fraction=success.float().mean(),
                           success_rate=self.successful_episodes / max(1, self.completed_episodes))
 
