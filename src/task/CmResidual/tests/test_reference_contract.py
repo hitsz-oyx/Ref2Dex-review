@@ -381,6 +381,118 @@ def test_v18_safe_policy_starts_at_zero_with_fixed_small_sigma():
     torch.testing.assert_close(result["mus"], torch.zeros(3, 18), rtol=0.0, atol=0.0)
 
 
+def _build_v19_model(train_config, seed=42):
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidual", f"train={train_config}",
+            "task.basePolicy.useOiCmContext=true",
+        ])
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    torch.manual_seed(seed)
+    builder = CmBuilder()
+    builder.load(params["network"])
+    model = ModelCmContinuous(builder).build({
+        "input_shape": (2005,),
+        "actions_num": 18,
+        "num_seqs": 1,
+        "value_size": 1,
+        "normalize_input": False,
+        "normalize_value": False,
+    })
+    return model, params
+
+
+def test_v19_critic_only_configs_are_a_strict_actor_matched_ablation():
+    control, control_params = _build_v19_model("CmResidualSafeCriticControlPPO")
+    critic_cm, critic_cm_params = _build_v19_model("CmResidualSafeCriticCmPPO")
+    assert control_params["network"]["actor_input_dim"] == 1442
+    assert control_params["network"]["critic_input_dim"] == 1442
+    assert control_params["network"]["critic_candidate_input_dims"] == [1442, 2005]
+    assert critic_cm_params["network"]["actor_input_dim"] == 1442
+    assert critic_cm_params["network"]["critic_input_dim"] == 2005
+    assert critic_cm_params["network"]["critic_candidate_input_dims"] == [1442, 2005]
+
+    control_state = control.a2c_network.state_dict()
+    critic_cm_state = critic_cm.a2c_network.state_dict()
+    actor_keys = [
+        key for key in control_state
+        if key.startswith("actor_mlp.") or key.startswith("mu.") or key == "sigma"
+    ]
+    assert actor_keys
+    for key in actor_keys:
+        torch.testing.assert_close(control_state[key], critic_cm_state[key], rtol=0.0, atol=0.0)
+
+    prefix = torch.randn(4, 1442)
+    suffix_a = torch.randn(4, 563)
+    suffix_b = suffix_a + 10.0
+    obs_a = torch.cat((prefix, suffix_a), dim=-1)
+    obs_b = torch.cat((prefix, suffix_b), dim=-1)
+    with torch.no_grad():
+        control_actor_a = control.a2c_network.eval_actor(obs_a)
+        control_actor_b = control.a2c_network.eval_actor(obs_b)
+        cm_actor_a = critic_cm.a2c_network.eval_actor(obs_a)
+        cm_actor_b = critic_cm.a2c_network.eval_actor(obs_b)
+        control_value_a = control.a2c_network.eval_critic(obs_a)
+        control_value_b = control.a2c_network.eval_critic(obs_b)
+        cm_value_a = critic_cm.a2c_network.eval_critic(obs_a)
+        cm_value_b = critic_cm.a2c_network.eval_critic(obs_b)
+    for left, right in (
+            (control_actor_a[0], control_actor_b[0]),
+            (control_actor_a[1], control_actor_b[1]),
+            (cm_actor_a[0], cm_actor_b[0]),
+            (cm_actor_a[1], cm_actor_b[1]),
+            (control_actor_a[0], cm_actor_a[0]),
+            (control_actor_a[1], cm_actor_a[1]),
+            (control_value_a, control_value_b)):
+        torch.testing.assert_close(left, right, rtol=0.0, atol=0.0)
+    assert not torch.equal(cm_value_a, cm_value_b)
+
+
+def test_v19_matched_build_preserves_rng_and_initial_stochastic_actions():
+    models = []
+    post_build_rng_states = []
+    for train_config in (
+            "CmResidualSafeCriticControlPPO", "CmResidualSafeCriticCmPPO"):
+        model, _ = _build_v19_model(train_config, seed=42)
+        model.eval()
+        models.append(model)
+        post_build_rng_states.append(torch.get_rng_state().clone())
+    assert torch.equal(*post_build_rng_states)
+
+    observation = torch.randn(4, 2005)
+    actions = []
+    with torch.no_grad():
+        for model, rng_state in zip(models, post_build_rng_states):
+            torch.set_rng_state(rng_state)
+            actions.append(model({"obs": observation, "is_train": False})["actions"])
+    torch.testing.assert_close(actions[0], actions[1], rtol=0.0, atol=0.0)
+
+
+def test_v19_asymmetric_inputs_require_separate_network():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from isaacgymenvs.learning.cm_network_builder import CmBuilder
+
+    _, params = _build_v19_model("CmResidualSafeCriticCmPPO")
+    params["network"]["separate"] = False
+    builder = CmBuilder()
+    builder.load(params["network"])
+    with pytest.raises(ValueError, match="separate=true"):
+        builder.build(
+            "cm_actor_critic", input_shape=(2005,), actions_num=18,
+            num_seqs=1, value_size=1)
+
+
 def test_v18_preservation_gate_requires_both_lift_and_contact():
     tools = Path("src/task/CmResidual/tools").resolve()
     if str(tools) not in sys.path:
@@ -436,6 +548,23 @@ def test_v18_training_stage_overrides_rlgames_epoch_budget():
     ])
     assert resolved["max_iterations"] != 10
     assert resolved["train"]["params"]["config"]["max_epochs"] == 10
+
+
+def test_v19_smoke_budget_and_checkpoint_frequency_are_explicit():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module("cm_residual_v19_smoke_budget_test",
+                          tools / "run_ppo_stability.py")
+    resolved = module._resolved_config([
+        "task=CmResidual",
+        "train=CmResidualSafeCriticControlPPO",
+        "task.basePolicy.useOiCmContext=true",
+        "train.params.config.max_epochs=2",
+        "train.params.config.save_frequency=1",
+    ])
+    assert resolved["train"]["params"]["config"]["max_epochs"] == 2
+    assert resolved["train"]["params"]["config"]["save_frequency"] == 1
 
 
 def test_real_oi_cm_checkpoint_contract_when_available():

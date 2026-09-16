@@ -1,4 +1,4 @@
-"""Evaluate zero or checkpoint mean residuals under the V1.8 stability protocol."""
+"""Evaluate zero or checkpoint mean residuals under V1.8/V1.9 stability protocols."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,7 @@ import traceback
 from eval_zero_residual import (
     DEFAULT_DEXPLORE,
     DEFAULT_DEXPLORE_SOURCE,
+    DEFAULT_OI_CM,
     REPOSITORY_ROOT,
     VENDOR_ROOT,
     Tee,
@@ -32,6 +33,10 @@ DEFAULT_REFERENCE = REPOSITORY_ROOT / (
 PROTOCOL_STEPS = 367
 PROTOCOL_ENVS = 64
 PRESERVATION_RATIO = 0.80
+V19_VARIANTS = {
+    "control": "CmResidualSafeCriticControlPPO",
+    "critic_cm": "CmResidualSafeCriticCmPPO",
+}
 
 
 def _install_isaacgym_numpy_compat() -> None:
@@ -66,11 +71,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--baseline-manifest", type=Path)
+    parser.add_argument(
+        "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
     parser.add_argument("--steps", type=int, default=PROTOCOL_STEPS)
     parser.add_argument("--num-envs", type=int, default=PROTOCOL_ENVS)
     parser.add_argument("--gpu", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dexplore-checkpoint", type=Path, default=DEFAULT_DEXPLORE)
+    parser.add_argument("--oi-cm-checkpoint", type=Path, default=DEFAULT_OI_CM)
     parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
     parser.add_argument("--dexplore-source", type=Path, default=DEFAULT_DEXPLORE_SOURCE)
     parser.add_argument(
@@ -79,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_policy(checkpoint: Path, params: dict, device):
+def _load_policy(checkpoint: Path, params: dict, device, observation_dim: int):
     import torch
     from isaacgymenvs.learning.cm_models import ModelCmContinuous
     from isaacgymenvs.learning.cm_network_builder import CmBuilder
@@ -92,7 +100,7 @@ def _load_policy(checkpoint: Path, params: dict, device):
     builder = CmBuilder()
     builder.load(params["network"])
     model = ModelCmContinuous(builder).build({
-        "input_shape": (1442,),
+        "input_shape": (observation_dim,),
         "actions_num": 18,
         "num_seqs": 1,
         "value_size": 1,
@@ -105,13 +113,20 @@ def _load_policy(checkpoint: Path, params: dict, device):
 
 def main() -> int:
     args = parse_args()
+    is_v19 = args.variant in V19_VARIANTS
+    modification_version = "V1.9.2" if is_v19 else "V1.8"
+    train_config = V19_VARIANTS.get(args.variant, "CmResidualSafePPO")
+    use_oi_cm_context = bool(is_v19)
+    observation_dim = 2005 if is_v19 else 1442
     if (args.steps != PROTOCOL_STEPS or args.num_envs != PROTOCOL_ENVS
             or args.gpu != 5 or args.seed != 42):
-        raise ValueError("V1.8 protocol is locked to GPU5, 367 steps, 64 envs, and seed 42")
+        raise ValueError(
+            f"{modification_version} protocol is locked to GPU5, 367 steps, 64 envs, and seed 42")
     if bool(args.checkpoint) != bool(args.baseline_manifest):
         raise ValueError("checkpoint evaluation requires --baseline-manifest, and baseline uses neither")
     mode = "checkpoint_mean" if args.checkpoint else "zero_residual"
-    run_id = args.run_id or f"cmresidual_v18_{mode}_{datetime.now():%Y%m%d_%H%M%S}"
+    run_label = "v18" if not is_v19 else f"v19_{args.variant}"
+    run_id = args.run_id or f"cmresidual_{run_label}_{mode}_{datetime.now():%Y%m%d_%H%M%S}"
     output = (args.output or REPOSITORY_ROOT / "outputs/CmResidual" / run_id).resolve()
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite evaluation: {output}")
@@ -122,6 +137,7 @@ def main() -> int:
     log_path = output / "eval.log"
 
     dexplore = _input(args.dexplore_checkpoint, "dexplore_checkpoint")
+    oi_cm = _input(args.oi_cm_checkpoint, "oi_cm_checkpoint") if is_v19 else None
     reference = _input(args.reference, "reference")
     source = _input(args.dexplore_source, "dexplore_source_tensor")
     checkpoint = _input(args.checkpoint, "residual_checkpoint") if args.checkpoint else None
@@ -136,7 +152,9 @@ def main() -> int:
         "seed": args.seed,
         "steps": args.steps,
         "terminate_on_success": True,
-        "use_oi_cm_context": False,
+        "use_oi_cm_context": use_oi_cm_context,
+        "observation_dim": observation_dim,
+        "policy_family": "v19_critic_only_ablation" if is_v19 else "v18_no_cm",
         "deterministic_mean_action": True,
         "preservation_ratio": PRESERVATION_RATIO,
         "preservation_metrics": {
@@ -145,6 +163,7 @@ def main() -> int:
         },
         "input_sha256": {
             "dexplore_checkpoint": dexplore["sha256"],
+            **({"oi_cm_checkpoint": oi_cm["sha256"]} if oi_cm else {}),
             "reference": reference["sha256"],
             "dexplore_source_tensor": source["sha256"],
         },
@@ -155,12 +174,14 @@ def main() -> int:
     manifest = {
         "manifest_schema": "ref2dex.run.v1",
         "created_at": _now(),
-        "mode": f"v18_stability_{mode}",
+        "mode": f"{run_label}_stability_{mode}",
         "task": "CmResidual",
         "run_id": run_id,
-        "activity_id": args.activity_id or "ACT-CMRESIDUAL-V18-STABILITY-EVAL",
+        "activity_id": args.activity_id or (
+            f"ACT-CMRESIDUAL-{modification_version.replace('.', '')}-"
+            f"{args.variant.upper()}-STABILITY-EVAL"),
         "run_status": "STARTED",
-        "modification_version": "V1.8",
+        "modification_version": modification_version,
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": " ".join(shlex.quote(value) for value in [sys.executable, *sys.argv]),
@@ -168,13 +189,15 @@ def main() -> int:
         "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path),
         "metadata_snapshot": str(reference_manifest_path.resolve()),
-        "input_references": [dexplore, reference, source] + ([checkpoint] if checkpoint else []),
+        "input_references": [dexplore] + ([oi_cm] if oi_cm else []) + [reference, source]
+                            + ([checkpoint] if checkpoint else []),
         "reference_training_eligible": bool(reference_manifest.get("training_eligible", False)),
         "initial_checkpoint": checkpoint,
         "baseline_manifest": str(args.baseline_manifest.resolve()) if args.baseline_manifest else None,
         "metrics": str(metrics_path),
         "log": str(log_path),
         "protocol": protocol,
+        "variant": args.variant,
         "conclusion": "INCONCLUSIVE",
     }
     _write_json(manifest_path, manifest)
@@ -182,6 +205,8 @@ def main() -> int:
     environment_paths = [args.isaac_gym_python.resolve(), REPOSITORY_ROOT, VENDOR_ROOT]
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     os.environ["DEXPLORE_CHECKPOINT"] = dexplore["path"]
+    if oi_cm:
+        os.environ["OI_CM_CHECKPOINT"] = oi_cm["path"]
     os.environ["CMRESIDUAL_REFERENCE"] = reference["path"]
     os.environ["CMRESIDUAL_DEXPLORE_SOURCE"] = source["path"]
     for path in environment_paths:
@@ -201,8 +226,8 @@ def main() -> int:
                 import isaacgymenvs
 
                 overrides = [
-                    "task=CmResidual", "train=CmResidualSafePPO",
-                    "task.basePolicy.useOiCmContext=false",
+                    "task=CmResidual", f"train={train_config}",
+                    f"task.basePolicy.useOiCmContext={'true' if use_oi_cm_context else 'false'}",
                     f"task.reference.path={args.reference.resolve()}",
                     f"task.env.numEnvs={args.num_envs}",
                     "task.env.terminateOnSuccess=true", "pipeline=gpu",
@@ -220,6 +245,9 @@ def main() -> int:
                 resolved_contract = {
                     "input_sha256": {
                         "dexplore_checkpoint": task_cfg["basePolicy"]["checkpointSha256"],
+                        **({
+                            "oi_cm_checkpoint": task_cfg["basePolicy"]["oiCmCheckpointSha256"],
+                        } if is_v19 else {}),
                         "reference": task_cfg["reference"]["sha256"],
                         "dexplore_source_tensor": task_cfg["reference"]["sourceTensorSha256"],
                     },
@@ -238,7 +266,7 @@ def main() -> int:
                     "input_sha256", "reward", "residual_scale")}
                 if resolved_contract != expected_contract:
                     raise RuntimeError(
-                        f"V1.8 evaluation contract drift: {resolved_contract} != {expected_contract}")
+                        f"{modification_version} evaluation contract drift: {resolved_contract} != {expected_contract}")
                 _write_json(config_path, {"run_id": run_id, "resolved": resolved,
                                           "runtime_overrides": overrides, "protocol": protocol})
                 env = isaacgymenvs.make(
@@ -247,13 +275,16 @@ def main() -> int:
                     headless=True, multi_gpu=False, virtual_screen_capture=False,
                     force_render=False, cfg=cfg)
                 observation = env.reset()["obs"]
-                if tuple(observation.shape) != (args.num_envs, 1442):
-                    raise RuntimeError(f"Unexpected no-Cm observation shape: {tuple(observation.shape)}")
+                if tuple(observation.shape) != (args.num_envs, observation_dim):
+                    raise RuntimeError(
+                        f"Unexpected {args.variant} observation shape: {tuple(observation.shape)}")
                 policy = payload = None
                 env_max_lift = torch.zeros(args.num_envs, device=env.rl_device)
+                completed_episode_returns = []
                 if args.checkpoint:
                     policy, payload = _load_policy(
-                        args.checkpoint.resolve(), resolved["train"]["params"], env.rl_device)
+                        args.checkpoint.resolve(), resolved["train"]["params"],
+                        env.rl_device, observation_dim)
                     manifest["checkpoint_epoch"] = int(payload.get("epoch", -1))
                     _write_json(manifest_path, manifest)
 
@@ -273,6 +304,13 @@ def main() -> int:
                                 env.object_indices.long(), 2]
                         lift_by_env = object_z_before_reset - env.initial_object_z
                         env_max_lift = torch.maximum(env_max_lift, lift_by_env)
+                        step_episode_returns = []
+                        if "episode" in info and "return" in info["episode"]:
+                            step_episode_returns = [
+                                float(value) for value in
+                                info["episode"]["return"].detach().cpu().flatten().tolist()
+                            ]
+                            completed_episode_returns.extend(step_episode_returns)
                         row = {
                             "step": step,
                             "reward_mean": _scalar(reward.mean()),
@@ -283,6 +321,9 @@ def main() -> int:
                             "success_fraction": _scalar(info["success_fraction"]),
                             "success_rate": _scalar(info["success_rate"]),
                             "done_count": int(done.sum().item()),
+                            "completed_episode_return_mean": (
+                                sum(step_episode_returns) / len(step_episode_returns)
+                                if step_episode_returns else None),
                             "residual_action_rms": _scalar(actions.square().mean().sqrt()),
                             "residual_target_delta_max": _scalar(info["residual_target_delta_max"]),
                             "observation_finite": bool(torch.isfinite(observation).all().item()),
@@ -311,6 +352,10 @@ def main() -> int:
         "mean_tip_distance_m": sum(row["tip_distance_mean_m"] for row in rows) / len(rows),
         "max_success_fraction": max(row["success_fraction"] for row in rows),
         "final_success_rate": rows[-1]["success_rate"],
+        "completed_episode_count": len(completed_episode_returns),
+        "mean_completed_episode_return": (
+            sum(completed_episode_returns) / len(completed_episode_returns)
+            if completed_episode_returns else 0.0),
         "max_residual_target_delta": max(row["residual_target_delta_max"] for row in rows),
     }
     if not all(math.isfinite(value) for value in summary.values()):
@@ -335,7 +380,7 @@ def main() -> int:
         "best_metric": {"name": "mean_env_max_lift_m",
                         "value": summary["mean_env_max_lift_m"]},
         "checkpoint": checkpoint["path"] if checkpoint else None,
-        "exit_reason": "Reached V1.8 deterministic evaluation budget",
+        "exit_reason": f"Reached {modification_version} {args.variant} deterministic evaluation budget",
         "gate": gate, "gate_passed": bool(gate["passed"]),
         "conclusion": "SUPPORTED" if gate["passed"] else "REFUTED",
         "scientific_conclusion": "INCONCLUSIVE", "summary": summary,

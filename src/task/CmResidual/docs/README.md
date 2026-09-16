@@ -6,10 +6,18 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.8`
-- 阶段：V1.8 B0→T10→E10→T20→E20 短程 stability gate 已完整通过
-- 计划状态：`final`（[V1.8 计划](plan/V1.8.md)；历史计划保留）
-- 执行审批：用户批准按 V1.8 最小因果方案连续执行至 E20；未批准追加训练、重复 seed 或改变研究变量
+- `modification_version`: `V1.9.1`
+- 阶段：V1.9.2 已修复 critic 构造后的 RNG parity，新 run_id 的两侧 Gate II GPU smoke 均为工程
+  `SUPPORTED`；独立 GPU 运行的 epoch-1 trajectory 指标仍非逐值一致，已记录为非严格确定性边界，正式 T10/E10 未启动
+- 计划状态：`final`（[V1.9 计划](plan/V1.9.md)；历史计划保留）
+- 执行审批：用户批准 V1.9 实现；GPU smoke、训练、评估、重复 seed 或 Experiment C 均未启动
+- V1.9 matched ablation：A/B 都构造相同 2005-D observation 并加载同一冻结 OI-Cm；actor 均只读取
+  1442-D base prefix，A critic 读取 1442-D，B critic 读取完整 2005-D。合同测试支持 actor 初始化完全一致
+  且 Cm 后缀不影响 actor；Gate II 进一步确认两侧均能完成 2 epochs 和 checkpoint 重载，但 critic 首层宽度
+  造成构造后 PyTorch RNG 状态不同；V1.9.2 通过固定顺序同时构造 1442/2005-D critic 候选消除了该差异，
+  post-build CPU RNG 与首轮 stochastic action 最大差均为 `0.0`，两侧 2-epoch smoke 和 checkpoint reload
+  均通过。epoch-1 success fraction 仍为 `0.1875/0.15625`，说明分进程 GPU rollout 不能视为逐 trajectory
+  bitwise 配对；后续必须保持同 seed、多 seed 与效果边界，不用 smoke loss/success 判断 Cm utility，当前仍为 `INCONCLUSIVE`
 - V1.8 safe 变体：保留 18D action，actor/critic 均关闭 OI-Cm、使用 1442-D base observation，
   residual mean 精确零初始化，state-independent `sigma=0.1` 且在 stability gate 中冻结
 - 默认兼容路径：canonical task config 继续启用 OI-Cm 与 2005-D observation；旧训练配置未显式
@@ -50,6 +58,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.7 最终执行计划](plan/V1.7.md)
 - [V1.8 用户指导](指导/V1.8.md)
 - [V1.8 最终执行计划](plan/V1.8.md)
+- [V1.9 用户指导](指导/V1.9.md)
+- [V1.9 最终执行计划](plan/V1.9.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

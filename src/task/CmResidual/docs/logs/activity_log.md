@@ -109,7 +109,7 @@ E20 是 V1.8 短程 stability 的最终 gate；训练统计不用于替代该 de
 - activity_id: `ACT-20260916-115828-CMRESIDUAL-V18-T20`
 - timestamp: `2026-09-16 11:58:28 +0800`
 - modification_version: `V1.8`
-- operation_category: `experiment`、`operation`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
 - task_mode: `run-only/operation`
 - change_level: `L2`
 - approval: `user-approved`
@@ -2159,3 +2159,331 @@ v2 corrected reference 已通过 raw-contact 距离准入，正式训练因此�
 - `third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml`
 - `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py`
 - `third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py`
+## 2026-09-16 13:24:33 +0800 — V1.9 critic-only Cm A/B 实现与合同验证
+
+- activity_id: `ACT-20260916-132433-CMRESIDUAL-V19-IMPLEMENTATION`
+- timestamp: `2026-09-16 13:24:33 +0800`
+- modification_version: `V1.9`
+- operation_category: `code`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认 V1.9 歧义收敛方案，审阅计划草案后明确要求继续实现。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（开始时存在用户提供的 V1.9 指导和无关 ObjectInteractionCm 活动日志差异；后者未触碰、未纳入本次范围）
+- scope: 按 V1.9 最终计划实现 matched control / critic-only Cm 的非对称 actor/critic 输入、配置、训练/评估入口和合同测试；只完成 CPU/静态验证，不启动 GPU smoke、训练或评估。
+- conclusion: `SUPPORTED`（工程 observation、actor parity、配置和入口合同）；Cm 的 RL utility、抓取改善、统计显著性与 Experiment C 均为 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 当前指针更新为 V1.9。
+- [src/task/CmResidual/docs/指导/V1.9.md](../指导/V1.9.md) — 用户提供的研究指导。
+- [src/task/CmResidual/docs/plan/V1.9.md](../plan/V1.9.md) — 用户确认的最终执行边界、A/B 协议和停止条件。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态更新为实现完成、运行未启动。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — 显式 actor/critic 输入宽度和前缀切片。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml) — 1442-D actor / 1442-D critic matched control。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml) — 1442-D actor / 2005-D critic-Cm 变体。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — V1.9 variant、输入 provenance、actor 初始化 parity 和 checkpoint schema gate。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — V1.9 B0/E10/E20 同协议 deterministic evaluator 与 episode-return 记录。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — V1.9 actor/critic 非对称输入、初始化 parity 和 V1.8 兼容回归。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本次实现的唯一活动入口；本轮无运行目录或 manifest。
+
+**原因**
+
+V1.8 已证明小探索 residual 能在短程内保持 base 行为，但没有检验 Cm 的 RL utility。V1.9 将唯一实验变量收敛为 critic 是否读取现有冻结 563-D Cm 上下文；A/B 都计算相同 Cm 并共享 2005-D 环境路径，actor 始终只读 1442-D prefix，以避免环境路径、探索和 actor 初始化成为混杂变量。
+
+**验证**
+
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`19 passed, 4 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile ...`：builder、train/eval runner 和测试文件全部通过。
+- 纯配置 preflight：A/B 均为 2005-D observation、1442-D actor；critic 分别为 1442/2005-D；相同 seed 下 actor state 无 mismatch，跨 variant mean/sigma diff 和后缀扰动 action diff 均为 `0.0`。
+- train/eval runner `--help` 均暴露 `v18_no_cm|control|critic_cm` 与显式 OI-Cm checkpoint 参数；`git diff --check` 和 staged activity/link audit 在提交前执行。
+- 本轮未运行 Isaac Gym/GPU smoke，不能将静态合同通过解释为训练可运行或 Cm 有效。
+
+**保护边界与回滚**
+
+- 未修改 action mapper、reward、residual scale、reset、坐标系、数据/cache/schema、OI-Cm 模型或 checkpoint、共享 `src/base/`、外部 DExplore、旧输出和其他 Task；未启动或覆盖任何运行。
+- 回退本次 V1.9 的 builder、两个新配置、runner/evaluator、测试和文档差异即可恢复 V1.8；现有 checkpoint/output 不受影响。
+## 2026-09-16 15:21:52 +0800 — V1.9.1 critic-Cm smoke 完成并发现配对 RNG 失效
+
+- activity_id: `ACT-20260916-152152-CMRESIDUAL-V191-CRITICCM-SMOKE`
+- timestamp: `2026-09-16 15:21:52 +0800`
+- modification_version: `V1.9.1`
+- operation_category: `experiment`、`operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准 V1.9 Gate II 实验；matched control 已完成 2 epochs 并通过全部 wiring/checkpoint 合同，按最终计划启动配对 critic-Cm smoke。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.9.1 实现；无关 ObjectInteractionCm 用户差异未触碰）
+- scope: GPU5、64 env、seed42、2 epochs、critic-Cm（2005-D 环境 observation，actor 读取 1442-D prefix，critic 读取完整 2005-D）；其余变量与 control smoke 相同。
+- run_id: `cmresidual_v19_critic_cm_smoke_20260916_152152`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 15:31:45 +0800`
+- last_step: `4096`
+- last_epoch: `2 / 2`
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/CmResidualV19CriticCmT2/nn/last_CmResidualSafeCriticCm_ep_2_rew__6.79_.pth](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/CmResidualV19CriticCmT2/nn/last_CmResidualSafeCriticCm_ep_2_rew__6.79_.pth)
+- exit_reason: 完成严格 2-epoch wiring smoke；单侧训练/checkpoint 合同通过，但 paired stochastic RNG 合同失败，按计划停止在 Gate II。
+- conclusion: `SUPPORTED`（critic-Cm 单侧工程 wiring）；`INVALID_IMPLEMENTATION`（严格配对 RNG 合同）；Cm utility 和抓取效果 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前指针更新为 V1.9.1。
+- [src/task/CmResidual/docs/指导/V1.9.md](../指导/V1.9.md) 和 [src/task/CmResidual/docs/plan/V1.9.md](../plan/V1.9.md) — 本轮遵循的指导与最终计划。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新为 Gate II 后停止及 RNG 阻断状态。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) 和 [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 两侧运行终态、证据与结论边界。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — 新增显式 2-epoch/save-frequency 合同并保留 A/B 静态 parity 测试。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — 计划内最小修正：允许 2-epoch smoke、每 epoch 保存并记录 V1.9.1。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — V1.9.1 manifest 版本一致性；本轮未启动 evaluation。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — V1.9 非对称 actor/critic 输入实现；本轮诊断定位其 critic replacement RNG 消耗差异。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml) 和 [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml) — 本轮实际运行的 1442/1442 与 1442/2005 配置。
+
+**原因**
+
+最终计划要求正式 A/B 前先完成各 2 epochs wiring smoke。runner 原只接受 10/20 epochs，因此先做不改变科研变量的最小预算修正；两侧完成后，首 epoch trajectory 差异进一步暴露静态 actor parity 未覆盖的 post-build RNG 状态差异。按计划停止并记录，不用无效配对结果判断 Cm 效果。
+
+**产物与结果**
+
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152) — 完整 critic-Cm smoke 目录。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/run_manifest.json) — 单侧 runner `COMPLETED / SUPPORTED` 终态。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/config.json](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/config.json) — resolved config、输入 SHA 和 actor 参数 parity。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/metrics.jsonl) — 2 行 epoch 指标。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/train.log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/train.log) — 完整训练日志。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/checkpoint_validation.json) — model/optimizer/action finite、固定 sigma 和重载验证。
+
+**验证**
+
+- initial mean=`0`，sigma min/max=`0.099999994` 且不可训练；checkpoint epoch/frame=`2/4096`，model/optimizer/action finite，重载 action diff=`0.0`。
+- epoch 2：`c_loss=4.212568`、`a_loss=0.089947`、`KL=0.199856`、`success_fraction=0.09375`、`residual_rms=0.105254`、saturation=`0.001736`，全部 finite。
+- control 与 critic-Cm 的 actor state、初始 mean/sigma 完全一致，但首 epoch success fraction 已为 `0.15625 / 0.203125`。离线同 seed 构造后下一组 `torch.rand(8)` 不相等，最大绝对差 `0.6465547085`；根因是 1442/2005-D critic replacement 消耗不同数量的 RNG draws。
+- 因此两个 smoke 只支持各自 wiring，不是有效效果对照；未启动 B0、T10、E10 或更长训练。修复应让两侧按固定候选顺序消耗相同 RNG，并新增 post-build RNG parity 与首轮 action-noise parity gate，需重新确认后实施。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`20 passed, 5 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- 修改 Python 文件 `py_compile` 与 `git diff --check` 通过；本轮没有残留 CmResidual 运行进程。
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant critic_cm --max-epochs 2 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v19_critic_cm_smoke_20260916_152152 --activity-id ACT-20260916-152152-CMRESIDUAL-V191-CRITICCM-SMOKE`
+
+**停止边界**
+
+只运行 2 epochs；若 finite、checkpoint、固定 sigma、actor parity 或重载合同失败，则记录终态并停止，不进入 T10/E10。
+
+## 2026-09-16 15:12:09 +0800 — V1.9.1 control GPU wiring smoke 完成
+
+- activity_id: `ACT-20260916-151209-CMRESIDUAL-V191-CONTROL-SMOKE`
+- timestamp: `2026-09-16 15:12:09 +0800`
+- modification_version: `V1.9.1`
+- operation_category: `code`、`experiment`、`operation`
+- task_mode: `run-only/operation -> change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户要求“实验一下”；按 V1.9 最终计划只启动 Gate II A/B 各 2 epochs wiring smoke，不进入 T10/E10。runner 原只允许 10/20 epochs，先做计划内最小修正开放 2 epochs 并强制每 epoch 保存。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.9 实现；无关 ObjectInteractionCm 用户差异未触碰）
+- scope: GPU5、64 env、seed42、2 epochs、matched control（2005-D 环境 observation，actor/critic 都只读取 1442-D prefix）；零 mean、固定 sigma=0.1、冻结 OI-Cm 和 V1.8 其余科研变量不变。
+- run_id: `cmresidual_v19_control_smoke_20260916_151209`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 15:21:45 +0800`
+- last_step: `4096`
+- last_epoch: `2 / 2`
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/CmResidualV19ControlT2/nn/last_CmResidualSafeCriticControl_ep_2_rew__6.78_.pth](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/CmResidualV19ControlT2/nn/last_CmResidualSafeCriticControl_ep_2_rew__6.78_.pth)
+- exit_reason: 完成严格 2-epoch wiring smoke；全部训练、finite、固定 sigma、actor parity 和 checkpoint 重载合同通过。
+- conclusion: `SUPPORTED`（工程 wiring）；Cm utility 和抓取效果 `INCONCLUSIVE`
+
+**产物与结果**
+
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209) — 完整 control smoke 目录。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/run_manifest.json) — `COMPLETED / SUPPORTED` 终态。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/config.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/config.json) — resolved config、输入 SHA 和 actor parity。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/metrics.jsonl) — 2 行 epoch 指标。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/train.log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/train.log) — 完整训练日志。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/checkpoint_validation.json) — model/optimizer/action finite、固定 sigma 和重载验证。
+
+**验证结果**
+
+- initial mean=`0`，sigma min/max=`0.099999994` 且不可训练；actor state mismatch 为空，Cm 后缀与跨 variant mean/sigma diff 均为 `0.0`。
+- epoch 2：`c_loss=3.538330`、`a_loss=-0.002872`、`KL=0.017957`、`success_fraction=0.0625`、`residual_rms=0.105352`、saturation=`0.001736`，全部 finite。
+- checkpoint epoch/frame=`2/4096`，model/optimizer/action finite，独立重载 action diff=`0.0`。
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant control --max-epochs 2 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v19_control_smoke_20260916_151209 --activity-id ACT-20260916-151209-CMRESIDUAL-V191-CONTROL-SMOKE`
+
+**停止边界**
+
+只运行 2 epochs；若进程、finite、checkpoint、固定 sigma、actor parity 或重载合同失败，则记录终态并停止，不启动 critic-Cm smoke。
+## 2026-09-16 15:49:00 +0800 — V1.9.2 critic-Cm smoke 复跑完成
+
+- activity_id: `ACT-20260916-154900-CMRESIDUAL-V192-CRITICCM-SMOKE`
+- timestamp: `2026-09-16 15:49:00 +0800`
+- modification_version: `V1.9.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准继续修复与复跑；V1.9.2 control 已完成并通过 RNG、finite、固定 sigma 与 checkpoint 合同，按相同协议启动 critic-Cm。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.9.2 实现；无关 ObjectInteractionCm 用户差异未触碰）
+- scope: GPU5、64 env、seed42、2 epochs、critic-Cm；actor 1442-D、critic 2005-D，固定候选构造顺序和全部科研变量与 V1.9.2 control 一致。
+- run_id: `cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 15:59:14 +0800`
+- last_step: `4096`
+- last_epoch: `2 / 2`
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/CmResidualV19CriticCmT2/nn/last_CmResidualSafeCriticCm_ep_2_rew__6.81_.pth](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/CmResidualV19CriticCmT2/nn/last_CmResidualSafeCriticCm_ep_2_rew__6.81_.pth)
+- exit_reason: 完成严格 2-epoch V1.9.2 critic-Cm smoke；RNG、finite、固定 sigma、actor parity 和 checkpoint 重载合同全部通过。
+- conclusion: `SUPPORTED`（V1.9.2 两侧静态 parity 与各自 GPU wiring）；跨独立 GPU 进程的逐 trajectory bitwise parity `INCONCLUSIVE`；Cm utility `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 当前指针更新为 V1.9.2。
+- [src/task/CmResidual/docs/指导/V1.9.md](../指导/V1.9.md) 和 [src/task/CmResidual/docs/plan/V1.9.md](../plan/V1.9.md) — 本轮遵循的研究指导和最终计划。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新 Gate II 终态和 GPU 非严格确定性边界。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) 和 [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — V1.9.1 失败 smoke、V1.9.2 修复复跑和结论边界。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — 固定顺序构造 1442/2005-D critic 候选，恢复 post-build RNG parity。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml) 和 [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml) — 声明相同 `[1442, 2005]` critic 候选顺序。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — post-build RNG、stochastic action parity 硬 gate，2-epoch smoke 和 V1.9.2 manifest。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — V1.9.2 manifest 版本一致性；本轮未运行 evaluation。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — RNG state 与首轮 stochastic action 精确一致回归。
+
+**原因**
+
+V1.9.1 的 actor 参数相同不足以保证模型构造后 RNG 相同；不同 critic 宽度会消耗不同数量的初始化随机数。V1.9.2 在不改变 critic 实际输入、actor、reward、数据或训练变量的前提下，让两侧以固定候选顺序消耗相同 RNG，并以新 run_id 复跑 Gate II。两侧 GPU smoke 完成后仍保留分进程 trajectory 非 bitwise 一致的边界，不把该差异归因于 Cm。
+
+**产物**
+
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913) — V1.9.2 control 运行目录。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log)、[checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json) — control 终态证据。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900) — V1.9.2 critic-Cm 运行目录。
+- [outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/train.log)、[checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/checkpoint_validation.json) — critic-Cm 终态证据。
+
+**验证**
+
+- 静态 parity：actor state mismatch 为空，mean/sigma/Cm 后缀 action diff=`0.0`，post-build CPU RNG equal=`true`，首轮 stochastic action max abs diff=`0.0`。
+- control / critic-Cm 均为 epoch/frame=`2/4096`，model/optimizer/action finite，sigma min/max=`0.099999994`，checkpoint reload diff=`0.0`。
+- epoch 1：control / critic-Cm residual RMS 均为 `0.1032117531`、saturation 均为 `0`；success fraction=`0.1875/0.15625`，因此不声称实际 GPU trajectory bitwise 相同。
+- epoch 2：control / critic-Cm `c_loss=3.707792/3.724522`、KL=`0.028788/0.024047`、success fraction=`0.03125/0.078125`、residual RMS=`0.105473/0.105276`；仅作 smoke 诊断，不比较效果。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`21 passed, 6 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- 修改 Python 文件 `py_compile` 和 `git diff --check` 通过；没有残留 CmResidual 进程，未启动 B0/T10/E10。
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant critic_cm --max-epochs 2 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900 --activity-id ACT-20260916-154900-CMRESIDUAL-V192-CRITICCM-SMOKE`
+
+**停止边界**
+
+只运行 2 epochs；完成后核对单侧 checkpoint 合同与两侧 epoch-1 初始 trajectory 指标。无论结果如何均不自动进入 T10/E10。
+
+## 2026-09-16 15:39:13 +0800 — V1.9.2 RNG parity 修复并启动 control smoke 复跑
+
+- activity_id: `ACT-20260916-153913-CMRESIDUAL-V192-CONTROL-SMOKE`
+- timestamp: `2026-09-16 15:39:13 +0800`
+- modification_version: `V1.9.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change -> run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: V1.9.1 smoke 暴露 critic 宽度导致 post-build RNG 不一致后，用户明确要求继续；限定修复 RNG parity 并用新 run_id 重跑 Gate II，不进入 T10/E10。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（使用已批准但未提交的 V1.9 系列实现；无关 ObjectInteractionCm 用户差异未触碰）
+- scope: 两侧按固定 `[1442, 2005]` 顺序构造 critic 候选并选择各自输入宽度，使构造后的 CPU RNG 与首轮 stochastic action 严格一致；随后在 GPU5、64 env、seed42、2 epochs 下先复跑 control。
+- run_id: `cmresidual_v19_control_smoke_rngfix_20260916_153913`
+- run_status: `COMPLETED`
+- completed_at: `2026-09-16 15:48:53 +0800`
+- last_step: `4096`
+- last_epoch: `2 / 2`
+- best_metric: checkpoint deterministic reload action max abs diff `0.0`
+- checkpoint: [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/CmResidualV19ControlT2/nn/last_CmResidualSafeCriticControl_ep_2_rew__7._.pth](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/CmResidualV19ControlT2/nn/last_CmResidualSafeCriticControl_ep_2_rew__7._.pth)
+- exit_reason: 完成严格 2-epoch V1.9.2 control smoke；RNG、finite、固定 sigma、actor parity 和 checkpoint 重载合同全部通过。
+- conclusion: `SUPPORTED`（V1.9.2 control 工程 wiring 与静态 RNG parity）；Cm utility `INCONCLUSIVE`
+
+**产物**
+
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913) — 完整运行目录。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json) — `COMPLETED / SUPPORTED` 终态及 RNG parity 合同。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/config.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/config.json) — resolved config 与输入身份。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl) — 2 行 epoch 指标。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log) — 完整训练日志。
+- [outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json) — finite、sigma 与重载证据。
+
+**运行结果**
+
+- epoch 1：`c_loss=1.130573`、success fraction=`0.1875`、residual RMS=`0.103212`。
+- epoch 2：`c_loss=3.707792`、`KL=0.028788`、success fraction=`0.03125`、residual RMS=`0.105473`、saturation=`0.001736`。
+- checkpoint epoch/frame=`2/4096`，model/optimizer/action finite，sigma min/max=`0.099999994`，reload diff=`0.0`。
+
+**实现与启动前验证**
+
+- 两侧 post-build CPU RNG state 完全相等，首轮 stochastic action max abs diff=`0.0`；actor state、mean、sigma 和 Cm 后缀不变性继续为 `0.0` mismatch。
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`21 passed, 6 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- 修改 Python 文件 `py_compile` 与 `git diff --check` 通过；GPU5 启动前为 `8 MiB / 0%`，无残留 CmResidual 进程。
+
+**命令**
+
+`CUDA_VISIBLE_DEVICES=5 /home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_ppo_stability.py --variant control --max-epochs 2 --gpu 5 --seed 42 --num-envs 64 --run-id cmresidual_v19_control_smoke_rngfix_20260916_153913 --activity-id ACT-20260916-153913-CMRESIDUAL-V192-CONTROL-SMOKE`
+
+**停止边界**
+
+只运行 2 epochs；单侧合同失败则停止。control 通过后才启动 critic-Cm；两侧结果仍只作 wiring 与配对协议验证，不判断 Cm 效果。
+## 2026-09-16 16:03:39 +0800 — V1.9.2 实现、RNG 修复与 Gate II 证据提交交接
+
+- activity_id: `ACT-20260916-160339-CMRESIDUAL-V192-COMMIT`
+- timestamp: `2026-09-16 16:03:39 +0800`
+- modification_version: `V1.9.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户批准 V1.9 critic-only Cm 计划、实现、Gate II smoke 与 RNG parity 修复，并明确要求提交代码。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`
+- worktree_dirty: `true`（包含本次 CmResidual V1.9.2 全部已批准差异及无关 ObjectInteractionCm 用户修改；后者明确排除）
+- scope: 汇总提交 V1.9 指导/最终 plan、critic-only Cm 非对称 actor/critic 实现、匹配配置、runner/evaluator、RNG parity 修复、Task 测试、版本指针和 Gate II 活动/实验记录；不提交 outputs、checkpoint、cache 或其他 Task 差异。
+- conclusion: `SUPPORTED`（静态 actor/RNG parity 与两侧 GPU wiring/checkpoint）；跨独立 GPU 进程 trajectory bitwise parity、Cm utility、抓取改善与统计显著性 `INCONCLUSIVE`
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新为 V1.9.2。
+- [src/task/CmResidual/docs/指导/V1.9.md](../指导/V1.9.md) — 用户提供的研究指导。
+- [src/task/CmResidual/docs/plan/V1.9.md](../plan/V1.9.md) — 用户确认的最终执行计划。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前实现、Gate II 终态和结论边界。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — V1.9 实现、V1.9.1 失败 smoke、V1.9.2 修复复跑与提交交接。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 两轮 Gate II 的假设、证据与解释边界。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — actor/critic 输入、RNG、stochastic action、预算和兼容回归。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) — V1.9 variants、2-epoch gate、manifest、checkpoint 与 parity preflight。
+- [src/task/CmResidual/tools/eval_residual_stability.py](../../tools/eval_residual_stability.py) — V1.9 deterministic evaluation 与 episode-return 记录入口。
+- [third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) — 非对称输入与固定候选构造顺序。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticControlPPO.yaml) — matched control 配置。
+- [third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualSafeCriticCmPPO.yaml) — critic-only Cm 配置。
+
+**原因**
+
+V1.8 只证明安全 residual 的短程保持能力。V1.9.2 将 Cm 唯一引入 critic，并通过相同环境路径、相同 actor、固定 sigma、固定 critic 候选构造顺序和显式 RNG/action parity gate 控制混杂变量。Gate II 证明两侧各自可运行，但尚未运行 B0/T10/E10，不能形成 Cm 效果结论。
+
+**验证**
+
+- `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`21 passed, 6 warnings`；warnings 均为 Hydra 1.1 兼容提示。
+- 修改 Python 文件 `py_compile`、`git diff --check` 通过；actor state mismatch 为空，post-build CPU RNG equal=`true`，首轮 stochastic action diff=`0.0`。
+- V1.9.2 control 与 critic-Cm run 均为 `COMPLETED / SUPPORTED`，epoch/frame=`2/4096`，model/optimizer/action finite，sigma 约 `0.1`，checkpoint reload diff=`0.0`。
+- control [manifest](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json)。
+- critic-Cm [manifest](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/checkpoint_validation.json)。
+- 提交前只暂存上述显式路径并执行 staged activity/link audit；不把 smoke 指标误报为 Cm 效果。
+
+**保护边界与回滚**
+
+- 未修改 OI-Cm 模型/checkpoint、action mapper、reward、residual scale、reset、坐标系、数据/cache/schema、共享 `src/base/`、外部 DExplore、旧 outputs 或其他 Task；未提交生成 checkpoint。
+- 本次单一提交可用 `git revert <commit>` 回滚；ignored outputs 证据保持独立，不随代码回滚删除。

@@ -401,3 +401,63 @@ OI-Cm tokens/anchors/effect、DExplore checkpoint 和全部模型参数不变。
 按 [V1.3 最终计划](../plan/V1.3.md) 的停止条件，本次没有启动 PPO。下一步需先经用户确认，将初始化/reference
 对齐与 `destroy_sim` 清理分别作为诊断范围，再决定是否修正和复跑 gate。运行日志见
 [eval.log](../../../../../outputs/CmResidual/cmresidual_zero_v13_20260915_164405/eval.log)。
+## 2026-09-16 — V1.9.1 critic-only Cm 配对 wiring smoke
+
+- modification_version: `V1.9.1`
+- operation_category: `experiment`、`operation`、`diagnostic`
+- approval: `user-approved`
+- activity_ids: `ACT-20260916-151209-CMRESIDUAL-V191-CONTROL-SMOKE`、`ACT-20260916-152152-CMRESIDUAL-V191-CRITICCM-SMOKE`
+- run_ids: `cmresidual_v19_control_smoke_20260916_151209`、`cmresidual_v19_critic_cm_smoke_20260916_152152`
+- run_status: 两侧均 `COMPLETED`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`（dirty worktree 为已批准的 V1.9.1 实现；无关 ObjectInteractionCm 差异未触碰）
+- initial_checkpoint: 两侧均为 `null`（seed42 从零初始化）
+- last_step / last_epoch: 两侧均为 `4096 / 2`
+- conclusion: `SUPPORTED`（两侧各自 GPU wiring、finite 与 checkpoint reload）；`INVALID_IMPLEMENTATION`（严格配对 stochastic RNG）；Cm utility、抓取改善与统计显著性 `INCONCLUSIVE`
+
+**假设与协议**
+
+Gate II 只检查 matched control（actor/critic 1442-D）与 critic-Cm（actor 1442-D、critic 2005-D）能否在相同 GPU5、64 env、seed42、2 epochs、零 mean、固定 `sigma=0.1` 和冻结 OI-Cm 下完成训练与 checkpoint 重载。smoke 不承担效果判断；只有严格配对合同成立后才允许 T10/E10。
+
+**结果**
+
+| variant | epoch-2 c_loss | epoch-2 KL | success fraction | residual RMS | checkpoint reload diff |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| control | 3.538330 | 0.017957 | 0.06250 | 0.105352 | 0.0 |
+| critic-Cm | 4.212568 | 0.199856 | 0.09375 | 0.105254 | 0.0 |
+
+两侧 model、optimizer、action、observation 和 checkpoint 均 finite，sigma 保持冻结且约为 `0.1`，因此各自 wiring 为工程 `SUPPORTED`。证据：control [manifest](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_20260916_151209/train.log)；critic-Cm [manifest](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_20260916_152152/train.log)。
+
+**配对失效与结论边界**
+
+静态 preflight 证明两侧 actor 参数、初始 mean/sigma 和 Cm 后缀 action 不变性完全一致；但 critic replacement 的输入宽度不同，构造线性层时消耗的 PyTorch RNG draws 数不同。同 seed 构造后下一组 `torch.rand(8)` 最大绝对差为 `0.6465547085`，对应首 epoch success fraction 已为 `0.15625 / 0.203125`。因此首轮 stochastic action/trajectory 不能视为严格配对，两个 smoke 的 loss、success 或 reward 差异不得解释为 Cm 效果。
+
+按 V1.9 停止条件，Gate II 后停止，未启动 B0/T10/E10。正式比较前需修复并验证 post-build RNG parity 与首轮 action-noise parity，再用新 run_id 复跑 Gate II；当前 Cm utility 结论保持 `INCONCLUSIVE`。
+## 2026-09-16 — V1.9.2 RNG parity 修复与 Gate II 复跑
+
+- modification_version: `V1.9.2`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`
+- approval: `user-approved`
+- activity_ids: `ACT-20260916-153913-CMRESIDUAL-V192-CONTROL-SMOKE`、`ACT-20260916-154900-CMRESIDUAL-V192-CRITICCM-SMOKE`
+- run_ids: `cmresidual_v19_control_smoke_rngfix_20260916_153913`、`cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900`
+- run_status: 两侧均 `COMPLETED`
+- base_commit: `c619a99f579bd1eef209073e1b8b5c660e71a5e6`（dirty worktree 为已批准的 V1.9.2 实现）
+- initial_checkpoint: 两侧均为 `null`
+- last_step / last_epoch: 两侧均为 `4096 / 2`
+- conclusion: `SUPPORTED`（post-build RNG/首轮 stochastic action 静态 parity、两侧 GPU wiring 与 checkpoint）；分进程 GPU trajectory bitwise parity、Cm utility 和抓取改善 `INCONCLUSIVE`
+
+**修复与协议**
+
+V1.9.1 失败原因为两种 critic replacement 宽度消耗不同数量的 CPU RNG draws。V1.9.2 在两侧都按固定 `[1442, 2005]` 顺序构造 critic 候选，再选择各自的 1442-D 或 2005-D 层；不改变 actor、实际 critic 输入、OI-Cm、reward、数据、seed 或 PPO 超参数。静态硬 gate 新增 post-build CPU RNG equality 和首轮 stochastic action exact equality。
+
+**结果**
+
+| variant | epoch-1 success | epoch-1 residual RMS | epoch-2 c_loss | epoch-2 KL | reload diff |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| control | 0.18750 | 0.1032118 | 3.707792 | 0.028788 | 0.0 |
+| critic-Cm | 0.15625 | 0.1032118 | 3.724522 | 0.024047 | 0.0 |
+
+两侧 manifest 均记录 `post_build_cpu_rng_equal=true`、`stochastic_action_max_abs_diff=0.0`，并完成 2 epochs、finite 和 checkpoint 重载。因此 Gate II 的工程 wiring 与静态配对合同为 `SUPPORTED`。然而独立 GPU 进程的 epoch-1 success fraction 仍未逐值一致；当前证据不能区分未记录的 CUDA sampling 差异与 GPU PhysX 非严格确定性，不能把后续 loss/success 差异解释为 Cm 效果。
+
+证据：control [manifest](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log)；critic-Cm [manifest](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/train.log)。
+
+本结果只允许进入下一次经用户确认的 B0/T10/E10 seed42 探索性实验；单 seed 结果仍须标记 `INCONCLUSIVE`，正式因果或显著性结论需要后续多 seed 方案。

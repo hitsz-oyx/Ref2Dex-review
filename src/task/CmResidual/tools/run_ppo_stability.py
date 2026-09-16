@@ -1,4 +1,4 @@
-"""Run one approved V1.8 no-Cm residual PPO stability stage."""
+"""Run one approved V1.8 or V1.9 residual PPO stability stage."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,7 @@ import traceback
 from eval_zero_residual import (
     DEFAULT_DEXPLORE,
     DEFAULT_DEXPLORE_SOURCE,
+    DEFAULT_OI_CM,
     REPOSITORY_ROOT,
     VENDOR_ROOT,
     _git,
@@ -30,6 +31,20 @@ NUM_ENVS = 64
 HORIZON_LENGTH = 32
 MINIBATCH_SIZE = 2048
 LOG_SIGMA = math.log(0.1)
+V19_VARIANTS = {
+    "control": {
+        "train_config": "CmResidualSafeCriticControlPPO",
+        "actor_input_dim": 1442,
+        "critic_input_dim": 1442,
+        "critic_candidate_input_dims": [1442, 2005],
+    },
+    "critic_cm": {
+        "train_config": "CmResidualSafeCriticCmPPO",
+        "actor_input_dim": 1442,
+        "critic_input_dim": 2005,
+        "critic_candidate_input_dims": [1442, 2005],
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,9 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-envs", type=int, default=NUM_ENVS)
-    parser.add_argument("--max-epochs", type=int, choices=(10, 20), required=True)
+    parser.add_argument("--max-epochs", type=int, choices=(2, 10, 20), required=True)
+    parser.add_argument(
+        "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--dexplore-checkpoint", type=Path, default=DEFAULT_DEXPLORE)
+    parser.add_argument("--oi-cm-checkpoint", type=Path, default=DEFAULT_OI_CM)
     parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE)
     parser.add_argument("--dexplore-source", type=Path, default=DEFAULT_DEXPLORE_SOURCE)
     parser.add_argument(
@@ -66,7 +84,7 @@ def _resolved_config(overrides: list[str]) -> dict:
     return OmegaConf.to_container(cfg, resolve=True)
 
 
-def _build_model(params: dict):
+def _build_model(params: dict, observation_dim: int):
     import torch
     from isaacgymenvs.learning.cm_models import ModelCmContinuous
     from isaacgymenvs.learning.cm_network_builder import CmBuilder
@@ -74,23 +92,27 @@ def _build_model(params: dict):
     builder = CmBuilder()
     builder.load(params["network"])
     model = ModelCmContinuous(builder).build({
-        "input_shape": (1442,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
+        "input_shape": (observation_dim,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
         "normalize_input": bool(params["config"]["normalize_input"]),
         "normalize_value": bool(params["config"]["normalize_value"]),
     })
     with torch.no_grad():
-        mean = model({"obs": torch.zeros(2, 1442), "is_train": False})["mus"]
+        mean = model({"obs": torch.zeros(2, observation_dim), "is_train": False})["mus"]
     return model, mean
 
 
-def _safe_contract(params: dict) -> dict:
+def _safe_contract(params: dict, observation_dim: int) -> dict:
     import torch
 
-    model, mean = _build_model(params)
+    model, mean = _build_model(params, observation_dim)
     network = model.a2c_network
     sigma = network.sigma.detach().exp()
     result = {
-        "observation_dim": 1442,
+        "observation_dim": observation_dim,
+        "actor_input_dim": int(getattr(network, "actor_input_dim", observation_dim)),
+        "critic_input_dim": int(getattr(network, "critic_input_dim", observation_dim)),
+        "critic_candidate_input_dims": list(
+            getattr(network, "critic_candidate_input_dims", ())),
         "action_dim": 18,
         "initial_mean_abs_max": float(mean.abs().amax().item()),
         "sigma_min": float(sigma.min().item()),
@@ -105,11 +127,11 @@ def _safe_contract(params: dict) -> dict:
     return result
 
 
-def _load_checkpoint(checkpoint: Path, params: dict) -> tuple[dict, dict]:
+def _load_checkpoint(checkpoint: Path, params: dict, observation_dim: int) -> tuple[dict, dict]:
     import torch
 
     payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    model, _ = _build_model(params)
+    model, _ = _build_model(params, observation_dim)
     state = {
         key[len("_orig_mod."):] if key.startswith("_orig_mod.") else key: value
         for key, value in payload["model"].items()
@@ -117,9 +139,10 @@ def _load_checkpoint(checkpoint: Path, params: dict) -> tuple[dict, dict]:
     model.load_state_dict(state, strict=True)
     model.eval()
     with torch.no_grad():
-        first = model({"obs": torch.linspace(-1, 1, 1442).repeat(2, 1),
+        fixed = torch.linspace(-1, 1, observation_dim).repeat(2, 1)
+        first = model({"obs": fixed,
                        "is_train": False})["mus"]
-        second = model({"obs": torch.linspace(-1, 1, 1442).repeat(2, 1),
+        second = model({"obs": fixed,
                         "is_train": False})["mus"]
     sigma = model.a2c_network.sigma.detach().exp()
     validation = {
@@ -135,16 +158,86 @@ def _load_checkpoint(checkpoint: Path, params: dict) -> tuple[dict, dict]:
     return payload, validation
 
 
+def _matched_actor_initialization_contract(control_params: dict, critic_cm_params: dict,
+                                           seed: int) -> dict:
+    import torch
+
+    models = []
+    post_build_rng_states = []
+    for params in (control_params, critic_cm_params):
+        torch.manual_seed(seed)
+        models.append(_build_model(params, 2005)[0])
+        post_build_rng_states.append(torch.get_rng_state().clone())
+    states = [model.a2c_network.state_dict() for model in models]
+    actor_keys = sorted(
+        key for key in states[0]
+        if key.startswith("actor_mlp.") or key.startswith("mu.") or key == "sigma")
+    mismatches = [
+        key for key in actor_keys if not torch.equal(states[0][key], states[1][key])]
+    prefix = torch.linspace(-1.0, 1.0, 1442).repeat(2, 1)
+    suffix_a = torch.zeros(2, 563)
+    suffix_b = torch.ones(2, 563)
+    with torch.no_grad():
+        actor_results = []
+        suffix_diffs = []
+        for model in models:
+            model.eval()
+            first = model({"obs": torch.cat((prefix, suffix_a), dim=-1),
+                           "is_train": False})
+            second = model({"obs": torch.cat((prefix, suffix_b), dim=-1),
+                            "is_train": False})
+            actor_results.append((first["mus"], first["sigmas"]))
+            suffix_diffs.append(float((first["mus"] - second["mus"]).abs().amax().item()))
+        stochastic_actions = []
+        for model, rng_state in zip(models, post_build_rng_states):
+            torch.set_rng_state(rng_state)
+            stochastic_actions.append(model({
+                "obs": torch.cat((prefix, suffix_a), dim=-1),
+                "is_train": False,
+            })["actions"])
+    cross_mean_diff = float(
+        (actor_results[0][0] - actor_results[1][0]).abs().amax().item())
+    cross_sigma_diff = float(
+        (actor_results[0][1] - actor_results[1][1]).abs().amax().item())
+    post_build_cpu_rng_equal = bool(torch.equal(*post_build_rng_states))
+    stochastic_action_diff = float(
+        (stochastic_actions[0] - stochastic_actions[1]).abs().amax().item())
+    result = {
+        "seed": seed,
+        "actor_state_keys": actor_keys,
+        "actor_state_mismatches": mismatches,
+        "suffix_mean_max_abs_diff": suffix_diffs,
+        "cross_variant_mean_max_abs_diff": cross_mean_diff,
+        "cross_variant_sigma_max_abs_diff": cross_sigma_diff,
+        "post_build_cpu_rng_equal": post_build_cpu_rng_equal,
+        "stochastic_action_max_abs_diff": stochastic_action_diff,
+    }
+    result["passed"] = bool(
+        actor_keys and not mismatches and max(suffix_diffs) == 0.0
+        and cross_mean_diff == 0.0 and cross_sigma_diff == 0.0
+        and post_build_cpu_rng_equal and stochastic_action_diff == 0.0)
+    return result
+
+
 def main() -> int:
     args = parse_args()
+    is_v19 = args.variant in V19_VARIANTS
+    modification_version = "V1.9.2" if is_v19 else "V1.8"
+    variant_contract = V19_VARIANTS.get(args.variant)
+    observation_dim = 2005 if is_v19 else 1442
+    train_config = (
+        variant_contract["train_config"] if variant_contract else "CmResidualSafePPO")
+    use_oi_cm_context = bool(is_v19)
     if args.gpu != 5 or args.seed != 42 or args.num_envs != NUM_ENVS:
-        raise ValueError("V1.8 stability stages are locked to GPU5, seed42, and 64 envs")
-    if args.max_epochs == 10 and args.initial_checkpoint is not None:
-        raise ValueError("T10 must start without a residual checkpoint")
+        raise ValueError(
+            f"{modification_version} stability stages are locked to GPU5, seed42, and 64 envs")
+    if args.max_epochs in (2, 10) and args.initial_checkpoint is not None:
+        raise ValueError(f"T{args.max_epochs} must start without a residual checkpoint")
     if args.max_epochs == 20 and args.initial_checkpoint is None:
         raise ValueError("T20 requires the explicit passing T10 checkpoint")
 
-    run_id = args.run_id or f"cmresidual_v18_t{args.max_epochs}_{datetime.now():%Y%m%d_%H%M%S}"
+    run_label = "v18" if not is_v19 else f"v19_{args.variant}"
+    run_id = args.run_id or f"cmresidual_{run_label}_t{args.max_epochs}_{datetime.now():%Y%m%d_%H%M%S}"
     output = (args.output or REPOSITORY_ROOT / "outputs/CmResidual" / run_id).resolve()
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite stability stage: {output}")
@@ -154,9 +247,12 @@ def main() -> int:
     metrics_path = output / "metrics.jsonl"
     log_path = output / "train.log"
     validation_path = output / "checkpoint_validation.json"
-    experiment_name = f"CmResidualSafeT{args.max_epochs}"
+    experiment_name = (
+        f"CmResidualSafeT{args.max_epochs}" if not is_v19
+        else f"CmResidualV19{args.variant.title().replace('_', '')}T{args.max_epochs}")
 
     dexplore = _input(args.dexplore_checkpoint, "dexplore_checkpoint")
+    oi_cm = _input(args.oi_cm_checkpoint, "oi_cm_checkpoint") if is_v19 else None
     reference = _input(args.reference, "reference")
     source = _input(args.dexplore_source, "dexplore_source_tensor")
     initial = _input(args.initial_checkpoint, "initial_residual_checkpoint") if args.initial_checkpoint else None
@@ -171,8 +267,8 @@ def main() -> int:
     reference_manifest = json.loads(reference_manifest_path.read_text(encoding="utf-8"))
 
     overrides = [
-        "task=CmResidual", "train=CmResidualSafePPO", "headless=True",
-        "task.basePolicy.useOiCmContext=false",
+        "task=CmResidual", f"train={train_config}", "headless=True",
+        f"task.basePolicy.useOiCmContext={'true' if use_oi_cm_context else 'false'}",
         f"task.reference.path={args.reference.resolve()}",
         f"num_envs={args.num_envs}",
         f"train.params.config.max_epochs={args.max_epochs}",
@@ -188,19 +284,53 @@ def main() -> int:
     ]
     if args.initial_checkpoint:
         overrides.append(f"checkpoint={args.initial_checkpoint.resolve()}")
+    if args.max_epochs == 2:
+        overrides.append("train.params.config.save_frequency=1")
     resolved = _resolved_config(overrides)
-    if resolved["task"]["basePolicy"]["useOiCmContext"] is not False:
-        raise RuntimeError("V1.8 stage unexpectedly enables OI-Cm")
+    if bool(resolved["task"]["basePolicy"]["useOiCmContext"]) != use_oi_cm_context:
+        raise RuntimeError(f"{modification_version} OI-Cm context contract drift")
     resolved_max_epochs = int(resolved["train"]["params"]["config"]["max_epochs"])
     if resolved_max_epochs != args.max_epochs:
         raise RuntimeError(
-            f"V1.8 stage budget drift: requested {args.max_epochs}, resolved {resolved_max_epochs}")
-    contract = _safe_contract(resolved["train"]["params"])
+            f"{modification_version} stage budget drift: requested {args.max_epochs}, resolved {resolved_max_epochs}")
+    contract = _safe_contract(resolved["train"]["params"], observation_dim)
+    if variant_contract:
+        for name in (
+                "actor_input_dim", "critic_input_dim",
+                "critic_candidate_input_dims"):
+            if contract[name] != variant_contract[name]:
+                raise RuntimeError(
+                    f"{args.variant} {name} drift: {contract[name]} != {variant_contract[name]}")
     if not contract["passed"]:
-        raise RuntimeError(f"V1.8 safe policy contract failed: {contract}")
+        raise RuntimeError(f"{modification_version} safe policy contract failed: {contract}")
+    if args.initial_checkpoint:
+        _, initial_validation = _load_checkpoint(
+            args.initial_checkpoint.resolve(), resolved["train"]["params"], observation_dim)
+        if initial_validation["checkpoint_epoch"] != 10:
+            raise ValueError(
+                f"T20 requires a schema-compatible epoch-10 checkpoint, got "
+                f"epoch {initial_validation['checkpoint_epoch']}")
+    matched_actor_contract = None
+    if is_v19:
+        paired_params = {}
+        for paired_variant, paired_contract in V19_VARIANTS.items():
+            paired_overrides = [
+                value if not value.startswith("train=")
+                else f"train={paired_contract['train_config']}"
+                for value in overrides
+            ]
+            paired_params[paired_variant] = _resolved_config(
+                paired_overrides)["train"]["params"]
+        matched_actor_contract = _matched_actor_initialization_contract(
+            paired_params["control"], paired_params["critic_cm"], args.seed)
+        if not matched_actor_contract["passed"]:
+            raise RuntimeError(
+                f"V1.9 matched actor initialization failed: {matched_actor_contract}")
     _write_json(config_path, {
         "run_id": run_id, "physical_gpu": args.gpu, "resolved": resolved,
-        "runtime_overrides": overrides, "safe_policy_contract": contract,
+        "runtime_overrides": overrides, "variant": args.variant,
+        "safe_policy_contract": contract,
+        "matched_actor_initialization_contract": matched_actor_contract,
     })
 
     train_entrypoint = VENDOR_ROOT / "isaacgymenvs/train.py"
@@ -211,10 +341,12 @@ def main() -> int:
     command_values = [sys.executable, "-c", compat_bootstrap, *overrides]
     manifest = {
         "manifest_schema": "ref2dex.run.v1", "created_at": _now(),
-        "mode": f"v18_stability_t{args.max_epochs}", "task": "CmResidual",
+        "mode": f"{run_label}_stability_t{args.max_epochs}", "task": "CmResidual",
         "run_id": run_id,
-        "activity_id": args.activity_id or f"ACT-CMRESIDUAL-V18-T{args.max_epochs}",
-        "run_status": "STARTED", "modification_version": "V1.8",
+        "activity_id": args.activity_id or (
+            f"ACT-CMRESIDUAL-{modification_version.replace('.', '')}-"
+            f"{args.variant.upper()}-T{args.max_epochs}"),
+        "run_status": "STARTED", "modification_version": modification_version,
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": " ".join(shlex.quote(value) for value in command_values),
@@ -222,7 +354,8 @@ def main() -> int:
         "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path),
         "metadata_snapshot": str(reference_manifest_path.resolve()),
-        "input_references": [dexplore, reference, source] + ([initial] if initial else []),
+        "input_references": [dexplore] + ([oi_cm] if oi_cm else []) + [reference, source]
+                            + ([initial] if initial else []),
         "reference_training_eligible": bool(reference_manifest.get("training_eligible", False)),
         "reference_allow_ineligible_for": "", "initial_checkpoint": initial,
         "checkpoint": None, "metrics": str(metrics_path), "log": str(log_path),
@@ -231,12 +364,18 @@ def main() -> int:
                    "max_epochs": args.max_epochs, "horizon_length": HORIZON_LENGTH,
                    "minibatch_size": MINIBATCH_SIZE},
         "safe_policy_contract": contract, "conclusion": "INCONCLUSIVE",
+        "variant": args.variant,
+        "actor_input_dim": contract["actor_input_dim"],
+        "critic_input_dim": contract["critic_input_dim"],
+        "matched_actor_initialization_contract": matched_actor_contract,
     }
     _write_json(manifest_path, manifest)
 
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     environment["DEXPLORE_CHECKPOINT"] = dexplore["path"]
+    if oi_cm:
+        environment["OI_CM_CHECKPOINT"] = oi_cm["path"]
     environment["CMRESIDUAL_REFERENCE"] = reference["path"]
     environment["CMRESIDUAL_DEXPLORE_SOURCE"] = source["path"]
     python_paths = [str(args.isaac_gym_python.resolve()), str(REPOSITORY_ROOT), str(VENDOR_ROOT)]
@@ -261,7 +400,8 @@ def main() -> int:
         with metrics_path.open("w", encoding="utf-8") as stream:
             for row in rows:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
-        _, validation = _load_checkpoint(last_checkpoint, resolved["train"]["params"])
+        _, validation = _load_checkpoint(
+            last_checkpoint, resolved["train"]["params"], observation_dim)
         validation["checkpoint"] = str(last_checkpoint)
         validation["checkpoint_sha256"] = _input(last_checkpoint, "ppo_checkpoint")["sha256"]
         validation["event_scalar_tags"] = event_tags
@@ -282,7 +422,7 @@ def main() -> int:
                             "value": validation["deterministic_reload_action_max_abs_diff"]},
             "checkpoint": str(last_checkpoint),
             "checkpoint_validation": str(validation_path),
-            "exit_reason": f"Reached V1.8 T{args.max_epochs} training budget",
+            "exit_reason": f"Reached {modification_version} {args.variant} T{args.max_epochs} training budget",
             "gate_passed": passed,
             "conclusion": "SUPPORTED" if passed else "INVALID_IMPLEMENTATION",
             "scientific_conclusion": "INCONCLUSIVE",
@@ -290,7 +430,7 @@ def main() -> int:
         })
         _write_json(manifest_path, manifest)
         if not passed:
-            raise RuntimeError(f"V1.8 training contract failed: {validation}")
+            raise RuntimeError(f"{modification_version} training contract failed: {validation}")
     except BaseException as error:
         traceback.print_exc()
         if not metrics_path.exists():
