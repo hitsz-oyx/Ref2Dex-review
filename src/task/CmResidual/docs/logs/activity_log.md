@@ -1,3 +1,93 @@
+## 2026-09-16 10:42:38 +0800 — V1.7.1 正式 PPO 训练终态与部分结果归档
+
+- activity_id: `ACT-20260916-104238-CMRESIDUAL-V171-PPO-TERMINAL`
+- timestamp: `2026-09-16 10:42:38 +0800`
+- modification_version: `V1.7.1`
+- operation_category: `experiment`、`diagnostic`、`operation`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认按 V1.7.1 记录外部中断、部分指标、checkpoint 解释和科研结论边界，并提交相关记录。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e4868b78581e723691e8581a1fe69e36b99f2438`
+- worktree_dirty: `true`（接手时已有同一 run 的 ETA activity；本次保留并一并归档）
+- scope: V1.7 正式 PPO 运行终态化、部分 TensorBoard 指标导出、Task 状态与实验结论同步；不恢复或复跑训练，不改代码、配置、数据、checkpoint 或研究变量。
+- run_id: `cmresidual_ppo_formal_v17_20260915_2345`
+- run_status: `FAILED`
+- last_step: `335872`
+- last_epoch: `165 / 1000`
+- best_metric: epoch 50 checkpoint eligible `rewards/iter=5.883934020996094`
+- best_checkpoint: [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/CmResidual.pth](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/CmResidual.pth)
+- latest_checkpoint: [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/last_CmResidual_ep_100_rew_-6470.568.pth](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/last_CmResidual_ep_100_rew_-6470.568.pth)
+- exit_reason: 外部执行会话以 `exit_code=-1` 终止；无 Python traceback、CUDA OOM 或内核 OOM 证据。
+- conclusion: `INVALID_IMPLEMENTATION`（计划运行与终态验证未完成）；科研结论 `INCONCLUSIVE`
+
+**文件**
+
+- [src/task/CmResidual/docs/plan/V1.7.md](../plan/V1.7.md) — 本次沿用的最终计划和停止条件。
+- [src/task/CmResidual/docs/README.md](../README.md) — 当前状态更新到 V1.7.1。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本次终态唯一活动入口。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 部分结果、对照边界和科研解释。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新到 V1.7.1。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345) — 原运行目录；未覆盖 checkpoint。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/config.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/config.json) — 原 resolved config。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json) — 补记 `FAILED`、中断原因、最后进度和 checkpoint。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/metrics.jsonl) — 从原始 TensorBoard 导出的 165 行部分 epoch 指标。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/train.log) — 原训练日志，行缓冲止于 epoch 101。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/summaries/events.out.tfevents.1789486158.server](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/summaries/events.out.tfevents.1789486158.server) — epoch 165 的原始标量证据。
+
+**原因**
+
+- 原会话在用户查询状态时遇到服务过载，长期命令随后以 `exit_code=-1` 结束；runner 未执行终态收尾，manifest 因而错误停留在 `STARTED`。
+- zero-residual gate 有接触与抬升工程证据；V1.7 epoch 165 的 lift、tip distance、contact、success fraction 和 residual RMS 显示训练 rollout 明显退化。两者不是同协议统计对照，故不把观察上升为 residual 或 OI-Cm 的因果结论。
+
+**验证**
+
+- TensorBoard `info/epochs` 共 `165` 条，最后 `epoch=165`、`frame=335872`；runner 所需 10 个 scalar tag 均存在，已按既有 schema 导出部分 `metrics.jsonl`。
+- epoch 165：`lift_mean=-0.545820 m`、`tip_distance_mean=1.049141 m`、`contact_occupancy=0.165625`、`success_fraction=0`、`residual_rms=0.852116`。
+- epoch 50/100 checkpoint 可读取；策略平均标准差约 `1.0051 / 0.9984`。未执行仿真恢复或 deterministic policy evaluation。
+- 进程检查确认 runner/训练子进程均不存在；GPU5 无该 run 的计算进程。训练效果、Cm 因果和普遍抓取结论保持 `INCONCLUSIVE`。
+
+**保护边界与回滚**
+
+- 未修改代码、配置、reference/source 数据、reward、模型权重、checkpoint、V1.7 plan、指导、共享 `src/base/` 或其他 Task；未启动恢复、复跑或新评估。
+- Git 回滚入口为本次文档提交；生成产物回滚只删除新导出的 `metrics.jsonl`，并将同一 run manifest 恢复到归档前副本/字段。原 TensorBoard、train log 和 checkpoint 不受影响。
+
+## 2026-09-16 00:21:56 +0800 — V1.7 正式训练耗时查询
+
+- timestamp: `2026-09-16 00:21:56 +0800`
+- activity_id: `ACT-20260916-002156-CMRESIDUAL-TRAIN-ETA`
+- modification_version: `V1.7`（沿用被查询运行版本；版本指针仍为 V1.6，本次不调整）
+- operation_category: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户查询训练预计耗时；只读检查并记录状态。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e4868b78581e723691e8581a1fe69e36b99f2438`
+- scope: 训练进度与耗时估算；不改变代码、配置、训练预算或进程。
+- run_id: `cmresidual_ppo_formal_v17_20260915_2345`
+- run_status: `RUNNING`（PID 576668 存在；runner manifest 在运行中仍写 STARTED）
+- last_epoch: `10` / `1000`
+- conclusion: `SUPPORTED`（当前进度证据）；`INCONCLUSIVE`（预计完成时间和训练效果）
+
+**文件**
+
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 仅新增本次查询记录；移除此条即可回滚。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345)；[outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json)；[outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/train.log](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/train.log)。
+- [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/summaries/events.out.tfevents.1789486158.server](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/summaries/events.out.tfevents.1789486158.server) — 直接读取原始 TensorBoard 标量，未生成或改写训练产物。
+
+**原因**
+
+用户询问训练需要多久，根据真实完成 epoch 的间隔估算，预算保持 1000 epochs。
+
+**验证**
+
+使用 `EventAccumulator(..., size_guidance={"scalars": 0}).Reload()` 读取 `info/epochs`；最近完成 epoch 间隔均值 `300.19 s/epoch`。
+剩余约 `82.5 h`，推算结束时间 `2026-09-19 10:51 +0800`；该时间取决于后续速度和资源占用，不能作为收敛承诺。
+
 ## 2026-09-15 21:55:00 +0800 — V1.5.4 PPO wiring pilot 通过
 
 - activity_id: `ACT-20260915-215500-CMRESIDUAL-V154-PPO-SUPPORTED`

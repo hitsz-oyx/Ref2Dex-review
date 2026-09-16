@@ -3,21 +3,47 @@
 - scope: `task:CmResidual`
 - related: [任务入口](../README.md)、[V1.5 最终计划](../plan/V1.5.md)、[V1.4 最终计划](../plan/V1.4.md)、[V1.3 最终计划](../plan/V1.3.md)、[活动记录](activity_log.md)
 
-## 2026-09-15 — V1.7 正式 PPO 训练运行中
+## 2026-09-16 — V1.7.1 正式 PPO 训练外部中断与部分结果
 
-- modification_version: `V1.7`
-- operation_category: `experiment`、`operation`
+- modification_version: `V1.7.1`
+- operation_category: `experiment`、`diagnostic`、`operation`、`documentation`
 - approval: `user-approved`
-- activity_id: `ACT-20260915-234500-CMRESIDUAL-V17-PPO-FORMAL`
+- activity_id: `ACT-20260916-104238-CMRESIDUAL-V171-PPO-TERMINAL`
 - run_id: `cmresidual_ppo_formal_v17_20260915_2345`
-- run_status: `RUNNING`
+- run_status: `FAILED`
+- base_commit: `9167f8d5bc550b058d61d8904546ef67f2719770`（运行启动时）
 - initial_checkpoint: `null`（随机初始化 residual PPO）
-- reference: [v2 eligible manifest](../../../../../data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/manifest.json)
-- output: [formal run](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/)
+- last_step / last_epoch: `335872 / 165`
+- best_metric: epoch 50 checkpoint eligible `rewards/iter=5.883934020996094`
+- best_checkpoint: [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/CmResidual.pth](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/CmResidual.pth)
+- latest_checkpoint: [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/last_CmResidual_ep_100_rew_-6470.568.pth](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/rlgames_formal/nn/last_CmResidual_ep_100_rew_-6470.568.pth)
+- reference: [data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/manifest.json](../../../../../data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/manifest.json)
+- output: [outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/)
+- conclusion: `INVALID_IMPLEMENTATION`（计划预算和终态验证未完成）；科研结论 `INCONCLUSIVE`
 
-V1.6 reference contract 通过后，使用 seed 42、GPU5、64 env、1000 epochs、horizon 32、minibatch 2048 和已验证的
-PhysX buffer 配置启动正式 PPO。1-env 初始化 smoke 已通过；正式运行当前已完成第 1 个 epoch，终态 checkpoint、
-metrics 和科学结论待运行结束后补写。当前仅有工程运行证据，收敛、抓取和 Cm 增益保持 `INCONCLUSIVE`。
+**终止与证据完整性**
+
+训练于 `2026-09-15T23:29:00+08:00` 启动，TensorBoard 最后写入 epoch 165（`2026-09-16T10:23:47+08:00`）。
+承载 runner 的外部执行会话随后以 `exit_code=-1` 终止，runner 与训练子进程均消失；没有 Python traceback、CUDA OOM
+或内核 OOM 证据。由于 runner 未能执行收尾，V1.7.1 从原始 TensorBoard 导出 165 行部分
+[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/metrics.jsonl)，并将
+[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_ppo_formal_v17_20260915_2345/run_manifest.json)
+终态化。epoch 165 后没有 checkpoint；最新定期 checkpoint 为 epoch 100，且未完成计划要求的终态独立策略评估。
+
+**部分结果与边界**
+
+- V1.4 zero-residual gate：mean/max lift `0.0798409 / 0.2123542 m`、mean tip distance `0.048995 m`、
+  mean contact occupancy `0.480790`，末步 `success_fraction=0.75`；只支持单场景 base 抓取/抬升工程行为。
+- V1.7 epoch 165：`lift_mean=-0.545820 m`、`tip_distance_mean=1.049141 m`、`contact_occupancy=0.165625`、
+  `success_fraction=0`、`residual_rms=0.852116`、`residual_saturation_ratio=0.009549`。
+- 训练从 epoch 1 起 residual RMS 已为 `0.731104`。epoch 50/100 checkpoint 的高斯策略平均标准差分别约
+  `1.0051 / 0.9984`，说明训练 rollout 持续承受接近单位标准差的随机 residual，而不是从 zero residual 邻域缓慢修正。
+- 上述幅度支持“V1.7 随机 residual 训练 rollout 相对 zero-residual 工程 gate 明显退化”的诊断观察；但两者的
+  CPU/GPU、env 数、成功重置与评估协议不同，且只有一个 seed，不能声称统计显著，不能把退化归因于 residual
+  方法或冻结 OI-Cm。需要同协议 zero/no-Cm/Cm ablation 和 deterministic checkpoint evaluation 才能判断因果。
+
+工程 smoke 与此前 PPO wiring `SUPPORTED` 结论不变；本次未完成训练预算、checkpoint 终态验证或独立抓取评估，
+因此 residual 增益、收敛、Cm 贡献和普遍抓取结论均保持 `INCONCLUSIVE`。
 
 ## 2026-09-15 — V1.6 corrected reference 训练准入
 
