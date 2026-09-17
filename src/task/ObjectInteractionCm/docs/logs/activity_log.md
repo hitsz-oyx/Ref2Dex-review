@@ -8584,6 +8584,10 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 - pid: `4002771`（wrapper）；selection 子进程 `4002773`。
 - scope: 全部 `2177` 条单物体 primitive 候选；选择输出和 cache 输出均为独立 NAS 目录。GPU 2 仅用于后续 MANO/KNN，GPU 3 外部仿真保持不动。
 
+**原因**
+
+用户已批准 OakInk2 仅保留单物体 primitive，并要求开始生成正式 cache；smoke 已验证 producer 的输入、双手 Inspire retarget 和 KNN 合同可以运行，因此进入全量操作。
+
 **运行与证据**
 
 - [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json) — `STARTED/RESTARTED` wrapper manifest；首次普通 `nohup` 子进程组被执行器回收，未产生选择产物，随后用 `setsid` 重启，未修改输入。
