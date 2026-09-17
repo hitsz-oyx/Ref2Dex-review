@@ -538,9 +538,7 @@ class ObjectInteractionCmDataset(Dataset):
         offline_knn_normals_real: np.ndarray | None = None
         offline_knn_future_real: np.ndarray | None = None
         for stream_name, _, _ in sequence.hands(current):
-            if self.hand_stream_mode == "unique_knn_edges":
-                if not sequence.has_offline_knn(stream_name):
-                    continue
+            if sequence.has_offline_knn(stream_name):
                 if offline_knn_side is not None:
                     raise ValueError(
                         f"{sequence.path}: multiple offline KNN streams are not supported in one sample"
@@ -558,18 +556,6 @@ class ObjectInteractionCmDataset(Dataset):
                 hand_points_parts.append(_world_to_frame(current_world, pose))
                 hand_normals_parts.append(_normal_world_to_frame(current_normals_world, pose))
                 hand_future_parts.append(_world_to_frame(future_world, pose))
-                if sequence.has_offline_knn(stream_name):
-                    if offline_knn_side is not None:
-                        raise ValueError(
-                            f"{sequence.path}: multiple offline KNN streams are not supported in one sample"
-                        )
-                    knn_world, knn_normals_world = sequence.knn_hand(stream_name, current)
-                    knn_future_world, _ = sequence.knn_hand(stream_name, future)
-                    offline_knn_points_real = _world_to_frame(knn_world, pose)
-                    offline_knn_normals_real = _normal_world_to_frame(knn_normals_world, pose)
-                    offline_knn_future_real = _world_to_frame(knn_future_world, pose)
-                    offline_knn_indices = sequence.knn_indices(stream_name, current)[selected].astype(np.int64)
-                    offline_knn_side = stream_name
 
         if self.hand_stream_mode == "unique_knn_edges":
             if (
@@ -745,27 +731,12 @@ def _split_sequences(paths: list[Path], *, seed: int, val_fraction: float, test_
 class SourceBalancedSampler(Sampler[int]):
     """Replacement sampler with a fixed probability for each data source."""
 
-    def __init__(
-        self,
-        sources: Sequence[str],
-        probabilities: Mapping[str, float],
-        *,
-        seed: int,
-        strict: bool = False,
-    ) -> None:
+    def __init__(self, sources: Sequence[str], probabilities: Mapping[str, float], *, seed: int) -> None:
         self.sources = tuple(str(source) for source in sources)
         counts: dict[str, int] = {}
         for source in self.sources:
             counts[source] = counts.get(source, 0) + 1
         requested = {str(key): float(value) for key, value in probabilities.items() if float(value) > 0.0}
-        if strict:
-            missing = sorted(set(counts) - set(requested))
-            extra = sorted(set(requested) - set(counts))
-            if missing or extra:
-                raise ValueError(
-                    "Strict source probabilities must cover exactly the train sources; "
-                    f"missing={missing}, extra={extra}"
-                )
         active = {source: value for source, value in requested.items() if source in counts}
         if not active:
             active = {source: 1.0 for source in counts}
@@ -794,16 +765,6 @@ def _plain_mapping(value: Any) -> dict[str, Any]:
     if isinstance(value, Mapping):
         return {str(key): item for key, item in value.items()}
     return {str(key): getattr(value, key) for key in vars(value)} if hasattr(value, "__dict__") else {}
-
-
-def _plain_sequence(value: Any) -> tuple[str, ...]:
-    if value is None:
-        return ()
-    if isinstance(value, (str, bytes)):
-        return (str(value),)
-    if isinstance(value, Sequence):
-        return tuple(str(item) for item in value)
-    return ()
 
 
 def _resolve_index_entries(index_path: Path, split: str) -> list[dict[str, str]]:
@@ -867,19 +828,9 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         test_entries = [{"path": str(path), "source": ""} for path in test_paths]
 
     source_stride_values = {
-        str(source): tuple(int(value) for value in values)
-        for source, values in _plain_mapping(getattr(data_cfg, "source_stride_values", {})).items()
+        "grab": tuple(int(value) for value in getattr(data_cfg, "grab_stride_values", tuple(range(1, 11)))),
+        "inspire_f1": tuple(int(value) for value in getattr(data_cfg, "inspire_stride_values", tuple(range(2, 21, 2)))),
     }
-    # Keep the explicit fields for readable YAML and V1.3 compatibility.  A
-    # mapping in ``data.source_stride_values`` takes precedence.
-    for source, field, default in (
-        ("grab", "grab_stride_values", tuple(range(1, 11))),
-        ("arctic", "arctic_stride_values", tuple(range(1, 11))),
-        ("oakink2", "oakink2_stride_values", tuple(range(1, 11))),
-        ("inspire_f1", "inspire_stride_values", tuple(range(2, 21, 2))),
-    ):
-        if source not in source_stride_values:
-            source_stride_values[source] = tuple(int(value) for value in getattr(data_cfg, field, default))
     common = dict(
         num_obj_points=int(meta_cfg.num_obj_points), num_hand_points=int(meta_cfg.num_hand_points),
         max_hand_points=int(getattr(meta_cfg, "max_hand_points", int(meta_cfg.num_hand_points) * 2)),
@@ -895,28 +846,12 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     val_dataset = ObjectInteractionCmDataset(Path("."), sequence_entries=val_entries, fixed_stride=eval_stride, **common) if val_entries else None
     test_dataset = ObjectInteractionCmDataset(Path("."), sequence_entries=test_entries, fixed_stride=eval_stride, **common) if test_entries else None
 
-    train_source_names = tuple(sorted({str(sequence.source_name) for sequence in train_dataset.sequences}))
-    val_source_names = tuple(sorted({str(sequence.source_name) for sequence in val_dataset.sequences})) if val_dataset else ()
-    test_source_names = tuple(sorted({str(sequence.source_name) for sequence in test_dataset.sequences})) if test_dataset else ()
-    configured_source_names = _plain_sequence(getattr(data_cfg, "source_domains", ()))
-    probability_policy = str(getattr(data_cfg, "source_probability_policy", "legacy") or "legacy").strip().lower()
     source_probabilities = _plain_mapping(getattr(data_cfg, "source_probabilities", {}))
-    strict_source_probabilities = probability_policy == "equal"
-    if strict_source_probabilities:
-        expected_sources = tuple(sorted(set(configured_source_names or train_source_names)))
-        if set(expected_sources) != set(train_source_names):
-            raise ValueError(
-                "Equal source probability policy requires source_domains to match train sources; "
-                f"configured={list(expected_sources)}, train={list(train_source_names)}"
-            )
-        if not expected_sources:
-            raise ValueError("Equal source probability policy requires at least one train source")
-        source_probabilities = {source: 1.0 / len(expected_sources) for source in expected_sources}
     sampler: Sampler[int] | None = None
     if source_probabilities:
         sampler = SourceBalancedSampler(
             [train_dataset.sequences[sequence_index].source_name for sequence_index, _ in train_dataset.rows],
-            source_probabilities, seed=seed, strict=strict_source_probabilities,
+            source_probabilities, seed=seed,
         )
     if distributed is not None and getattr(distributed, "enabled", False):
         from src.base.distributed import shard_sampler_for_distributed
@@ -949,13 +884,13 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     val_loaders: dict[str, Any] = {"val/": val_loader} if val_loader is not None else {}
     test_loaders: dict[str, Any] = {"test/": test_loader} if test_loader is not None else {}
     if val_entries:
-        for source in val_source_names:
+        for source in ("grab", "inspire_f1"):
             entries = [item for item in val_entries if item.get("source") == source]
             if entries:
                 source_view = ObjectInteractionCmDataset(Path("."), sequence_entries=entries, fixed_stride=eval_stride, **common)
                 val_loaders[f"val/{source}/"] = eval_loader(source_view)
     if test_entries:
-        for source in test_source_names:
+        for source in ("grab", "inspire_f1"):
             entries = [item for item in test_entries if item.get("source") == source]
             if entries:
                 source_view = ObjectInteractionCmDataset(Path("."), sequence_entries=entries, fixed_stride=eval_stride, **common)
@@ -988,20 +923,10 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
         "frame_filter_distance_m": float(getattr(meta_cfg, "frame_filter_distance_m", 0.05)),
         "hand_supervision_radius_m": float(getattr(meta_cfg, "hand_supervision_radius_m", 0.03)),
         "source_probabilities": source_probabilities,
-        "source_probability_policy": probability_policy,
-        "source_domains": list(configured_source_names or train_source_names),
-        "source_stride_values": {source: list(values) for source, values in source_stride_values.items()},
         "dataset_split": {"train_sequences": len(train_entries), "val_sequences": len(val_entries), "test_sequences": len(test_entries)},
         "source_split": {
-            source: {split: sum(1 for item in split_entries if item.get("source") == source) for split, split_entries in (("train", train_entries), ("val", val_entries), ("test", test_entries))}
-            for source in sorted(set(train_source_names) | set(val_source_names) | set(test_source_names))
-        },
-        "train_sources": list(train_source_names),
-        "val_sources": list(val_source_names),
-        "test_sources": list(test_source_names),
-        "train_rows_by_source": {
-            source: sum(1 for sequence_index, _ in train_dataset.rows if train_dataset.sequences[sequence_index].source_name == source)
-            for source in train_source_names
+            source: {split: sum(1 for item in entries if item.get("source") == source) for split, entries in (("train", train_entries), ("val", val_entries), ("test", test_entries))}
+            for source in ("grab", "inspire_f1")
         },
         "kept_frame_ratio": float(
             len(train_dataset)

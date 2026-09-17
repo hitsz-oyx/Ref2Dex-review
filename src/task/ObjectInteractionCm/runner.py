@@ -234,14 +234,9 @@ class ObjectInteractionCmRunner(BaseRunner):
         # Model selection is defined on the equal-source mean, not on the
         # frame-count-weighted aggregate loader (the two source datasets have
         # different sequence/frame counts).  Keep per-source metrics intact.
-        source_names = tuple(
-            str(source)
-            for source in self.metadata.get("val_sources", self.metadata.get("source_domains", ()))
-        )
         source_values = [
             metrics[key]
-            for source in source_names
-            for key in (f"val/{source}/obj/flow_epe_mm",)
+            for key in ("val/grab/obj/flow_epe_mm", "val/inspire_f1/obj/flow_epe_mm")
             if key in metrics
         ]
         if source_values:

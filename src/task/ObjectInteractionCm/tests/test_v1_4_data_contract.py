@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 
-from src.task.ObjectInteractionCm.dataset import SourceBalancedSampler
 from src.task.ObjectInteractionCm.tools.data.compute_v1_4_max_steps import compute_max_steps
 from src.task.ObjectInteractionCm.tools.data.export_bilateral_geometry import export_bilateral_geometry
 
@@ -16,22 +15,6 @@ def test_max_steps_uses_ceiling():
     assert compute_max_steps(1, 33, 32) == 2
     with pytest.raises(ValueError):
         compute_max_steps(0, 10, 1)
-
-
-def test_source_balanced_sampler_equalizes_domain_probability():
-    sampler = SourceBalancedSampler(
-        ["grab"] * 2 + ["arctic"] * 3 + ["oakink2"] * 5,
-        {"grab": 1.0 / 3.0, "arctic": 1.0 / 3.0, "oakink2": 1.0 / 3.0},
-        seed=42,
-        strict=True,
-    )
-    totals = {
-        source: sum(float(weight) for item_source, weight in zip(sampler.sources, sampler._weights) if item_source == source)
-        for source in ("grab", "arctic", "oakink2")
-    }
-    assert all(abs(value - 1.0 / 3.0) < 1e-12 for value in totals.values())
-    with pytest.raises(ValueError, match="exactly the train sources"):
-        SourceBalancedSampler(["grab"], {"grab": 1.0 / 3.0, "arctic": 1.0 / 3.0}, seed=42, strict=True)
 
 
 def test_export_merges_bilateral_and_drops_stale_knn(tmp_path):
