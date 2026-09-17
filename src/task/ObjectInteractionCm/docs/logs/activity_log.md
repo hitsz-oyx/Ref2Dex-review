@@ -8530,3 +8530,37 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 **回滚**
 
 反向应用本次提交即可恢复原 Git 可见性；生成样本始终原位保留。
+
+## 2026-09-17 09:08:08 +0000 — 启动 OakInk2 V1.4 Inspire cache 导出
+
+- timestamp: `2026-09-17 09:08:08 +0000`
+- activity_id: `ACT-20260917-090808-OICM-OAKINK2-CACHE-START`
+- modification_version: `V1.4.23`
+- type: `code, data, operation`
+- change_level: `L3`（新增 OakInk2 正式选择与双手 Inspire geometric/KNN producer，并写入独立 NAS cache）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“现在开始导出 OakInk2 的 cache”；范围沿用已定稿 [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §9、§10、§19。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e444b1d0cce192dc9a310f0dcfd7bb67eea8f67c`
+- worktree_dirty: `true`（本次新增 producer 尚未提交；既有用户改动未覆盖）
+- scope: 读取 OakInk2 单物体 primitive index、原始双手 quaternion MANO、Stage3 几何；按官方 30 Hz、7 帧中心窗、2 mm/2 deg、运动优先和严格 `<2 cm` 规则创建独立选择 index；随后生成双手 Inspire 3076 点、4096 物体点和离线 KNN cache。只写 NAS 独立目录，不修改原始 annotation/Stage3、旧 v1/v1.1 index、GRAB/ARCTIC cache、val/test、训练配置和 checkpoint。
+
+**运行**
+
+- smoke selection/export：`run_id=oakink2_v1423_cache_smoke_20260917T090808Z`，`run_status=STARTED`，GPU `cuda:2`；目标目录和 manifest 在 smoke 创建后补写。
+- full selection/export：`run_id=oakink2_v1423_cache_full_20260917T090808Z`，`run_status=PENDING`；等待 smoke 通过后启动后台运行。
+- [src/task/ObjectInteractionCm/tools/data/export_oakink2_inspire_v1_4.py](../../tools/data/export_oakink2_inspire_v1_4.py) — 新增 producer，旧数据处理脚本保持不变。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/` — smoke/full 选择 index 目录，NAS 路径解析后写入。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/` — smoke/full cache 目录，终态链接待运行完成后补齐（当前 `PENDING`）。
+
+**验证**
+
+- 已通过 producer `py_compile`、导入检查和 `git diff --check`；尚未形成 cache 工程或科研结论。
+- smoke 运行终态补记 selection/export 的 `run_manifest.json`、关键数组 shape/finite/KNN 校验和输出目录；full 运行终态另行追加。
+- 当前结论：`INCONCLUSIVE`（代码链路尚未经过 smoke；不把训练 val 指标当作 OakInk2 cache 结论）。
+
+**保护与回滚**
+
+- 既有 GRAB/ARCTIC cache、旧 OakInk2 index、训练输出和外部 DExplore/dex-retargeting 仓库保持只读。
+- 代码回滚入口为本次 producer 与版本/activity 增量；运行回滚只停止对应 run 并保留 NAS 审计产物，不删除既有数据。
