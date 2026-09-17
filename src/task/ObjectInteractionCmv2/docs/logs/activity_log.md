@@ -1746,3 +1746,43 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 只读预检，无代码或数据改动。后续若获得批准，先安全停止当前 writer、保留/验证 complete 段、使用独立并行实现恢复未完成段；旧 full/partial 与当前 complete cache 均不覆盖。
+
+## 2026-09-17 14:15:54 +0000 — 高分辨率回填安全恢复与 KNN 批处理 smoke 准备
+
+- timestamp: `2026-09-17 14:15:54 +0000`
+- activity_id: `ACT-20260917-141554-CMV2-HIGHRES-RESUME-BATCH-SMOKE-PREP`
+- modification_version: `V1.4.3`
+- type: `code, data, operation, documentation`
+- task_mode: `change`，随后切换为 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确回复“可以，你继续吧”，批准停止单 writer、复用已完成段并尝试批量恢复 smoke。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e1966df71bab1d807be0a969538b4f054ff18407`
+- worktree_dirty: `true`（仅本条列出的 V1.4.3 文件尚未提交）
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `STOPPED`
+- scope: 停止已批准的单 writer 基线；保留同一高分辨率输出根并逐段校验复用；为两个未完成段的 GPU2 KNN batch smoke 增加独立 manifest。未改变 selection、split、坐标、2 cm、KNN32、MANO 4096 或 Inspire KNN 20270 合同。
+- conclusion: `INCONCLUSIVE`（工程恢复准备；不是模型效果结论）。
+
+**文件与产物**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Cmv2 当前指针更新为 `V1.4.3`。
+- [docs/plan/V1.4.md](../plan/V1.4.md) — 已定稿的批处理恢复边界：先单 writer 的 frame batch smoke，不在未测量前加入多进程 GPU/写入竞争。
+- [tools/data/backfill_oakink2_inspire_v1_4.py](../../tools/data/backfill_oakink2_inspire_v1_4.py) — 同一 `output_root` 优先校验复用完整 20270 点段；恢复 run 不覆盖已暂停基线 manifest；限量 smoke 不发布局部正式 index/cache manifest，并登记实际 batch 参数。
+- [已暂停基线 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) — `STOPPED`，`100` 个计数已写入段、磁盘逐段校验发现 `102` 个 complete geometry 段、`39885` 已计帧、无记录 failure。
+
+**原因**
+
+基线只能从旧 3076 点 root 查找可复用项，恢复时会错过同一 high-resolution root 中已完成的有效段，且会覆盖基线 `run_manifest.json`。该最小修订先消除这两个恢复风险；GPU2 的 frame batch 从默认 `2` 提至 smoke 的 `8`，以测量 KNN 短 burst 的批处理收益，但不引入未经测量的多进程写入或新的数据语义。
+
+**验证**
+
+- `ps -p 370520 -o pid=,stat=,etime=,cmd=` 无输出，GPU2 空闲 `48509 MiB`，并扫描到 `0` 个 `.partial` 目录；未删除、移动或覆盖已有 sequence。
+- 已逐段检查 102 个 geometry manifest 及其 KNN shape/index/finite 合同；旧 `existing_root` 的 3076 点条目仍只作只读审计源，不能进入 V1.4 训练流。
+- 待提交前运行 `py_compile`、Task 定向测试、`git diff --check` 和 `audit_diff.py --check-links`；恢复 smoke 的结果另记独立 `run_id`/manifest。
+
+**回滚**
+
+停止新的限量恢复 run 即可；基线 manifest、102 个已验证高分辨率段与旧 3076 审计 root 均保留。撤销代码只需恢复本条所列三个受版本控制文件，绝不删除 NAS cache。

@@ -26,7 +26,7 @@ import torch
 from src.task.ObjectInteractionCm.tools.data import export_oakink2_inspire_v1_4 as legacy
 
 
-MODIFICATION_VERSION = "V1.4.2"
+MODIFICATION_VERSION = "V1.4.3"
 INSPIRE_POINTS_PER_SIDE = 10135
 INSPIRE_HAND_POINTS = INSPIRE_POINTS_PER_SIDE * 2
 DECODER_POINTS_PER_SIDE = 1538
@@ -240,7 +240,13 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
     output_root = args.output_root.resolve()
     output_root.mkdir(parents=True, exist_ok=True)
     _set_legacy_highres_contract()
-    run_manifest_path = output_root / "run_manifest.json"
+    # A resume must not overwrite the manifest of the interrupted baseline
+    # run.  Keep each invocation independently auditable while sharing the
+    # sequence root whose complete high-resolution entries are reusable.
+    run_manifest_path = output_root / (
+        "run_manifest.json" if not (output_root / "run_manifest.json").exists()
+        else f"run_manifest_{args.run_id or output_root.name}.json"
+    )
     manifest = {
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "ObjectInteractionCmv2",
@@ -253,6 +259,9 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "selection_index": str(selection_path),
         "existing_root": str(existing_root),
         "output_root": str(output_root),
+        "knn_frame_batch": int(args.knn_frame_batch),
+        "knn_object_chunk": int(args.knn_object_chunk),
+        "mano_batch_size": int(args.mano_batch_size),
         "expected_segments": len(rows),
         "reused_segments": 0,
         "backfilled_segments": 0,
@@ -278,22 +287,28 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
     records, failures = [], []
     for ordinal, row in enumerate(rows, 1):
         selection_id = str(row["id"])
+        destination = _output_destination(output_root, selection_id)
         existing = _output_destination(existing_root, selection_id)
         try:
             reusable = False
-            if (existing / "geometry" / "manifest.json").is_file():
+            # Prefer complete entries already written in this high-resolution
+            # root.  The original `existing_root` contains legacy 3076-point
+            # entries and remains only a read-only audit source.
+            for candidate in (destination, existing):
+                if not (candidate / "geometry" / "manifest.json").is_file():
+                    continue
                 # Only an already corrected high-resolution cache may be reused.
                 # The old 3076-point export is retained for audit but is never a
                 # valid V1.4 training input; an invalid old entry is rebuilt below.
                 try:
-                    record = _cache_entry(existing, row)
+                    record = _cache_entry(candidate, row)
                     reusable = True
+                    break
                 except (FileNotFoundError, ValueError):
-                    reusable = False
+                    continue
             if reusable:
                 manifest["reused_segments"] += 1
             else:
-                destination = _output_destination(output_root, selection_id)
                 with (args.annotation_root.resolve() / f"{row['sequence']}.pkl").open("rb") as stream:
                     annotation = pickle.load(stream)
                 stage3 = RawAnnotationGeometryStore(stage3_map, row["sequence"], annotation,
@@ -335,6 +350,17 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         manifest.update({"run_status": "FAILED", "finished_at": _now(), "conclusion": "INCONCLUSIVE"})
         _write_json(run_manifest_path, manifest)
         raise RuntimeError(f"OakInk2 backfill failed for {len(failures)} segments")
+    if args.limit is not None:
+        # A bounded resume smoke validates reuse and the revised batching
+        # without publishing a misleading partial formal index/manifest.
+        manifest.update({
+            "run_status": "COMPLETED", "finished_at": _now(),
+            "outputs": {"sample_root": str(output_root)},
+            "conclusion": "SUPPORTED",
+            "limited_smoke": True,
+        })
+        _write_json(run_manifest_path, manifest)
+        return manifest
     records.sort(key=lambda value: str(value["id"]))
     entries = [dict(value) for value in records]
     index = {
