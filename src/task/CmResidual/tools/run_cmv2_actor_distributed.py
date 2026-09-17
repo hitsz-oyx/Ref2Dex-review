@@ -9,6 +9,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
 import traceback
 
 from eval_zero_residual import _git, _input, _now, _write_json, REPOSITORY_ROOT, VENDOR_ROOT
@@ -48,6 +49,12 @@ def _gpu_memory(gpus: tuple[int, ...]) -> dict[int, int]:
     return {gpu: values[gpu] for gpu in gpus}
 
 
+def _merge_gpu_memory_peaks(peaks: dict[int, int], sample: dict[int, int]) -> dict[int, int]:
+    if peaks.keys() != sample.keys():
+        raise ValueError("GPU peak and sample keys must match")
+    return {gpu: max(peaks[gpu], sample[gpu]) for gpu in peaks}
+
+
 def _torchrun_command(overrides: list[str]) -> list[str]:
     """Use the active Python's torchrun module and a real training script."""
     if not BOOTSTRAP.is_file():
@@ -60,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"cmresidual_v116_ddp_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", default="V1.16.2")
+    parser.add_argument("--modification-version", default="V1.16.3")
     parser.add_argument("--gpus", type=_parse_gpus, required=True)
     parser.add_argument("--envs-per-rank", type=int, choices=(128, 256), required=True)
     parser.add_argument("--capacity-probe", action="store_true",
@@ -158,10 +165,19 @@ def main() -> None:
     command = _torchrun_command(overrides)
     manifest.update(run_status="RUNNING", command=" ".join(shlex.quote(item) for item in command))
     _write_json(manifest_path, manifest)
+    peak_used_mib = dict(used_mib)
+    monitor_error = None
     try:
         with log_path.open("w", encoding="utf-8", buffering=1) as stream:
-            result = subprocess.run(command, cwd=REPOSITORY_ROOT, env=env,
-                                    stdout=stream, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(command, cwd=REPOSITORY_ROOT, env=env,
+                                       stdout=stream, stderr=subprocess.STDOUT)
+            while process.poll() is None:
+                try:
+                    peak_used_mib = _merge_gpu_memory_peaks(peak_used_mib, _gpu_memory(args.gpus))
+                except Exception as error:  # Monitoring must not interrupt PPO workers.
+                    monitor_error = f"{type(error).__name__}: {error}"
+                time.sleep(0.5)
+            result = process.wait()
         if result.returncode:
             raise RuntimeError(f"torchrun exited {result.returncode}")
         rank_manifests = [Path(path) / "manifest.json" for path in manifest["rank_buffer_dirs"]]
@@ -186,6 +202,9 @@ def main() -> None:
         manifest.update(run_status="COMPLETED", completed_at=_now(), checkpoint=str(checkpoint),
                         checkpoint_validation=str(validation_path), last_step=validation["checkpoint_frame"],
                         last_epoch=validation["checkpoint_epoch"],
+                        gpu_used_mib_peak=peak_used_mib,
+                        gpu_memory_sample_interval_s=0.5,
+                        gpu_memory_monitor_error=monitor_error,
                         best_metric={"name": "checkpoint_reload_action_max_abs_diff",
                                      "value": validation["deterministic_reload_action_max_abs_diff"]},
                         event_tags=tags,
@@ -195,6 +214,9 @@ def main() -> None:
         traceback.print_exc()
         manifest.update(run_status="STOPPED" if isinstance(error, KeyboardInterrupt) else "FAILED",
                         completed_at=_now(), exit_reason=f"{type(error).__name__}: {error}",
+                        gpu_used_mib_peak=peak_used_mib,
+                        gpu_memory_sample_interval_s=0.5,
+                        gpu_memory_monitor_error=monitor_error,
                         conclusion="INVALID_IMPLEMENTATION", scientific_conclusion="INCONCLUSIVE")
         _write_json(manifest_path, manifest)
         raise

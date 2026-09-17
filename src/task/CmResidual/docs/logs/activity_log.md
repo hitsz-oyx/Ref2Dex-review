@@ -3994,15 +3994,16 @@ V1.16 的 launcher 将 Python executable 放在 torchrun 的 training-script 位
 - branch: oyx
 - base_commit: 9fc85052007e03b546da61826985cb889d9ba92e
 - worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
-- scope: 只将 V1.16 DDP physical GPU allowlist 从 0/1/2 改为用户指定的 0/1/3；CUDA_VISIBLE_DEVICES 会将其重映射为各 rank 的 local cuda:0/1/2。运行 3 rank × 128 env、1 epoch capacity probe，记录每 rank buffer、checkpoint、finite 与实际显存；不启动 256 env/rank 或无 epoch 上限的正式训练。
+- scope: 只将 V1.16 DDP physical GPU allowlist 从 0/1/2 改为用户指定的 0/1/3；CUDA_VISIBLE_DEVICES 会将其重映射为各 rank 的 local cuda:0/1/2。运行 3 rank × 128 env、1 epoch capacity probe，记录每 rank buffer、checkpoint 与 finite；本轮未采样运行中显存峰值，故不启动 256 env/rank 或无 epoch 上限的正式训练。
 - run_id: cmresidual_v1162_ddp_3x128_capacity_20260918_010356
-- run_status: STARTED；run manifest、train log、metrics、checkpoint 与 rank buffer manifest 在 launcher 创建后登记。
-- conclusion: INCONCLUSIVE（尚无 capacity 运行结果）。
+- run_status: COMPLETED；last_step=12288、last_epoch=1；best_metric=`checkpoint_reload_action_max_abs_diff=0.0`。
+- conclusion: 3×128 DDP/rank mapping/buffer/checkpoint 工程合同 SUPPORTED；运行中物理显存峰值、3×256 capacity 与任何科研效果 INCONCLUSIVE。
 
 **文件**
 
 - [V1.16 最终计划](../plan/V1.16.md)、[DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py) — 用户指定的 GPU allowlist 与 rank-local 映射。
 - [README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — V1.16.2 状态入口。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/checkpoint_validation.json)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_1_rew_-inf.pth)、[rank 0 buffer](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/cm_buffer/rank_000/manifest.json)、[rank 1 buffer](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/cm_buffer/rank_001/manifest.json)、[rank 2 buffer](../../../../../outputs/CmResidual/cmresidual_v1162_ddp_3x128_capacity_20260918_010356/cm_buffer/rank_002/manifest.json) — 首轮 3×128 DDP 工程证据。
 
 **原因**
 
@@ -4010,9 +4011,46 @@ GPU2 正在被其他工作占用；GPU0/1/3 的预检显存均低于 4096 MiB。
 
 **验证**
 
-- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'` 与 `py_compile`：PENDING。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`：`4 passed, 26 deselected`；`py_compile` 与 runner `--help` 通过。
 - capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010356-CMRESIDUAL-V1162-DDP --modification-version V1.16.2 --run-id cmresidual_v1162_ddp_3x128_capacity_20260918_010356`。仅作为工程容量测试；三 rank buffer、finite checkpoint/action/optimizer 和显存证据通过才允许讨论 3×256。
+- 命令于 2026-09-18 01:05:44 +0800 正常完成：每 rank 的 transition-only buffer 各有 4096 sample；checkpoint、optimizer 与 action finite，reload diff=0。日志记录 global/local rank=0/0、1/1、2/2，且 local cuda:2 由 CUDA_VISIBLE_DEVICES 映射到物理 GPU3。runner 仅存 preflight memory，未采样峰值，因此补做 V1.16.3。
 
 **保护与回滚**
 
 回滚只恢复 0/1/2 allowlist 和本次 V1.16.2 文档/测试差异；不改 actor/Cmv2/reward/critic、数据、checkpoint、buffer schema、已有 output 或用户未提交文件。
+
+## 2026-09-18 01:07:09 +0800 — V1.16.3 3×128 DDP 运行中显存峰值测量
+
+- timestamp: 2026-09-18 01:07:09 +0800
+- activity_id: ACT-20260918-010709-CMRESIDUAL-V1163-MEMPEAK
+- modification_version: V1.16.3
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L1（Task-local capacity telemetry）；3×128 probe 为 L3。
+- approval: user-approved
+- approval_basis: 用户明确要求先实际测量显存，且首轮 3×128 已证明 DDP 接线但未保留运行中显存峰值。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 3567a4387b67f25f408700addf022bae020a9ea7
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
+- scope: runner 在 torchrun 子进程存活期间每 0.5 秒以 nvidia-smi 合并物理 GPU0/1/3 的 memory.used 峰值，并写入 run manifest；复跑相同 3 rank × 128 env、1 epoch budget。采样失败不打断 PPO worker；不改算法/数据/模型合同，不启动 256 env/rank 或正式训练。
+- run_id: cmresidual_v1163_ddp_3x128_mempeak_20260918_010709
+- run_status: STARTED；运行产物会由 launcher 创建后登记。
+- conclusion: INCONCLUSIVE（尚无带峰值采样的 capacity 结果）。
+
+**文件**
+
+- [DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — memory peak schema、定向测试与 V1.16.3 状态入口。
+
+**原因**
+
+首轮执行已证明 3×128 可完成，但执行结束后 nvidia-smi 无法回溯峰值；必须在 worker 存活期内采样，才能用证据而非猜测判断 256 env/rank 的下一步。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`、`py_compile` 与 activity link audit：PENDING。
+- capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010709-CMRESIDUAL-V1163-MEMPEAK --modification-version V1.16.3 --run-id cmresidual_v1163_ddp_3x128_mempeak_20260918_010709`。
+
+**保护与回滚**
+
+回滚仅删除 runner peak-monitor 与本条 V1.16.3 文档/测试差异；首轮 V1.16.2 output 保留为证据，训练、数据、buffer schema 和用户未提交路径不受影响。

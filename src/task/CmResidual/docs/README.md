@@ -6,8 +6,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.16.2`
-- V1.16.2：用户将已批准的 DDP 物理卡资源从 `0,1,2` 指定为 `0,1,3`；先运行 `3×128`、单 epoch capacity probe 测量三 rank 实际显存，不直接假设 `3×256` 可用。算法、输入、buffer、奖励与 critic 合同不变。
+- `modification_version`: `V1.16.3`
+- V1.16.3：首轮 `3×128` DDP probe 已完成 12288 total steps、三 rank buffer 和 finite checkpoint，但没有运行中显存峰值采样；runner 现每 0.5 秒记录 GPU0/1/3 物理卡峰值，并复跑同一 budget。算法、输入、buffer、奖励与 critic 合同不变，尚不假设 `3×256` 可用。
 - V1.16.1：仅修正 DDP 启动器为 active Python 的 `torch.distributed.run` 加真实 `.py` bootstrap，并在 Task 正常退出/Ctrl-C 清理时 flush 未满 CmBuffer shard；不改 actor/Cmv2/reward/critic 或 buffer 字段。3×128 capacity probe 将作为单 epoch 工程测量运行；其运行状态以 [活动记录](logs/activity_log.md) 为准。
 - V1.16：V1.15 actor 表示不变，但 nominal-base Cmv2 改为 current GPU hand link pose 到 next GPU reference hand link pose 的纯 GPU sweep；transition-only v2 CmBuffer 取消 executed-action Cmv2、在 GPU staging 后批量转存。base 68-D 恢复独立 RunningMeanStd，token/effect 语义保持。GPU5/1 env/8 step/1 epoch smoke 的 checkpoint/optimizer/action finite、reload diff=`0`、saturation=`0`，v2 buffer 有 8 个无点云 finite sample。三卡 DDP runner 已实现但未运行：GPU2 当前占用约 23 GiB，工程接线为 `SUPPORTED`、规模训练与科研效果仍为 `INCONCLUSIVE`。
 - V1.15：冻结 Cmv2 的零 residual nominal-base effect 仅进入 PPO actor：raw transport 为 `68+16×40+18=726-D`，网络内以 masked self-attention/effect-conditioned pooling 形成 `214-D` actor 表示；critic 严格只读 `68-D` base prefix。GPU5/1 env/8 step/1 epoch smoke 的 checkpoint、optimizer 与动作均 finite，重载 action diff=`0`、saturation=`0`，CmBuffer 写入 8 个无点云 shard；这只支持工程接线，attention utility、Cmv2 微调资格与科研效果仍为 `INCONCLUSIVE`。

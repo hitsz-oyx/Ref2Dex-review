@@ -565,6 +565,8 @@ def test_v116_ddp_launcher_requires_explicit_gpu012():
     assert module._parse_gpus("0,1,3") == (0, 1, 3)
     with pytest.raises(argparse.ArgumentTypeError, match="exactly"):
         module._parse_gpus("0,1,2")
+    assert module._merge_gpu_memory_peaks({0: 10, 1: 20, 3: 30},
+                                          {0: 12, 1: 18, 3: 31}) == {0: 12, 1: 20, 3: 31}
 
 
 def test_v116_ddp_launcher_uses_python_script_bootstrap():

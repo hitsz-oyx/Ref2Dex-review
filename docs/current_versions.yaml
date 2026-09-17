@@ -11,7 +11,7 @@ tasks:
   CmDecoderv2:
     modification_version: V1.1.15
   CmResidual:
-    modification_version: V1.16.2
+    modification_version: V1.16.3
   ObjectInteractionCm:
     modification_version: V1.4.22
   ObjectInteractionCmv2:
