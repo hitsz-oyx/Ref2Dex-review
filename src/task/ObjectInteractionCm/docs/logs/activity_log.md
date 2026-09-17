@@ -8497,3 +8497,36 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 **回滚**
 
 本次提交作为独立 Git commit，可按提交范围反向应用；NAS cache、旧 checkpoint 和运行输出未修改。
+
+## 2026-09-17 07:38:31 +0000 — 忽略 full_export_smoke 生成样本
+
+- timestamp: `2026-09-17 07:38:31 +0000`
+- activity_id: `ACT-20260917-073831-OICM-SMOKE-IGNORE`
+- modification_version: `V1.4.22`
+- type: `documentation, operation`
+- change_level: `L0`（Task-local Git 忽略规则，不改变代码、数据语义或公共合同）
+- approval: `user-approved`
+- approval_basis: 用户要求对剩余未提交内容选择忽略、取消更改或提交；此目录经检查为生成产物。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `e62df715d39c9e9b806eae955bd20aa3d620a478`
+- worktree_dirty: `true`
+- scope: 仅忽略 `src/task/ObjectInteractionCm/research/full_export_smoke/grab/` 中已有和后续生成文件；样本原位保留。
+
+**文件**
+
+- [src/task/ObjectInteractionCm/research/full_export_smoke/.gitignore](../../research/full_export_smoke/.gitignore) — 将 `/grab/` 标记为生成产物目录。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本次 Git 工作区清理记录。
+
+**原因**
+
+该目录仅有一次 smoke 导出的 `left.npz`、`right.npz`、`shared.npz`、`manifest.csv` 和 `meta.json`；它们属于研究生成产物，不应进入源码提交。
+
+**验证**
+
+- `git check-ignore -v` 对 5 个文件均命中该定向规则；`git status --short` 仅显示本次 `.gitignore` 与活动记录，提交后应为空。
+- `git diff --cached --check` 与最新活动链接审计通过。本次无工程 smoke 或科研效果结论，结论 `INCONCLUSIVE`。
+
+**回滚**
+
+反向应用本次提交即可恢复原 Git 可见性；生成样本始终原位保留。
