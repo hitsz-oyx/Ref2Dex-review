@@ -1646,3 +1646,35 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 本次为独立本机临时 smoke；移除其临时目录即可回收小型 checkpoint/日志，不影响 NAS cache。正式训练仍须等待高分辨率 OakInk2 cache 完成并另行确定 GPU、预算、验证指标。
+
+## 2026-09-17 13:57:02 +0000 — NAS Cmv2 output 写入状态更正
+
+- timestamp: `2026-09-17 13:57:02 +0000`
+- activity_id: `ACT-20260917-135702-CMV2-OUTPUT-WRITE-STATUS-CORRECTION`
+- modification_version: `V1.4.2`
+- type: `diagnostic, documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问此前为什么没有写权限；本条只读复核权限、挂载和历史输出归属。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `c480f6afa2cb142788a22bbdda67ec849f9d45cf`
+- worktree_dirty: `false`
+- scope: 更正部分三域 smoke 记录中关于 NAS canonical output 不可写的未证实归因；不修改 NAS 权限、运行、cache 或 checkpoint。
+- conclusion: `SUPPORTED`（权限状态复核）；与模型科研结论无关。
+
+**原因**
+
+此前两个后台 smoke 启动均未留下输出目录或 launcher log，但没有保留可证明 `permission denied` 的 stderr；不能据此断定 ACL 拒绝写入。
+
+**验证**
+
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2` 的表面归属为 `lsj:uucp`、模式 `775`，本机身份为 `wbcd`（UID 1006），且当前 group 不含 `uucp`；单看 POSIX mode 会推断无写权限。
+- 实际 NFSv3 挂载为 `rw,sec=sys`，Shell `test -w` 对该目录及相邻 output/data run root 均返回 writable，说明服务端实际授权或映射与本机 group 列表不同。
+- 系统未安装 `getfacl`，且失败 launcher 没有日志，故不能追溯其确切退出原因。此前“没有写权限”的说法撤回；后续正式运行应先保留一次创建结果/错误，再做归因。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次更正与原 smoke 状态的唯一入口。
+
+**回滚**
+
+本条仅追加诊断更正；不涉及权限变更或数据写入。临时 smoke 输出仍按上一条记录保留，不能据此推断正式 NAS output 不可用。
