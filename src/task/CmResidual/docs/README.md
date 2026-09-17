@@ -6,8 +6,17 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.12.1`
-- V1.12.1：用户确认的 [指导](指导/V1.12.md) 与 [最终计划](plan/V1.12.md) 已在当前 `oyx` 工作树落地 action-conditioned 第一阶段接口。新增冻结 Cmv2 V1.3 structured effect adapter、nominal controller/FK hand-sweep evaluator、候选排序指标和显式 diagnostic opt-in；Cmv2 不拼接到 PPO observation。synthetic checkpoint/候选合同测试通过；真实 checkpoint、物理候选排序、PPO 与样本内评估尚未运行，科研效果为 `INCONCLUSIVE`。
+- `modification_version`: `V1.14.5`
+- V1.14.5：保持 68-D PPO actor/critic 与 frozen Cmv2；仅为已执行 residual 做 action-conditioned effect inference，并把无点云、可离线重建的 pre/post state、prediction、reference/PhysX effect 写入 per-rank CmBuffer。GPU5/1 env smoke 生成 1 条完整 shard、无 target saturation；buffer 未参与 PPO reward、actor/critic 或 Cmv2 更新。
+- V1.14.4：用户批准的局部可行动作映射已将 reference-boundary 的外向 residual authority 收缩到实际可行余量，并保留原 18-D action、global scale、reward 与 mimic 合同。GPU5 单环境 zero/nonzero smoke 的 target saturation 为 `0`；其后 64-step/64-env/seed42 的 2+8 epoch PPO 完成 `40960` env-steps，10 个 epoch saturation 均为 `0`、checkpoint finite 且重载差为 `0`。这是工程协议 `SUPPORTED`，单 seed/单 reference 的 tracking、residual utility 与抓取效果仍为 `INCONCLUSIVE`。
+- V1.14.3：固定 `sigma=0.1` 的无更新回放显示 saturation 集中于 native finger DOF 8、14、15；它们在部分 reference phase 的名义 target margin 已为零。该诊断支持“局部 reference-boundary 问题”，不支持直接缩小全局 scale；未改代码或重训。
+- V1.14.2：已实现 reference-indexed reset、object pose/transition tracking reward 与独立 64-step curriculum runner。GPU5/64 env/seed42 的 64-step smoke 完成 2 epochs/8192 env-steps 和 checkpoint reload，但 epoch-1 residual saturation=`5.38%` 超过 `5%` 阈值，未续跑 8 epochs 或进入 128/366；协议为 `INVALID_IMPLEMENTATION`，科研效果 `INCONCLUSIVE`。详见 [活动记录](logs/activity_log.md)、[实验记录](logs/experiment_log.md)。
+- V1.14.1：按用户定稿的 [V1.14 计划](plan/V1.14.md) 扩展真实物体 zero-residual 评估的 object pose/transition 指标，并已启动 GPU5、1 env、366-step 物理基线；运行终态、tracking 曲线和是否进入 reward/window 实现以 [活动记录](logs/activity_log.md) 为准。Cmv2 仍未接入策略。
+- V1.13.4：用户明确批准越过未通过的追踪门禁，在 GRAB retargeted base 上以 GPU5、64 env、seed42 做探索性 PPO。2+8 epochs 完成，共 20480 env-steps；checkpoint 有限且可重载。但每环境仅 320 步，短于 366-step episode，未有完整 episode，最优 reward 为 `-inf`；epoch-10 residual 目标饱和率 `10.76%` 超过预定 `10%` 停止阈值。运行 `FAILED`，探索协议 `INVALID_IMPLEMENTATION`，科研效果 `INCONCLUSIVE`；未继续加预算。详见 [V1.13 计划](plan/V1.13.md)、[活动记录](logs/activity_log.md)、[实验记录](logs/experiment_log.md)。
+- V1.13.3：用户批准的 GPU5 腕部 PD 增益对照 `200/20`、`300/30`、`400/40` 均完成 366 步无接触零 residual 评估。最优 `400/40` 在 GRAB 接触标记帧的腕部/指尖 p95 为 `0.02653/0.03648 m`，未达到 `0.015/0.020 m` 的预设门禁；三组最佳腕部对齐均为滞后两帧。按停止条件未进行有物体 Gate 或 PPO，下一步需单独协商速度前馈等低层控制方案。详见 [V1.13 最终计划](plan/V1.13.md)、[实验记录](logs/experiment_log.md)。
+- V1.13.2：同一 GRAB 无接触 366 步协议补记实际腕部位置，诊断显示实际位置更接近两帧前的参考（接触帧 p95 `0.00740 m`，同帧 p95 `0.02762 m`）；这是时序滞后证据，不是修改固定参考时钟的许可。已在 V1.13 plan 中写入低层增益对照草案，尚未批准执行；PPO 仍未开始。
+- V1.13.1：按用户确认切换到 GRAB 现成重定向轨迹作为新路线的确定性 base；腕部从 `wrist_pose_world_ref` 按 URDF 逆解，手指从 `q_native_ref` 读取，旧 DExplore 路径保留用于复现。366 步 CPU/单环境无接触零 residual 运行接线通过，未见接触或饱和；但 GRAB 接触帧指尖追踪误差 p95 约 `0.0375 m`，超过 Cmv2 `0.02 m` 交互半径，低层追踪是否足够仍为 `INCONCLUSIVE`，未启动 PPO。详见 [V1.13 最终计划](plan/V1.13.md)、[活动记录](logs/activity_log.md)。
+- V1.12.5：用户确认的 [指导](指导/V1.12.md) 与 [最终计划](plan/V1.12.md) 已在当前 `oyx` 工作树落地 action-conditioned 第一阶段接口。真实 Cmv2 V1.3 `latest.pt` 已严格加载，reference FK 静态接触 frame 可产生非空 token；但 GPU5 的 53-step base warmup 后，实际手—物体表面距离为 `0.260–3.431 m`，并非 reference frame 53 的接触状态。该漂移已存在于 V1.11.2 base-only 运行；K=8 平行 env 还会因 PhysX 分叉而不是同一 counterfactual state。Cmv2 不拼接到 PPO observation，PPO 与样本内训练均未运行；当前为 `INVALID_IMPLEMENTATION`（物理 gate），科研效果 `INCONCLUSIVE`。详见 [活动记录](logs/activity_log.md)。
 - 阶段：V1.11.2 已将 DexYCB actor 创建 DOF state 与 reference reset 对齐，并经用户批准在空闲 GPU5 完成
   4 env × 72 steps 修复后复跑；工程 Gate C（reset、finite、zero residual、正常退出）全部通过
 - 行为结果：固定 `subject-10/20201022_110806/right` 单轨迹没有观察到成功抓取；最小平均 tip distance=
@@ -80,6 +89,10 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.11 最终执行计划](plan/V1.11.md)
 - [V1.12 用户指导](指导/V1.12.md)
 - [V1.12 最终执行计划](plan/V1.12.md)
+- [V1.13 用户指导](指导/V1.13.md)
+- [V1.13 最终执行计划](plan/V1.13.md)
+- [V1.14 用户指导](指导/V1.14.md)
+- [V1.14 最终执行计划](plan/V1.14.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

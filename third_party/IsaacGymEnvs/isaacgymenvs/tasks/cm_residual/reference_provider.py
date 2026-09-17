@@ -194,13 +194,19 @@ class ReferenceProvider:
         selected = (selected + int(offset)).clamp(0, self.length - 1)
         return self.hoi_data.index_select(0, selected)
 
-    def reset_state(self, count: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def reset_state(self, count: int, indices: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if count <= 0:
             raise ValueError("reset_state count must be positive")
+        if indices is None:
+            indices = torch.zeros(count, dtype=torch.long, device=self.device)
+        else:
+            indices = indices.to(self.device, dtype=torch.long).flatten()
+            if len(indices) != count or (indices < 0).any() or (indices >= self.length).any():
+                raise ValueError("reset_state indices must be in the reference frame range")
         return (
-            self.robot_q[0].expand(count, -1),
-            self.robot_dq[0].expand(count, -1),
-            self.object_state[0].expand(count, -1),
+            self.robot_q.index_select(0, indices),
+            self.robot_dq.index_select(0, indices),
+            self.object_state.index_select(0, indices),
         )
 
     def reset_body_state(self, urdf_path: str | Path, body_names) -> tuple[torch.Tensor, ...]:
@@ -290,9 +296,3 @@ class RetargetedReferenceProvider(ReferenceProvider):
             raise ValueError("Retargeted link order mismatch")
         self.length = count
         self.retargeted = True
-
-    def reset_state(self, count: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if count <= 0:
-            raise ValueError("reset_state count must be positive")
-        return (self.robot_q[0].expand(count, -1), self.robot_dq[0].expand(count, -1),
-                self.object_state[0].expand(count, -1))

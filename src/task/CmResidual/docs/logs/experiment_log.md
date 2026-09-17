@@ -3,6 +3,72 @@
 - scope: `task:CmResidual`
 - related: [任务入口](../README.md)、[V1.5 最终计划](../plan/V1.5.md)、[V1.4 最终计划](../plan/V1.4.md)、[V1.3 最终计划](../plan/V1.3.md)、[活动记录](activity_log.md)
 
+## 2026-09-17 — V1.14.5 冻结 Cmv2 executed-transition CmBuffer smoke
+
+- modification_version: `V1.14.5`
+- operation_category: `code`、`diagnostic`、`operation`
+- approval: `user-approved`（[V1.14 最终计划](../plan/V1.14.md) 的 V1.14.5 修订）
+- terminal_activity_id: `ACT-20260917-224000-CMRESIDUAL-V1145-CMBUFFER`
+- run_id: `cmresidual_v1145_cmbuffer_smoke_20260917_2240`
+- run_status: `COMPLETED`；GPU5/1 env/seed42，`last_step=1`。
+- conclusion: frozen action evaluator 与无点云 buffer 的工程接线 `SUPPORTED`；Cmv2 prediction quality、候选排序、是否应微调与任何 PPO 效果均 `INCONCLUSIVE`。
+
+PPO observation 仍为 68-D，actor/critic/reward/optimizer 不接收 Cmv2 输出。pre-physics 对实际执行 residual 的
+nominal `q -> PD target -> FK -> hand sweep` 做 Cmv2 prediction；post-physics 仅把真实 object local effect 补为
+label。生成 shard 不包含 point/normals/flow，而含 `q/dq` pre/post、object pose pre/post、residual/reference/PD
+target、authority、reference index、predicted/reference/actual delta xi。manifest 固定 Cmv2 checkpoint/model schema、
+reference、URDF/mesh SHA、control dt 和 residual scale，供离线重建。
+
+证据：[运行目录](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/run_manifest.json)、[summary](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/summary.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/config.json)、[CmBuffer manifest](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/cm_buffer/rank_000/manifest.json) 与 [shard](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/cm_buffer/rank_000/chunk_000000.npz)。
+
+## 2026-09-17 — V1.14.4 局部可行动作映射后的 64-step PPO
+
+- modification_version: `V1.14.4`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`
+- approval: `user-approved`（[V1.14 最终计划](../plan/V1.14.md) 的 V1.14.3 后局部修订）
+- terminal_activity_id: `ACT-20260917-221500-CMRESIDUAL-V1144-FEASIBLE`
+- run_id: `cmresidual_v1144_feasible_authority_smoke_20260917_2215`、`cmresidual_v1144_reftrack_feasible_w64_20260917_2215`
+- run_status: 两个运行均 `COMPLETED`；PPO `last_step / last_epoch = 40960 / 10`。
+- conclusion: 局部 action-boundary、PPO saturation gate 与 checkpoint reload 的工程协议 `SUPPORTED`；reference tracking、residual utility 与抓取效果 `INCONCLUSIVE`。
+
+**协议与结果**
+
+保持 V1.14 的 18-D action、`0.015 m / 0.20 rad / 0.08 rad` configured authority、reference、reward、mimic、PPO 超参数和 `5%` 阈值不变。只对 absolute reference target 已无同方向 margin 的分量，将实际 authority 限为 source/mimic 共同可行余量；zero action 仍逐值返回 reference target。GPU5/1 env smoke 先执行 3 步 zero action、后执行 16 步固定 `±0.25` action：19 步均 finite，target saturation 最大 `0`；zero action 的 authority-limited ratio 为 `0`，nonzero 阶段最高 `0.1111111`，表明边界处理被显式记录而非 clamp。
+
+随后 GPU5、64 env、seed42、random 64-step window、horizon64 的既定 2+8 epoch PPO 正常完成。epoch 1–10 的 residual saturation 全为 `0`，不触发 `>0.05` 停止门；epoch-10 checkpoint 的 model、optimizer、action 均 finite，deterministic reload action 最大差 `0`。这只说明该训练预算不再受 target saturation 阻断；10 个 epoch、单 seed 和未做独立评估不支持对 reward、tracking 或抓取收益作科研结论。
+
+**证据**
+
+- [单环境 smoke 目录](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/run_manifest.json)、[summary](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/summary.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/metrics.jsonl)、[日志](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/smoke.log)。
+- [PPO 目录](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/checkpoint_validation.json)、[epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/continuation/CmResidualGrabReferenceTransition_continuation/nn/last_CmResidualGrabReferenceTransitionPPO_ep_10_rew__-2736.07_.pth)。
+
+## 2026-09-17 — V1.13.4 GRAB retargeted base 探索性 PPO
+
+- modification_version: `V1.13.4`
+- operation_category: `experiment`、`operation`
+- approval: `user-approved`（明确批准 [V1.13 PPO 替代方案](../plan/V1.13.md) 越过原追踪门禁）
+- terminal_activity_id: `ACT-20260917-211422-CMRESIDUAL-V1134`
+- run_id: `cmresidual_v1134_grab_ppo_20260917_2115`
+- run_status: `FAILED`（epoch 10 结束后饱和门禁失败）
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`（dirty worktree 包含先前 V1.13 及用户改动）
+- initial_checkpoint: `null`；last_step / last_epoch: `20480 / 10`；best_metric/best_checkpoint: 不适用（无完成 episode）；latest_checkpoint: epoch 10，路径见下。
+- conclusion: 探索协议 `INVALID_IMPLEMENTATION`；PPO 接线及 checkpoint 可重载的工程证据局部 `SUPPORTED`；科研效果 `INCONCLUSIVE`。
+
+**假设与协议**
+
+检验在直接 GRAB 重定向 base、400/40 腕部 PD、原 18-D residual/68-D observation/reward、固定 reference clock 下，单轨迹 PPO 能否正常更新，并在 10 epochs 预算内获得可解释的训练反馈。GPU5、64 env、seed42、horizon32、minibatch2048，先运行 2 epochs，再从保存的 checkpoint 续至 epoch 10。旧追踪门禁未通过；本次无物体零 residual Gate、无 Cmv2、无多 seed，不作为效果对照。
+
+**结果与解释**
+
+- 2+8 epochs 均实际执行，共 `20480` env-steps；10 行逐 epoch 指标 finite。epoch 1/2 的 residual 饱和率为 `0/0`；epoch 10 上升至 `0.107638888`，超过预设 `0.10` 的工程停止阈值。epoch 10 residual RMS=`0.1144237`，success fraction=`0`。
+- 每环境只经历 `10×32=320` 步，而完整 episode 为 `366` 步。训练日志明确报告没有环境完成过 episode；因此 `last_*_rew_-inf.pth` 中的 `-inf` 是缺少 episode return 的记录，不是负无穷的物理 reward 或策略表现。success fraction 的零值亦不能当作完整轨迹失败率。
+- epoch-10 checkpoint 的模型、optimizer、action 都有限；固定 sigma 约 `0.1`，确定性加载两次输出动作最大差 `0`。这仅支持训练接线可运行；无法判断收敛、抓取提升或 residual/Cmv2 效果。训练未追加预算。
+
+**证据**
+
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/train.log)、[checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/checkpoint_validation.json)。
+- [epoch-2 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/stage2/CmResidualGrabRetargetedPPO_stage2/nn/last_CmResidualGrabRetargetedPPO_ep_2_rew_-inf.pth)、[epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/stage10/CmResidualGrabRetargetedPPO_stage10/nn/last_CmResidualGrabRetargetedPPO_ep_10_rew_-inf.pth)、[活动记录](activity_log.md)。
+
 ## 2026-09-16 — V1.10.1 deterministic A-E10 / B-E10 配对评估
 
 - modification_version: `V1.10.1`
@@ -668,3 +734,90 @@ V1.9.1 失败原因为两种 critic replacement 宽度消耗不同数量的 CPU 
 证据：control [manifest](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_control_smoke_rngfix_20260916_153913/train.log)；critic-Cm [manifest](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/metrics.jsonl)、[validation](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/checkpoint_validation.json)、[log](../../../../../outputs/CmResidual/cmresidual_v19_critic_cm_smoke_rngfix_20260916_154900/train.log)。
 
 本结果只允许进入下一次经用户确认的 B0/T10/E10 seed42 探索性实验；单 seed 结果仍须标记 `INCONCLUSIVE`，正式因果或显著性结论需要后续多 seed 方案。
+## 2026-09-17 — V1.13.1 GRAB 确定性 base 无接触追踪 Gate
+
+- modification_version: `V1.13.1`
+- operation_category: `experiment`、`diagnostic`
+- activity_id: `ACT-20260917-203900-CMRESIDUAL-V1131`
+- run_id: `cmresidual_v113_grab_nominal_20260917_2039`
+- run_status: `COMPLETED`
+- initial_checkpoint: `null`（base 不加载 DExplore；residual 全零）
+- last_step: `366`
+- conclusion: 工程接线 `SUPPORTED`；无接触追踪是否足以进入交互 PPO 为 `INCONCLUSIVE`。
+
+**假设与协议**
+
+GRAB 现成重定向 `reference_tracking_v2/s1_airplane_lift` 提供 367 帧、30 Hz、train 且 `training_eligible=true` 的腕部世界位姿与手指 native q。将物体从 reset pose 沿 x 移出 10 m，仅检查绝对 PD 目标与零 residual 的手部追踪。单环境 CPU、seed 42、固定参考时钟，step 1–366 对应 reference index 1–366；该操作不回答真实物体接触或抓取效果。
+
+**结果**
+
+运行 [目录](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/run_manifest.json)、[逐步指标](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/metrics.jsonl) 与 [日志](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/eval.log) 记录了 366 步。全程 finite，hand contact occupancy 和 residual saturation 均为零。手腕位置误差平均 `0.01120 m`、p95 `0.02924 m`、最大 `0.06276 m`；指尖误差平均 `0.01395 m`、p95 `0.03775 m`、最大 `0.07101 m`；手指 q 绝对误差平均 `0.00855 rad`。按 step 对齐原 GRAB 源接触标记选取 296 帧，指尖误差平均 `0.01286 m`、p95 `0.03703 m`、最大 `0.04245 m`。此前同段文字的接触帧统计误将 step 1–366 对齐到 reference 0–365，已按 V1.13.2 诊断纠正。
+
+绝对目标与零 residual 的工程接线成立；接触帧高分位误差大于 Cmv2 `0.02 m` interaction radius，不能由此宣称名义 PD 足够精准，也不能开始 PPO 或将误差归因为物体交互。下一步应先诊断参考时间对齐与控制器滞后，再按计划协商是否调整低层控制或训练门禁。更早的 [首次运行](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2036/) 在终止步读取了自动 reset 后的 native q，指尖/手腕 info 未受影响，但末步手指 q 误差无效；本条只采用修复终止步读取后的第二次运行。
+## 2026-09-17 — V1.13.2 固定时钟无接触腕部滞后诊断
+
+- modification_version: `V1.13.2`
+- operation_category: `diagnostic`、`experiment`、`operation`
+- activity_id: `ACT-20260917-204549-CMRESIDUAL-V1132`
+- run_id: `cmresidual_v1132_grab_lag_20260917_2046`
+- run_status: `COMPLETED`
+- last_step: `366`；initial_checkpoint: `null`；best_metric/checkpoint: 不适用。
+- conclusion: 固定时钟下约两帧腕部位置滞后的诊断证据 `SUPPORTED`；增益修正效果、交互训练资格与科研效果 `INCONCLUSIVE`。
+
+与 V1.13.1 完全相同的 GRAB train reference、CPU/1 env、seed42、物体移出接触、零 residual 和 366 步协议，只在逐步指标中增记实际/参考腕部世界位置。证据：[运行目录](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/)、[配置](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/metrics.jsonl)、[日志](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/eval.log)。先前同协议运行 [目录](../../../../../outputs/CmResidual/cmresidual_v113_grab_lag_20260917_2043/) 的 manifest 误记 `V1.13.1`，不作为规范证据；两次逐步指标 SHA256 一致，旧目录只作审计保留。
+
+用 `step=1..366` 对齐 reference index 1..366，并按原 GRAB 源 tensor 同 index 的接触标记选出 296 帧。同帧腕部误差 mean/p95=`0.01000/0.02762 m`；实际腕部位置与两帧前参考位置比较的 mean/p95=`0.00264/0.00740 m`，在测试的 lag `-3..+6` 中最小。腕部同帧误差与参考相邻帧位移的 Pearson 相关系数约 `0.898`。接触标记帧中，腕部误差超过 `0.015 m` 的比例 `27.03%`，指尖误差超过 `0.020 m` 的比例 `26.69%`。这些是滞后诊断与门禁风险，不证明提高 PD 增益必然有效，也不证明 residual PPO 可训练。V1.13.1 原记录的接触帧统计存在一帧对齐错误，已在原条目标明修正值。
+## 2026-09-17 — V1.13.3 GPU5 腕部 PD 增益无接触对照
+
+- modification_version: `V1.13.3`
+- operation_category: `experiment`、`operation`、`diagnostic`
+- activity_id: `ACT-20260917-205100-CMRESIDUAL-V1133`
+- run_ids: `cmresidual_v1133_gpu5_kp200_kd20_20260917_2051`、`cmresidual_v1133_gpu5_kp300_kd30_20260917_2056`、`cmresidual_v1133_gpu5_kp400_kd40_20260917_2057`
+- run_status: 三组均 `COMPLETED`，每组 `last_step=366`；初始 checkpoint、best metric/checkpoint 均不适用。
+- conclusion: 三组都未满足预注册无接触追踪 Gate，对“三组任一可直接达到此门禁”为 `REFUTED`；训练可行性、速度前馈效果、抓取与 Cm 效果仍为 `INCONCLUSIVE`。
+
+**协议**
+
+同一 GRAB train 参考、GPU5、GPU pipeline、seed42、1 env、366 步、物体移出接触、零 residual、canonical `num_subscenes=4` 与相同 PhysX buffer。仅腕部六 DOF position drive 的 stiffness/damping 分别取 `200/20`、`300/30`、`400/40`；手指 drive、reference clock、base target、reward 与其他物理设置不变。每组在独立进程与运行目录完成，不用此前 CPU 结果计算增益收益。依据原 GRAB 接触标记按 step 1–366 对齐后统计 296 帧，预设门禁为腕部位置误差 p95 `≤0.015 m`、指尖误差 p95 `≤0.020 m`，且 finite、零 residual target 差异、无接触。
+
+| 腕部 stiffness/damping | 接触帧腕部 p95 | 接触帧指尖 p95 | 腕部超过 1.5 cm | 指尖超过 2 cm | 最佳腕部位置对齐 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `200/20` | `0.027618 m` | `0.037040 m` | `27.03%` | `26.69%` | 滞后 2 帧 |
+| `300/30` | `0.026923 m` | `0.036556 m` | `25.68%` | `26.35%` | 滞后 2 帧 |
+| `400/40` | `0.026527 m` | `0.036484 m` | `24.66%` | `25.34%` | 滞后 2 帧 |
+
+三组均 366 行、有限、手部接触 occupancy 为零、零 residual target 差异约 `1.19e-07` 的浮点精度。增益上升后误差仅小幅下降，两项 p95 仍超门禁，且两帧滞后未消失。因此按 V1.13 最终计划停止搜索，没有继续加大增益、启动有物体 Gate 或 PPO。该单序列、单 seed 结果只否定预定三组参数在该门禁下的通过性，不否定其他低层控制方案。
+
+**证据**
+
+- `200/20`：[目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/)、[配置](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/metrics.jsonl)、[日志](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/eval.log)。
+- `300/30`：[目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/)、[配置](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/metrics.jsonl)、[日志](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/eval.log)。
+- `400/40`：[目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/)、[配置](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/metrics.jsonl)、[日志](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/eval.log)。
+
+## 2026-09-17 — V1.14.1 GRAB 真实物体 zero-residual reference 基线
+
+- modification_version: `V1.14.1`
+- activity_id: `ACT-20260917-213945-CMRESIDUAL-V1141-PHYSICAL-ZERO`
+- run_id: `cmresidual_v1141_grab_physical_zero_20260917_2139`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（object transition 指标与物理工程接线）；reference tracking、residual utility 和抓取效果 `INCONCLUSIVE`。
+
+**协议与结果**
+
+固定 GRAB training-eligible reference、400/40 wrist drive、GPU5/1 env/seed42、真实 object、zero residual 和
+366 steps；`terminateOnSuccess=false`。每个执行后状态严格与 `reference_index=step` 对齐；同时记录 actual/ref
+world object pose、SO(3) rotation error，以及 local `T[t-1]^-1 T[t]` transition error。运行 [目录](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/)、[日志](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/eval.log) 证明全程 finite、正常退出且 zero target delta 最大 `1.19e-07`。
+
+object position error mean/p95/max=`0.047775/0.164753/0.221184 m`，rotation error=`0.268102/0.543927/0.599684 rad`；一步 transition translation error=`0.004155/0.015792/0.020499 m`，rotation error=`0.018703/0.051554/0.170197 rad`。因此 deterministic base 在本真实物体 rollout 中并没有精确复现 object pose trajectory；该单 env/seed 基线不评价 residual 改善或抓取，且不能由工程正常结束推断科研效果。它只满足 V1.14 的实现前置工程门，允许进入冻结的 reference-tracking reward/window 实现。
+
+## 2026-09-17 — V1.14.2 64-step reference-transition PPO smoke
+
+- modification_version: `V1.14.2`
+- activity_id: `ACT-20260917-214656-CMRESIDUAL-V1142-W64-PPO`
+- run_id: `cmresidual_v1142_reftrack_w64_20260917_2147`
+- run_status: `FAILED`
+- conclusion: `INVALID_IMPLEMENTATION`（预注册 saturation Gate）；reset/reward/checkpoint 工程接线局部 `SUPPORTED`；科研效果 `INCONCLUSIVE`。
+
+固定 GRAB reference、random-uniform start `[0,302]`、64-step window、GPU5/64 env/seed42/horizon64。reward 固定为 object pose/transition tracking 的 `0.02 m/0.05 rad` 归一化负加权和与 action penalty；Cmv2 未接入。2 epochs/8192 env-steps 完成，epoch-2 checkpoint finite 且可重载，但 saturation 在 epoch 1/2 为 `5.3819%/4.8611%`；按 `>5%` 停止条件不续跑 epoch 3–10，也不进入 128/366。证据：[manifest](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/metrics.jsonl)、[log](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/train.log)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/smoke/CmResidualGrabReferenceTransition_smoke/nn/last_CmResidualGrabReferenceTransitionPPO_ep_2_rew__-1168.13_.pth)。
+
+tracking 曲线（epoch 1/2）position=`0.066881/0.181973 m`、rotation=`0.535478/0.701575 rad`、transition translation=`0.003643/0.006629 m`、transition rotation=`0.017725/0.041125 rad`。这不足以证明新 reward 改善或反驳该研究假设：本轮按工程饱和门终止，且只有单 seed/两 epochs。下一步若要改阈值、action scale、reward 权重、控制器、PPO 超参数或继续预算，必须新计划和用户批准，不能在 V1.14 中追调。

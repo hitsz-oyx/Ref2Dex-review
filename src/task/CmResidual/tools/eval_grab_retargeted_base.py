@@ -33,6 +33,44 @@ def write(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
+def pose_matrix_xyzw(pose):
+    """Convert a world `[x,y,z,qx,qy,qz,qw]` pose to a homogeneous matrix."""
+    import torch
+    position, quaternion = pose[..., :3], pose[..., 3:7]
+    x, y, z, w = quaternion.unbind(-1)
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    rotation = torch.stack((
+        1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy),
+        2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+        2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy),
+    ), dim=-1).reshape(*pose.shape[:-1], 3, 3)
+    result = torch.zeros((*pose.shape[:-1], 4, 4), dtype=pose.dtype, device=pose.device)
+    result[..., :3, :3] = rotation
+    result[..., :3, 3] = position
+    result[..., 3, 3] = 1
+    return result
+
+
+def relative_pose(current, following):
+    """Return `current^-1 @ following` for homogeneous world poses."""
+    import torch
+    inverse = torch.zeros_like(current)
+    rotation = current[..., :3, :3]
+    inverse[..., :3, :3] = rotation.transpose(-1, -2)
+    inverse[..., :3, 3] = -(rotation.transpose(-1, -2) @ current[..., :3, 3, None]).squeeze(-1)
+    inverse[..., 3, 3] = 1
+    return inverse @ following
+
+
+def rotation_error_rad(first_rotation, second_rotation):
+    import torch
+    relative = first_rotation.transpose(-1, -2) @ second_rotation
+    cosine = (relative.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) * 0.5
+    return torch.acos(cosine.clamp(-1.0, 1.0))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
@@ -128,6 +166,9 @@ def main():
                 gymtorch.unwrap_tensor(object_ids), len(object_ids))
             env.compute_observations()
         action = torch.zeros((1, 18), device=env.rl_device)
+        previous_actual_pose = pose_matrix_xyzw(
+            env.actor_root_state[env.object_indices.long(), :7].clone())
+        previous_reference_pose = pose_matrix_xyzw(env.reference.object_state[0:1, :7])
         rows = []
         with metrics_path.open("w", encoding="utf-8") as stream:
             for step in range(1, args.steps + 1):
@@ -140,16 +181,32 @@ def main():
                 actual_wrist = (info["terminal_wrist_pose"] if terminal else
                                 env.actual_link_poses()[:, 0])
                 reference_wrist = env.reference.wrist_pose[step:step + 1]
+                actual_object = (info["terminal_object_pose"] if terminal else
+                                 env.actor_root_state[env.object_indices.long(), :7].clone())
+                reference_object = env.reference.object_state[step:step + 1, :7]
+                actual_object_pose = pose_matrix_xyzw(actual_object)
+                reference_object_pose = pose_matrix_xyzw(reference_object)
+                actual_transition = relative_pose(previous_actual_pose, actual_object_pose)
+                reference_transition = relative_pose(previous_reference_pose, reference_object_pose)
                 row = {"step": step, "reference_index": step,
                        "finite": bool(torch.isfinite(observed).all()),
                        "actual_wrist_position_m": actual_wrist[0, :3, 3].detach().cpu().tolist(),
                        "reference_wrist_position_m": reference_wrist[0, :3, 3].detach().cpu().tolist(),
+                       "actual_object_pose_world_xyzw": actual_object[0].detach().cpu().tolist(),
+                       "reference_object_pose_world_xyzw": reference_object[0].detach().cpu().tolist(),
                        "wrist_error_m": float(info["reference_root_position_error_m"]),
                        "finger_q_error_rad": float((native[:, 6:] - target[:, 6:]).abs().mean()),
                        "tip_error_m": float(info["reference_tip_position_error_m"]),
                        "tip_distance_mean_m": float(info["tip_distance_mean"]),
                        "lift_mean_m": float(info["lift_mean"]),
-                       "object_position_error_m": float(info["reference_object_position_error_m"]),
+                       "object_position_error_m": float(
+                           (actual_object_pose[:, :3, 3] - reference_object_pose[:, :3, 3]).norm(dim=-1)[0]),
+                       "object_rotation_error_rad": float(rotation_error_rad(
+                           actual_object_pose[:, :3, :3], reference_object_pose[:, :3, :3])[0]),
+                       "object_transition_translation_error_m": float(
+                           (actual_transition[:, :3, 3] - reference_transition[:, :3, 3]).norm(dim=-1)[0]),
+                       "object_transition_rotation_error_rad": float(rotation_error_rad(
+                           actual_transition[:, :3, :3], reference_transition[:, :3, :3])[0]),
                        "contact_occupancy": float(info["contact_occupancy"]),
                        "residual_saturation_ratio": float(info["residual_saturation_ratio"]),
                        "residual_target_delta_max": float(info["residual_target_delta_max"]),
@@ -159,9 +216,12 @@ def main():
                     raise RuntimeError(f"Evaluation gate failed at step {step}: {row}")
                 stream.write(json.dumps(row) + "\n")
                 rows.append(row)
+                previous_actual_pose = actual_object_pose
+                previous_reference_pose = reference_object_pose
         summary = {key: max(row[key] for row in rows) for key in
                    ("wrist_error_m", "finger_q_error_rad", "tip_error_m", "contact_occupancy",
-                    "residual_target_delta_max")}
+                    "residual_target_delta_max", "object_position_error_m", "object_rotation_error_rad",
+                    "object_transition_translation_error_m", "object_transition_rotation_error_rad")}
         summary["steps"] = len(rows)
         manifest.update(run_status="COMPLETED", ended_at=stamp(), last_step=len(rows),
                         summary=summary, conclusion="INCONCLUSIVE",

@@ -3328,3 +3328,526 @@ E10 两侧均完成；需要使 Task 入口与实验记录反映真实终态，�
 
 - 未加载用户尚未提供的 Cmv2 checkpoint，未运行 GPU 物理候选排序、DexYCB PPO 或样本内评估；未改变 reference split、坐标系、单位、GT、reward 或 base policy。
 - 旧 OI-Cm 和 base-only 配置保持原路径；回滚入口为本条实现文件、配置、测试、Task README/版本指针及本活动记录的显式 Git diff，远端 `e444b1d` 基线和独立工作树仍保留。
+
+## 2026-09-17 18:17:57 +0800 — 导入权重的 Cmv2 checkpoint 身份诊断
+
+- timestamp: `2026-09-17 18:17:57 +0800`
+- activity_id: `ACT-20260917-181757-CMRESIDUAL-V1121-CHECKPOINT-DIAGNOSTIC`
+- modification_version: `V1.12.1`
+- operation_category: `diagnostic`、`documentation`
+- task_mode: `read-only/diagnostic`（追加本条证据记录）
+- change_level: `L0`
+- approval: `auto`（用户要求继续检查已补全的权重；只读校验和证据记录）
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（已有根级、ObjectInteractionCm 日志和 V1.12 指导未提交改动）
+- scope: 只读校验用户导入的权重身份及 V1.12 真实 checkpoint Gate；未启动训练、物理评估或修改 checkpoint。
+
+**文件与证据**
+
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/best.pt](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/best.pt) — 1,096,720,131 bytes；SHA256 `e5c1822547c958a8dbb282dec647733e83ea16ebb4e08db390f3cb5057aa0898`。
+- [src/task/CmResidual/docs/plan/V1.12.md](../plan/V1.12.md) — 真实 checkpoint Gate 要求 Cmv2 V1.3 严格加载；本条记录校验结果。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本次诊断与停止依据。
+
+**原因**
+
+先前同路径文件缺少 zip 中央目录；用户现已补全权重，需要重新判断是否可进入 V1.12 物理评估和后续训练。
+
+**验证**
+
+- `sha256sum third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/best.pt` 得到上述 SHA256；`unzip -t` 全部通过，文件容器完整。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -c 'import torch; ... torch.load(..., map_location="cpu", weights_only=False)'` 可读取 payload，但 `architecture_version=None`，`config.name=correspondence_ptv3_v2_finetune_day_cosine_restart`，`model.class_path=src.task.correspondence_ptv3_v2.model.StaticHOCPTv3V2`，`epoch=50`、`step=113500`。
+- `FrozenCmv2Adapter` 对上述固定 SHA 严格加载时抛出 `ValueError: Cmv2 checkpoint architecture_version mismatch`。本地 `outputs/ObjectInteractionCmv2`、Task 资产目录及该 vendor 目录未发现其他 Cmv2 checkpoint。
+- 结论：`INVALID_IMPLEMENTATION`（权重身份不匹配 Cmv2 V1.3 输入合同）；`run_id=none`，`run_status=NOT_STARTED`。真实 checkpoint Gate 未通过，nominal sweep、counterfactual physics 和 PPO 均未运行；科研效果仍为 `INCONCLUSIVE`。
+
+**保护与回滚**
+
+只追加本条活动记录；删除本条即可回滚文档变化。原权重、其他用户改动、旧运行及 checkpoint 均未触碰。
+
+## 2026-09-17 18:28:33 +0800 — Cmv2 latest.pt 身份与合成输入门禁诊断
+
+- timestamp: `2026-09-17 18:28:33 +0800`
+- activity_id: `ACT-20260917-182833-CMRESIDUAL-V1122-LATEST-DIAGNOSTIC`
+- modification_version: `V1.12.2`
+- operation_category: `diagnostic`、`documentation`
+- task_mode: `read-only/diagnostic`（追加证据与版本指针）
+- change_level: `L0`
+- approval: `auto`（用户要求检查指定 `latest.pt`；只读检查及记录）
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留既有根级、ObjectInteractionCm 日志与 V1.12 指导改动）
+- scope: 核对指定 Cmv2 checkpoint 的 SHA、结构、严格加载和合成输入有限前向；未执行真实 Inspire 几何或物理候选评估。
+
+**文件与证据**
+
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/latest.pt](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/latest.pt) — 3,741,125 bytes，SHA256 `371fb3396d8fc4ecea61de25178e58954090e26b2f2856aad925f25cb3b01591`。
+- [src/task/CmResidual/docs/plan/V1.12.md](../plan/V1.12.md) — 分阶段 checkpoint、nominal sweep 与 physics Gate。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — CmResidual 指针更新至 `V1.12.2`。
+- [src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 本次诊断记录。
+
+**原因**
+
+先前 `best.pt` 是 PTv3 权重；用户指定新导入的 `latest.pt`，需核对真实模型身份与前向接口。
+
+**验证**
+
+- `sha256sum` 与 `unzip -t`：上述 SHA 固定，容器内容完整。
+- `torch.load(..., map_location="cpu", weights_only=False)`：payload 的 `architecture_version=v1_3_rigid_only`，`step=4088`，`epoch=4`，`model` 有 39 项；无 `config` 字段。
+- `FrozenCmv2Adapter(..., expected_sha256, "cpu")`：严格 state_dict 加载通过，参数全部冻结。
+- `eval_dexycb_cmv2_action_effect.py --checkpoint .../latest.pt --checkpoint-sha256 371fb3396d8fc4ecea61de25178e58954090e26b2f2856aad925f25cb3b01591 --device cpu --candidates 2`：合成几何输出 `finite=true`，两个候选分数均有限。
+- 结论：checkpoint 身份、严格加载与合成前向的工程诊断为 `SUPPORTED`；checkpoint 未内嵌配置，非参数超参仍需与原训练配置/manifest 核对，真实 Inspire geometry、nominal sweep parity 与 counterfactual physics Gate 尚未执行，科研效果 `INCONCLUSIVE`。`run_id=none`，`run_status=NOT_STARTED`。
+
+**保护与回滚**
+
+仅追加本条并更新 Task 版本指针；旧 `best.pt`、新 `latest.pt`、代码、数据、旧运行与用户改动均未触碰。删除本条并恢复指针即可回滚文档变化。
+
+## 2026-09-17 18:42:28 +0800 — V1.12 Cmv2 真实几何与物理候选 Gate
+
+- timestamp: `2026-09-17 18:42:28 +0800`
+- activity_id: `ACT-20260917-190400-CMRESIDUAL-V1124-CMV2-PHYSICS`
+- modification_version: `V1.12.4`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `run-only/operation`（为执行已定稿 V1.12 Gate，补齐其独立物理运行入口的最小实现）
+- change_level: `L2`（Task-local 候选采样/物理评估接口）；物理运行遵循已批准的 V1.12 L3 Gate
+- approval: `user-approved`
+- approval_basis: V1.12 最终计划已明确批准 K=8 counterfactual physics Gate；用户在 checkpoint 身份诊断后明确回复“你继续吧”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留用户已有根级/ObjectInteractionCm 日志及 V1.12 指导差异）
+- scope: 在空闲 GPU5 上验证真实 Inspire/DexYCB 状态的 controller→FK→冻结 Cmv2→单步物理 K=8 Gate；不启动 PPO，不改变 reference、GT、reward、base policy、资产、坐标或 checkpoint。
+- run_ids: `cmresidual_v112_cmv2_action_effect_20260917_190000`、`cmresidual_v112_cmv2_action_effect_20260917_190200`、`cmresidual_v112_cmv2_action_effect_20260917_190400`
+- run_status: 前两次 `COMPLETED`（Gate 不通过）；最后一次 `FAILED`（可行候选重采样停止）
+- conclusion: `INVALID_IMPLEMENTATION`（当前仿真状态无法形成 V1.12 的有效候选/interaction gate）；科研结论 `INCONCLUSIVE`
+
+**文件与运行**
+
+- [src/task/CmResidual/tools/eval_dexycb_cmv2_physics.py](../../tools/eval_dexycb_cmv2_physics.py) — 新增独立 K=8 物理 Gate：固定 GPU5/seed42、53 步 base warmup、零 residual + 可行随机 residual、严格 SHA/manifest 和不覆盖输出。
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新 Task 当前状态至 V1.12.4 与物理 Gate 停止结论。
+- [src/task/CmResidual/docs/指导/V1.12.md](../指导/V1.12.md) — 用户已有的未提交 V1.12 研究指导；本次只按其最终边界执行，未修改内容。
+- [outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190000](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190000/) — 首次运行；[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190000/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190000/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190000/eval.log)。
+- [outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/) — 已完成的 K=8 可复核结果；[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/eval.log)。
+- [outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190400](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190400/) — 严格可行候选重采样失败的终态；[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190400/run_manifest.json)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190400/eval.log)。
+
+**原因**
+
+已定稿 V1.12 要求在进入任何 PPO 前，以真实 checkpoint、nominal action sweep 与 K=8 物理执行验证 action-conditioned Cmv2 是否获得可用的交互/ranking 信号。先前 CLI 只覆盖合成输入，故以最小 Task-local 运行入口执行该既有 Gate；候选越界时必须排除而非裁剪。
+
+**验证**
+
+- 真实 reference 几何静态检查：frame 0 的最小 hand–object surface distance=`0.306138 m`，16 个 token 全空；接触最强的 reference frame 53 距离=`0.000173 m`、token 数=`13/16`，说明冻结 Cmv2 与 FK/几何本身可产生有限、非空的真实几何输出，但首帧不具交互。
+- GPU5 物理 Gate 在 53 步 frozen-base warmup 后运行。首次 K=8 有 `5/8` 候选在约束内，因其余候选饱和不作为有效排序证据；运行入口随后改为 rejection sampling，避免将裁剪后的候选伪装为可行 action。
+- 第二次 K=8 的重采样在每个环境的当前状态得到 8 个候选，但执行后 token min/max 仍为 `0/0`、contact occupancy 均为 `0`、tip distance 为 `0.424–2.184 m`；尽管表面 top-1 相同、Spearman=`0.404762`，无 interaction token 时 Cmv2 仅输出全局先验，该数值不构成 ranking 支持。
+- 进一步按各环境实际 warmup state 验证动作可行性，最后一次在 `4096` 次采样中不能得到 8 个无饱和非零 residual；零 residual 保持唯一允许的候选，故停止而不缩小尺度、裁剪、改变 reward 或换序列。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmResidual/tools/eval_dexycb_cmv2_physics.py` 通过；三次命令均严格校验 Cmv2 SHA `371fb3396d8fc4ecea61de25178e58954090e26b2f2856aad925f25cb3b01591`，生成独立 manifest/log，且无训练 checkpoint。
+
+**保护与回滚**
+
+- 未运行 residual PPO、未更新训练资格、未修改 DExplore/Cmv2 权重、共享 `src/base`、旧 OI-Cm 路径或用户已有改动。删除新增物理 Gate 工具、还原版本指针和本条活动记录即可回滚代码/文档；三个 `outputs/` 运行目录保留为不可覆盖的诊断证据。
+
+## 2026-09-17 18:50:06 +0800 — V1.12 physical Gate 停止原因诊断
+
+- timestamp: `2026-09-17 18:50:06 +0800`
+- activity_id: `ACT-20260917-185006-CMRESIDUAL-V1125-PHYSICS-DIAG`
+- modification_version: `V1.12.5`
+- operation_category: `diagnostic`、`documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户明确要求诊断 V1.12 Gate 未通过原因；本次只读运行定点状态检查。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留用户已有根级/ObjectInteractionCm 日志、V1.12 指导及本 Task 的未提交 Gate 实现）
+- scope: 比较 V1.11.2 base-only 证据与 V1.12 已解析配置，并在 GPU5 定点复现 53-step zero-residual warmup 的状态/目标边界；不修改代码、配置、数据、权重或训练状态。
+- run_id: `none`
+- run_status: `COMPLETED`（短时、无落盘的诊断命令）
+- conclusion: `SUPPORTED`（停止原因已定位）；Cmv2 ranking、residual PPO 与科研效果 `INCONCLUSIVE`
+
+**文件与证据**
+
+- [src/task/CmResidual/docs/README.md](../README.md) — 更新 V1.12.5 的诊断状态；[src/task/CmResidual/docs/指导/V1.12.md](../指导/V1.12.md) 为用户已有指导，本次未改。
+- [src/task/CmResidual/tools/eval_dexycb_cmv2_physics.py](../../tools/eval_dexycb_cmv2_physics.py) — 先前 V1.12 Gate 的未提交 Task-local 工具；本次只读诊断未改。
+- [outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/run_manifest.json) — V1.11.2 frozen-base 对照。
+- [outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1112_dexycb_base_gpu5_20260916_182728/metrics.jsonl) — step 53 的既有 base-only 行为证据。
+- [outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v112_cmv2_action_effect_20260917_190200/run_manifest.json) — V1.12 K=8 的输入、配置与终态。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py) — zero residual 保留 DExplore unclamped base target，而非零 residual 必须经过 joint/mimic 安全约束。
+- [src/task/CmResidual/docs/plan/V1.12.md](../plan/V1.12.md) — 固定状态、K=8 可行动作及失败停止边界。
+
+**原因**
+
+澄清 V1.12 K=8 Gate 的失败是 Cmv2 输入接线问题、冻结 base 行为问题，还是候选执行协议未能构造严格 counterfactual；该结论决定是否可进入后续计划协商。
+
+**验证**
+
+- V1.11.2 已通过 reset/finite/zero-residual 的工程 Gate，但其 step 53 `contact_occupancy=0`、`tip_distance_mean_m=1.668312 m`、`reference_root_position_error_m=1.446333 m`；因此 Cmv2 运行看到的无接触并非新 evaluator 回归。
+- 当前 GPU5/4-env/seed42 的只读复现同样到 `reference_index=53`：实际 hand–object 最小 surface distance 为 `[3.430841, 0.260098, 0.272403, 0.263671] m`，tip distance 为 `[3.609586, 0.353069, 0.376766, 0.475268] m`，root error 为 `[2.374451, 0.392007, 0.484377, 0.704440] m`；与静态 reference frame 53 的 `0.000173 m` 接触距离不同。
+- 同一复现中，四个 env 的 frozen-base target 越界 DOF 数为 `[0,1,0,0]`，最大越界 `0.096375 rad`。由于 zero-residual 为 release compatibility 保留 unclamped target，任何非零 residual 进入安全路径时会触发 clamp/saturation；这解释了 K=8 可行动作重采样的停止。
+- V1.12 运行把 8 个候选放入 8 个独立 GPU PhysX env。warmup 后各 env 状态已显著分叉，故它们不是“同一状态逐个 action”的 counterfactual；仅以并行 slot 的 Spearman/top-1 不能作 ranking 结论。
+- 解析配置比较只差 task alias、Cmv2 evaluator opt-in、reference profile 和 `numEnvs=4→8`；DExplore checkpoint、reference/source SHA、资产、物理参数、30 Hz 和 reward 不变。无代码/配置修改；诊断命令正常退出。
+
+**保护与回滚**
+
+- 未启动 PPO、未改变研究变量或覆写旧 run。仅本条、Task README 和版本指针为 L0 诊断记录，可独立回滚；此前 V1.12 物理 Gate 工具及输出保持原状。
+## 2026-09-17 20:36:13 +0800 — V1.13 GRAB 重定向确定性 base 与无接触 Gate
+
+- timestamp: `2026-09-17 20:36:13 +0800`
+- activity_id: `ACT-20260917-203900-CMRESIDUAL-V1131`
+- modification_version: `V1.13.1`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task 局部 base target、reference 与 observation 合同；评估运行按批准的 Gate）
+- approval: `user-approved`
+- approval_basis: 用户确认先用 GRAB 现成重定向数据训练、DexYCB 暂不使用，并回复“是的，就按照你想的来”；[V1.13 最终计划](../plan/V1.13.md) 定义先做确定性 base/无接触 Gate。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留先前用户和其他任务的未提交改动）
+- scope: 新增 GRAB 确定性 base 路线；沿用旧 DExplore 路线供复现，不改 GRAB/DexYCB 数据、GT、split、权重、共享 `src/base` 或旧 run。
+- run_id: `cmresidual_v113_grab_nominal_20260917_2039`
+- run_status: `COMPLETED`（CPU、1 env、366 steps）；此前 `cmresidual_v113_grab_nominal_20260917_2036` 为终止步指标读取修复前的独立运行，不用于结论。
+- last_step: `366`；best_metric: 不适用（确定性评估，无 checkpoint 选择）；best_checkpoint/latest_checkpoint: 不存在。
+- conclusion: 工程接线 `SUPPORTED`；无接触追踪是否足以进入交互 PPO 为 `INCONCLUSIVE`，未启动 PPO。
+
+**文件与证据**
+
+- [src/task/CmResidual/docs/plan/V1.13.md](../plan/V1.13.md) — 最终计划；[src/task/CmResidual/docs/指导/V1.13.md](../指导/V1.13.md) 为用户指导。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py) — GRAB 手腕位姿加手指 q 转 native 目标，校验 FK、manifest 与 finite。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py) — 新路线绝对目标叠加 residual，按参考 manifest 应用 mimic 系数。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabRetargeted.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabRetargeted.yaml) — 独立的 68-D GRAB 路线，跳过 DExplore teacher。
+- [src/task/CmResidual/tools/eval_grab_retargeted_base.py](../../tools/eval_grab_retargeted_base.py)、[src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — 无接触 Gate 与 GRAB mimic 合同测试。
+- [src/task/CmResidual/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 状态、版本和实验解释。
+- [outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/) — [config.json](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/eval.log)。
+- [outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2036](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2036/) — 首次独立运行，仅作工具终止步读取审计。
+
+**原因**
+
+V1.12 冻结 DExplore base 在参考接触帧已明显漂移。用户按 V1.13 改为直接使用 GRAB 重定向轨迹作为名义 base；该参考的 `q_native_ref[:6]` 全零，必须结合 `wrist_pose_world_ref` 的 URDF 逆解。其小指 mimic 系数 `1.18` 也不同于旧 DExplore 映射的 `1.05`，故新路线按 manifest 实现，旧路线不变。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q`：`23 passed`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile` 新增/修改的四个 Python 入口：通过。
+- `eval_grab_retargeted_base.py --run-id cmresidual_v113_grab_nominal_20260917_2039 --activity-id ACT-20260917-203900-CMRESIDUAL-V1131`：366 步 CPU 运行正常退出；全程 finite、无接触、零 residual 饱和，末帧后正常 reset。
+- 367 帧手腕 URDF 逆解的最大 FK 回代矩阵误差 `8.71e-08`。手腕位置误差平均/p95/最大 `0.01120/0.02924/0.06276 m`，指尖 `0.01395/0.03775/0.07101 m`。按 step 对齐的原 GRAB 接触标记 296 帧上，指尖误差平均/p95/最大 `0.01286/0.03703/0.04245 m`（V1.13.2 复核修正）；高分位误差超过 Cmv2 `0.02 m` interaction radius，不据此放行 PPO。单环境无接触 smoke 不支持抓取、残差或 Cm 效果结论。
+
+**保护与回滚**
+
+只回滚 V1.13 新增 Task 局部实现、配置、测试与本次记录；旧 DExplore config/权重、GRAB/DexYCB 数据和旧运行保持原状。两个新输出目录作为诊断证据保留，不覆盖。
+## 2026-09-17 20:46:17 +0800 — V1.13.2 GRAB 无接触腕部滞后诊断与训练门禁复核
+
+- timestamp: `2026-09-17 20:46:17 +0800`
+- activity_id: `ACT-20260917-204549-CMRESIDUAL-V1132`
+- modification_version: `V1.13.2`
+- operation_category: `diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `change`（Task 局部诊断字段），随后 `run-only/operation`（同一 V1.13 无接触协议）；未改变控制器或研究变量。
+- change_level: `L0`（诊断字段和记录；无控制行为变化）
+- approval: `auto`
+- approval_basis: 用户要求继续并询问能否训练；V1.13 最终计划规定无接触门禁不足时先诊断控制器与参考时序。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留此前 V1.13.1 及用户、其他 Task 的未提交改动）
+- scope: 同一 CPU/1 env/seed42/366-step 无接触协议增加实际与参考腕部位置记录，复核接触帧 step 对齐和训练前门禁；不改 PD、clock、reference、reward、checkpoint、数据或旧 run。
+- run_id: `cmresidual_v1132_grab_lag_20260917_2046`
+- run_status: `COMPLETED`
+- last_step: `366`；best_metric: 不适用（确定性诊断）；best_checkpoint/latest_checkpoint: 不存在。
+- conclusion: 两帧位置滞后的诊断证据 `SUPPORTED`；可训练性与控制器修正效果 `INCONCLUSIVE`，PPO `NOT_STARTED`。
+
+**文件与证据**
+
+- [src/task/CmResidual/tools/eval_grab_retargeted_base.py](../../tools/eval_grab_retargeted_base.py) — 逐步指标增记实际/参考腕部世界位置，终止步使用 `terminal_wrist_pose` 避免自动 reset 污染。
+- [outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/) — [config.json](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v1132_grab_lag_20260917_2046/eval.log)。
+- [outputs/CmResidual/cmresidual_v113_grab_lag_20260917_2043](../../../../../outputs/CmResidual/cmresidual_v113_grab_lag_20260917_2043/) — 先前同协议运行的 manifest 被工具默认值写成 `V1.13.1`，故作为 provenance 错误的审计证据保留，不用作本次规范结果；修正后的两次逐步指标 SHA256 一致。
+- [src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 对齐方法、滞后曲线和结论边界；[src/task/CmResidual/docs/plan/V1.13.md](../plan/V1.13.md) — 下一阶段低层控制修订提议，明确标记 `draft`、未获批准。
+- [src/task/CmResidual/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 更新当前诊断状态和 Task 版本指针。
+
+**原因**
+
+V1.13.1 接触标记帧指尖误差已接近或超过 Cmv2 interaction radius，不能把无接触运行正常退出当作 PPO 准入；需要判断偏差是否主要体现为固定时钟下低层跟踪滞后。同时发现先前接触帧统计把 step 1..366 错配到参考 0..365，故复核并修正旧记录的数字，不改原始指标文件。
+
+**验证**
+
+- `eval_grab_retargeted_base.py --run-id cmresidual_v1132_grab_lag_20260917_2046 --activity-id ACT-20260917-204549-CMRESIDUAL-V1132 --modification-version V1.13.2`：366 步正常退出，全程 finite、无手部接触、零 residual 饱和，终止步读取与同帧腕部误差 parity 最大绝对差约 `4.47e-09 m`。
+- 接触标记对齐后 296 帧：同帧腕部位置误差 mean/p95=`0.01000/0.02762 m`；与两帧前参考对比 mean/p95=`0.00264/0.00740 m`。腕部误差与相邻参考位移 Pearson 相关约 `0.898`。接触帧腕部误差超过 `0.015 m` 占 `27.03%`，指尖误差超过 `0.020 m` 占 `26.69%`；这支持“约两帧滞后”的诊断，不证明增益修正或残差训练有效。
+- 只读复核命令读取既有 [V1.13.1 metrics](../../../../../outputs/CmResidual/cmresidual_v113_grab_nominal_20260917_2039/metrics.jsonl) 和 GRAB source tensor；按 step 对齐后更正接触帧指尖 mean/p95/max 为 `0.01286/0.03703/0.04245 m`。训练门禁未放行，未启动 PPO。
+
+**保护与回滚**
+
+诊断字段、计划修订草稿和新活动/实验记录可单独撤销；两个 V1.13 运行目录、其他 Task 用户改动、GRAB/DexYCB 数据、旧 DExplore 路径与 checkpoint 均未覆盖。新运行目录保留为可复核证据。
+## 2026-09-17 20:57:25 +0800 — V1.13.3 GPU5 腕部 PD 增益对照未通过门禁
+
+- timestamp: `2026-09-17 20:57:25 +0800`
+- activity_id: `ACT-20260917-205100-CMRESIDUAL-V1133`
+- modification_version: `V1.13.3`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task 局部控制器物理参数化），GPU5 物理评估按批准的 `L3` Gate 执行。
+- approval: `user-approved`
+- approval_basis: 用户在 [V1.13 计划](../plan/V1.13.md) 的 GPU5 增益对照方案及后续阶段说明后回复“可以”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留此前 V1.13、其他 Task 与用户未提交改动）
+- scope: 仅给新 GRAB retargeted 任务显式腕部 position drive gains，依预设三组在空闲 GPU5 比较无接触追踪；旧 DExplore drive 固定值、手指 drive、参考、时钟、reward、数据、checkpoint 不变。
+- run_ids: `cmresidual_v1133_gpu5_kp200_kd20_20260917_2051`、`cmresidual_v1133_gpu5_kp300_kd30_20260917_2056`、`cmresidual_v1133_gpu5_kp400_kd40_20260917_2057`
+- run_status: 三组均 `COMPLETED`，每组 `last_step=366`；best_metric、best_checkpoint、latest_checkpoint 不适用（确定性零 residual 评估）。
+- conclusion: 对预定三组中任一满足接触帧追踪门禁的假设为 `REFUTED`；低层速度前馈、PPO 与科研效果 `INCONCLUSIVE`，PPO `NOT_STARTED`。
+
+**文件与证据**
+
+- [src/task/CmResidual/docs/plan/V1.13.md](../plan/V1.13.md) — 用户批准的 GPU5 增益对照修订；[src/task/CmResidual/docs/指导/V1.13.md](../指导/V1.13.md) 为用户研究指导。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabRetargeted.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabRetargeted.yaml) — 新路线腕部 gains 可配置，缺省 `200/20`；旧路线保持硬编码原值。
+- [src/task/CmResidual/tools/eval_grab_retargeted_base.py](../../tools/eval_grab_retargeted_base.py) — 独立 GPU/CPU 与无接触/物体开启运行协议、预设三组 gains、manifest 和逐步指标。
+- [src/task/CmResidual/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) — 当前状态、版本与结果解释。
+- `200/20`：[运行目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp200_kd20_20260917_2051/eval.log)。
+- `300/30`：[运行目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp300_kd30_20260917_2056/eval.log)。
+- `400/40`：[运行目录](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/metrics.jsonl)、[eval.log](../../../../../outputs/CmResidual/cmresidual_v1133_gpu5_kp400_kd40_20260917_2057/eval.log)。
+
+**原因**
+
+V1.13.2 显示腕部实际位置约滞后两帧；用户批准先在固定 reference clock 和同一 GPU 物理协议下验证调节现有 position drive gains 是否可消除这一滞后，不改变研究目标或 residual 语义。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile` 修改的 Task/评估 Python：通过；`/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q`：`23 passed`；`git diff --check`：通过。
+- 三组均在 GPU5、GPU pipeline、seed42、1 env、canonical `num_subscenes=4` 完成 366 步且产生有效 manifest/config/metrics/log；运行配置分别回读 `200/20`、`300/30`、`400/40`，无接触且 finite，零 residual target 差异约 `1.19e-07` 浮点精度。
+- 接触标记帧腕部/指尖 p95：`200/20=0.027618/0.037040 m`、`300/30=0.026923/0.036556 m`、`400/40=0.026527/0.036484 m`；三组最佳腕部位置对齐均滞后两帧。没有一组达到预定 `0.015/0.020 m` 门禁，故按计划停止，未运行物体开启 Gate 或 PPO。三组单 seed 的结果不能说明其他控制方案或泛化效果。
+
+**保护与回滚**
+
+回滚仅移除新路线可配置 gains 与评估工具增量、恢复本次文档；旧 DExplore 的 `200/20`、手指 `100/10`、旧运行及用户改动不触碰。三个 GPU5 运行目录保留为独立诊断证据。
+
+## 2026-09-17 21:14:36 +0800 — V1.13.4 GRAB 探索性 PPO 启动
+
+- timestamp: `2026-09-17 21:14:36 +0800`
+- activity_id: `ACT-20260917-211422-CMRESIDUAL-V1134`
+- modification_version: `V1.13.4`
+- operation_category: `code`、`experiment`、`operation`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task 局部训练配置和运行工具）；GPU5 PPO 为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户审阅 [V1.13 PPO 替代方案](../plan/V1.13.md) 后回复“确定”，批准越过先前失败的追踪门禁启动探索性 PPO。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7d750d61e3cfe79461f5d10d70e55de33a17f168`
+- worktree_dirty: `true`（保留先前 V1.13 及其他 Task 未提交改动）
+- scope: GRAB 固定 retargeted base、400/40 腕部增益、68-D observation、18-D residual、GPU5、64 env、seed42 的 2+8 epoch 探索性 PPO；旧 DExplore、数据、reward、共享 base 不变。
+- run_id: `cmresidual_v1134_grab_ppo_20260917_2115`
+- run_status: `FAILED`（运行于 `2026-09-17 21:15:17 +0800` 终止；2+8 epochs 完成，但探索性门禁失败）
+- completed_at: `2026-09-17 21:15:17 +0800`；原运行证据回收与日志核对于 `2026-09-17 21:16:24 +0800` 完成。
+- last_step: `20480` env-steps；last_epoch: `10`。
+- best_metric: 不适用（无完成 episode，rl_games 最优 reward 为 `-inf`）；best_checkpoint: 不存在；latest_checkpoint: [epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/stage10/CmResidualGrabRetargetedPPO_stage10/nn/last_CmResidualGrabRetargetedPPO_ep_10_rew_-inf.pth)。
+- conclusion: `INVALID_IMPLEMENTATION`（本次 10-epoch 探索协议不足以完成 366-step episode，且末轮饱和超限）；PPO 接线与 checkpoint 工程证据局部 `SUPPORTED`；科研效果 `INCONCLUSIVE`。
+
+**文件与证据**
+
+- [src/task/CmResidual/docs/plan/V1.13.md](../plan/V1.13.md)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabRetargetedPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabRetargetedPPO.yaml)、[src/task/CmResidual/tools/run_grab_retargeted_ppo.py](../../tools/run_grab_retargeted_ppo.py) — 批准协议、训练配置与带 manifest 的运行入口。
+- [src/task/CmResidual/docs/README.md](../README.md)、[src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmResidual/docs/logs/activity_log.md](activity_log.md) — 当前状态、实验解释、版本指针与唯一运行时间线。
+- [outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/) — [config.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/metrics.jsonl)、[train.log](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/train.log)、[checkpoint_validation.json](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/checkpoint_validation.json)、[epoch-2 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/stage2/CmResidualGrabRetargetedPPO_stage2/nn/last_CmResidualGrabRetargetedPPO_ep_2_rew_-inf.pth)、[epoch-10 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/stage10/CmResidualGrabRetargetedPPO_stage10/nn/last_CmResidualGrabRetargetedPPO_ep_10_rew_-inf.pth)。
+
+**原因**
+
+用户明确选择停止控制器对照并开始 PPO；因原追踪门禁失败，本轮限定为探索性接线与可学习性检查，不宣称 residual 或 Cmv2 的科研效果。
+
+**验证**
+
+- 启动前 `py_compile` 和 `git diff --check` 通过；Hydra 解析为 68-D observation、64 env，模型零均值、固定 sigma 约 0.1，actor/critic 均为 68-D。
+- GPU5、64 env、seed42、horizon32 完成 `2+8=10` epochs、`20480` env-steps；第 2 epoch 后 checkpoint 从零训练且通过 reload，续跑到 epoch 10。10 行 [metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/metrics.jsonl) 均 finite；epoch 10 residual saturation=`0.107638888`，超过工程停止阈值 `0.10`，因此 `run_status=FAILED`、不追加训练。
+- 每环境 `10×32=320` 步，少于完整 reference 的 `366` 步；[train.log](../../../../../outputs/CmResidual/cmresidual_v1134_grab_ppo_20260917_2115/train.log) 明确报告 `Max epochs reached before any env terminated at least once`，两个 checkpoint 的 reward 标签为 `-inf`。所以本次预算设计不能观察完整 episode 或成功率，不能解释为策略已学会/未学会。
+- epoch-10 checkpoint 模型、optimizer、action 均 finite，确定性 reload action 最大差 `0`，固定 sigma 约 `0.1`。启动器在饱和检查时先报错，随后只读回收 stage10 TensorBoard 和 checkpoint 证据，补齐原运行的 metrics/manifest/validation；未重复训练或改写 checkpoint。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_grab_retargeted_ppo.py`、`git diff --check`：通过；`/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q`：`23 passed`。
+
+**保护与回滚**
+
+仅撤销本次 PPO 配置、runner 与记录即可回滚实现；新运行目录保留为证据，旧 DExplore、已有运行和用户改动不触碰。
+
+## 2026-09-17 21:39:45 +0800 — V1.14.1 真实物体 zero-residual reference 基线启动
+
+- timestamp: `2026-09-17 21:39:45 +0800`
+- activity_id: `ACT-20260917-213945-CMRESIDUAL-V1141-PHYSICAL-ZERO`
+- modification_version: `V1.14.1`
+- operation_category: `code`、`experiment`、`operation`、`diagnostic`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task-local object transition 指标和定向测试）；GPU5 物理基线为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户确认 [V1.14 最终计划](../plan/V1.14.md) 并授权按 reference 步间统计冻结 reward、课程预算和停止阈值后执行。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `80f04145ad48bd7db875b20116b6d2fc3e10863e`
+- worktree_dirty: `true`（保留 V1.13、根级、ObjectInteractionCm 及用户已有未提交改动；本次只触及下列 CmResidual 文件与版本指针）。
+- scope: 真实 GRAB object、400/40 wrist drive、zero residual、GPU5/1 env/seed42/366 steps；记录 object 当前 pose、SO(3) rotation error 和 local one-step transition error，不改 reward、window reset、Cmv2、reference、资产或共享 base。
+- run_id: `cmresidual_v1141_grab_physical_zero_20260917_2139`
+- run_status: `COMPLETED`；于 `2026-09-17 21:40:53 +0800` 正常结束。
+- initial_checkpoint: `null`；best_metric/checkpoint: 不适用；last_step: `366`；last_epoch: `null`。
+- conclusion: `SUPPORTED`（运行/索引/zero-residual/object-transition 指标工程接线）；object reference tracking、residual 效果和抓取效果 `INCONCLUSIVE`。
+
+**文件与原因**
+
+- [src/task/CmResidual/docs/plan/V1.14.md](../plan/V1.14.md) — 已定稿的 reference-transition reward、window curriculum、预算和停止边界。
+- [src/task/CmResidual/tools/eval_grab_retargeted_base.py](../../tools/eval_grab_retargeted_base.py) — physical 协议新增实际/reference object pose、SO(3) pose error 与相邻 local transition error，终止步使用 terminal object pose 避免 reset 污染。
+- [src/task/CmResidual/tests/test_grab_retargeted_eval.py](../../tests/test_grab_retargeted_eval.py) — 验证 xyzw pose matrix、局部 translation 和旋转测地误差。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmResidual/docs/README.md](../README.md) — 指向本次当前 Task 版本和正在进行的 Gate。
+
+V1.13.4 的 PPO 未完成任何 366-step episode，且 reward 不包含 object reference tracking；本 Gate 先取得真实 object、固定索引和 zero-residual 下的可审计基线，作为是否实现新 reward/window 的工程前置条件。
+
+**启动前验证与回滚**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmResidual/tools/eval_grab_retargeted_base.py`：通过；`/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_grab_retargeted_eval.py src/task/CmResidual/tests/test_reference_contract.py -q`：`25 passed`（6 条现有 Hydra compatibility warnings）；`git diff --check`：通过。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/metrics.jsonl) 与 [eval.log](../../../../../outputs/CmResidual/cmresidual_v1141_grab_physical_zero_20260917_2139/eval.log) 已生成。366 步全程 finite、zero residual target delta 最大 `1.19e-07`、无异常 reset，故 A 的工程硬门通过。
+- actual-vs-reference object position/rotation 的 mean/p95/max 为 `0.047775/0.164753/0.221184 m` 与 `0.268102/0.543927/0.599684 rad`；local one-step transition translation/rotation error 的 mean/p95/max 为 `0.004155/0.015792/0.020499 m` 与 `0.018703/0.051554/0.170197 rad`。这些偏差不是准确 nominal tracking 的证据；但 A 未设置其为阻断阈值，按 V1.14 仅允许进入受控 B 实现，不允许宣称抓取或 residual 改善。
+- 回滚只撤销本次 V1.14.1 工具/测试、版本指针、README 和本活动条目；新 run 目录一旦创建保留为证据，不删除旧 outputs、数据、checkpoint 或用户改动。
+
+## 2026-09-17 21:46:56 +0800 — V1.14.2 reference-transition reward 与 64-step PPO 启动
+
+- timestamp: `2026-09-17 21:46:56 +0800`
+- activity_id: `ACT-20260917-214656-CMRESIDUAL-V1142-W64-PPO`
+- modification_version: `V1.14.2`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（reward、reference reset/window、Task 注册和训练合同）；GPU5 PPO 为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户确认 [V1.14 最终计划](../plan/V1.14.md) 并授权冻结的 reward、课程、预算与停止阈值。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `80f04145ad48bd7db875b20116b6d2fc3e10863e`
+- worktree_dirty: `true`（本次 CmResidual/vendor 配置、registry 和记录与既有用户差异并存）。
+- scope: random-uniform start `k∈[0,302]`、64-step window、`q/dq/object` 同 index reset；冻结 pose/transition tracking reward；GPU5/64 env/seed42/horizon64 的 2+8 epoch stage，saturation `>0.05` 停止。
+- run_id: `cmresidual_v1142_reftrack_w64_20260917_2147`
+- run_status: `FAILED`；于 `2026-09-17 21:48:29 +0800` 终止，未启动 continuation。
+- initial_checkpoint: `null`；last_step: `8192`；last_epoch: `2`；best_metric: 不适用；best_checkpoint: 不存在；latest_checkpoint: [epoch-2 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/smoke/CmResidualGrabReferenceTransition_smoke/nn/last_CmResidualGrabReferenceTransitionPPO_ep_2_rew__-1168.13_.pth)。
+- conclusion: `INVALID_IMPLEMENTATION`（epoch-1 saturation 超过冻结阈值）；reset/reward/checkpoint 工程接线局部 `SUPPORTED`；reference tracking、residual utility 和抓取效果 `INCONCLUSIVE`。
+
+**文件与验证**
+
+- [src/task/CmResidual/docs/plan/V1.14.md](../plan/V1.14.md) — 最终 reward/课程/预算边界。
+- [reference_provider.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py)、[task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — indexed reset、SO(3)/local transition metrics 与 opt-in reward；legacy lift/distance 路径保持。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) — 注册 V1.14 独立 task name，不改变既有 CmResidual task aliases。
+- [CmResidualGrabReferenceTransition.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransition.yaml)、[CmResidualGrabReferenceTransitionPPO.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceTransitionPPO.yaml)、[run_grab_reference_transition_ppo.py](../../tools/run_grab_reference_transition_ppo.py) — 专用配置与 manifest/checkpoint runner。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/)、[config.json](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/config.json)、[run_manifest.json](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/run_manifest.json)、[metrics.jsonl](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/metrics.jsonl) 与 [train.log](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/train.log)；最终 `checkpoint_validation.json` 未生成，因为 saturation Gate 在 epoch-2 checkpoint reload 后、写最终 validation 前停止。
+- smoke 完成 epoch 1/2：saturation=`0.053819/0.048611`、residual RMS=`0.105158/0.106061`；epoch 1 已超过 `0.05` 硬阈值，故 manifest 终态为 `FAILED`，不续跑 epoch 3–10，不进入 128/366 window。epoch-2 checkpoint 可由 runner 重新加载并通过 finite/deterministic action 门；无 `best_checkpoint`。tracking 指标从 TensorBoard 读取：position=`0.066881/0.181973 m`、rotation=`0.535478/0.701575 rad`、transition translation=`0.003643/0.006629 m`、transition rotation=`0.017725/0.041125 rad`（epoch 1/2）。
+
+**原因**
+
+V1.13.4 的 lift/distance PPO 在每 env 仅覆盖 320 步，且没有 object reference tracking 目标。V1.14.2 将 reset 的 robot/object state 与同一随机 reference index 对齐，并冻结 reference pose/transition reward；本次硬阈值停止防止在 residual 已触及 joint limit 的情况下继续把训练曲线解释为效果。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_grab_retargeted_eval.py src/task/CmResidual/tests/test_reference_contract.py -q`：`26 passed`；GPU5/1-env/3-step smoke 从 start index 78 到 81，obs/reward/transition finite；`py_compile`、Hydra 配置合同和 `git diff --check` 通过。
+- [src/task/CmResidual/tests/test_reference_contract.py](../../tests/test_reference_contract.py) — indexed provider reset 单测；[src/task/CmResidual/tools/eval_grab_retargeted_base.py](../../tools/eval_grab_retargeted_base.py) — A 阶段 physical object transition 指标。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmResidual/docs/README.md](../README.md)、[src/task/CmResidual/docs/logs/experiment_log.md](experiment_log.md) 与本 [activity_log.md](activity_log.md) — V1.14.2 指针、终态和科研结论边界。
+
+**保护边界**
+
+- [docs/logs/activity_log.md](../../../../../docs/logs/activity_log.md) 与 [src/task/ObjectInteractionCm/docs/logs/activity_log.md](../../../ObjectInteractionCm/docs/logs/activity_log.md) 在本次工作开始前已处于 dirty 状态；未读取、修改或归入 V1.14.2。旧 V1.13 未提交计划/指导、DexYCB evaluator、旧 outputs/checkpoint 和共享 `src/base/` 同样未触碰。
+
+## 2026-09-17 21:58:37 +0800 — V1.14.3 saturation 分量与 margin 诊断
+
+- timestamp: `2026-09-17 21:58:37 +0800`
+- activity_id: `ACT-20260917-215837-CMRESIDUAL-V1143-SATURATION-DIAG`
+- modification_version: `V1.14.3`
+- operation_category: `diagnostic`、`operation`、`documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“诊断一下”。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `80f04145ad48bd7db875b20116b6d2fc3e10863e`
+- worktree_dirty: `true`（只读诊断；未改代码、配置、数据或 checkpoint）。
+- scope: GPU5、64 random starts、63 steps、固定 seed42 和 `sigma=0.1` Gaussian action；不 optimizer update、不加载/改写 checkpoint 训练状态。
+- run_id: `cmresidual_v1143_saturation_diag_20260917_2200`
+- run_status: `COMPLETED`；last_step: `4032` env-steps；best_metric/checkpoint: 不适用。
+- conclusion: `SUPPORTED`（局部 saturation/margin 诊断）；scale 归因、修复效果和科研效果 `INCONCLUSIVE`。
+
+**证据、原因与验证**
+
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1143_saturation_diag_20260917_2200/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1143_saturation_diag_20260917_2200/run_manifest.json)、[summary](../../../../../outputs/CmResidual/cmresidual_v1143_saturation_diag_20260917_2200/summary.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1143_saturation_diag_20260917_2200/metrics.jsonl)。总体 saturation=`4.147%`，其中 native DOF 8/14/15 为 `41.57%/21.65%/11.43%`，其他 15 个维度均为零。
+- 三个分量的 mean requested absolute residual 均约 `0.005 rad`，而 base margin 的最小值均为 `0`（mean margin 分别 `0.0378/0.1631/0.0672 rad`）。这说明瞬时越界由 reference nominal target 落在 joint boundary 后、同方向 residual 触发；不是 wrist translation/rotation 的 global scale 造成。
+- 此回放用固定初始 exploration sigma，而非失败 run 的原始 stochastic action trace；它解释结构性来源但不能精确复现训练的 `5.3819%`。缩小所有 scale 会同时削弱未饱和的 15 个维度，不能作为本诊断后的自动修复。
+- [V1.14 最终计划](../plan/V1.14.md)、[task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[reference_provider.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py)、[CmResidualGrabReferenceTransition.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransition.yaml)、[runner](../../tools/run_grab_reference_transition_ppo.py)、[tests](../../tests/test_reference_contract.py)、[A evaluator](../../tools/eval_grab_retargeted_base.py)、[experiment log](experiment_log.md)、[README](../README.md)、[current_versions](../../../../../docs/current_versions.yaml) 仅作 V1.14.1/2 已实现边界的导航；本诊断未修改它们。
+
+## 2026-09-17 22:12:25 +0800 — V1.14.4 可行动作 authority 映射与 64-step 重跑
+
+- timestamp: `2026-09-17 22:12:25 +0800`
+- activity_id: `ACT-20260917-221500-CMRESIDUAL-V1144-FEASIBLE`
+- modification_version: `V1.14.4`
+- operation_category: `code`、`diagnostic`、`experiment`、`operation`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task-local action mapping、诊断指标、runner 与定向测试）；GPU5 smoke/PPO 为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户审阅 [V1.14 最终计划](../plan/V1.14.md) 中 V1.14.3 后局部修订并明确回复“你继续吧”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `80f04145ad48bd7db875b20116b6d2fc3e10863e`
+- worktree_dirty: `true`（保留先前根级、ObjectInteractionCm、V1.13 及用户已有未提交改动；未覆盖、reset 或纳入本次实现）。
+- scope: 不改变 reference、reward、18-D action、configured scale、joint limits、mimic、PPO 超参数、Cmv2 或共享 `src/base`；仅将 reference-boundary 的 outward residual 映射到实际 source/mimic 可行余量，并新增 authority-limited 诊断。
+- run_id: `cmresidual_v1144_feasible_authority_smoke_20260917_2215`，`run_status: COMPLETED`；GPU5/1 env/seed42、3 zero + 16 fixed-nonzero steps，`last_step=19`、无 checkpoint，target saturation 最大 `0`。
+- run_id: `cmresidual_v1144_reftrack_feasible_w64_20260917_2215`，`run_status: COMPLETED`；GPU5/64 env/seed42/64-step、2+8 epoch，`last_step=40960`、`last_epoch=10`；latest/best checkpoint 为 [epoch-10](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/continuation/CmResidualGrabReferenceTransition_continuation/nn/last_CmResidualGrabReferenceTransitionPPO_ep_10_rew__-2736.07_.pth)。
+- conclusion: mapping、smoke、PPO saturation gate 与 checkpoint reload 工程 `SUPPORTED`；reference tracking、residual utility 和抓取效果 `INCONCLUSIVE`。
+
+**原因**
+
+V1.14.3 的证据表明 saturation 来自少数 nominal reference target 已在 joint boundary 的外向 residual；全局缩小 scale 会无差别削弱其余 15 个分量，故按已批准计划改为局部可行 authority。
+
+**文件**
+
+- [V1.14 最终计划](../plan/V1.14.md) — 将经批准的局部修订标为最终版：不缩小 global scale，而在 base target 的剩余可行区间内逐方向收缩 authority。
+- [action_mapping.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/action_mapping.py) — 按真实 native source DOF（而非 `MIMIC_SOURCE` 的独立分量位置）回推 mimic bounds；zero action 不标记为 authority-limited，outward 非零 action 在 boundary 处安全收缩且仍保持 mimic coupling。
+- [task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 仅为 reference path 导出 `residual_authority_limited_ratio`；legacy physical residual path 保持原行为。
+- [tests](../../tests/test_reference_contract.py) — 覆盖 boundary outward/inward、zero parity、mimic 以及 saturation=0。
+- [runner](../../tools/run_grab_reference_transition_ppo.py) — 接收 `--modification-version`，使新 manifest 记录实际 V1.14.4；未改变训练超参数或 stop gate。`py_compile` 与 `git diff --check` 均通过。
+- [smoke 目录](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/)、[smoke manifest](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/run_manifest.json)、[smoke summary](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/summary.json)、[smoke metrics](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/metrics.jsonl) 与 [smoke log](../../../../../outputs/CmResidual/cmresidual_v1144_feasible_authority_smoke_20260917_2215/smoke.log)：zero action authority-limited=`0`，fixed nonzero action 最高 authority-limited ratio=`0.1111111`，全程 finite、saturation=`0`。
+- [PPO 目录](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/)、[config](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v1144_reftrack_feasible_w64_20260917_2215/checkpoint_validation.json) 与上述 checkpoint：epoch 1–10 的 saturation 均为 `0`，model/optimizer/action finite，reload action diff=`0`，到达锁定 `2+8` budget。
+- [experiment log](experiment_log.md)、[README](../README.md)、[current_versions](../../../../../docs/current_versions.yaml) — 记录终态和 V1.14.4 指针。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py src/task/CmResidual/tests/test_grab_retargeted_eval.py -q`：`27 passed`（6 条既有 Hydra compatibility warnings）；`py_compile`、`git diff --check` 均通过。
+
+**保护与回滚**
+
+回滚只撤销本次 action mapping、Task 指标、runner 参数、定向测试和 V1.14.4 文档/指针；新 outputs 保留为可审计证据。不删除或修改历史 V1.14.1–3 outputs、reference、checkpoint、数据、共享 base 或既有用户改动。
+
+## 2026-09-17 22:40:00 +0800 — V1.14.5 冻结 Cmv2 action evaluator 与 CmBuffer
+
+- timestamp: `2026-09-17 22:40:00 +0800`
+- activity_id: `ACT-20260917-224000-CMRESIDUAL-V1145-CMBUFFER`
+- modification_version: `V1.14.5`
+- operation_category: `code`、`diagnostic`、`operation`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task-local evaluator/buffer/config/runner/test）；GPU5 smoke 为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户明确指定 action-conditioned Cmv2 不进 actor/critic/更新、CmBuffer 不存点云并回复“可以，然后开始吧”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `80f04145ad48bd7db875b20116b6d2fc3e10863e`
+- worktree_dirty: `true`（提交时只暂存本次 CmResidual/V1.14 路径；根级、ObjectInteractionCm、V1.13 及用户已有差异保持不触碰）。
+- scope: PPO actor/critic 保持 68-D；Cmv2 仅对实际 executed residual 的 nominal controller/FK sweep 推理。CmBuffer 每 rank 写 compressed shard，仅含可重建 state/action/effect label，不含 point/normals/flow；Cmv2 `latest.pt` 保持 eval/`requires_grad=False`，不入 reward 或 optimizer。
+- run_id: `cmresidual_v1145_cmbuffer_smoke_20260917_2240`
+- run_status: `COMPLETED`；GPU5/1 env/seed42，`last_step=1`，无 checkpoint。
+- conclusion: buffer/evaluator 工程接线 `SUPPORTED`；Cmv2 accuracy、候选排序、微调资格、PPO/research effect `INCONCLUSIVE`。
+
+**原因**
+
+V1.14 的 current PPO 已完成 no-Cm baseline；用户要求按指导中的 action-conditioned effect 接口积累可审计的真实执行 transition，而不是把历史 token context 拼入 actor/critic，也不在没有标签覆盖/诊断前自动微调 Cmv2。
+
+**文件**
+
+- [V1.14 最终计划](../plan/V1.14.md) — 新增最终 V1.14.5 合同、冻结边界、buffer schema、验证和三卡训练前置条件。
+- [cm_buffer.py](../../cm_buffer.py) — per-rank compressed NPZ shard/manifest；字段 batch-shape 一致性、finite、schema 与点云禁令受检。
+- [task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — pre-physics 保存 executed action prediction/pre-state，post-physics 写 PhysX local effect label；不改 PPO observation/reward。
+- [CmBuffer task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransitionCmBuffer.yaml)、[CmBuffer PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceTransitionCmBufferPPO.yaml)、[registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py)、[runner](../../tools/run_grab_reference_transition_ppo.py) — 隔离 Cmv2 buffer task，runner 以 `--cm-buffer` 选择该 task；旧 V1.14.4 config/runner 默认保持 no-Cm。
+- [buffer test](../../tests/test_cm_buffer.py) — 无点云 chunk round-trip 与 schema；[README](../README.md)、[experiment log](experiment_log.md)、[current versions](../../../../../docs/current_versions.yaml) — 状态与版本入口。
+- [smoke 目录](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/run_manifest.json)、[summary](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/summary.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/config.json)、[buffer manifest](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/cm_buffer/rank_000/manifest.json) 与 [chunk](../../../../../outputs/CmResidual/cmresidual_v1145_cmbuffer_smoke_20260917_2240/cm_buffer/rank_000/chunk_000000.npz)：1 条 finite sample、saturation=`0`，必需状态/metadata 存在且不含 point/normals/flow。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_cm_buffer.py -q`：`1 passed`；Hydra config contract、`py_compile` 与 `git diff --check` 通过。
+- GPU5 smoke 使用真实 pinned Cmv2 checkpoint；该 smoke 只证明输入/输出、label 时序与存储合同，不能把单样本 prediction error 解释为模型可微调或 policy 效果。
+
+**保护与回滚**
+
+回滚仅删除 V1.14.5 的 CmBuffer module/config/registry/runner option/test 和文档记录；生成 shard 保留为证据。三卡分布式 capacity probe 与正式训练尚未启动，需在 rank-to-GPU、每卡容量和有限总 env-step/人工停止记录确定后单列 operation。

@@ -119,6 +119,8 @@ isaacgym_task_map = {
     "Trifinger": Trifinger,
     "CmResidual": CmResidual,
     "CmResidualGrabRetargeted": CmResidual,
+    "CmResidualGrabReferenceTransition": CmResidual,
+    "CmResidualGrabReferenceTransitionCmBuffer": CmResidual,
     "CmResidualDexYCBBase": CmResidual,
     "CmResidualDexYCBCmv2ActionEval": CmResidual,
     "CmResidualDecoderBank": CmResidual,

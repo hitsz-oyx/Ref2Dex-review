@@ -166,6 +166,62 @@ def test_grab_reference_residual_uses_manifest_mimic_and_absolute_target():
     assert changed[0, 13] > base[0, 13]
 
 
+def test_reference_residual_reduces_only_outward_authority_at_joint_boundary():
+    module = _action_mapping_module()
+    scales = (1.05, 1.05, 1.05, 1.18, .6, .8)
+    lower = torch.full((18,), -3.0)
+    upper = torch.full((18,), 3.0)
+    # Native DOF 8 is a source; its coupled DOF 9 remains feasible at 1.05.
+    base = torch.zeros(1, 18)
+    upper[8] = 1.0
+    base[0, 8] = upper[8]
+    base[0, 9] = upper[8] * scales[1]
+    outward = torch.zeros_like(base)
+    outward[0, 8] = 1.0
+    target, details = module.compose_reference_residual(
+        base, outward, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(target, base, atol=0, rtol=0)
+    assert details["configured_authority"][0, 8] == pytest.approx(.08)
+    assert details["effective_authority"][0, 8] == 0
+    assert details["authority_limited"][0, 8] == 1
+    assert details["authority_limited"][0, 9] == 1
+    assert details["saturation"].sum() == 0
+
+    zero, zero_details = module.compose_reference_residual(
+        base, torch.zeros_like(base), lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(zero, base, atol=0, rtol=0)
+    assert zero_details["authority_limited"].sum() == 0
+
+    inward = torch.zeros_like(base)
+    inward[0, 8] = -1.0
+    target, details = module.compose_reference_residual(
+        base, inward, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    assert target[0, 8] == pytest.approx(.92)
+    assert target[0, 9] == pytest.approx(.92 * scales[1])
+    assert details["authority_limited"].sum() == 0
+    assert details["saturation"].sum() == 0
+
+
+def test_reference_provider_indexed_reset_preserves_per_env_reference_state():
+    module = _reference_provider_module()
+    provider = object.__new__(module.RetargetedReferenceProvider)
+    provider.device = torch.device("cpu")
+    provider.length = 4
+    provider.robot_q = torch.arange(72, dtype=torch.float32).view(4, 18)
+    provider.robot_dq = provider.robot_q + 100
+    provider.object_state = torch.arange(52, dtype=torch.float32).view(4, 13)
+    indices = torch.tensor([3, 1])
+    q, dq, obj = provider.reset_state(2, indices)
+    torch.testing.assert_close(q, provider.robot_q[[3, 1]])
+    torch.testing.assert_close(dq, provider.robot_dq[[3, 1]])
+    torch.testing.assert_close(obj, provider.object_state[[3, 1]])
+    with pytest.raises(ValueError, match="reference frame range"):
+        provider.reset_state(1, torch.tensor([4]))
+
+
 def test_contact_selection_uses_net_force_tensor():
     module = _observation_module()
     net_force = torch.zeros(2, 20, 3)

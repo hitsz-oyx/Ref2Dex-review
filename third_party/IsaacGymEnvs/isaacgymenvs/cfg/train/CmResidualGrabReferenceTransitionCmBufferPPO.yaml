@@ -1,0 +1,8 @@
+defaults:
+  - CmResidualGrabReferenceTransitionPPO
+  - _self_
+
+params:
+  config:
+    name: CmResidualGrabReferenceTransitionCmBufferPPO
+    full_experiment_name: CmResidualGrabReferenceTransitionCmBufferPPO

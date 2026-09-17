@@ -111,12 +111,40 @@ def compose_reference_residual(base_targets: torch.Tensor, residual_action: torc
     if not torch.allclose(couple(base_targets), base_targets, atol=1e-5, rtol=0):
         raise ValueError("Retargeted base target violates mimic coupling")
     residual = residual_action.clamp(-1.0, 1.0)
+    configured_authority = torch.zeros_like(base_targets)
+    configured_authority[..., :3] = float(translation_scale_m)
+    configured_authority[..., 3:6] = float(rotation_scale_rad)
+    configured_authority[..., list(INDEPENDENT_NATIVE)] = float(finger_scale_rad)
+    effective_lower, effective_upper = lower.clone(), upper.clone()
+    for mimic, source, scale in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+        if float(scale) <= 0:
+            raise ValueError("Retargeted mimic scale must be positive")
+        source_native = INDEPENDENT_NATIVE[source]
+        effective_lower[..., source_native] = torch.maximum(
+            effective_lower[..., source_native], lower[..., mimic] / float(scale))
+        effective_upper[..., source_native] = torch.minimum(
+            effective_upper[..., source_native], upper[..., mimic] / float(scale))
+    effective_authority = torch.zeros_like(base_targets)
     requested = torch.zeros_like(base_targets)
-    requested[..., :3] = residual[..., :3] * float(translation_scale_m)
-    requested[..., 3:6] = residual[..., 3:6] * float(rotation_scale_rad)
-    requested[..., list(INDEPENDENT_NATIVE)] = residual[..., list(INDEPENDENT_NATIVE)] * float(finger_scale_rad)
+    independent = tuple(range(6)) + tuple(INDEPENDENT_NATIVE)
+    for index in independent:
+        positive = torch.minimum(configured_authority[..., index],
+                                 (effective_upper[..., index] - base_targets[..., index]).clamp_min(0))
+        negative = torch.minimum(configured_authority[..., index],
+                                 (base_targets[..., index] - effective_lower[..., index]).clamp_min(0))
+        effective_authority[..., index] = torch.where(residual[..., index] >= 0, positive, negative)
+        requested[..., index] = residual[..., index] * effective_authority[..., index]
+    # A zero residual retains the exact reference target; it is not an
+    # authority reduction event even if that target lies on a joint boundary.
+    authority_limited = ((effective_authority < configured_authority - 1e-7) &
+                         (residual.abs() > 1e-7))
+    for mimic, source, _ in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+        authority_limited[..., mimic] = authority_limited[..., INDEPENDENT_NATIVE[source]]
     unclamped = couple(base_targets + requested)
     targets = unclamped.clamp(lower, upper)
-    saturation = (targets != unclamped).to(targets.dtype)
+    saturation = (targets.sub(unclamped).abs() > 1e-7).to(targets.dtype)
     return targets, {"base_targets": base_targets, "requested_delta": requested,
-                     "applied_delta": targets - base_targets, "saturation": saturation}
+                     "applied_delta": targets - base_targets, "saturation": saturation,
+                     "configured_authority": configured_authority,
+                     "effective_authority": effective_authority,
+                     "authority_limited": authority_limited.to(targets.dtype)}
