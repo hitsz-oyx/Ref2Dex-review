@@ -12,7 +12,7 @@ import torch
 
 from .config import load_grab_config
 from .grab import GrabManoTransitions, sha256_file
-from .model import ObjectInteractionCmv2Model
+from .model import ObjectInteractionCmv2Model, ObjectInteractionCmv2V13Model
 from .train_grab import utc_now, write_json
 
 
@@ -26,14 +26,17 @@ def main(argv=None):
     parser.add_argument("--run-id", required=True)
     args = parser.parse_args(argv)
     cfg = load_grab_config(args.config)
+    v13 = cfg["schema_name"].endswith("v1_3")
+    architecture = ObjectInteractionCmv2V13Model.architecture_version if v13 else "v1_2"
     if cfg["training"].get("mode") == "smoke" and (args.max_sequences is None or not 1 <= args.max_sequences <= 3 or
        args.max_pairs is None or not 1 <= args.max_pairs <= 8):
         raise ValueError("Smoke evaluation must be bounded to three sequences and eight pairs")
     output = Path(cfg["output_root"]) / args.run_id
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "config.json", cfg)
-    manifest = {"task": "ObjectInteractionCmv2", "modification_version": "V1.2.1",
+    manifest = {"task": "ObjectInteractionCmv2", "modification_version": cfg.get("modification_version", "V1.3.2") if v13 else "V1.2.1",
                 "run_id": args.run_id, "run_status": "STARTED", "created_at": utc_now(),
+                "architecture_version": architecture,
                 "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                 "config": "config.json", "split": args.split, "stride": 1,
                 "input": {"index": cfg["source"]["index"], "manifest": cfg["source"]["manifest"]},
@@ -42,10 +45,14 @@ def main(argv=None):
                 "conclusion": "INCONCLUSIVE"}
     write_json(output / "run_manifest.json", manifest)
     dataset = GrabManoTransitions(cfg["source"]["index"], cfg["source"]["manifest"], args.split,
-                                  max_sequences=args.max_sequences)
+                                  max_sequences=args.max_sequences, direct_pose_gt=v13)
     device = torch.device(cfg["training"].get("device", "cpu"))
-    model = ObjectInteractionCmv2Model(SimpleNamespace(**cfg["model"])).to(device)
-    model.load_state_dict(torch.load(args.checkpoint, map_location=device)["model"])
+    model_class = ObjectInteractionCmv2V13Model if v13 else ObjectInteractionCmv2Model
+    model = model_class(SimpleNamespace(**cfg["model"])).to(device)
+    checkpoint = torch.load(args.checkpoint, map_location=device)
+    if checkpoint.get("architecture_version", "v1_2") != architecture:
+        raise ValueError("Checkpoint architecture differs")
+    model.load_state_dict(checkpoint["model"])
     model.eval()
     stats = defaultdict(lambda: [0, 0.0, 0.0, 0.0])
     with torch.no_grad():

@@ -1,0 +1,27 @@
+schema_name: object_interaction_cmv2_grab_v1_3
+source:
+  name: grab
+  hand_source: mano
+  stride: 1
+  index: ${REF2DEX_GRAB_MANO_CACHE}/index.json
+  manifest: ${REF2DEX_GRAB_MANO_CACHE}/run_manifest.json
+model:
+  architecture_version: v1_3_rigid_only
+  hidden_width: 128
+  num_tokens: 16
+  use_residual: false
+  knn_k: 32
+  interaction_radius_m: 0.02
+  interaction_mode: swept
+  feature_scale_m: 0.02
+  frame_dt_s: 0.03333333333333333
+training:
+  mode: smoke
+  max_sequences: 3
+  batch_size: 2
+  max_steps: 8
+  checkpoint_step: 4
+  learning_rate: 0.001
+  seed: 42
+  device: cuda:1
+output_root: ${REF2DEX_CMV2_OUTPUT_ROOT}

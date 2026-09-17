@@ -44,6 +44,22 @@ def transform_points(points: Tensor, delta_xi_root: Tensor) -> Tensor:
     return torch.bmm(points, matrix.transpose(1, 2)) + translation[:, None, :]
 
 
+def _axis_angle_matrix_stable(axis_angle: Tensor) -> Tensor:
+    """Rodrigues map with finite derivatives at zero."""
+    theta2 = axis_angle.square().sum(-1, keepdim=True)
+    theta = theta2.clamp_min(1e-16).sqrt()
+    x, y, z = axis_angle.unbind(-1)
+    zero = torch.zeros_like(x)
+    skew = torch.stack((zero, -z, y, z, zero, -x, -y, x, zero), -1).reshape(-1, 3, 3)
+    small = theta2 < 1e-8
+    a = torch.where(small, 1 - theta2 / 6 + theta2.square() / 120,
+                    torch.sin(theta) / theta.clamp_min(1e-8))
+    b = torch.where(small, 0.5 - theta2 / 24 + theta2.square() / 720,
+                    (1 - torch.cos(theta)) / theta2.clamp_min(1e-8))
+    eye = torch.eye(3, device=axis_angle.device, dtype=axis_angle.dtype).expand_as(skew)
+    return eye + a[..., None] * skew + b[..., None] * (skew @ skew)
+
+
 def swept_topk(object_points: Tensor, hand_points: Tensor, hand_flow: Tensor,
                hand_valid_mask: Optional[Tensor] = None, k: int = 32,
                object_chunk: int = 128, hand_chunk: int = 256) -> Tuple[Tensor, Tensor]:
@@ -89,13 +105,15 @@ class LocalInteractionEncoder(nn.Module):
     """Object-query attention over valid hand neighbors within 2 cm."""
 
     def __init__(self, width: int = 128, knn_k: int = 32, radius_m: float = 0.02,
-                 interaction_mode: str = "static") -> None:
+                 interaction_mode: str = "static", feature_scale_m: Optional[float] = None,
+                 frame_dt_s: float = 1 / 30) -> None:
         super().__init__()
         self.width, self.knn_k, self.radius_m = int(width), int(knn_k), float(radius_m)
         if interaction_mode not in ("static", "swept"):
             raise ValueError("interaction_mode must be static or swept")
         self.interaction_mode = interaction_mode
-        self.edge = _mlp(21 if interaction_mode == "swept" else 18, width, width)
+        self.feature_scale_m, self.frame_dt_s = feature_scale_m, frame_dt_s
+        self.edge = _mlp((24 if feature_scale_m else 21) if interaction_mode == "swept" else 18, width, width)
         self.query = nn.Linear(width, width, bias=False)
         self.key = nn.Linear(width, width, bias=False)
         self.value = nn.Linear(width, width, bias=False)
@@ -133,8 +151,16 @@ class LocalInteractionEncoder(nn.Module):
         tangent_flow = hf - normal_flow * on
         dt = delta_time_s[:, None, None, None].expand_as(dot)
         if self.interaction_mode == "swept":
-            edge_input = torch.cat([relative, current_distance, end_distance, edge_distances[..., None],
-                                    on, hn, dot, hf, normal_flow, tangent_flow, dt], -1)
+            if self.feature_scale_m is None:
+                edge_input = torch.cat([relative, current_distance, end_distance, edge_distances[..., None],
+                                        on, hn, dot, hf, normal_flow, tangent_flow, dt], -1)
+            else:
+                s = self.feature_scale_m
+                velocity = (hf / dt.clamp_min(1e-8)) * (self.frame_dt_s / s)
+                edge_input = torch.cat([relative / s, current_distance / s, end_distance / s,
+                                        edge_distances[..., None] / s, on, hn, dot, hf / s,
+                                        normal_flow / s, tangent_flow / s, dt / self.frame_dt_s,
+                                        velocity], -1)
         else:
             edge_input = torch.cat([relative, edge_distances[..., None], on, hn, dot,
                                     hf, normal_flow, tangent_flow], -1)
@@ -222,3 +248,131 @@ def object_interaction_loss(output: Dict[str, Tensor], batch: Dict[str, Tensor],
     residual = output["obj_flow_residual"].square().mean()
     total = flow + 0.1 * effect + residual_weight * residual
     return {"total": total, "flow": flow, "effect": effect, "residual": residual}
+
+
+def _masked_attention_pool(values: Tensor, mask: Tensor, score: nn.Module) -> Tensor:
+    logits = score(values).squeeze(-1)
+    weights = torch.softmax(logits.masked_fill(~mask, -torch.finfo(logits.dtype).max), dim=1)
+    weights = weights * mask.to(weights.dtype)
+    weights = weights / weights.sum(1, keepdim=True).clamp_min(1e-8)
+    return (weights[..., None] * values).sum(1)
+
+
+class CompetitiveContactTokens(nn.Module):
+    """Assign each active object point across tokens; retain physical mass."""
+
+    def __init__(self, width: int, num_tokens: int) -> None:
+        super().__init__()
+        self.assignment = _mlp(width + 6, width, num_tokens)
+
+    def forward(self, contact: Tensor, points: Tensor, normals: Tensor, active: Tensor,
+                object_scale: Tensor):
+        spatial = torch.cat((contact, points / object_scale[:, None, None], normals), dim=-1)
+        weights = torch.softmax(self.assignment(spatial), dim=-1) * active[..., None].to(contact.dtype)
+        mass = weights.sum(1)
+        normalized = weights / mass[:, None].clamp_min(1e-8)
+        tokens = torch.bmm(normalized.transpose(1, 2), contact)
+        anchors = torch.bmm(normalized.transpose(1, 2), points)
+        token_normals = F.normalize(torch.bmm(normalized.transpose(1, 2), normals), dim=-1, eps=1e-8)
+        mask = mass.gt(1e-8)
+        return tokens, anchors, token_normals, mass, mask
+
+
+class ObjectInteractionCmv2V13Model(nn.Module):
+    """V1.3.2 rigid-only spatial fusion; earlier models remain untouched."""
+
+    architecture_version = "v1_3_rigid_only"
+
+    def __init__(self, cfg) -> None:
+        super().__init__()
+        width = int(cfg.hidden_width)
+        num_tokens = int(cfg.num_tokens)
+        if cfg.use_residual or cfg.interaction_mode != "swept":
+            raise ValueError("V1.3 requires swept interaction without residual")
+        self.feature_scale_m = float(cfg.feature_scale_m)
+        self.geometry_encoder = _mlp(7, width, width)
+        self.local_interaction = LocalInteractionEncoder(
+            width, int(cfg.knn_k), float(cfg.interaction_radius_m), "swept",
+            feature_scale_m=self.feature_scale_m, frame_dt_s=float(cfg.frame_dt_s))
+        self.global_score = nn.Linear(width, 1)
+        self.contact_score = nn.Linear(width, 1)
+        self.part_fusion = _mlp(2 * width, width, width)
+        self.tokens = CompetitiveContactTokens(width, num_tokens)
+        self.token_encoder = _mlp(width + 7, width, width)
+        self.cross_attention = nn.MultiheadAttention(width, num_heads=4, batch_first=True)
+        self.fusion_head = _mlp(2 * width, width, width)
+        self.root_head = nn.Linear(width, 6)
+        self.cm_projection = nn.Linear(width, 32)
+
+    def forward(self, batch: Dict[str, Tensor]) -> Dict[str, Tensor]:
+        required = ("obj_points", "obj_normals", "hand_points", "hand_normals", "hand_flow")
+        missing = [key for key in required if key not in batch]
+        if missing:
+            raise KeyError(f"Missing V1.3 fields: {missing}")
+        points = batch["obj_points"]
+        normals = F.normalize(batch["obj_normals"], dim=-1, eps=1e-8)
+        centered = points - points.mean(1, keepdim=True)
+        object_scale = centered.square().sum(-1).mean(1).sqrt()
+        if not torch.isfinite(object_scale).all() or (object_scale <= 1e-8).any():
+            raise ValueError("Degenerate object geometry")
+        log_scale = torch.log(object_scale / self.feature_scale_m)
+        geo = self.geometry_encoder(torch.cat((
+            centered / object_scale[:, None, None], normals,
+            log_scale[:, None, None].expand(-1, points.shape[1], 1)), dim=-1))
+        contact, diagnostics = self.local_interaction(
+            geo, points, normals, batch["hand_points"], batch["hand_normals"],
+            batch["hand_flow"], batch.get("hand_valid_mask"), batch.get("delta_time_s"))
+        active = diagnostics["has_interaction"]
+        global_feature = _masked_attention_pool(
+            geo, torch.ones_like(active), self.global_score)
+        interaction_feature = _masked_attention_pool(contact, active, self.contact_score)
+        direct = self.part_fusion(torch.cat((global_feature, interaction_feature), dim=-1))
+        tokens, anchors, token_normals, mass, token_mask = self.tokens(
+            contact, points, normals, active, object_scale)
+        token_input = torch.cat((tokens, anchors / object_scale[:, None, None],
+                                 token_normals, torch.log(mass.clamp_min(1e-8))[..., None]), dim=-1)
+        spatial_tokens = self.token_encoder(token_input)
+        # MultiheadAttention needs at least one unmasked key for each sample.
+        safe_mask = token_mask.clone()
+        empty = ~safe_mask.any(1)
+        safe_mask[empty, 0] = True
+        attended, _ = self.cross_attention(
+            direct[:, None], spatial_tokens, spatial_tokens,
+            key_padding_mask=~safe_mask, need_weights=False)
+        attended = attended[:, 0] * (~empty)[:, None].to(direct.dtype)
+        fused = self.fusion_head(torch.cat((direct, attended), dim=-1))
+        delta_xi = self.root_head(fused)
+        rotation = _axis_angle_matrix_stable(delta_xi[:, 3:])
+        structured_flow = torch.bmm(points, rotation.transpose(1, 2)) + delta_xi[:, None, :3] - points
+        cm_tokens = self.cm_projection(spatial_tokens) * token_mask[..., None].to(points.dtype)
+        return {"delta_xi_root": delta_xi,
+                "obj_flow_structured": structured_flow,
+                "obj_flow_residual": torch.zeros_like(points),
+                "obj_flow_pred": structured_flow,
+                "contact_features": contact, "contact_active": active,
+                "tokens": tokens, "cm_tokens": cm_tokens,
+                "token_anchors": anchors, "token_normals": token_normals,
+                "token_mass": mass, "token_mask": token_mask, **diagnostics}
+
+
+def object_interaction_v13_loss(output: Dict[str, Tensor], batch: Dict[str, Tensor],
+                                scale_m: float = 0.02) -> Dict[str, Tensor]:
+    """Direct rigid supervision with translation, rotation, and flow only."""
+    pred = output["delta_xi_root"]
+    translation = F.smooth_l1_loss(pred[:, :3] / scale_m,
+                                   batch["delta_translation_gt"] / scale_m)
+    pred_rotation = _axis_angle_matrix_stable(pred[:, 3:])
+    relative = batch["delta_rotation_gt"].transpose(1, 2) @ pred_rotation
+    trace = relative.diagonal(dim1=-2, dim2=-1).sum(-1)
+    skew = torch.stack((relative[:, 2, 1] - relative[:, 1, 2],
+                        relative[:, 0, 2] - relative[:, 2, 0],
+                        relative[:, 1, 0] - relative[:, 0, 1]), dim=-1)
+    angle = torch.atan2(torch.linalg.vector_norm(skew, dim=-1), trace - 1)
+    points = batch["obj_points"]
+    radius = (points - points.mean(1, keepdim=True)).square().sum(-1).mean(1).sqrt()
+    rotation = (angle * radius / scale_m).mean()
+    flow = F.smooth_l1_loss(output["obj_flow_pred"] / scale_m,
+                            batch["obj_flow_gt"] / scale_m)
+    total = translation + rotation + flow
+    return {"total": total, "translation": translation, "rotation": rotation,
+            "flow": flow}

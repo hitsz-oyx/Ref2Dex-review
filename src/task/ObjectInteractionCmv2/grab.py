@@ -33,11 +33,13 @@ def _arrays(sequence_path: str):
 
 class GrabManoTransitions(Dataset):
     def __init__(self, index: str | Path, manifest: str | Path, split: str,
-                 max_sequences: int | None = None, object_points: int = 1024):
+                 max_sequences: int | None = None, object_points: int = 1024,
+                 direct_pose_gt: bool = False):
         self.index_path, self.manifest_path = Path(index).resolve(), Path(manifest).resolve()
         if split not in ("train", "val", "test"):
             raise ValueError("split must be train, val, or test")
         self.split = split
+        self.direct_pose_gt = direct_pose_gt
         run = json.loads(self.manifest_path.read_text())
         if run.get("run_status") != "COMPLETED" or run.get("result") != "SUPPORTED":
             raise ValueError("Input cache must have a completed, supported run manifest")
@@ -99,10 +101,25 @@ class GrabManoTransitions(Dataset):
         selected = self.point_indices
         pose = np.asarray(arrays["obj_pose_world"][t], dtype=np.float32)
         rotation, translation = pose[:3, :3], pose[:3, 3]
+        if self.direct_pose_gt:
+            next_pose = np.asarray(arrays["obj_pose_world"][t + 1], dtype=np.float32)
+            next_rotation, next_translation = next_pose[:3, :3], next_pose[:3, 3]
+            if (not np.isfinite(pose).all() or not np.isfinite(next_pose).all()
+                or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-4)
+                or not np.allclose(next_rotation.T @ next_rotation, np.eye(3), atol=1e-4)
+                or abs(np.linalg.det(rotation) - 1) > 1e-4
+                or abs(np.linalg.det(next_rotation) - 1) > 1e-4):
+                raise ValueError(f"Invalid rigid pose: {sequence_id} frame {t}")
+            delta_rotation = rotation.T @ next_rotation
+            delta_translation = (next_translation - translation) @ rotation
         def local(world):
             return (np.asarray(world, dtype=np.float32) - translation) @ rotation
         obj = local(arrays["obj_points_pool_world"][t, selected])
         obj_next = local(arrays["obj_points_pool_world"][t + 1, selected])
+        if self.direct_pose_gt:
+            reconstruction = obj @ delta_rotation.T + delta_translation
+            if np.max(np.linalg.norm(reconstruction - obj_next, axis=-1)) > 1e-4:
+                raise ValueError(f"Pose/point mismatch: {sequence_id} frame {t}")
         normals = np.asarray(arrays["obj_normals_pool_world"][t, selected]) @ rotation
         hand = local(arrays["knn_hand_points_world"][t])
         hand_next = local(arrays["knn_hand_points_world"][t + 1])
@@ -111,6 +128,8 @@ class GrabManoTransitions(Dataset):
         tensors = {"obj_points": obj, "obj_normals": normals, "hand_points": hand,
                    "hand_normals": hand_normals, "hand_flow": hand_next - hand,
                    "obj_flow_gt": obj_next - obj}
+        if self.direct_pose_gt:
+            tensors.update(delta_translation_gt=delta_translation, delta_rotation_gt=delta_rotation)
         if not all(np.isfinite(value).all() for value in tensors.values()):
             raise ValueError(f"Nonfinite geometry: {sequence_id} frame {t}")
         return {**{name: torch.from_numpy(np.ascontiguousarray(value, dtype=np.float32)) for name, value in tensors.items()},
