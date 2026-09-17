@@ -4035,12 +4035,15 @@ GPU2 正在被其他工作占用；GPU0/1/3 的预检显存均低于 4096 MiB。
 - worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
 - scope: runner 在 torchrun 子进程存活期间每 0.5 秒以 nvidia-smi 合并物理 GPU0/1/3 的 memory.used 峰值，并写入 run manifest；复跑相同 3 rank × 128 env、1 epoch budget。采样失败不打断 PPO worker；不改算法/数据/模型合同，不启动 256 env/rank 或正式训练。
 - run_id: cmresidual_v1163_ddp_3x128_mempeak_20260918_010709
-- run_status: STARTED；运行产物会由 launcher 创建后登记。
-- conclusion: INCONCLUSIVE（尚无带峰值采样的 capacity 结果）。
+- run_status: FAILED；PPO worker 正常退出并保存 checkpoint/buffer，但 runner 后处理在 checkpoint validation 前发生 AttributeError。
+- last_step: unavailable（runner validation 未执行）；last_epoch: 1（worker log）；best_metric/checkpoint validation: unavailable。
+- exit_reason: `AttributeError: 'int' object has no attribute 'returncode'`；`Popen.wait()` 返回 int，runner 错误读取 `.returncode`。
+- conclusion: peak telemetry 与 worker rollout evidence SUPPORTED；本次 capacity run 整体为 INVALID_IMPLEMENTATION，不能作为 3×256 或正式训练批准依据。
 
 **文件**
 
 - [DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — memory peak schema、定向测试与 V1.16.3 状态入口。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/train.log)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_1_rew_-inf.pth)、[rank 0 buffer](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/cm_buffer/rank_000/manifest.json)、[rank 1 buffer](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/cm_buffer/rank_001/manifest.json)、[rank 2 buffer](../../../../../outputs/CmResidual/cmresidual_v1163_ddp_3x128_mempeak_20260918_010709/cm_buffer/rank_002/manifest.json) — peak sampling 和 worker 产物。
 
 **原因**
 
@@ -4048,9 +4051,46 @@ GPU2 正在被其他工作占用；GPU0/1/3 的预检显存均低于 4096 MiB。
 
 **验证**
 
-- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`、`py_compile` 与 activity link audit：PENDING。
+- runner 在 0.5 秒采样间隔下记录 `gpu_used_mib_peak={0:16440,1:14137,3:15358}`，monitor error 为 null。相对 preflight `2553/776/1997 MiB` 的增量约为 `13887/13361/13361 MiB`；这不构成 256 env/rank 的线性外推或安全许可。
+- PPO worker log 显示三个 rank 完成 broadcast/epoch 1/checkpoint；三个 transition-only buffer manifest 均存在。由于 runner 收尾 AttributeError，该 run 不进行 checkpoint finite/reload 或 metrics validation。
 - capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010709-CMRESIDUAL-V1163-MEMPEAK --modification-version V1.16.3 --run-id cmresidual_v1163_ddp_3x128_mempeak_20260918_010709`。
 
 **保护与回滚**
 
 回滚仅删除 runner peak-monitor 与本条 V1.16.3 文档/测试差异；首轮 V1.16.2 output 保留为证据，训练、数据、buffer schema 和用户未提交路径不受影响。
+
+## 2026-09-18 01:09:32 +0800 — V1.16.4 修复峰值 probe 收尾并复跑
+
+- timestamp: 2026-09-18 01:09:32 +0800
+- activity_id: ACT-20260918-010932-CMRESIDUAL-V1164-MEMPEAK
+- modification_version: V1.16.4
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L1（Task-local runner 收尾修复）；3×128 probe 为 L3。
+- approval: user-approved
+- approval_basis: 用户要求实测显存；V1.16.3 已发现 runner 后处理缺陷，修复并复跑同一受限 budget 是该授权范围内的必要验证。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 405ecb379f399376c02981421ff8f5cd188134f5
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
+- scope: 将 Popen return-code 判断修正为整数比较，保留 0.5 秒 physical GPU peak telemetry；复跑相同 physical GPU0/1/3、3 rank×128 env、1 epoch capacity budget，以完成 rank-buffer、metrics、checkpoint finite/reload 与 peak-memory 的整体验证。不尝试 256 env/rank 或正式训练。
+- run_id: cmresidual_v1164_ddp_3x128_mempeak_20260918_010932
+- run_status: STARTED；运行产物由 launcher 创建后登记。
+- conclusion: INCONCLUSIVE（修复后的 capacity 运行尚未完成）。
+
+**文件**
+
+- [DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — return-code 修复、peak telemetry 与 V1.16.4 状态。
+
+**原因**
+
+V1.16.3 的训练 worker 返回 0，但 Popen.wait() 的 int 被误当作带 `.returncode` 的对象；必须修正后才能可信地验证 checkpoint 与 metrics。已观测峰值接近 14–16 GiB，直接倍增 env 前必须先拥有有效的 3×128 terminal evidence。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`、`py_compile` 与 activity link audit：PENDING。
+- capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010932-CMRESIDUAL-V1164-MEMPEAK --modification-version V1.16.4 --run-id cmresidual_v1164_ddp_3x128_mempeak_20260918_010932`。
+
+**保护与回滚**
+
+回滚仅恢复 runner 的 Popen return-code 判断并移除 V1.16.4 文档/测试差异；V1.16.2/V1.16.3 outputs、算法、数据、buffer schema 和用户未提交路径保留。

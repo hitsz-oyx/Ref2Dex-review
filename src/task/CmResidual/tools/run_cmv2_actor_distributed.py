@@ -178,8 +178,8 @@ def main() -> None:
                     monitor_error = f"{type(error).__name__}: {error}"
                 time.sleep(0.5)
             result = process.wait()
-        if result.returncode:
-            raise RuntimeError(f"torchrun exited {result.returncode}")
+        if result:
+            raise RuntimeError(f"torchrun exited {result}")
         rank_manifests = [Path(path) / "manifest.json" for path in manifest["rank_buffer_dirs"]]
         if not all(path.is_file() for path in rank_manifests):
             raise RuntimeError(f"Missing rank buffer manifests: {rank_manifests}")

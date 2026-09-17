@@ -580,6 +580,9 @@ def test_v116_ddp_launcher_uses_python_script_bootstrap():
                            "--nproc_per_node=3", str(module.BOOTSTRAP)]
     assert module.BOOTSTRAP.suffix == ".py" and module.BOOTSTRAP.is_file()
     assert "-c" not in command
+    source = (tools / "run_cmv2_actor_distributed.py").read_text()
+    assert "gpu_used_mib_peak" in source
+    assert "if result.returncode" not in source
 
 
 def _build_v19_model(train_config, seed=42):
