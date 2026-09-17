@@ -1946,3 +1946,40 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 恢复本条所列受版本控制文件并把 Cmv2 指针回退到 `V1.4.3`；不删除任何 cache 或旧 checkpoint。尚未产生的新 split/run 输出可通过停止其独立 run 保留审计后不再使用。
+
+## 2026-09-17 15:01:08 +0000 — 修正双域 split 首次运行的 manifest 父目录创建
+
+- timestamp: `2026-09-17 15:01:08 +0000`
+- activity_id: `ACT-20260917-150108-CMV2-V144-SPLIT-MANIFEST-PARENT-FIX`
+- modification_version: `V1.4.4`
+- type: `code, data, operation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 属于用户已批准的 V1.4.4 trajectory split 正式运行前的最小实现修正。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `b418c6b02b97bdbf1d769d2e60e92a5f72816921`
+- worktree_dirty: `true`（仅本条所列修正和记录尚未提交）
+- run_id: `cmv2_two_domain_mano_split_20260917T150100Z`
+- run_status: `FAILED`
+- scope: 修正 split 工具在 output root 尚不存在时首次写 run manifest 的父目录创建顺序；未写入 split、未修改原 cache、未启动训练。
+- conclusion: `INVALID_IMPLEMENTATION`（首次启动包装错误；数据/模型合同未执行）。
+
+**文件**
+
+- [tools/data/build_two_domain_mano_split_v1_4.py](../../tools/data/build_two_domain_mano_split_v1_4.py) — `_write_json` 先创建父目录，再执行原子临时文件替换。
+
+**原因**
+
+首次命令在 `run_manifest_*.json.tmp` 写入前调用 `build()`，因此 output root 尚未创建并触发 `FileNotFoundError`。错误发生在读取/处理 source index 之前，未产生可误用的 split 产物。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/tools/data/build_two_domain_mano_split_v1_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`1 passed`。
+- 下一步以同一独立 output root 和新 run id 重跑；只有 `COMPLETED` manifest/index/cache manifest 同时存在才可用于训练。
+
+**回滚**
+
+撤销该单行目录创建修正即可；没有需要删除或恢复的 cache/split 数据。
