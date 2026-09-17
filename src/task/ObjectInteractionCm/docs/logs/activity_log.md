@@ -8643,3 +8643,44 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 **回滚**
 
 本次仅新增诊断记录，无代码、配置或数据改动；删除本 activity 条目即可回滚记录。
+
+## 2026-09-17 10:43:40 +0000 — OakInk2 与 ARCTIC 几何重定向 cache 状态核对
+
+- timestamp: `2026-09-17 10:43:40 +0000`
+- activity_id: `ACT-20260917-104340-OICM-OAKINK2-ARCTIC-STATUS`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 和 ARCTIC 几何重定向数据是否导出完成。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `eaf028dc2d9c7dc2c21b5c74343cf618d6756e7c`
+- worktree_dirty: `false`
+- scope: 只读核对 OakInk2 选择/cache manifest、实时流水线和现有 GRAB/ARCTIC Inspire geometric cache manifest；不停止任务、不修改代码、输入数据或 cache。
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`（OakInk2）；ARCTIC 使用既有 full cache manifest。
+- run_status: `RUNNING`（OakInk2 cache export）；ARCTIC manifest `COMPLETED` 对应既有全量 cache。
+- conclusion: `INCONCLUSIVE`（OakInk2 尚未完成）；ARCTIC 工程完整性 `SUPPORTED`。
+
+**原因**
+
+确认 OakInk2 是否已经从选择阶段进入并完成 cache 导出，同时核对 ARCTIC 几何重定向数据的正式 manifest 和坏样本统计。
+
+**验证**
+
+- OakInk2 选择已完成：`2177` 个输入 primitive 中选出 `1849` 段、`379591` 帧，`0` 个选择失败。
+- OakInk2 cache export 仍在运行：已完成 `406/1849` 段、`116725` 帧；当前记录 `43` 个失败，原因均为对应选择缺少 Stage3 geometry；cache `index`/`cache_manifest` 仍为 `PENDING`，全量结论保持 `INCONCLUSIVE`。
+- ARCTIC Inspire geometric cache 已完成：`301` 个序列、30 Hz；合并 manifest 的 `bad_count=0`，手部合同为双手 Inspire `3076` 点，物体池 `4096` 点。
+- 诊断命令：`ps`、`cat` 两个 OakInk2 run manifest、`tail pipeline.log`、`cat cache_manifest.json`。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+- [data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+
+**回滚**
+
+本次仅新增诊断记录，无代码、配置或数据改动；删除本 activity 条目即可回滚记录。
