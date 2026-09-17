@@ -1,0 +1,15 @@
+name: grab_stride_visualization
+task: ObjectInteractionCm
+modification_version: V1.4.5
+importance: exploratory
+pinned: false
+tags: [grab, stride, point-flow, visualization]
+entrypoint: src.task.ObjectInteractionCm.visualize_grab
+default_output_root: src/task/ObjectInteractionCm/research/grab_stride_visualization/output
+plan: src/task/ObjectInteractionCm/docs/plan/V1.4.md
+hypothesis: GRAB 30 Hz cache 中 t 到 t+10 的实际点流跨度可以通过对应点叠加和位移统计进行人工判断。
+constraints:
+  cache_read_only: true
+  future_delta_cache_frames: 10
+  preserve_flow_gt: true
+  preserve_split: true

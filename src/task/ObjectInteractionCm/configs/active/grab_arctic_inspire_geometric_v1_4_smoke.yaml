@@ -1,0 +1,20 @@
+_base_: src.task.ObjectInteractionCm.configs.active.grab_arctic_inspire_geometric_v1_4
+
+name: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_smoke
+train:
+  epochs: 1
+  max_steps: 2
+  skip_eval: true
+  eval_every_epochs: null
+  save_every_epochs: null
+  save_every_steps: null
+  log_every_steps: 1
+data:
+  batch_size: 2
+  val_batch_size: 2
+  test_batch_size: 2
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+performance:
+  mode: off

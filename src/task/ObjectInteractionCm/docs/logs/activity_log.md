@@ -5,6 +5,129 @@
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
+## 2026-09-13 09:01:27 +0000 — ObjectInteractionCm 扩大训练数据可行性只读诊断
+
+- activity_id: ACT-20260913-090127-OICM-DIAG
+- timestamp: 2026-09-13 09:01:27 +0000
+- modification_version: V1.3.2
+- type: diagnostic
+- operation_category: [diagnostic, documentation]
+- change_level: L0
+- approval: auto
+- approval_basis: 用户澄清目标为 ObjectInteractionCm，并请求判断扩大 Cm 训练数据的可行性与必要性；本次仅阅读与只读查询
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留本次会话已有的 Cm 活动记录改动）
+- scope: ObjectInteractionCm 近期 Git 提交、V1.3 训练记录、数据 index/split/采样配置和跨源诊断；不修改模型、runner、dataset、GT、坐标、split、cache、checkpoint 或运行状态
+- conclusion: SUPPORTED（可行性与已有证据复核）；INCONCLUSIVE（扩大现有帧数对效果的必要性）
+
+**文件**
+- [`../../../../../docs/logs/activity_log.md`](../../../../../docs/logs/activity_log.md) — 读取根级近期合并与版本指针记录。
+- [`experiment_log.md`](experiment_log.md) — 读取 V1.3 全量训练、跨源 effect 和机制诊断结果。
+- [`activity_log.md`](activity_log.md) — 读取 ObjectInteractionCm 近期训练/诊断活动。
+- [`../configs/active/dexplore_rl_v1_3.yaml`](../../configs/active/dexplore_rl_v1_3.yaml) — 读取当前 V1.3 数据、采样、split 和训练预算。
+- [`../plan/V1.3.md`](../plan/V1.3.md) — 读取数据合同与不变量。
+
+**原因**
+区分增加独立交互序列、增加同序列帧/stride 曝光和延长训练预算三种“扩容”，并依据当前 V1.3 已有样本覆盖、平台期与误差归因判断优先级。
+
+**验证**
+- `git log --date=iso --format='%h %ad %s' -n 30 -- src/task/ObjectInteractionCm`：确认最近变更集中于 V1.3 cache/训练终态、跨源 effect 诊断和机制诊断。
+- 只读扫描 V1.3 记录与配置：确认 train `509`（MANO/Inspire-F1 `254/255`）、val `58`、test `63`，目标 `202300` steps，global batch `96`，source probability `0.5/0.5`。
+- 既有 V1.3 结果：best equal-source object EPE `6.516671 mm`（step `132480`），最近 `6.714598 mm`（step `143520`），连续 15 次验证未刷新 best，训练尚未完成且已出现平台期迹象。
+- 既有机制诊断：val `7670` 有效样本；低接触样本仅占总 EPE `12.49%/13.89%`，不能将主要瓶颈归因于简单缺样本。
+- `git status --short --branch`：当前工作区仅保留会话内活动记录改动；数据路径为外部 NAS 软链接，未对实体 cache 做本机数量复核。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`：本条写入后执行，链接与日志审计通过。
+
+**回滚与规范反馈**
+
+- 仅移除本 activity 条目即可回滚本次诊断记录；未产生代码、配置、数据或实验产物变更。
+- 本次未遇到目录、版本或审批阻碍；由于目标从旧 Cm 更正为 ObjectInteractionCm，结论仅适用于本 Task。
+
+## 2026-09-13 09:37:13 +0000 — ARCTIC 扩容与 CmDecoderv2 重定向链路可行性诊断
+
+- activity_id: ACT-20260913-093713-OICM-ARCTIC-DECODER-DIAG
+- timestamp: 2026-09-13 09:37:13 +0000
+- modification_version: V1.3.2
+- type: diagnostic
+- operation_category: [diagnostic, documentation]
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问加入 NAS 上 ARCTIC 等数据集的必要性，以及 ObjectInteractionCm 是否支持 CmDecoderv2 重定向；本次仅只读核对接口和既有结果
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留会话内已有活动记录改动）
+- scope: ObjectInteractionCm V1.3 cache/训练合同、CmDecoderv2 OICM 接口、Inspire point-flow decoder 训练与 rollout 诊断；不修改模型、数据、split、cache、checkpoint 或运行状态
+- conclusion: SUPPORTED（接口与数据接入方向可行）；INCONCLUSIVE（“加入 ARCTIC 后得到较好重定向结果”）
+
+**文件**
+- [`experiment_log.md`](experiment_log.md) — 读取 ObjectInteractionCm V1.3 训练平台期、跨源 effect 与机制诊断。
+- [`../../../CmDecoderv2/docs/logs/experiment_log.md`](../../../CmDecoderv2/docs/logs/experiment_log.md) — 读取 CmDecoderv2 V1.3 full10135 训练、teacher-forced 与递归 rollout 结果。
+- [`../configs/active/dexplore_rl_v1_3.yaml`](../../configs/active/dexplore_rl_v1_3.yaml) — 读取 OI V1.3 的 4096/1024 object、KNN=32、2 cm、右手与 source split 合同。
+- [`../../../CmDecoderv2/model.py`](../../../CmDecoderv2/model.py) — 读取 frozen OICM 加载、`cm_tokens`/anchor 窗口接口与 CmDecoderv2 调用路径。
+- [`../指导/V1.3.md`](../指导/V1.3.md) — 读取 V1.3 固定 630 sequence、159476 frame、split/GT/坐标/hand-side 不变量。
+
+**原因**
+区分“ObjectInteractionCm 能否作为 CmDecoderv2 的编码器”与“整条链路能否在递归重定向中产生稳定效果”，并评估 ARCTIC 对交互覆盖、articulated object 和跨 embodiment 泛化的实际价值。
+
+**验证**
+- OI V1.3 模型输出 `cm_tokens [B,16,32]`、`cm_anchor_pos [B,16,3]`、`cm_anchor_normal [B,16,3]`；CmDecoderv2 将窗口展平后恢复为 `[B,4,16,32]`，接口形状和坐标合同一致。
+- CmDecoderv2 已用冻结 OI V1.3 完成 50 epoch Inspire point-flow 训练；best point-flow EPE `12.8782 mm`，最终 `12.7156 mm`，工程链路 `SUPPORTED`，但只有 Inspire train/val，跨 embodiment 效果仍 `INCONCLUSIVE`。
+- teacher-forced 诊断中，GT hand flow 直接进入 OI 时 effect EPE `0.660 mm`；说明 OI effect 映射具备有效信号，主要误差来自 decoder hand-state/hand-flow 与递归漂移。
+- 接触起点递归诊断中，接触段 effect EPE `3.545 mm`，但 hand position EPE `87.909 mm`，后段 38/323 帧离开有效区；从 frame 0 的另一 run 中 OI valid ratio 为 `0`、hand EPE 均值约 `640.851 mm`。因此不能把当前重定向瓶颈归因于 OI 样本量不足。
+- ARCTIC 不能直接塞入当前 V1.3：当前指导固定右手、630 sequence、159476 frame、object_pose_t 和现有 split；接入 ARCTIC 需生成同合同的 articulated-object cache、KNN/半径字段、source split 与 train-only scale，并同步 decoder 的目标手/状态数据视图。
+- 本机 `data/processed_data` 仍是未挂载 NAS 软链接，未对 ARCTIC 实体数量做本机复核。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`：本条写入后执行，链接与日志审计通过。
+
+**回滚与规范反馈**
+
+- 仅移除本 activity 条目即可回滚本次诊断记录；未产生代码、配置、数据或实验产物变更。
+- 本次未遇到格式、目录、版本或审批阻碍；若要接入 ARCTIC 或改变 OI/CmDecoderv2 训练合同，需要新 plan 和用户确认。
+
+## 2026-09-13 09:52:23 +0000 — RL 基础策略前的 rollout 偏移影响诊断
+
+- activity_id: ACT-20260913-095223-OICM-RL-OFFSET-DIAG
+- timestamp: 2026-09-13 09:52:23 +0000
+- modification_version: V1.3.2
+- type: diagnostic
+- operation_category: [diagnostic, documentation]
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问进入强化学习前 rollout 偏移的影响与当前优先问题；本次只读核对 RL 任务、base-policy 配置和既有 rollout 证据
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留会话内已有活动记录改动）
+- scope: CmDecoderv2 rollout、ObjectInteractionCm→CmDecoderv2 接口、IsaacGymEnvs CmResidual 任务与 RL decoder-bank 配置；不修改模型、数据、训练配置、checkpoint 或运行状态
+- conclusion: SUPPORTED（偏移对当前 2 cm 有效区和 residual base 的影响判断）；INCONCLUSIVE（正式 RL 成功率与物理抓取效果）
+
+**文件**
+- [`../../../CmDecoderv2/docs/logs/experiment_log.md`](../../../CmDecoderv2/docs/logs/experiment_log.md) — 读取单步、短递归和接触起点 rollout 结果。
+- [`../../../CmDecoderv2/model.py`](../../../CmDecoderv2/model.py) — 读取 OI frozen encoder、Cm window 和 decoder state 接口。
+- [`../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual.py) — 读取当前 residual base、观测、动作和奖励实现。
+- [`../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml) — 读取 decoder-bank base 配置。
+- [`../../../CmDecoderv2/tools/rl/export_decoder_bank.py`](../../../CmDecoderv2/tools/rl/export_decoder_bank.py) — 读取 bank 的 teacher-forced、非在线闭环语义。
+
+**原因**
+判断 decoder 的时序偏移是否会让 residual PPO 在错误的基础轨迹上学习，并区分当前真正需要解决的状态预测、接触有效性、物理任务和 RL 工程问题。
+
+**验证**
+- 当前 `CmResidual` 只提供 `reference_frozen` 与 `decoder_bank` 两种 base mode；`decoder_bank` 由预先导出的 q/wrist 轨迹按 `progress_buf` 索引，bank manifest 标记 `online_closed_loop=false`，不是仿真内逐步调用 CmDecoderv2 的闭环 base。
+- residual action 范围为独立 finger `±0.08`、wrist translation `±15 mm`、wrist rotation `±0.20 rad`；当前 OICM 交互有效半径为 `2 cm`。因此几十毫米级 hand-state 偏移可能直接把 OICM 置于无效区，超过 residual 一步可补偿范围。
+- CmDecoderv2 既有 16 步短递归中，正确 Cm 的 hand EPE 从 `8.5667 mm` 增至 `53.1931 mm`；接触起点单序列中 hand position EPE `87.909 mm`，后段 `38/323` 帧离开有效区；从 frame 0 的另一 run 中 OICM valid ratio `0`、hand EPE 均值 `640.851 mm`。
+- teacher-forced GT hand flow 进入同一 OICM 时 effect EPE `0.660 mm`，表明当前主要优先级是 decoder/state rollout 与物理闭环对齐，而不是先扩大 OI 数据或重写 Cm effect head。
+- 当前 RL vendor smoke 只验证 action `(12,)`、observation `(71,)` 和单 PPO epoch；`rew=-inf` 是未完成 episode 的 smoke 统计伪影，尚无正式 RL 成功率证据。
+- 当前配置的 reference 路径为 `s1_airplane_lift`，仿真 object asset 为 cube；正式 PPO 前必须确认 reference/object/reward 三者语义一致。
+- 本机数据仍通过未挂载 NAS 软链接访问；本诊断不重新扫描数据或启动 rollout。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`：本条写入后执行，链接与日志审计通过。
+
+**回滚与规范反馈**
+
+- 仅移除本 activity 条目即可回滚本次诊断记录；未产生代码、配置、数据或实验产物变更。
+- 本次未遇到格式、目录、版本或审批阻碍；正式 RL 训练、在线 decoder 接入或改变 ARCTIC 数据合同都需另行形成 final plan 并确认。
+
 ## 2026-09-12 13:30:43 +0800 — Cm 后续路线的仓库复核与定向文献调研
 
 - activity_id: ACT-20260912-133043-OICM-RESEARCH-REVIEW
@@ -2674,7 +2797,7 @@ V1.2.5 的 Inspire 小物体可小至约 40 mm，而 4096 点的典型间距约 
 - run_status: `COMPLETED`
 - conclusion: `SUPPORTED`（仅表示 pilot 数据合同与转换 wiring 通过，不表示 Cm/解码科学效果成立）
 
-**产物与验证**
+**产物**
 
 - [pilot cache](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/) — 单序列 geometry、assignment、index、manifest。
 - [pilot run manifest](../../../../../data/processed_data/object_interaction_cm_dexplore_rl_v1_pilot/run_manifest.json) — 记录输入、q slice、URDF hash、seed、计数与 validation。
@@ -4362,3 +4485,4015 @@ V1.2 指导指出原设计的 object `softmax(candidate_flow)` 仍是 mixture，
 - `git diff --check`、新增 architecture 的空树 diff 检查：通过。
 - `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm --check-links`：通过；activity 与 5 个 scope 变更路径一致，5 个本地链接可导航。
 - 未运行训练、评估、测试或数据处理。
+
+## 2026-09-14 04:22:21 +0000 — 扩大 OI-Cm 数据与 Dexplore 导出入口只读盘点
+
+- activity_id: ACT-20260914-042221-OICM-DATA-SCOPE-DIAG
+- timestamp: 2026-09-14 04:22:21 +0000
+- modification_version: V1.3.2
+- type: diagnostic
+- operation_category: [diagnostic, documentation]
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求浏览仓库并确认扩大 OI-Cm 数据、MANO/Inspire 混合训练及 Dexplore 重导出是否存在歧义；本次仅只读扫描
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留开始前已有 activity_log 改动）
+- scope: ObjectInteractionCm V1.3 指导/计划/配置、Dexplore 导出仓库、NAS 原始数据入口和现有产物可见性；不修改代码、配置、数据、cache、split、checkpoint 或运行状态
+- conclusion: SUPPORTED（当前入口与扩容方向可定位）；INCONCLUSIVE（目标数据集合、Inspire 几何/RL 选择及是否纳入 ARCTIC 尚未确认）
+
+**文件**
+- [`../指导/V1.3.md`](../指导/V1.3.md) — 核对当前 630 sequence、159476 frame、右手、30 Hz、4096/1024、KNN=32/2 cm 合同。
+- [`../plan/V1.3.md`](../plan/V1.3.md) — 核对现有 cache、split、source-specific stream 与全量构建顺序。
+- [`../../configs/active/dexplore_rl_v1_3.yaml`](../../configs/active/dexplore_rl_v1_3.yaml) — 核对 mixed source、0.5/0.5 source probability、训练预算和 index 路径。
+- [`../../../../../../dexplore/data_processing/README_GRAB_INSPIRE_EXPORT.md`](../../../../../../dexplore/data_processing/README_GRAB_INSPIRE_EXPORT.md) — 核对 GRAB→Inspire geometric/RL 导出说明；该仓库不含生成数据目录。
+- [`../../../../../../dexplore/data_processing/convert_grab.py`](../../../../../../dexplore/data_processing/convert_grab.py) — 核对 GRAB 转换器输入/输出及重定向参数。
+
+**原因**
+用户希望在保持 OI-Cm 其他配置不变的前提下扩大 MANO 数据，并将对应动作几何重定向到 Inspire 后混合训练；必须先区分新增独立序列、现有序列重导出、Inspire 几何轨迹和 RL 实际轨迹四种输入。
+
+**验证**
+- `data/raw_data/GRAB/grab` 可读，包含 10 个 subject、1335 个 `.npz` 原始序列；MANO 模型与 GRAB subject meshes 可见。
+- `data/raw_data/ARCTIC/arctic_data/data` 可见 ARCTIC 原始目录（1206 个 `.npy` 文件），但当前 OI-Cm V1.3 指导未允许直接加入 ARCTIC。
+- 当前机器不存在 `/home2/wyy/oyx_ws/Ref2Dex`、`/home2/wyy/oyx_ws/dexplore`、`/home2/wyy/oyx_ws/InterAct`；`/home/wbcd/workspace/oyx_ws/dexplore` 只有代码/资产/checkpoint，无生成 `data/` 轨迹，另一份 `/home/wbcd/workspace/dex/retarget/dexplore` 仅有单条 pilot 轨迹。
+- `data/processed_data` 是 `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data` 软链接；该 NAS 当前可见 stage/cache 目录，但没有可直接定位的 OI-Cm V1.3 index 或 Dexplore geometric/RL 轨迹目录。
+- Dexplore README 说明完整 GRAB 导出需要 InterAct canonical cache、SMPL-X/机器人资产和 `inspire.pth`；RL 导出会替换 Inspire DOF，并使用实际仿真物体状态。README 中的默认路径仍是另一台机器的绝对路径。
+- 未运行导出、cache 构建、训练或评估；上述检查属于工程入口盘点，不构成科研效果结论。
+
+**待用户确认**
+- 扩容集合是否为全部 1335 条 GRAB，还是沿用 Dexplore 过滤后的 660 条，或只追加现有 630 条之外的序列；是否保留右手/排除左手接触与 `doorknob` 过滤。
+- Inspire 侧使用 geometric retarget 轨迹，还是必须重新跑 `inspire.pth` 得到实际 RL object trajectory；两者不能在同一 source 名下混用。
+- 第一阶段是否完全不纳入 ARCTIC；若纳入，需要新数据合同、articulated-object cache、split 和 plan。
+- “其他配置不变”是否也冻结当前 0.5/0.5 source probability、stride、split 规则、202300 max steps/120 epochs；扩容后是否允许按新增样本量增加训练 steps。
+- 现有 InterAct canonical/Dexplore geometric/RL 产物在 NAS 上的确切路径，或是否授权从 NAS 原始 GRAB 重新导出。
+
+**回滚与规范反馈**
+
+- 仅移除本 activity 条目即可回滚本次诊断记录；没有生成新的代码、配置、数据或运行产物。
+- 本次未遇到目录、版本或审批阻碍；后续若改变数据集合、cache/schema、split、GT/坐标或启动长时导出/训练，需先形成对应 final plan 并取得用户确认。
+
+## 2026-09-14 04:25:00 +0000 — InterAct 官方代码浅克隆准备
+
+- activity_id: ACT-20260914-042500-INTERACT-CLONE
+- timestamp: 2026-09-14 04:25:00 +0000
+- modification_version: V1.3.2
+- type: operation / diagnostic
+- operation_category: [operation, diagnostic]
+- change_level: L3（外部网络与本地依赖准备）
+- approval: user-approved
+- approval_basis: 用户明确询问并授权尝试从 GitHub 克隆 InterAct 以支持重新导出。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留开始前已有 activity_log 改动）
+- run_id: interact_clone_20260914_042500
+- run_status: COMPLETED
+- scope: 将官方 `wzyabcas/InterAct` 仓库以 `--depth 1` 克隆到 `/home/wbcd/workspace/oyx_ws/InterAct`；不下载数据、不执行处理脚本。
+- conclusion: SUPPORTED（代码入口准备完成）；不构成数据完整性或科研效果结论。
+
+**原因**
+用户确认需要重新导出扩容数据；InterAct 是当前 GRAB/ARCTIC canonical 处理链的上游代码依赖，因此先准备本地代码副本，后续再按定稿 plan 接入数据。
+
+**文件**
+- [`../../../../../../InterAct/README.md`](../../../../../../InterAct/README.md) — 官方处理说明与 GRAB/ARCTIC 目录合同。
+- [`../../../../../../InterAct/process/process_grab.py`](../../../../../../InterAct/process/process_grab.py) — GRAB 处理入口。
+- [`../../../../../../InterAct/process/process_arctic.py`](../../../../../../InterAct/process/process_arctic.py) — ARCTIC 处理入口。
+
+**验证**
+- 官方仓库地址：[wzyabcas/InterAct](https://github.com/wzyabcas/InterAct)。
+- 克隆提交：`96180a34f7b516e7f3520b853c19ea8679b8204f`；工作树 clean。
+- 首次经过失效本地代理 `127.0.0.1:7897` 的尝试失败；随后清除该代理变量后直连成功。
+- 未下载 GRAB/ARCTIC 数据、未运行 InterAct 处理、未修改 Ref2Dex 代码或数据。
+
+**回滚与规范反馈**
+
+- 回滚入口：删除 `/home/wbcd/workspace/oyx_ws/InterAct` 目录即可；没有触碰 Ref2Dex 现有产物。
+- 本次未遇到需要修改治理规则的阻碍；后续数据处理仍需扩容 plan 定稿和运行记录。
+
+## 2026-09-14 04:30:00 +0000 — 扩容目标确认与 V1.4 计划入口
+
+- activity_id: ACT-20260914-043000-OICM-EXPANSION-SCOPE-CONFIRMED
+- timestamp: 2026-09-14 04:30:00 +0000
+- modification_version: V1.3.2（新数据合同拟升级为下一版本，尚未定稿）
+- type: diagnostic / documentation
+- operation_category: [diagnostic, documentation]
+- change_level: L2/L3（数据合同、ARCTIC 接入、cache 重建与长时导出）
+- approval: user-approved（目标范围）；pending（具体手侧重定向和 ARCTIC Inspire 路线）
+- approval_basis: 用户确认完整 GRAB、加入 ARCTIC、保留现有 val/test、只用 geometric Inspire、按扩容比例增加 max steps 并保持 epoch 总数。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有 activity_log 改动）
+- scope: 记录用户确认的扩容方向；不修改指导、plan、代码、cache、split、配置或训练运行。
+- conclusion: INCONCLUSIVE（关键数据语义仍需定稿）
+
+**原因**
+完整 GRAB + ARCTIC、左右手点合并、Inspire geometric-only 和 max-step 重算会改变 V1.3 的数据合同，必须在新 plan 中明确而不能静默覆盖 V1.3。
+
+**文件**
+- [`../指导/V1.3.md`](../指导/V1.3.md) — 当前合同，作为不可静默改写的基线。
+- [`../plan/V1.3.md`](../plan/V1.3.md) — 当前 cache/训练计划，后续需建立新版本 plan。
+- [`../../../../../../InterAct/README.md`](../../../../../../InterAct/README.md) — 已克隆的官方上游处理说明。
+
+**验证**
+- 用户确认：完整 GRAB；不区分左右手点；val/test 保持；仅 geometric Inspire；加入 ARCTIC；max steps 按扩容调整且 epoch 总数保持。
+- 尚未确认：双手/左手如何映射到单只 Inspire；ARCTIC 是否也必须生成 Inspire geometric 对；“val/test 不变”是保持成员与帧索引，还是保留旧 cache 字节与旧 Inspire-RL 结果。
+- 未运行数据导出、cache 构建、训练或评估。
+
+**回滚与规范反馈**
+
+- 仅移除本 activity 条目即可回滚；没有新增代码或数据产物。
+- 后续 L2/L3 数据合同和长任务需新 guidance/plan 配对并在定稿后执行。
+
+## 2026-09-14 04:35:00 +0000 — TopoRetarget 候选代码盘点
+
+- activity_id: ACT-20260914-043500-TOPORETARGET-REVIEW
+- timestamp: 2026-09-14 04:35:00 +0000
+- modification_version: V1.3.2
+- type: operation / diagnostic
+- operation_category: [operation, diagnostic]
+- change_level: L3（外部代码获取与候选重定向评估）
+- approval: user-approved
+- approval_basis: 用户要求检查 TopoRetarget，并在本机缺失时从 GitHub 获取。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有 activity_log 改动）
+- run_id: toporetarget_clone_review_20260914_043500
+- run_status: COMPLETED
+- scope: 将官方公开的 `0iui0/toporetarget` 以 `--depth 1` 克隆到 `/home/wbcd/workspace/oyx_ws/toporetarget` 并只读检查其模型/输入合同；不修改 Ref2Dex，不运行数据处理。
+- conclusion: SUPPORTED（候选代码可获取）；INCONCLUSIVE（不能直接替代当前 Inspire 双手重定向）。
+
+**原因**
+用户要求双手 GRAB/ARCTIC 都重定向到 Inspire；TopoRetarget 可能提供 interaction-preserving 候选，但需先核对机器人支持和输入数据合同。
+
+**文件**
+- [`../../../../../../toporetarget/README.md`](../../../../../../toporetarget/README.md) — 候选算法说明和支持列表。
+- [`../../../../../../toporetarget/toporetarget/core/retarget.py`](../../../../../../toporetarget/toporetarget/core/retarget.py) — MediaPipe 21 点与 object pose 输入合同。
+- [`../../../../../../toporetarget/toporetarget/core/robot.py`](../../../../../../toporetarget/toporetarget/core/robot.py) — 当前机器人模型实现。
+
+**验证**
+- 官方仓库：[0iui0/toporetarget](https://github.com/0iui0/toporetarget)，提交 `8c7fbcbb946a00cae92de803e731b7c5dacba3d7`，工作树 clean。
+- 当前公开支持 Revo3、Wuji、Leap、Simplified，不包含 Inspire；输入为 MediaPipe 21 keypoints + object pose，不是 GRAB/ARCTIC 的 MANO/SMPL-X 轨迹。
+- 因此若采用 TopoRetarget，至少需要 Inspire robot model、MANO/SMPL-X 到 21 点转换、双手调用与 ARCTIC 铰接物体适配；不能直接把其输出当作现有 Dexplore Inspire geometric 数据。
+- 未运行 TopoRetarget demo、未安装依赖、未改代码或数据。
+
+**回滚与规范反馈**
+
+- 回滚入口：删除 `/home/wbcd/workspace/oyx_ws/toporetarget` 即可；Ref2Dex 无代码/数据改动。
+- 本次未遇到治理阻碍；是否把 TopoRetarget 纳入正式导出必须在新 plan 中作为候选路线冻结。
+
+## 2026-09-14 04:40:00 +0000 — V1.4 双手 GRAB/ARCTIC geometric 扩容计划定稿
+
+- activity_id: ACT-20260914-044000-OICM-V14-PLAN-FINAL
+- timestamp: 2026-09-14 04:40:00 +0000
+- modification_version: V1.4
+- type: documentation / config_change
+- operation_category: [documentation, code, data, experiment, operation]
+- change_level: L2/L3
+- approval: user-approved
+- approval_basis: 用户连续确认完整 GRAB、ARCTIC、双手分别重定向到 Inspire、只使用 geometric、保留 val/test、按扩容比例调整 max steps 并保持 epoch 总数；随后确认继续执行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 新建 V1.4 guidance/plan 和 geometric 双手训练配置；未修改 V1.3 代码/cache/checkpoint/output，未启动导出或训练。
+- conclusion: N/A（计划与配置入口，不构成科研效果结论）
+
+**文件**
+- [`../指导/V1.4.md`](../指导/V1.4.md) — 固化完整 GRAB/ARCTIC、双手合并、双 Inspire geometric 和 val/test 保护边界。
+- [`../plan/V1.4.md`](../plan/V1.4.md) — 定稿执行范围、cache/schema、验证顺序、预算公式和回滚方式。
+- [`../../configs/active/grab_arctic_inspire_geometric_v1_4.yaml`](../../configs/active/grab_arctic_inspire_geometric_v1_4.yaml) — 新正式配置入口。
+- [`../../configs/active/grab_arctic_inspire_geometric_v1_4_smoke.yaml`](../../configs/active/grab_arctic_inspire_geometric_v1_4_smoke.yaml) — 新 smoke 配置入口。
+- [`../../../../../docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针更新为 V1.4。
+
+**原因**
+用户确认的数据集合和双手重定向语义改变了 V1.3 的 hand/cache 合同，因此建立独立 V1.4 版本，避免覆盖旧实验并为后续导出、cache finalize 和训练提供唯一入口。
+
+**验证**
+- `git diff --check`：计划、指导和配置无空白错误。
+- `audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`：通过，最新条目 5 个本地链接可导航。
+- 未执行数据导出、cache 构建、模型 smoke 或正式训练；`max_steps` 待 cache finalize 后按实际 train rows 更新。
+
+**回滚与规范反馈**
+
+- 删除 V1.4 guidance/plan/config 和 current_versions 指针增量即可回滚；V1.3 及更早产物不受影响。
+- 本轮未遇到治理阻碍；后续实现若发现 ARCTIC/MANO 双手无法满足同一坐标或 point correspondence 合同，必须暂停并回到计划协商。
+
+## 2026-09-14 04:45:00 +0000 — V1.4 双手无 side-ID 合并工具与合同测试
+
+- activity_id: ACT-20260914-044500-OICM-V14-BILATERAL-MERGE
+- timestamp: 2026-09-14 04:45:00 +0000
+- modification_version: V1.4
+- type: code_change / diagnostic
+- operation_category: [code, diagnostic]
+- change_level: L1（Task-local helper，保持模型外部合同）
+- approval: user-approved
+- approval_basis: V1.4 计划已定稿；用户确认左右手都重定向并按无 side-ID 合并。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 新增双手点/法向/future/flow 合并 helper 与 Task-local 合同测试；未改 loader/model/cache producer，未启动数据导出。
+- conclusion: SUPPORTED（合并 helper 工程合同）；不构成科研效果结论。
+
+**文件**
+- [`../../tools/data/merge_dual_hand_stream.py`](../../tools/data/merge_dual_hand_stream.py) — 固定 left→right 拼接、严格帧/shape/finite 检查；明确 KNN 必须在合并后重新计算。
+- [`../../tests/test_merge_dual_hand_stream.py`](../../tests/test_merge_dual_hand_stream.py) — 双手顺序、flow、帧不一致和 non-finite 测试。
+
+**原因**
+V1.4 需要把 MANO 和 Inspire 的左右手统一成单一无 side-ID stream；若直接偏移并拼接左右旧 KNN index，会漏掉跨手近邻，因此先建立独立合并合同。
+
+**验证**
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py`：`2 passed`。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/merge_dual_hand_stream.py`：通过。
+- 未运行正式导出、cache、训练或评估。
+
+**回滚与规范反馈**
+
+- 删除上述 helper/test 文件即可回滚；V1.3 及现有产物不受影响。
+- 暂无规范反馈。
+
+## 2026-09-14 08:35:00 +0000 — V1.4 导出器 CLI 导入兼容修正
+
+- activity_id: ACT-20260914-083500-OICM-V14-EXPORT-CLI
+- timestamp: 2026-09-14 08:35:00 +0000
+- modification_version: V1.4
+- type: code_change / diagnostic
+- operation_category: [code, diagnostic]
+- change_level: L1
+- approval: user-approved
+- approval_basis: V1.4 计划已定稿。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 允许双手导出器既以 package module 又以文件 CLI 运行；未改变数据语义或输出合同。
+- conclusion: SUPPORTED（静态导入/编译合同）；不构成科研效果结论。
+
+**文件**
+- [`../../tools/data/export_bilateral_geometry.py`](../../tools/data/export_bilateral_geometry.py) — 增加直接脚本调用的 import fallback。
+
+**原因**
+
+后续 NAS 批处理可能直接调用脚本路径，导出器需要兼容该入口。
+
+**验证**
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py`：`4 passed`。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/export_bilateral_geometry.py`：通过。
+
+**回滚与规范反馈**
+
+- 删除该 fallback 增量即可回滚；暂无规范反馈。
+
+## 2026-09-14 08:33:17 +0000 — V1.4 geometric 双手导出适配器与 max_steps 计算器
+
+- activity_id: ACT-20260914-083317-OICM-V14-EXPORT-ADAPTER
+- timestamp: 2026-09-14 08:33:17 +0000
+- modification_version: V1.4
+- type: code_change / diagnostic
+- operation_category: [code, data, diagnostic]
+- change_level: L1（Task-local 可回滚适配器和纯函数测试）
+- approval: user-approved
+- approval_basis: V1.4 计划已定稿；用户确认双手 geometric Inspire、完整 GRAB/ARCTIC 扩容方向。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 新增通用双手 geometry 导出适配器（复制 shared、left→right 合并点/法向、union candidate mask、拒绝覆盖既有输出）和按 epoch/实际 train rows/global batch 计算绝对 max_steps 的工具；不修改 V1.3，不复制旧 KNN，不启动长时导出或训练。
+- conclusion: SUPPORTED（工具合同和单元测试）；不构成科研效果结论。
+
+**文件**
+- [`../../tools/data/export_bilateral_geometry.py`](../../tools/data/export_bilateral_geometry.py) — 从 retargeter 产出的 left/right sequence 生成 V1.4 side-free geometry 目录，并要求合并后重算 KNN。
+- [`../../tools/data/compute_v1_4_max_steps.py`](../../tools/data/compute_v1_4_max_steps.py) — `ceil(epochs * train_rows / global_batch)` 计算入口。
+- [`../../tests/test_v1_4_data_contract.py`](../../tests/test_v1_4_data_contract.py) — 导出顺序、candidate union、旧 KNN 不复制和 max_steps 测试。
+
+**原因**
+
+V1.4 需要将任一 retargeter 的双手输出统一到单一无 side-ID stream，并在最终 train rows 确定后按 epoch 语义更新绝对步数；这两个适配点可以先独立验证，避免在数据尚未导出时修改旧 cache 或凭估计填写预算。
+
+**验证**
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py`：`4 passed`。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/export_bilateral_geometry.py src/task/ObjectInteractionCm/tools/data/compute_v1_4_max_steps.py`：通过。
+- 未运行正式导出、cache finalize、训练或评估；`max_steps` 仍待最终 cache train rows 解析后写回正式配置。
+
+**回滚与规范反馈**
+
+- 删除上述三个新增文件即可回滚；V1.3 及现有产物不受影响。
+- 暂无规范反馈。
+
+## 2026-09-14 08:50:00 +0000 — V1.4 上游双手输入与 ARCTIC raw pilot
+
+- activity_id: ACT-20260914-085000-OICM-UPSTREAM-PILOT
+- timestamp: 2026-09-14 08:50:00 +0000
+- modification_version: V1.4
+- type: diagnostic / operation
+- operation_category: [diagnostic, operation, data]
+- change_level: L2（只读输入盘点与单序列 CPU pilot）
+- approval: user-approved
+- approval_basis: 用户确认继续执行 V1.4 扩容和重导方向。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 只读检查 NAS 原始输入和模型资产；验证完整 GRAB 双手参数帧一致性、ARCTIC 双手 raw adapter 单序列输出；未写入 cache、未改 NAS、未启动全量导出。
+- conclusion: SUPPORTED（输入完整性与 ARCTIC raw geometry pilot）；INCONCLUSIVE（GRAB geometric retarget 尚未运行）。
+
+**文件**
+- [`../../../../../data/raw_data/GRAB`](../../../../../data/raw_data/GRAB) — 1335 条 `.npz` 原始序列入口。
+- [`../../../../../data/raw_data/ARCTIC`](../../../../../data/raw_data/ARCTIC) — 301 组同时含 `.mano/.object/.smplx` 的序列入口。
+- [`../../../../../process/ARCTIC/raw.py`](../../../../../process/ARCTIC/raw.py) — 双手 MANO 与铰接物体 raw adapter。
+- [`../../../../../../InterAct/README.md`](../../../../../../InterAct/README.md) — 上游 GRAB/ARCTIC 处理入口说明。
+
+**原因**
+
+重导必须先确认两侧参数和帧轴完整，且 ARCTIC 的 object articulation 字段能够在当前机器上被解析；这一步避免在上游不完整时生成不可审计的 V1.4 cache。
+
+**验证**
+- GRAB 扫描：`1335` 条序列，`missing=0`，`frame_mismatch=0`；每条均有 `lhand/rhand/object` 参数。
+- ARCTIC CPU pilot：`REF2DEX_ARCTIC_ROOT=/mnt/ugreen_nas/storage/Ref2Dex_storage/arctic`，`ArcticRawAdapter(num_obj_points=64,max_frames=2)`；输出左右手均为 `[2,1538,3]`，`obj_articulation` 为 `[2,1]`，`obj_point_id` 为 `[64]`。
+- NAS 已有 `MANO_LEFT/RIGHT.pkl`、`SMPLX_{MALE,FEMALE,NEUTRAL}.npz/.pkl` 和 Inspire 左右 URDF；InterAct `process/process_grab.py --help` 当前被其仓库内缺少顶层 `render` import 阻塞，尚未运行 GRAB canonical processing。
+- 未执行正式导出、cache finalize、训练或评估。
+
+**回滚与规范反馈**
+
+- 本次仅产生诊断记录，无数据产物可回滚；暂无规范反馈。
+
+## 2026-09-14 09:05:00 +0000 — V1.4 InterAct GRAB 入口依赖复核
+
+- activity_id: ACT-20260914-090500-OICM-INTERACT-DEPS
+- timestamp: 2026-09-14 09:05:00 +0000
+- modification_version: V1.4
+- type: diagnostic / operation
+- operation_category: [diagnostic, operation]
+- change_level: L2（只读依赖检查）
+- approval: user-approved
+- approval_basis: 用户确认继续尝试上游重导。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 在临时环境变量和未修改外部仓库的前提下检查 InterAct GRAB processing 入口；没有创建 symlink、安装依赖或写入外部 checkout。
+- conclusion: INCONCLUSIVE（处理入口代码可见，但当前环境缺少 `pyrender` 依赖；不能据此生成 canonical 输出）。
+
+**文件**
+- [`../../../../../../InterAct/process/process_grab.py`](../../../../../../InterAct/process/process_grab.py) — GRAB 处理脚本，使用 `render.mesh_utils`。
+- [`../../../../../../InterAct/text2interaction/render/mesh_utils.py`](../../../../../../InterAct/text2interaction/render/mesh_utils.py) — 当前导入链依赖 `pyrender`。
+- [`../../../../../../InterAct/README.md`](../../../../../../InterAct/README.md) — 模型目录和处理命令合同。
+
+**原因**
+
+InterAct 脚本在模块导入阶段就加载渲染工具；先确认缺口可以避免全量处理半途失败，也避免未经用户确认改变 Python 环境。
+
+**验证**
+- `cd /home/wbcd/workspace/oyx_ws/InterAct && PYTHONPATH=.:text2interaction /home/wbcd/miniconda3/envs/ref2dex-grab/bin/python process/process_grab.py --help`：失败于 `ModuleNotFoundError: pyrender`，未进入数据写入阶段。
+- 现有 NAS 模型资产已确认位于 `/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/{smplx,mano}`；完整 GRAB/ARCTIC 输入和 ARCTIC CPU pilot 见上一条 activity。
+- 未安装依赖、未改 InterAct、未运行全量处理、cache 或训练。
+
+**回滚与规范反馈**
+
+- 本次无文件/数据产物可回滚；暂无规范反馈。后续若安装 `pyrender` 或建立 InterAct 临时 staging，应单独记录环境与命令。
+
+## 2026-09-14 09:20:00 +0000 — V1.4 InterAct GRAB 单序列 staging smoke
+
+- activity_id: ACT-20260914-092000-OICM-INTERACT-GRAB-SMOKE
+- timestamp: 2026-09-14 09:20:00 +0000
+- modification_version: V1.4
+- type: operation / diagnostic
+- operation_category: [operation, diagnostic, data]
+- change_level: L2（临时 staging，只读输入，输出位于 `/tmp`）
+- approval: user-approved
+- approval_basis: 用户确认继续尝试数据重导。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 建立临时 `/tmp/interact_grab_smoke.jQqZ1o` staging，将一条 GRAB 原始序列、GRAB subject mesh、物体 mesh 和 NAS SMPL-X 模型映射到 InterAct 约定路径；运行单序列 `process_grab.py`，未写入 Ref2Dex 或 NAS。
+- conclusion: ENGINEERING_PASS（InterAct 单序列 canonical processing 可运行）；不构成双手 Inspire retarget 或科研效果结论。
+
+**文件**
+- [`../../../../../../InterAct/process/process_grab.py`](../../../../../../InterAct/process/process_grab.py) — 实际运行入口。
+- [`../../../../../data/raw_data/GRAB/grab/s7/cubemedium_inspect_1.npz`](../../../../../data/raw_data/GRAB/grab/s7/cubemedium_inspect_1.npz) — smoke 输入。
+
+**原因**
+
+上一条诊断发现 InterAct 需要 `pyrender`；本机 `ref2dex-grab` 环境已具备该依赖，因此用隔离 staging 验证真正的 GRAB 处理链，避免先改动正式数据目录。
+
+**验证**
+- 命令返回码 `0`，日志输出 `Saved s7_cubemedium_inspect_1`。
+- 输出 `/tmp/interact_grab_smoke.jQqZ1o/data/grab/sequences/s7_cubemedium_inspect_1/{human,object}.npz`；`human.npz` 含 `poses [238,114]`、`trans [238,3]`、`vtemp [10475,3]`，`object.npz` 已生成。
+- 未运行全量 1335 条、双手 Inspire geometric retarget、V1.4 cache 或训练。
+
+**回滚与规范反馈**
+
+- 临时目录可直接清理；本次无仓库/NAS 产物可回滚。暂无规范反馈。
+
+## 2026-09-14 09:13:27 +0000 — Dexplore geometric retargeting 手型与目标合同核查
+
+- activity_id: ACT-20260914-091327-OICM-DEXPLORE-GEOMETRIC-CONTRACT
+- timestamp: 2026-09-14 09:13:27 +0000
+- modification_version: V1.4
+- type: diagnostic
+- operation_category: [diagnostic]
+- change_level: L1（只读代码核查）
+- approval: user-approved
+- approval_basis: 用户询问 Dexplore geometric retargeting 的手型限制和基础。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 只读检查 Dexplore `convert_grab.py`、robot config、dex-retargeting Inspire offline config 和 PositionOptimizer；未修改外部仓库或 Ref2Dex。
+- conclusion: SUPPORTED（实现合同已确认）；不构成科研效果结论。
+
+**文件**
+- [`../../../../../../dexplore/data_processing/convert_grab.py`](../../../../../../dexplore/data_processing/convert_grab.py) — SMPL-X forward、21 点输入抽取、position retarget 调用。
+- [`../../../../../../dexplore/data_processing/robot_configs.py`](../../../../../../dexplore/data_processing/robot_configs.py) — Inspire 18 DOF 和关节重排。
+- [`../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_right.yml`](../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_right.yml) — Inspire right-hand position 配置。
+- [`../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_left.yml`](../../../../../../dex/retargeting/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_left.yml) — 已存在的 left-hand 对称配置。
+- [`../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/optimizer.py`](../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/optimizer.py) — 位置误差目标和正则项。
+
+**原因**
+
+需要区分“输入人的手型是否固定”和“输出机器人手型是否固定”：前者影响 SMPL-X 生成的关键点，后者由 Inspire URDF/DOF 合同决定。
+
+**验证**
+- 当前 Dexplore geometric exporter 的 `setup_retargeting` 固定使用 `HandType.right` 和 `inspire_hand_right.urdf`；这是现有脚本实现限制，不是 dex-retargeting 算法只能支持右手。依赖包同时提供 left 配置和 left URDF。
+- 输入不是完整手部 mesh 拟合，而是 SMPL-X forward 后的 21 个点：手腕、15 个手指关节和 5 个指尖顶点；PositionOptimizer 用 5 个 Inspire tip link 的三维位置做 Huber 位置误差优化，并带轻微关节变化正则，不匹配法向、完整 mesh 或手指姿态矩阵。
+- 输出是固定 Inspire 机器人形态：18 个 native DOF（6 个 floating wrist + 12 个手指相关 DOF，含 URDF mimic/重排处理）。不同人的 SMPL-X/MANO shape 会改变输入点位置，但不会改变 Inspire 的 link 长度、关节数量或目标手型。
+- `convert_grab.py` 当前实际只构造并 retarget 右手 landmark stream；双手需要分别准备左/右 landmark、选择对应 URDF/config，并分别输出 qpos 后再合并几何点。
+
+**回滚与规范反馈**
+
+- 本次无代码/数据产物可回滚；暂无规范反馈。
+
+## 2026-09-14 09:21:42 +0000 — ARCTIC→Inspire 直接重定向可行性核查
+
+- activity_id: ACT-20260914-092142-OICM-ARCTIC-INSPIRE-FEASIBILITY
+- timestamp: 2026-09-14 09:21:42 +0000
+- modification_version: V1.4
+- type: diagnostic
+- operation_category: [diagnostic]
+- change_level: L1（只读合同核查）
+- approval: user-approved
+- approval_basis: 用户询问 ARCTIC 是否可直接重定向到 Inspire。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 对照 ARCTIC raw adapter 与 Dexplore geometric 输入合同；未修改代码、数据或外部仓库。
+- conclusion: SUPPORTED（算法路线可行）；INCONCLUSIVE（现有 Dexplore GRAB wrapper 不能无修改直接消费 ARCTIC）。
+
+**文件**
+- [`../../../../../process/ARCTIC/raw.py`](../../../../../process/ARCTIC/raw.py) — ARCTIC 左右 MANO、1538 face-center 和 articulation 输出。
+- [`../../../../../../dexplore/data_processing/convert_grab.py`](../../../../../../dexplore/data_processing/convert_grab.py) — 当前仅右手、GRAB/SMPL-X 专用输入路径。
+- [`../../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_left.yml`](../../../../../../../dex/retarget/third_party/dex-retargeting/dex_retargeting/configs/offline/inspire_hand_left.yml) — 可复用的左 Inspire position 配置。
+
+**原因**
+
+ARCTIC 已有完整 MANO 参数和双手几何，理论上满足位置重定向；需要明确哪些是格式适配和坐标校准问题，哪些才是算法限制。
+
+**验证**
+- ARCTIC raw adapter 已输出左右手 MANO pose/betas、wrist/joint 几何、物体 articulation 和稳定 point ID。
+- 现有 Dexplore converter 的 21 点输入和 `rotation_x_90` 处理是 GRAB 专用；ARCTIC 不能直接套用该坐标变换或其 SMPL-X 顶点索引。
+- dex-retargeting 同时提供 Inspire left/right position 配置，因此双手分别优化在算法层面可行；需要新增 ARCTIC landmark adapter、左右调用和 merged FK geometry。
+
+**回滚与规范反馈**
+
+- 本次无代码/数据产物可回滚；暂无规范反馈。
+
+## 2026-09-14 09:50:23 +0000 — ARCTIC 双手 Inspire geometric 实际 pilot
+
+- activity_id: ACT-20260914-095023-OICM-ARCTIC-INSPIRE-PILOT
+- timestamp: 2026-09-14 09:50:23 +0000
+- modification_version: V1.4
+- type: code_change / operation / diagnostic
+- operation_category: [code, operation, diagnostic]
+- change_level: L1（Task-local pilot 工具和小规模验证）
+- approval: user-approved
+- approval_basis: 用户确认继续 ARCTIC→Inspire pilot。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留既有用户/activity 改动）
+- scope: 新增 ARCTIC MANO→21 landmark→Inspire 左右 position retargeting pilot；使用 4 帧 `s07/scissors_use_01`，未写入 cache、未修改 NAS 或 Dexplore。
+- conclusion: ENGINEERING_PASS（左右均生成 finite `[4,18]` qpos）；INCONCLUSIVE（坐标约定尚未冻结，未进入全量导出）。
+
+**文件**
+- [`../../tools/data/pilot_arctic_inspire_geometric.py`](../../tools/data/pilot_arctic_inspire_geometric.py) — ARCTIC MANO landmark、左右 Inspire retarget 和 tip error 统计。
+- [`../../tests/test_arctic_landmark_contract.py`](../../tests/test_arctic_landmark_contract.py) — 21 点和五指尖索引合同测试。
+
+**原因**
+
+需要实测验证 ARCTIC 参数能否进入 dex-retargeting，而不是只依赖格式推断；同时检查左右 URDF 的坐标约定差异。
+
+**验证**
+- ARCTIC MANO extraction：左右均输出 `[4,21,3]`，使用官方 MANO tip vertex IDs `[744,320,443,554,671]`。
+- dex-retargeting 左右配置均成功构建，输出均为 finite `[4,18]` qpos。
+- 未变换坐标时：left 平均 tip error `11.44 mm`，right `65.20 mm`；right landmark 采用候选 `Rx(180°)` 约定时平均误差约 `14.42 mm`。该旋转只作为 pilot 诊断参数，尚未写入正式 schema。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_arctic_landmark_contract.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py`：`3 passed`。
+- 未运行全量 retarget、cache finalize、训练或评估。
+
+**回滚与规范反馈**
+
+- 删除 pilot 工具和测试即可回滚；暂无规范反馈。
+
+## 2026-09-14 12:01:25 +0000 — OakInk2 三序列抽样试转：FAILED
+
+- activity_id: ACT-20260914-120125-OICM-OAKINK2-FAILED
+- timestamp: 2026-09-14 12:01:25 +0000
+- modification_version: V1.4.1
+- type: operation / diagnostic
+- operation_category: [operation, diagnostic]
+- primary_task_mode: run-only/operation
+- change_level: L2（用户授权的独立双手几何诊断）
+- approval: user-approved
+- approval_basis: 用户要求使用 graspenv 安装依赖并尝试 OakInk2 转换，随后多次确认继续。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 三条序列各均匀采样 64 个原始 mocap 帧；独立 output，不改变正式 cache/split。
+- run_id: oakink2_inspire_20260914T120600Z
+- run_status: FAILED
+- conclusion: INVALID_IMPLEMENTATION
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/run.py --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --mano-root /mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano --dex-root /home/wbcd/workspace/dex/retarget/third_party/dex-retargeting --frames 64 --output src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z`
+- output: [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z)
+
+**文件**
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/run_manifest.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/report.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/report.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/run.log](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T120600Z/run.log)
+
+**原因**
+
+验证官方 MANO 重建与左右 Inspire FK 的端到端诊断入口。
+
+**验证**
+
+首轮在误差统计处触发 NumPy advanced indexing 轴顺序错误：`(5,64,3)` 与 `(64,5,3)` 不匹配，三条序列均显式记录失败。未生成有效 NPZ；随后修正为先取位置再选择 link 轴，原失败 run 不覆盖。run_id 的时间标签不是事件时间，准确起止时间以 manifest 字段为准。
+
+**回滚与规范反馈**
+
+仅本次独立输出目录；失败产物保留审计。没有训练 step/epoch、checkpoint 或 metrics.jsonl。无规范阻碍。
+
+## 2026-09-14 12:02:05 +0000 — OakInk2 三序列抽样试转：COMPLETED
+
+- activity_id: ACT-20260914-120205-OICM-OAKINK2-COMPLETED
+- timestamp: 2026-09-14 12:02:05 +0000
+- modification_version: V1.4.1
+- type: operation / diagnostic
+- operation_category: [operation, diagnostic]
+- primary_task_mode: run-only/operation
+- change_level: L2（用户授权的独立双手几何诊断）
+- approval: user-approved
+- approval_basis: 用户要求使用 graspenv 安装依赖并尝试 OakInk2 转换，随后多次确认继续。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 三条序列各均匀采样 64 个原始 mocap 帧；独立 output，不改变正式 cache/split。
+- run_id: oakink2_inspire_20260914T121000Z
+- run_status: COMPLETED
+- conclusion: SUPPORTED（工程可运行）；INCONCLUSIVE（接触/科研效果）
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/run.py --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --mano-root /mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano --dex-root /home/wbcd/workspace/dex/retarget/third_party/dex-retargeting --frames 64 --output src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z`
+- output: [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z)
+
+**文件**
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/run_manifest.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/report.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/report.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/run.log](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/run.log)
+
+**原因**
+
+修复诊断脚本索引后重新验证三条序列，保持重建和优化目标不变。
+
+**验证**
+
+三条序列共 192 个双手帧、384 次单手优化通过，左右均输出 `[64,18]` finite qpos。每条序列每侧前 3 帧与等价 smplx 重建相比顶点最大差异不超过 `1.35e-7 m`；所有导出帧手腕严格等于对应 `tsl`。每侧逐序列平均指尖误差约 `10.92–15.81 mm`，最大单指尖误差 `74.03 mm`；未按误差剔除帧。NPZ 全字段重读相等，所有对象 SE(3) 和原始帧 ID 检查通过。run_id 的时间标签不是事件时间，准确起止时间以 manifest 字段为准。
+
+**回滚与规范反馈**
+
+仅本次独立输出目录；失败产物保留审计。没有训练 step/epoch、checkpoint 或 metrics.jsonl。无规范阻碍。
+
+## 2026-09-14 12:10:56 +0000 — graspenv 依赖就绪及 OakInk2 完整双手序列试转
+
+- activity_id: ACT-20260914-121056-OICM-OAKINK2-FULL-PILOT
+- timestamp: 2026-09-14 12:10:56 +0000
+- modification_version: V1.4.1
+- type: code_change / operation / diagnostic
+- operation_category: [code, operation, diagnostic, documentation]
+- primary_task_mode: change
+- change_level: L3（用户指定环境的依赖安装）+ L2（OakInk2 独立几何诊断及坐标/帧合同）
+- approval: user-approved
+- approval_basis: 用户明确要求“直接用 graspenv 环境，装一下依赖”“看看 OakInk2 的数据，也尝试转一下”，后续确认继续；已体现在 [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §7。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保留已有 Cm/OI-Cm 日志、V1.4 exporter/config/tests 和用户改动）
+- scope: 在 graspenv 安装 geometric/manotorch 依赖，新增 OakInk2 诊断入口与检查图工具；版本指针从 V1.4 递进至 V1.4.1。只读 NAS 原始数据，输出独立 pilot；不修改正式 GRAB/ARCTIC cache、val/test、scale、训练超参、120 epochs、V1.3 或公共 src/base。
+- run_id: oakink2_full_20260914T120310Z
+- run_status: COMPLETED
+- run_started_at: 2026-09-14T12:03:11+00:00
+- run_completed_at: 2026-09-14T12:03:17+00:00
+- last_source_frame_id: 1590
+- last_step / last_epoch / best_metric / checkpoint: N/A（几何数据诊断，无训练）
+- conclusion: SUPPORTED（原始重建、双手几何优化和 NPZ 导出工程可行）；INCONCLUSIVE（穿透、接触保持、手掌朝向、训练收益与全量数据质量）
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/run.py --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --mano-root /mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/mano --dex-root /home/wbcd/workspace/dex/retarget/third_party/dex-retargeting --sequence scene_04__A008++seq__ff070467cd91f735acab__2023-04-23-11-28-29.pkl --frames 0 --output src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z`
+- output: [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z)
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/README.md](../../research/oakink2_inspire_pilot/README.md)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/experiment.yaml](../../research/oakink2_inspire_pilot/experiment.yaml)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/run.py](../../research/oakink2_inspire_pilot/run.py)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/plot.py](../../research/oakink2_inspire_pilot/plot.py)
+
+**原因**
+
+用户希望直接复用 graspenv 并确认 OakInk2 是否可扩大双手 MANO/Inspire 数据。已在 V1.4 final plan 下补充本次明确授权的 pilot，指导及正式训练数据范围仍为 GRAB+ARCTIC；不将 OakInk2 试转等同于正式接入。
+
+**验证**
+
+- 安装并导入 `anytree 2.12.1`、`nlopt 2.7.1`、`pinocchio 2.7.0`、`sapien 2.2.2`、`pyrender 0.1.45`、`dex-retargeting 0.4.6`，追加官方 `manotorch 0.0.2`。`pip check`：`No broken requirements found.`；当前环境 `torch 2.0.1+cu118`、`numpy 1.24.4`。安装命令取消失效的本机代理，不修改持久代理设置。
+- 新 clone 的 manotorch commit `a2a70c591f91551078b7bb2af9b5d9f275b626e0`，dex-retargeting commit `8632b2cab32e1b51ce379940c414a0f78332ff6b`；二者均 clean。真实 import 路径及 commit 见 source_provenance.json。
+- NAS `downloads/hf/OakInk-v2/anno_preview` 共 627 份标注，匹配 627 份配套 frame metadata；metadata 合计 4,029,640 mocap 帧、1,004,631 RGB 帧。该总数不是全量 pose 重建成功计数。
+- 官方 OakInk2 MANO 使用 quaternion wxyz、`flat_hand_mean=True`、`center_idx=0`，将标注平移加到已按手腕居中的结果；初始临时尝试曾直接套用 ARCTIC 均值/平移约定，其误差不作有效证据。最终使用官方 manotorch，并与等价 smplx 独立重建对照。
+- 本次完整序列 `scene_04__A008++seq__ff070467cd91f735acab__2023-04-23-11-28-29`：1,591 帧，2 个物体，两侧各 `[1591,18]` finite native qpos。每侧前 3 帧与 smplx 最大顶点差异不超过 `1.37e-7 m`，所有 1,591 帧的手腕平移误差为零。
+- 左/右平均指尖误差 `8.7163 / 8.7422 mm`，p95 `19.6628 / 18.1939 mm`，最大单指尖误差 `48.3018 / 31.8341 mm`；左 8 帧的五指平均误差超过 20 mm，右 0 帧。保留全部帧；这些误差不是穿透/接触成功率。
+- 输出含左右 MANO 顶点/21 点/参数、Inspire qpos+joint names+逐 link FK、对象 ID+原始 float64 位姿、原始 mocap ID；2 个物体的 SE(3) 与帧对应检查通过。NPZ 全字段重新读取后精确相等，约 37.98 MiB。
+- `plot.py` 从保存的 FK 和 URDF visual mesh 重建手部几何并生成检查图，已人工查看；物体与双手保留同一 native world，不做仅右手的全局旋转。pilot 使用依赖包的官方 Inspire URDF/config，未将 native qpos 冒充 Dexplore 的 joint reorder 格式。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/run.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_arctic_landmark_contract.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py`：`5 passed in 0.91s`。OakInk2 证据来自上述真实重建/FK/NPZ 检查，既有 tests 只用于相关合同回归。
+- `git diff --check`、`run.py/plot.py` AST 语法检查及完整 NPZ SHA256/1591 帧连续 ID/双手 shape/双物体 shape 复核：通过。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix docs/current_versions.yaml --scope-prefix src/task/ObjectInteractionCm/docs/plan/V1.4.md --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --scope-prefix src/task/ObjectInteractionCm/research/oakink2_inspire_pilot --check-links`：通过，6 个选定变更路径、20 个本地链接可导航。
+- 未启动正式全量导出、OI-Cm cache 构建或训练。OakInk2 正式接入仍需明确多物体样本构造和 train-only 分配。
+
+**产物**
+
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/run_manifest.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/config.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/config.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/metadata.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/metadata.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/report.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/report.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/run.log](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/run.log)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/geometry_review.png](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/geometry_review.png)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/environment.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/environment.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/pip_freeze.txt](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/pip_freeze.txt)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/source_provenance.json](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/source_provenance.json)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/dependency_actions.md](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/dependency_actions.md)
+- [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/scene_04__A008++seq__ff070467cd91f735acab__2023-04-23-11-28-29.npz](../../research/oakink2_inspire_pilot/output/oakink2_full_20260914T120310Z/scene_04__A008++seq__ff070467cd91f735acab__2023-04-23-11-28-29.npz)
+
+**回滚与规范反馈**
+
+回滚为移除新增 research 诊断定义与本次独立 output、恢复本次 plan/版本指针增量；不触碰旧数据或其他工作区改动。环境安装前未保存完整 pip freeze，不能保证仅卸载顶层依赖即可精确恢复传递依赖；已保存安装后快照和操作清单，未执行卸载。
+
+本次没有格式、目录、版本、日志或审批规则阻碍；已有明确用户授权，无需重复确认。没有修改 AGENTS/Skill/治理合同。
+
+## 2026-09-14 13:39:36 +0000 — TopoRetarget-Repro 与 Dexplore 几何重定向方案对比诊断
+
+- activity_id: ACT-20260914-133936-OICM-TOPO-DEX-COMPARE
+- timestamp: 2026-09-14 13:39:36 +0000
+- modification_version: V1.4.1
+- type: diagnostic / operation
+- operation_category: [diagnostic, operation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读时间轴与文件长度核对）
+- change_level: L0（只读仓库、代码和资产能力检查；新增独立诊断报告与 manifest）
+- approval: user-approved（用户明确要求比较 `/home/wbcd/workspace/oyx_ws/TopoRetarget-Repro` 与 Dexplore，并连续确认继续）
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- scope: 只读比较 Dexplore Inspire position retargeting 与 TopoRetarget-Repro 的目标手、输入数据、目标函数、接触/穿透处理、左右手和大规模导出适配；不修改两个外部仓库，不安装新依赖，不改变正式数据、cache、val/test、训练超参或 checkpoint。
+- run_id: toporetarget_vs_dexplore_20260914T133936Z
+- run_status: COMPLETED
+- last_step / last_epoch / best_metric / checkpoint: N/A（方案诊断，无训练）
+- external_repositories: Dexplore `c31f57f186409ce5f0de47ced2d347abffe45d06` clean；TopoRetarget-Repro `a1052368b1e9bdee77ecef71a49de571d583282d` clean。
+- evidence: TopoRetarget Arti-MANO RH/LH generic model 均加载并通过 `validate(seed=4,dtype=float64)`；两侧均 22 DoF、28 links、27 joints、5 fixed，FK 交叉检查最大平移误差约 `2.8e-17 m`。仓库检索未发现 Inspire 配置/插件；ARCTIC、OakInk2 在其 README 中仍为 planned。Dexplore `convert_grab.py` 直接绑定 Inspire URDF/config，输出约定为 native 18D。
+- environment: TopoRetarget 项目要求 Python `>=3.10,<3.14`；本机 `graspenv` 为 Python 3.8.20，系统 Python 3.12 缺少 Typer，故未将 CLI 启动失败误报为算法失败，也未改动环境。
+- conclusion: ENGINEERING_PASS（两边的已存在基础能力已核实）；INCONCLUSIVE（当前没有同一 Inspire 目标手、同一输入和同一指标的公平算法 benchmark）；SUPPORTED（立即扩大 OI-Cm Inspire train-only 数据时选 Dexplore）。
+- command: 见 [toporetarget_vs_dexplore_20260914T133936Z/commands.log](../../research/toporetarget_vs_dexplore/output/toporetarget_vs_dexplore_20260914T133936Z/commands.log)；完整对比见 [toporetarget_vs_dexplore_20260914T133936Z/report.md](../../research/toporetarget_vs_dexplore/output/toporetarget_vs_dexplore_20260914T133936Z/report.md)。
+- output: [toporetarget_vs_dexplore_20260914T133936Z](../../research/toporetarget_vs_dexplore/output/toporetarget_vs_dexplore_20260914T133936Z)，manifest 为 [run_manifest.json](../../research/toporetarget_vs_dexplore/output/toporetarget_vs_dexplore_20260914T133936Z/run_manifest.json)。
+- validation: 直接 RobotHandRegistry/FK/asset manifest 校验通过；两个外部仓库 `git status --short` 均为空；Ref2Dex `git diff --check` 待本条记录写入后执行。
+- protected_boundary: 未修改 Dexplore、TopoRetarget-Repro、OI-Cm 正式 exporter/cache、val/test、训练配置、RL 数据或公共 `src/base`。
+
+**原因**
+
+用户需要在扩大 OI-Cm 数据前判断 TopoRetarget-Repro 是否能替代 Dexplore 的 Inspire 几何重定向。两套方案当前目标手和数据支持不一致，必须先做能力矩阵和运行基础校验，避免把 Arti-MANO 结果误当作 Inspire 算法对比。
+
+**验证**
+
+- `PYTHONPATH=src /home/wbcd/miniconda3/envs/wbcd/bin/python` 直接加载 registry、URDF、anchor 和 FK；`artimano_rh`、`artimano_lh` 均 `validate=pass`。
+- `PYTHONPATH=src python3 -m toporetarget --help` 的唯一失败为当前环境缺少 `typer`；项目要求 Python 3.10+，graspenv 为 Python 3.8.20，因此未把环境缺失误记为算法失败。
+- `git diff --check` 及 `audit_diff.py --check-links` 在本条记录完成后执行；报告和 manifest 保存上述能力、差异和结论标签。
+
+**规范反馈**
+
+本次只读诊断需在最近作用域 activity 中记录外部仓库 commit、环境阻塞和“工程可用/算法结论”分层，当前规则足以表达，无额外规范阻碍。
+
+## 2026-09-14 13:45:00 +0000 — Inspire 目标手接入工作量边界诊断
+
+- activity_id: ACT-20260914-134500-OICM-TOPO-INSPIRE-SCOPE
+- timestamp: 2026-09-14 13:45:00 +0000
+- modification_version: V1.4.1
+- type: diagnostic / documentation
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读代码路径与接口边界；更新独立诊断报告）
+- approval: user-approved（用户追问 Inspire 是否方便加入，要求继续当前比较）
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- scope: 判断 TopoRetarget-Repro 增加 Inspire 目标手是否只需配置，区分 generic URDF/FK 最小接入与完整 GRAB/ARCTIC/OakInk2 workflow 接入；不修改外部仓库、正式数据、训练配置或 cache。
+- run_id: toporetarget_vs_dexplore_20260914T133936Z
+- run_status: COMPLETED
+- last_step / last_epoch / best_metric / checkpoint: N/A（接口诊断，无训练）
+- evidence: generic URDF parser 已支持 `revolute`、`continuous`、`prismatic`；但 `WorkflowRequest.validate`、`WORKFLOW_ID=grab_to_artimano`、Arti-MANO loader、geometry/contact audit 和部分 profiles/path 仍存在 Arti-MANO 特化。当前仓库仍无 Inspire spec、anchor、qpos、surface/collision profile 或 ARCTIC/OakInk2 adapter。
+- conclusion: 基础 Inspire FK/anchor 接入可复用 generic 层，主要是资产与配置；完整 TopoRetarget Inspire workflow 需要专门适配代码、碰撞/接触合同和回归 benchmark，属于中等改动，不是求解器重写。
+- reason: 用户需要判断是否值得把 TopoRetarget 用作 Inspire 接触质量方案，避免误以为复制 URDF 即可接入。
+- validation: 已读取 parser/model/registry/workflow/geometry/retarget 代码并更新对比报告；未修改两个外部仓库及正式 OI-Cm 路径。
+- output: [toporetarget_vs_dexplore_20260914T133936Z/report.md](../../research/toporetarget_vs_dexplore/output/toporetarget_vs_dexplore_20260914T133936Z/report.md)。
+- protected_boundary: Dexplore、TopoRetarget-Repro、正式 GRAB/ARCTIC/OakInk2 cache、val/test、训练超参、RL 数据和公共 `src/base` 均未改动。
+
+**规范反馈**
+
+本次问题属于上一条诊断的工作量细化，现有 activity 与独立报告结构可以表达。链接审计要求独立的原因/验证段，已补齐；不修改审计合同。
+
+**原因**
+
+用户询问 Inspire 接入是否只需要配置，进一步定位完整 workflow 中的手型特化边界。
+
+**验证**
+
+已通过 `rg` 和源码读取核实 generic parser、robot registry 和 WorkflowRequest 的实现边界；本条仅补充诊断，不运行重定向。
+
+## 2026-09-14 14:17:42 +0000 — TopoRetarget Inspire 双手适配及同侧模型几何 pilot
+
+- activity_id: ACT-20260914-141742-OICM-INSPIRE-TOPO-PILOT
+- timestamp: 2026-09-14 14:17:42 +0000
+- modification_version: V1.4.2
+- type: code_change / data_change / diagnostic / operation
+- operation_category: [code, data, diagnostic, operation, documentation]
+- primary_task_mode: change
+- change_level: L2（目标手、锚点与坐标适配）+ L3（隔离依赖环境）
+- approval: user-approved
+- approval_basis: 用户要求对比 TopoRetarget-Repro 与 Dexplore、询问 Inspire 接入后要求“继续”；既有 V1.4 指导允许少量适配性 pilot。左右模型选择已说明，左手按推荐的此前官方模型进行候选诊断。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true（保护本次之前所有 Cm/OI-Cm、V1.4 exporter/config/tests 与 OakInk2 改动）
+- scope: 新增 Task-local Inspire adapter、源输入重建、原 Topo API 调用和几何图；版本指针 V1.4.1 -> V1.4.2；不修改外部两仓库、公共 src/base、正式数据/cache、val/test、训练超参、epoch 或 checkpoint。
+- run_id: inspire_integration_20260914T141600Z
+- run_status: COMPLETED
+- child_runs: topo_right_20260914T141000Z COMPLETED（3/3 accepted）；topo_left_20260914T141200Z COMPLETED（3/3 accepted）；inspire_right_20260914T140500Z / inspire_left_20260914T141100Z COMPLETED（源重建与 position）；inspire_pilot_20260914T140000Z FAILED（Dexplore left 缺 joint1/tip links，失败保留）。
+- last_source_frame_id: 242；last_step / last_epoch / best_metric / checkpoint: N/A（几何 pilot，无训练）
+- conclusion: SUPPORTED（左右 Inspire FK/anchor、wrist/18D 等价与原 Topo warm/graph/refinement API 可运行）；INCONCLUSIVE（全数据集效果及 OI-Cm 训练收益）。
+
+**文件**
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/README.md](../../research/toporetarget_vs_dexplore/README.md)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/experiment.yaml](../../research/toporetarget_vs_dexplore/experiment.yaml)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/inspire_adapter.py](../../research/toporetarget_vs_dexplore/inspire_adapter.py)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/prepare.py](../../research/toporetarget_vs_dexplore/prepare.py)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/run.py](../../research/toporetarget_vs_dexplore/run.py)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/plot.py](../../research/toporetarget_vs_dexplore/plot.py)
+
+**原因**
+Topo 有通用目标手底层，但原 parser 拒绝 mimic、上层 workflow 仍特化 Arti-MANO。采用独立适配调用原算法，固定同侧两方法的 URDF、12 独立指关节、源点、对象和帧，避免改手型后做不公平比较。
+
+**实现与科研边界**
+右手沿用 Dexplore inspire_hand_new；实际 Dexplore left 无 wrist/tips，候选左手使用此前 dex-retargeting 官方 left，左右分开统计。mimic 标签在私有副本移除以匹配 Dexplore ignore_mimic_joint=True，不能解释为真实 6 actuator 模型。Topo base 单独承载腕部 SE(3)，输出按名称还原 18D；四指 DIP 使用 PIP-tip 中点工程锚点。NAS 世界坐标/原帧/物体位姿不改变。
+
+**验证**
+- `RobotHandModel.validate(seed=42,dtype=float64)` 双手通过；原 Pinocchio 与 Topo 逐 link FK 最大差异 <=6.67e-16；随机 wrist 拆合 <=5.56e-16；21 点 Jacobian 与中心差分 <=1.48e-11。
+- GRAB s1/airplane_lift native 120 Hz 帧 240..242 共用输入：MANO fullpose/PCA 重建差异 <1e-7 m；与官方 ObjectModel 对象变换差异 <2e-9 m。左右各 3 帧原 SLSQP 接受，输出均保留。
+- 右侧指尖均值误差：position 16.23 mm、Topo final 48.87 mm；相同 collision samples >1 mm 穿透比例 8.49% ->0%，但表面 <=2 cm 比例 39.66% ->10.66%，<=2 mm 比例 4.17% ->0%。几何图已查看：不能将离物体更远当作接触保持改善。左侧源无接触，仅证明工程链路；指尖 10.06 ->56.56 mm。
+- final_refinement 使用现有 scipy_slsqp_active_set_contact_rich_v3_fixed profile；warm、交互图、SDF 与权重未修改。reference SDF 核对两方法，collision 采样右416/左640，不代表连续全表面无穿透。
+- 右/左 final 总耗时约23.38/20.77 s，各3帧；不是全量吞吐量 benchmark。不同依赖环境、solver预算、原输入窗口和未启用全部加速配置均在报告中说明。
+- `src/task/ObjectInteractionCm/assets/toporetarget_pilot_env/bin/python -m pip check`：No broken requirements found。venv 复用 wbcd 的 Python3.10/Torch2.7.1，追加 trimesh4.12.2/zarr2.18.3/numcodecs0.13.1/fasteners/asciitree；未升级 graspenv 或既有 Torch/CUDA。初次 zarr2.18.7 的 Python>=3.11 要求导致安装命令失败，改用兼容版后成功，原失败无包安装。
+- `python -m py_compile` 四个新增脚本通过；独立 FK/随机姿态/Jacobian 与官方重建检查直接使用真实资产，未扩跑无关 Task tests。`plot.py` 用 Pinocchio 复核导出的 final18 指尖与保存的 Topo 点一致，绘图检查通过。
+- `prepare.py --help` / `run.py --help` 分别在 graspenv / 隔离 venv 通过；两个外部仓库 `git status --short` 均为空。
+- `git diff --check` 通过；`audit_diff.py --check-links` 通过，activity 与 8 个变更路径一致，26 个本地链接可导航。最终右手几何图已查看。
+
+**产物与命令**
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/report.md](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/report.md)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/run_manifest.json](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/comparison.json](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/comparison.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/config.json](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/config.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/metadata.json](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/metadata.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/pip_freeze.txt](../../research/toporetarget_vs_dexplore/output/inspire_integration_20260914T141600Z/pip_freeze.txt)
+- 精确 run 命令记录在下列 manifest；prepare 的早期运行 manifest 明确为 retrospective config 重建，没有虚构启动时间。
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/run_manifest.json](../../research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/config.json](../../research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/config.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/metrics.jsonl](../../research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/report.json](../../research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/report.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/run_manifest.json](../../research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/config.json](../../research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/config.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/metrics.jsonl](../../research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/metrics.jsonl)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/report.json](../../research/toporetarget_vs_dexplore/output/topo_left_20260914T141200Z/report.json)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/right_geometry_comparison.png](../../research/toporetarget_vs_dexplore/output/topo_right_20260914T141000Z/right_geometry_comparison.png)
+- [src/task/ObjectInteractionCm/research/toporetarget_vs_dexplore/output/inspire_pilot_20260914T140000Z/run_manifest.json](../../research/toporetarget_vs_dexplore/output/inspire_pilot_20260914T140000Z/run_manifest.json)
+
+**回滚**
+只移除这次新增 research 定义与独立输出、assets/inspire_topo_* 派生资产和 assets/toporetarget_pilot_env；恢复本次 plan/指针增量。外部源仓库和所有旧数据/运行/用户改动保持原样；未提交 Git。
+
+**规范反馈**
+原左手资产缺失语义点是技术适配边界，已显式区分模型来源；没有以无回复当作外部发布或正式数据替换批准。activity 审计要求独立原因/验证段，已补齐；初期 prepare 缺 manifest 的记录已追补并标记 retrospective，后续入口已自动生成。没有修改 AGENTS/Skill/公共治理合同。
+
+## 2026-09-14 14:44:33 +0000 — ARCTIC/OakInk2 导出数据 KNN/距离查看器
+
+- activity_id: ACT-20260914-144433-OICM-EXPORT-VIS
+- timestamp: 2026-09-14 14:44:33 +0000
+- modification_version: V1.4.2
+- type: diagnostic / operation / documentation
+- operation_category: [diagnostic, operation, documentation]
+- primary_task_mode: run-only/operation
+- change_level: L1（只读适配投影与查看器运行；不改变源数据或正式 cache）
+- approval: user-approved（用户指定使用已有 KNN/距离可视化脚本）
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- scope: 使用现有 `visualize_grab.py` 查看此前导出的 ARCTIC 与 OakInk2 pilot；将 world-space NPZ 只读投影为查看器所需的 4096 物体点/1538 手点显示格式，原始导出、训练配置和 cache 不变。
+- run_id: export_visualization_20260914T144433Z
+- run_status: RUNNING（Viser `127.0.0.1:8140` 服务仍在运行；已从先前的 `0.0.0.0` 绑定重启为本地监听）
+- output: [exported_20260914T151000Z](../../research/export_visualization/output/exported_20260914T151000Z)、[index.json](../../research/export_visualization/output/exported_20260914T151000Z/index.json)、[run_manifest.json](../../research/export_visualization/output/exported_20260914T151000Z/run_manifest.json)
+- files: [stage_for_visualizer.py](../../research/export_visualization/stage_for_visualizer.py)、[visualize_grab.py](../../visualize_grab.py)
+- entries: OakInk2 3 条已导出序列，ARCTIC `s07/scissors_use_01` 48 帧；合并 viewer 可通过轨迹下拉框切换。
+- command: `env PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index src/task/ObjectInteractionCm/research/export_visualization/output/exported_20260914T151000Z/index.json --sequence s07/scissors_use_01 --frame 12 --point-display both --mesh-display off --host 127.0.0.1 --port 8140 --fps 8`
+- validation: 两条 `--check-only` 均通过；OakInk2 frame 0 KNN union counts n=1/4/8/16/32/64 为 8/28/40/68/104/165，ARCTIC frame 12 为 3/8/15/24/49/97；两个独立端口的 Viser 初始渲染均启动成功。`viser 1.1.0` 及其依赖仅安装到 graspenv。
+- semantics: 距离阈值按最近物体点计算；KNN 为物体点查询最近手点并取并集，沿用既有查看器定义。当前适配是可视化投影，不是训练 cache；OakInk2 多物体被合并为显示点池，mesh 关闭以避免把对象名当作 GRAB mesh。
+- conclusion: SUPPORTED（查看器和高亮逻辑运行）；不构成数据质量或训练收益结论。
+- protected_boundary: ARCTIC/OakInk2 原始导出、NAS 数据、正式 OI-Cm cache、split、val/test、训练配置和 checkpoint 均未修改。
+- rollback: 停止 run_id 对应 Viser 进程并删除该独立 visualization output；恢复不涉及正式数据。
+
+**原因**
+
+用户希望直接检查刚导出的 ARCTIC/OakInk2 手点与物体距离分布，并使用现有 KNN 着色逻辑；两个 pilot NPZ 不是查看器原生 index/cache，因此需要隔离显示投影。
+
+**验证**
+
+`visualize_grab.py --check-only` 对两个数据源均加载成功，距离与 KNN 统计可复现；`viser` 服务在端口 8140 完成初始化。适配器通过 `graspenv` 运行，未写回输入文件。
+
+## 2026-09-14 15:17:25 +0000 — 查看器轨迹帧间隔诊断
+
+- activity_id: ACT-20260914-151725-OICM-EXPORT-VIS-FRAME-DIAG
+- timestamp: 2026-09-14 15:17:25 +0000
+- modification_version: V1.4.2
+- type: diagnostic / documentation
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读检查 source_frame_id 和导出数组）
+- approval: user-approved（用户询问轨迹是否跳帧及变化原因）
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- scope: 检查当前 ARCTIC/OakInk2 viewer 投影的原始 frame ID、导出采样策略和相邻手点位移；不改数据、配置或 viewer。
+- files: [stage_for_visualizer.py](../../research/export_visualization/stage_for_visualizer.py)、[exported index](../../research/export_visualization/output/exported_20260914T151000Z/index.json)
+- run_id: export_visualization_frame_diag_20260914T151725Z
+- run_status: COMPLETED
+- finding: viewer 按 staged cache 的相邻帧播放，不会额外跳帧；OakInk2 导出阶段为每条原序列均匀取 64 帧，故 source frame 间隔分别为 scene_01 `165/166`、scene_02 `72/73`、scene_04 `25/26`。ARCTIC 本次 staged 的 48 帧为连续 `0..47`，但只覆盖序列开头窗口。
+- evidence: OakInk2 scene_01 手部质心相邻导出帧位移中位数/最大值约 `107/583 mm`，scene_02 `16/262 mm`，scene_04 `12/304 mm`；大变化来自稀疏均匀采样叠加真实动作，不是 KNN 或播放回调重新抽帧。导出代码 `select_frame_ids(..., limit=64)` 保存于 OakInk2 run source。
+- conclusion: SUPPORTED（跳帧原因已定位）；当前图不能代表逐原始帧连续运动。
+- protected_boundary: 原始 OakInk2/ARCTIC 数据、已有导出 NPZ、正式 cache、训练配置和正在运行的 viewer 未修改。
+- rollback: 无代码或数据变更；删除本条诊断记录即可。
+
+**原因**
+
+用户观察到 viewer 中相邻画面变化大，需要区分播放器行为和导出阶段的帧抽样。
+
+**验证**
+
+读取三条 OakInk2 NPZ 与当前 ARCTIC staged `source_frame_id`，统计 `np.diff` 及手部质心位移；确认 viewer 只按 staged 帧索引递增。
+
+## 2026-09-14 15:27:40 +0000 — OakInk2/ARCTIC 时间轴与场景长度核对
+
+- activity_id: ACT-20260914-152740-OICM-EXPORT-FPS-DIAG
+- timestamp: 2026-09-14 15:27:40 +0000
+- modification_version: V1.4.2
+- type: diagnostic / documentation
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读时间轴与文件长度核对）
+- approval: user-approved（用户询问轨迹帧率、场景帧切分和轨迹长度）
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- scope: 只读 OakInk2 toolkit 常量、annotation pkl 的 `mocap_frame_id_list`/`frame_id_list`/`raw_mano`，以及 Ref2Dex ARCTIC source-fps 配置；不修改数据或 viewer。
+- files: [stage_for_visualizer.py](../../research/export_visualization/stage_for_visualizer.py)、[OakInk2 meta.py](../../../../../dataset/OakInk2/src/oakink2_toolkit/meta.py)、[OakInk2 pilot config](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/config.json)、[ARCTIC stage4_cm.py](../../../../../process/ARCTIC/stage4_cm.py)
+- run_id: export_fps_diag_20260914T152740Z
+- run_status: COMPLETED
+- finding: OakInk2 toolkit 定义 `FPS_MOCAP=120`、`FPS_VIDEO=30`；三条 pilot annotation 的 mocap 长度分别为 10449、4577、1591 帧（约 87.07、38.13、13.25 秒），RGB 帧分别为 2610、1144、397。此前 pilot 命令 `--frames 64` 仅均匀选 64 个 mocap frame ID，并未重采样为 30 Hz。Ref2Dex ARCTIC Stage4 合同为 `SOURCE_FPS=30.0`，本次 ARCTIC staged 的 48 帧连续但只取序列开头。
+- conclusion: SUPPORTED（时间轴和长度已核实）；当前 viewer 投影 manifest 的 `effective_fps=30` 仅为 OI-Cm 兼容显示字段，不能覆盖 OakInk2 原始 mocap 120 Hz 及稀疏选帧事实。
+- protected_boundary: OakInk2/ARCTIC 原始 annotation、已有 pilot NPZ、正式 cache、训练配置和运行中的 viewer 未修改。
+- rollback: 无代码或数据变更；删除本条诊断记录即可。
+
+**原因**
+
+需要解释 viewer 中相邻画面变化，并区分 OakInk2 的 mocap、视频时间轴与本次 pilot 导出长度。
+
+**验证**
+
+读取本地 OakInk2 toolkit 常量和三条 annotation 的实际列表长度，结合 pilot `report.json/config.json` 与 ARCTIC Stage4 的 `SOURCE_FPS` 核对；未把 RGB 30 Hz 误当成 MANO mocap 频率。
+
+## 2026-09-14 15:58:39 +0000 — ARCTIC 单物体核实与 OakInk2 裁剪范围澄清
+
+- activity_id: ACT-20260914-155839-OICM-OBJECT-SCOPE-DIAG
+- timestamp: 2026-09-14 15:58:39 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读标注清点与需求记录）
+- approval: user-approved
+- approval_basis: 用户要求核实 ARCTIC 是否单物体，并明确 OakInk2 先筛运动物体、再用手物最近距离严格小于 2 cm 切段。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 本次仅补充本活动记录；不实现裁剪、不运行数据导出。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- evidence: [process/ARCTIC/raw.py](../../../../../process/ARCTIC/raw.py) 的 `process_sequence`；本机 NAS `arctic/data/arctic_data/data/raw_seqs` 全量标注数组头。
+- command: 使用 `/home/wbcd/miniconda3/envs/graspenv/bin/python`，对上述 NAS 目录 `Path.rglob('*.object.npy')`，逐项 `np.load(path, mmap_mode='r', allow_pickle=False).shape`，并核对同名 `.mano.npy`；阅读 `sed -n '660,725p' process/ARCTIC/raw.py`。
+- finding: 301 个 `.object.npy` 全为 `[T,7]`，对应 301 个 `.mano.npy`，无异常形状或缺失配对。解析代码将每条序列映射到一个物体，7 列为铰链角、整体旋转及整体平移；铰链部件属于同一标注对象，未发现多独立标注物体的 ARCTIC 轨迹。
+- requirement: ARCTIC 不做本次裁剪。OakInk2 按既定 30 Hz 时间轴先用物体位姿筛运动候选及其区间，静止物体排除，再仅对候选区间计算两手到目标物体的最近距离，以任一手距离严格小于 0.02 m 的连续帧切分。每段一个目标物体与单手或双手；不同目标物体分别输出，不能合并场景物体点池，不能跨被剔除帧拼接。
+- pending_detail: 运动判定需同时考虑平移和旋转并排除跟踪抖动，数值阈值尚未确定；拟由原始 MANO 确定帧段、Inspire 沿用同一 source frame ID，尚未实现。
+- conclusion: SUPPORTED（仅限本机 ARCTIC 标注清点）；裁剪与训练效果未评估。
+- protected_boundary: 现有数据、导出 NPZ、查看器、正式 cache、val/test、训练配置、checkpoint 和用户既有改动均未修改。
+- rollback: 本次仅追加活动条目，可单独撤销本条；无数据回滚需求。
+
+**原因**
+
+用户将多物体裁剪限定在 OakInk2，并要求先依据物体运动缩小计算范围，需要排除将 ARCTIC 铰链部件误认为独立物体的情况。
+
+**验证**
+
+全量数组头检查输出 `object_files=301, mano_files=301, shape_signatures={(2,7):301}, anomalies=[], missing_mano_pairs=[]`；结合解析代码确认字段含义。使用 `audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links` 审计本条记录和本地链接。
+
+## 2026-09-14 16:28:13 +0000 — OakInk2 同时运动实例及物体部件归属核对
+
+- activity_id: ACT-20260914-162813-OICM-SIMULTANEOUS-MOTION-DIAG
+- timestamp: 2026-09-14 16:28:13 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（读取已有位姿与部件元数据）
+- approval: user-approved
+- approval_basis: 用户询问 OakInk2 是否存在两个物体同时运动。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 只读三条 pilot 对应的物体位姿；本次仅追加活动记录，未实施运动筛选或裁剪。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- input: [src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/config.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/config.json)、[src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/report.json](../../research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/report.json) 中的 NAS annotation 与 object_root；[dataset/OakInk2/src/oakink2_toolkit/dataset.py](../../../../../dataset/OakInk2/src/oakink2_toolkit/dataset.py) 的 `get_part_tree_root`。
+- finding: `scene_02__A002++seq__e1fa69abb1738c8fea90__2023-04-17-14-54-52` 在原始帧 3204..3228（26.7..26.9 秒）中，剪刀标注部件 `O02@0035@00001` 和纸部件 `O02@0056@00001` 同时运动。每隔 4 个 mocap 帧取样，6 个连续间隔的平移步长均分别大于 3.14 mm、3.68 mm；窗口首尾净位移分别 23.00 mm、39.93 mm。
+- part_identity: NAS `object_raw/obj_desc.json` 确认名称为剪刀和纸。`object_affordance/object_part_tree.json` 确认剪刀的 `O02@0035@00001/00002` 共同属于 `O02@0035@00003`，纸的 `O02@0056@00001/00002` 共同属于 `O02@0056@00003`，夹子的 `O02@0032@00001/00002` 共同属于 `O02@0032@00003`。因此部件 ID 数量不能当作独立物体数量；上述剪刀与纸的示例属于两个不同根实例。
+- limitation: 临时以每个 30 Hz 间隔平移大于 3 mm 定位明显例子，不是已批准的正式运动阈值；未计算手物 2 cm 距离，未估计全数据集发生比例。
+- implication: 后续若按单个物理物体切段，应先依据官方部件树归组，完整保留该目标的部件；同时运动的不同目标可分别生成时间重叠的样本。本次未修改实现或 final plan。
+- conclusion: SUPPORTED（存在同时运动的两个不同物体实例）；不构成裁剪质量或训练效果结论。
+- protected_boundary: 数据、代码、配置、正式 cache、val/test、Inspire 导出与查看器均未修改。
+- rollback: 仅追加本条记录，可单独撤销，无数据回滚需求。
+
+**原因**
+
+需要用连续位姿证据回答实际是否存在同时运动，并区分独立物体与铰接/可分部件，避免用稀疏 64 帧采样推断同时性。
+
+**验证**
+
+使用 graspenv Python 只读载入原始 annotation；下列核心计算复现上述位移（单位米转毫米），帧率来自已核实的 120 Hz mocap 时间轴：
+
+```python
+import json, pickle
+from pathlib import Path
+import numpy as np
+cfg = json.loads(Path('src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output/oakink2_inspire_20260914T121000Z/config.json').read_text())
+p = next(Path(cfg['annotation_root']).glob('scene_02__A002++seq__e1fa69abb1738c8fea90*'))
+with p.open('rb') as h:
+    a = pickle.load(h)
+for obj in ['O02@0035@00001', 'O02@0056@00001']:
+    t = np.stack([a['obj_transf'][obj][i][:3, 3] for i in range(3204, 3229, 4)])
+    print(obj, np.linalg.norm(t[-1] - t[0]) * 1000,
+          np.linalg.norm(np.diff(t, axis=0), axis=-1).min() * 1000)
+```
+
+活动链接审计命令：`python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`。
+
+## 2026-09-14 17:29:00 +0000 — OakInk2 单物体段正式范围确认
+
+- activity_id: ACT-20260914-172900-OICM-OAKINK2-SINGLEOBJ-SCOPE
+- timestamp: 2026-09-14 17:29:00 +0000
+- modification_version: V1.4.2
+- operation_category: [data, experiment, operation, documentation]
+- primary_task_mode: change
+- change_level: L3（正式数据范围与长时训练边界）
+- approval: user-approved
+- approval_basis: 用户明确确认 OakInk2 只用单物体段，其他数据全量导出并开始训练。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 将用户确认追加到 [plan/V1.4.md](../plan/V1.4.md) §9；GRAB/ARCTIC 全量、OakInk2 仅单物体 primitive train 段；val/test 保护不变。当前仅完成范围记录和启动前检查，未导出或训练。
+- files: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- finding: 范围已消除 OakInk2 是否纳入的歧义；但全量 producer/cache/index 尚未实现，OakInk2 运动阈值仍需在 exporter 中固定并记录，不能立即运行正式任务。
+- validation: 计划 §9 已写入并保持 `final`；此前 V1.4 定向测试 5 项通过；正式 index 路径仍不存在。
+- conclusion: INCONCLUSIVE（范围已获确认，工程尚未具备正式导出/训练条件）。
+- protected_boundary: V1.3 cache、旧 split、val/test、pilot/output、checkpoint 和用户已有改动均未修改。
+- rollback: 仅撤销本次计划和活动增量即可恢复范围记录；未生成数据或运行状态。
+
+**原因**
+
+用户确认 OakInk2 的正式纳入策略，需要在开始实现全量 producer 前锁定数据边界和部件归组规则。
+
+**验证**
+
+读取 V1.4 guidance/plan、配置和 producer 入口；确认计划新增 §9 与用户要求一致，并核对正式 index 尚不存在。活动链接审计待本条追加后执行。
+
+## 2026-09-14 17:24:06 +0000 — V1.4 全量导出与训练启动前阻塞检查
+
+- activity_id: ACT-20260914-172000-OICM-FULL-RUN-READINESS
+- timestamp: 2026-09-14 17:24:06 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, operation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L3（正式全量数据处理和长时训练的启动前检查）
+- approval: user-approved（用户要求全量导出并开始训练；本条仅检查是否具备启动条件）
+- approval_basis: 用户明确要求“现在导出全量并开始训练”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 只读检查 V1.4 final plan、指导、配置、数据处理入口和输出路径；未启动全量导出或训练，未修改数据和配置。
+- files: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/docs/指导/V1.4.md](../指导/V1.4.md)、[src/task/ObjectInteractionCm/configs/active/grab_arctic_inspire_geometric_v1_4.yaml](../../configs/active/grab_arctic_inspire_geometric_v1_4.yaml)、[src/task/ObjectInteractionCm/tools/data/export_bilateral_geometry.py](../../tools/data/export_bilateral_geometry.py)
+- finding: V1.4 配置引用的 `data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/index.json` 不存在；`export_bilateral_geometry.py` 仅能拼接已经存在的左右手 NPY，不能从 GRAB/ARCTIC/OakInk2 原始数据生成全量 producer/cache；`max_steps=202300` 仍是等待最终 train-row 统计的占位值。现有 OakInk2 plan §7 只允许 pilot，未把 627 条 OakInk2 序列纳入正式 train 范围。
+- validation: `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py src/task/ObjectInteractionCm/tests/test_arctic_landmark_contract.py` 结果 `5 passed`；配置 index 路径检查为缺失；工作区已有 V1.4 未提交改动保持不变。
+- blockers: 需先完成全量 geometric producer、OakInk2 是否正式纳入 train 的范围确认、运动抖动阈值和按最终 train rows 计算 max_steps；在此之前启动会失败或训练错误数据。
+- conclusion: INCONCLUSIVE（仅说明工程尚未达到正式启动条件，不代表数据或模型效果结论）。
+- protected_boundary: V1.3 cache、split、val/test、已有 pilot/output、训练配置和 checkpoint 未修改，未启动新长任务。
+- rollback: 无数据或运行状态变更；仅追加本条活动记录，可单独撤销。
+
+**原因**
+
+用户要求马上进行不可逆成本较高的全量数据处理和长时训练；根据 final plan 先核实输入范围、producer、cache、预算和启动条件，避免将 pilot 或占位配置误当正式实验。
+
+**验证**
+
+读取 final guidance/plan/config，检查 index 目标和 producer 能力；定向 V1.4 测试 5 项通过。链接需以 `audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links` 复核。
+
+## 2026-09-14 17:08:53 +0000 — OakInk2 多物体交互轨迹全量计数
+
+- activity_id: ACT-20260914-170853-OICM-OAKINK2-MULTIOBJ-COUNT
+- timestamp: 2026-09-14 17:08:53 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读 program_info 与部件树统计）
+- approval: user-approved
+- approval_basis: 用户要求统计涉及物体间交互的 OakInk2 轨迹并评估是否排除难例。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 扫描 NAS OakInk2 全部 627 个 `program/program_info/*.json`，按 `object_part_tree` 将部件归并到实例根；不读取手物距离、不修改数据或训练配置。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)、[OakInk2 dataset.py](../../../../../dataset/OakInk2/src/oakink2_toolkit/dataset.py)
+- input: NAS `data/OakInk-v2-hub/program/program_info/*.json`、`object_affordance/object_part_tree.json`、`part_desc.json`。
+- method: 每个 primitive 的 `obj_list` 去重后沿部件树追溯实例根；根实例数大于 1 计为多物体交互。部件数大于 1 但根相同（例如剪刀两刃）不计为多物体。
+- result: 627 条轨迹包含 2840 个 primitive 段；658 个 primitive 段涉及至少两个不同物体根，来自 363 条独立轨迹（57.9%）。若按整条轨迹剔除，剩余 264 条不含多物体 primitive 的轨迹；若仅剔除多物体段，可保留 2177 个单物体 primitive 段。
+- category_counts: 多物体轨迹去重计数：`cut/shear_paper/staple_paper_together` 44 条；`pour/pour_in_lab` 77 条；`scoop/scrape/stir/stir_experiment_substances` 84 条；插拔/取放类 USB、铅笔、灯泡、电源插头 95 条；实验器材/点火/装配类（`hold_test_tube` 等）45 条。类别有交集，不能直接相加。
+- limitation: 这是官方任务/物体语义的候选数量，不等价于两个物体在每一帧都同时运动，也不等价于手物最近距离小于 2 cm；还需后续运动筛选和几何距离筛选。
+- conclusion: SUPPORTED（计数规则和结果可复现）；难例取舍及训练收益尚未评估。
+- protected_boundary: 原始 annotation、pilot、正式 cache、split、配置、checkpoint 和用户既有改动均未修改。
+- rollback: 仅追加本条记录，可单独撤销。
+
+**原因**
+
+用户需要估算多物体交互规模，以决定是否从 OI-Cm 训练中排除剪切、倒液、实验器材等复杂动作。
+
+**验证**
+
+使用 graspenv Python 扫描 627 个 program_info 文件，逐段映射部件树根并统计；输出为 `segments=2840, multi_segments=658, multi_sequences=363`。活动链接审计通过。
+
+## 2026-09-14 17:00:28 +0000 — 剪纸序列纸部件初始状态核对
+
+- activity_id: ACT-20260914-170028-OICM-PAPER-PARTS-INITIAL-DIAG
+- timestamp: 2026-09-14 17:00:28 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读初始位姿与物体网格）
+- approval: user-approved
+- approval_basis: 用户询问被剪开的纸是否从开始就是两个独立 ID。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 只读 `scene_02/A002` 的纸部件 annotation 和 object_repair 网格；未修改代码、数据或训练配置。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)、[OakInk2 dataset.py](../../../../../dataset/OakInk2/src/oakink2_toolkit/dataset.py)
+- input: NAS `anno_preview/scene_02__A002++seq__e1fa69abb1738c8fea90__2023-04-17-14-54-52.pkl`；`object_repair/align_ds/O02@0056@00001/00002/model.obj`；`object_affordance/{object_part_tree,object_affordance,part_desc}.json`。
+- finding: `O02@0056@00001` 与 `O02@0056@00002` 在原始第 0 帧均已有独立 4x4 `obj_transf` 和独立 paper mesh。第 0 帧两网格顶点最近距离约 0.141 mm（相邻/近似接触）；到帧 3204 时约 63.4 mm，说明后续运动使其分开。部件树始终将两者归于纸实例根 `O02@0056@00003`。
+- semantics: 可以确认“两个纸部件 ID 从起始帧就存在”，不能据此声称数据记录了某一帧发生拓扑剪切；OakInk2 没有剪开时刻或剪开后新 ID。任务 primitive 的 `obj_list` 只显式列出纸部件 `00001`，原始场景 `obj_list` 仍含 `00002`，因此实现时应以部件树和任务语义共同决定是否把两个部件作为一个训练目标。
+- conclusion: SUPPORTED（初始独立 ID 与初始几何关系已核实）；未评估剪切物理真实性或训练效果。
+- protected_boundary: 原始 annotation、资产、pilot、cache、配置、val/test 和查看器均未修改。
+- rollback: 仅追加本条记录，可单独撤销。
+
+**原因**
+
+需要区分“数据集预先把纸建模为两个部件”与“序列中途发生纸张断裂”，避免把静态部件 ID 误当作动态切割事件。
+
+**验证**
+
+用 graspenv Python 读取两个部件第 0/3204 帧的刚体变换和 trimesh 网格，并用 `scipy.spatial.cKDTree` 计算顶点近似最近距离；同时读取 `object_part_tree.json` 与 `program_info` 核对实例根和任务列表。活动链接审计通过。
+
+## 2026-09-14 16:55:18 +0000 — OakInk2 剪纸序列语义与物体 ID 结构核对
+
+- activity_id: ACT-20260914-164500-OICM-OAKINK2-SHEAR-SEMANTICS
+- timestamp: 2026-09-14 16:55:18 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（读取已有 annotation、program 与物体元数据）
+- approval: user-approved
+- approval_basis: 用户询问 OakInk2 如何表示剪刀剪纸及物体 ID 分类。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 只读 `scene_02/A002` 剪纸序列的 annotation、program_info、task_target、affordance 和部件树；未修改代码、数据或训练配置。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)、[OakInk2 dataset.py](../../../../../dataset/OakInk2/src/oakink2_toolkit/dataset.py)
+- input: NAS `OakInk2/downloads/hf/OakInk-v2/anno_preview/scene_02__A002++seq__e1fa69abb1738c8fea90__2023-04-17-14-54-52.pkl`；`data/OakInk-v2-hub/program/program_info/<seq>.json`；`program/task_target.json`；`object_affordance/{object_part_tree,object_affordance,part_desc,affordance_label}.json`。
+- finding: task target 是 `Shear paper`；唯一 primitive 是 `shear_paper`。`program_info` 的 `obj_list` 为纸 `O02@0056@00001` 与剪刀两个部件 `O02@0035@00001/00002`；`obj_list_lh` 仅纸，`obj_list_rh` 为剪刀两个部件；`primitive_lh=hold`、`primitive_rh=shear_paper`、`interaction_mode=rh_main`。两只手的标注区间分别为 mocap 805..3379 和 1213..3863。
+- identity: `object_part_tree` 将剪刀两个部件归到实例根 `O02@0035@00003`，纸两个部件归到实例根 `O02@0056@00003`；`object_affordance` 根节点分别含 `<shear, paper>` 和 `<be sheared by, scissors>`。`is_instance=false` 的部件有独立 mesh，`is_instance=true` 的根节点无单一 mesh。
+- semantics: OakInk2 通过每帧 `obj_transf[obj_id]` 的刚体 4x4 位姿表达物体/部件运动，通过 program/affordance 表达“剪纸”语义；没有逐帧剪切线、纸张拓扑变化、断开时刻或剪开后的新物体 ID。纸的两个部件仍是同一纸实例，剪刀两个部件仍是同一剪刀实例。
+- implication: 数据处理应按部件树根实例归组后做运动筛选和 2 cm 裁剪；这条任务应保留剪刀实例与纸实例，分别计算目标片段。不能把部件 ID 数量当成物体数量，也不能从刚体位姿推断纸已经被剪开。
+- conclusion: SUPPORTED（字段语义和 ID 归属已由本机元数据确认）；未评估剪纸动作的几何接触或训练效果。
+- protected_boundary: 原始 annotation、物体资产、已有 pilot、正式 cache、val/test、配置和查看器均未修改。
+- rollback: 仅追加本条记录，可单独撤销。
+
+**原因**
+
+需要确定多物体裁剪时剪刀的两个部件和纸的两个部件应如何归并，以及 OakInk2 是否提供剪开后的物理状态标签。
+
+**验证**
+
+读取上述 JSON/PKL；`dataset.py` 的 `_load_primitive_task_from_def` 使用 `obj_list_lh`/`obj_list_rh` 区分手侧，`get_part_tree_root` 沿 `object_part_tree` 追溯实例根。相关本地链接已通过 activity 审计。
+
+## 2026-09-14 16:38:43 +0000 — OakInk2 同时运动轨迹查看器启动
+
+- activity_id: ACT-20260914-163843-OICM-VIS-SCENE02
+- timestamp: 2026-09-14 16:38:43 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, operation]
+- primary_task_mode: run-only/operation
+- change_level: L0（启动既有查看器，不改输入或处理逻辑）
+- approval: user-approved
+- approval_basis: 用户要求可视化已核实的 OakInk2 同时运动轨迹。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 复用既有可视化投影，初始打开 `scene_02__A002++seq__e1fa69abb1738c8fea90__2023-04-17-14-54-52`，帧 28，监听 127.0.0.1:8141；8140 原查看器未停止。
+- run_id: oakink2_scene02_visualizer_20260914T163843Z
+- run_status: RUNNING
+- command: `env PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index src/task/ObjectInteractionCm/research/export_visualization/output/exported_20260914T151000Z/index.json --split train --sequence 'scene_02__A002++seq__e1fa69abb1738c8fea90__2023-04-17-14-54-52' --frame 28 --point-display both --mesh-display off --host 127.0.0.1 --port 8141 --fps 8`
+- output: [exported_20260914T151000Z](../../research/export_visualization/output/exported_20260914T151000Z)、[index.json](../../research/export_visualization/output/exported_20260914T151000Z/index.json)
+- validation: 进程 PID 1875763 存活，`ss -ltnp` 确认 127.0.0.1:8141 LISTEN；查看器输出 HTTP `http://127.0.0.1:8141`。当前是既有 visualization projection，帧间隔仍遵循该投影的 64 帧 pilot，不作为连续 30 Hz 裁剪结果。
+- conclusion: SUPPORTED（查看器服务已启动）；不构成数据质量或训练收益结论。
+- protected_boundary: 原始 OakInk2 annotation、正式 cache、训练配置、val/test 和既有 8140 进程未修改。
+- rollback: 停止 PID 1875763 即可关闭本次独立查看器。
+
+**原因**
+
+用户希望直接查看包含剪刀与纸同时运动的 OakInk2 轨迹。
+
+**验证**
+
+启动日志打印 `viewer=http://127.0.0.1:8141`，端口监听检查通过；本次不改变数据或代码。
+
+## 2026-09-14 17:36:10 +0000 — V1.4 GRAB 全量 30 Hz 双手中间导出启动
+
+- activity_id: ACT-20260914-173610-OICM-GRAB-STAGE4-FULL
+- timestamp: 2026-09-14 17:36:10 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation]
+- primary_task_mode: run-only/operation
+- change_level: L3（全量数据处理长任务）
+- approval: user-approved
+- approval_basis: 用户要求继续直到开始训练，并确认 GRAB 全量、OakInk2 单物体段、ARCTIC 全量。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 使用 NAS GRAB 原始数据，以 `ds_rate=4` 从 120 Hz 生成 30 Hz 双手 MANO 中间 cache；不覆盖旧 cache。后续仍需 Inspire geometric retarget、OakInk2/ARCTIC 接入、KNN finalize 和训练 smoke。
+- files: [process/GRAB/stage4_cm.py](../../../../../process/GRAB/stage4_cm.py)、[V1.4 plan](../plan/V1.4.md)
+- run_id: grab_stage4_full_20260914T173610Z
+- run_status: RUNNING
+- command: `.../graspenv/bin/python -u -m process.GRAB.stage4_cm --grab-root /mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/data/GRAB --mano-path dataset/arctic/data/body_models/mano --output-root data/processed_data/oicm_v1_4_raw/grab_mano_30hz --side both --ds-rate 4 --num-obj-points 4096 --device cuda --save-compressed`
+- output: [GRAB intermediate output](../../../../../data/processed_data/oicm_v1_4_raw/grab_mano_30hz)（RUNNING/PENDING）
+- validation: 单序列 `s1/cup_lift` smoke 已通过，934 帧，左右 hand 文件均生成；全量任务当前已处理 `s1` 的前若干序列且进程持续运行。
+- conclusion: INCONCLUSIVE（中间导出运行中；不代表 geometric retarget 或训练效果）。
+- protected_boundary: 原始 NAS、旧 cache、split、val/test、配置和 checkpoint 未修改。
+- rollback: 停止 run_id 对应进程并删除独立中间输出；不触及旧产物。
+
+**原因**
+
+为 V1.4 正式全量 pipeline 先生成 30 Hz 双手 MANO/物体中间数据，供后续 Inspire geometric 和 KNN producer 使用。
+
+**验证**
+
+启动日志包含 `stage4` 输出，已验证输入 NAS 路径、MANO 模型和 CUDA 可用；终态待进程结束后补写。
+
+## 2026-09-14 17:39:42 +0000 — V1.4 ARCTIC 全量 30 Hz 双手中间导出启动
+
+- activity_id: ACT-20260914-173942-OICM-ARCTIC-STAGE4-FULL
+- timestamp: 2026-09-14 17:39:42 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation]
+- primary_task_mode: run-only/operation
+- change_level: L3（全量数据处理长任务）
+- approval: user-approved
+- approval_basis: 用户要求继续直到开始训练，并确认 ARCTIC 全量。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 使用 NAS ARCTIC 原始序列，`ds_rate=1`（源数据 30 Hz）生成双手 MANO/铰链物体中间 cache；不做多物体裁剪，不覆盖旧 cache。后续需 Inspire geometric retarget、KNN finalize 和训练 smoke。
+- files: [process/ARCTIC/stage4_cm.py](../../../../../process/ARCTIC/stage4_cm.py)、[V1.4 plan](../plan/V1.4.md)
+- run_id: arctic_stage4_full_20260914T173942Z
+- run_status: RUNNING
+- command: `.../graspenv/bin/python -u -m process.ARCTIC.stage4_cm --output-root data/processed_data/oicm_v1_4_raw/arctic_mano_30hz --side both --ds-rate 1 --num-obj-points 4096 --device cuda:0 --save-compressed`
+- output: [ARCTIC intermediate output](../../../../../data/processed_data/oicm_v1_4_raw/arctic_mano_30hz)（RUNNING/PENDING）
+- validation: 301 个原始 `.mano.npy` 已盘点；ARCTIC stage4 进程已启动并完成 MANO 模型加载。
+- conclusion: INCONCLUSIVE（中间导出运行中；不代表 geometric retarget 或训练效果）。
+- protected_boundary: 原始 NAS、旧 cache、split、val/test、配置和 checkpoint 未修改。
+- rollback: 停止 run_id 对应进程并删除独立中间输出；不触及旧产物。
+
+**原因**
+
+为 V1.4 正式全量 pipeline 先生成 ARCTIC 30 Hz 双手 MANO、物体整体位姿和铰链字段，供后续 geometric producer 使用。
+
+**验证**
+
+启动日志已打印 `[Preprocessor] Loading MANO models...`；终态待进程结束后补写，链接以运行状态标记 PENDING。
+
+## 2026-09-14 17:48:43 +0000 — OakInk2 单物体段索引生成
+
+- activity_id: ACT-20260914-174843-OICM-OAK-SINGLE-INDEX
+- timestamp: 2026-09-14 17:48:43 +0000
+- modification_version: V1.4.2
+- operation_category: [code, data]
+- primary_task_mode: change
+- change_level: L2（新增正式 train 候选索引，不改 val/test）
+- approval: user-approved
+- approval_basis: 用户明确要求 OakInk2 只使用单物体段。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 新增单物体 primitive 索引生成器，扫描 627 个 OakInk2 program_info，按官方部件树根实例筛选；未生成手/物体几何 cache，未改 val/test。
+- files: [src/task/ObjectInteractionCm/tools/data/build_oakink2_single_object_index.py](../../tools/data/build_oakink2_single_object_index.py)
+- run_id: oakink2_single_object_index_20260914T174843Z
+- run_status: COMPLETED
+- command: `.../graspenv/bin/python -m src.task.ObjectInteractionCm.tools.data.build_oakink2_single_object_index --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --output data/processed_data/oicm_v1_4_raw/oakink2_single_object_segments/index.json`
+- output: [OakInk2 single-object index](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_single_object_segments/index.json)
+- validation: 输出 `segment_count=2177`、`excluded_multi_object_segments=663`；脚本 `py_compile` 通过。663 包含 658 个多物体段及 5 个无对象段。
+- conclusion: SUPPORTED（语义筛选索引生成）；几何重定向、2 cm 帧裁剪和训练效果尚未评估。
+- protected_boundary: OakInk2 原始 annotation/资产、现有 pilot、旧 cache、val/test、训练配置和 checkpoint 未修改。
+- rollback: 删除新增脚本及独立 index/output 即可回滚，不触及原始数据。
+
+**原因**
+
+为后续全量 producer 固定 OakInk2 的正式 train 候选边界，避免将部件 ID 或多物体 primitive 混入单物体训练样本。
+
+**验证**
+
+全量扫描 627 个 program_info 文件并沿 object_part_tree 追溯根实例；`segment_count=2177` 与此前统计一致。活动链接审计待本条追加后执行。
+
+## 2026-09-14 19:14:06 +0000 — V1.4 GRAB+ARCTIC 几何重定向训练启动
+
+- activity_id: ACT-20260914-191406-OICM-TRAIN-START
+- timestamp: 2026-09-14 19:14:06 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation, experiment]
+- primary_task_mode: run-only/operation
+- change_level: L3（全量数据导出与长时训练）
+- approval: user-approved
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- run_id: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406
+- run_status: RUNNING
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/grab_arctic_inspire_geometric_v1_4.yaml --set train.distributed.enable=false --set data.num_workers=4 --set data.persistent_workers=true --device cuda`
+- scope: ObjectInteractionCm V1.4 full GRAB + ARCTIC geometry training run.
+- output: [run directory](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406)
+- evidence: loader smoke `train_rows=402235,val_rows=26531,test_rows=24498`; first logged step=100, loss=0.0683698, obj_flow_epe=34.0439mm.
+- data: full GRAB=1335 geometry sequences, full ARCTIC=301 geometry sequences, bilateral merged hand points=3076, effective FPS=30.
+- max_steps: 1508382 = ceil(402235/32)*120.
+- protected_boundary: original GRAB val/test split unchanged; OakInk2 single-object index has 2177 candidates but its full MANO reconstruction/geometry producer is not yet part of this run.
+- conclusion: SUPPORTED（工程 smoke 与训练已启动；科研效果尚未结论）。
+
+**原因**
+
+按用户确认的 30 Hz、双手 Inspire 几何重定向范围启动训练，并按最终 train 行数保持 120 个 epoch。
+
+**验证**
+
+训练目录已生成 `run_manifest.json`、`train.log`、`metrics.jsonl`；首个有效日志 step=100。OakInk2 未静默混入，待其 producer 完成后再单独扩展索引。
+
+## 2026-09-15 01:17:45 +0000 — OI-Cm 训练进度与剩余时间诊断
+
+- activity_id: ACT-20260915-011745-OICM-TRAIN-STATUS
+- timestamp: 2026-09-15 01:17:45 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问当前训练状态和预计完成时间；仅查询已有进程、配置、指标并追加诊断记录。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 查询既有 run 的进程、step/epoch、验证指标、checkpoint 与 ETA；仅追加本 activity，不修改代码、配置、数据或运行。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406
+- run_status: RUNNING
+- command: `ps -eo pid,etime,pcpu,pmem,args`；`nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader`；Python 标准库读取 metrics.jsonl、config.json、metadata.json 和 index.json，使用最近 5 个完整 epoch 的 wall time 估算 ETA。
+- last_step: 175900
+- last_epoch: 14
+- best_metric: val/obj/flow_epe_mm=6.81080321，epoch=13，step=163410
+- evidence: PID 1966387 存活；最近 step_ms 约 114.786；GPU0 利用率 95%；最近完整 epoch 均时 1523.011s，含验证及保存间隔，预计剩余 44.85h；ETA 以运行负载不变为前提。
+- output: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406)
+- manifest: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/run_manifest.json](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/run_manifest.json)
+- metrics: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/metrics.jsonl)
+- train_log: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/train.log)
+- best_checkpoint: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/checkpoints/best.pt)
+- latest_checkpoint: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/checkpoints/latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406/checkpoints/latest.pt)
+- plan_reference: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)
+- scope_discrepancy: 已核对 index.train 只有 Inspire 源（GRAB 1068、ARCTIC 301），没有 MANO 原手型或 OakInk2；运行快照 hand_stream_mode=decoder，与 final plan 的 MANO/Inspire 混训及 unique-KNN stream 约束不符。本条不把前次实际范围变化解释为已获用户批准。
+- conclusion: SUPPORTED（进程持续推进和日志状态）；INCONCLUSIVE（原定混训方案尚未实现，现有 val 值不能证明其效果）。
+- protected_boundary: 进程、checkpoint、cache、split、config 和模型代码均未修改。
+- rollback: 本次只有追加的诊断条目；无运行或数据回滚操作。
+
+**原因**
+
+响应用户状态与训练完成时间查询；区分当前运行 ETA 与原计划完成状态。
+
+**验证**
+
+比对存活进程、连续更新的 metrics/train.log、既有 checkpoint 和配置快照。验证 EPE 从 epoch 1 的 8.8820mm 至 epoch 13 的 6.8108mm，仅为当前数据配置下的观测。活动链接审计在追加后执行。
+
+**规范反馈**
+
+本次诊断无格式、路径或审批阻碍。发现前次启动范围与 final plan 不一致，已向用户说明；本次不改规范、不重写历史审批记录。
+
+## 2026-09-15 01:25:00 +0000 — 停止旧训练并固化 NAS cache
+
+- activity_id: ACT-20260915-012500-OICM-STOP-OLD-TRAIN-CACHE
+- timestamp: 2026-09-15 01:25:00 +0000
+- modification_version: V1.4.2
+- operation_category: [operation, data]
+- primary_task_mode: run-only/operation
+- change_level: L3（停止长任务并固化全量 cache）
+- approval: user-approved
+- approval_basis: 用户明确要求停止当前训练、完整 cache 写入 NAS，仅使用 ARCTIC 和 GRAB 后重新训练。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 终止 run_id=object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406；核验 NAS 上 GRAB/ARCTIC 双手几何 cache、索引和 manifest；未复制数组到本地，未清理旧输出。
+- run_id: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406
+- run_status: STOPPED
+- command: `kill -TERM 1966387`；NAS cache shape validation；`du -sh`。
+- output: [旧训练目录](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260914_191406)
+- cache_manifest: [NAS cache manifest](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+- evidence: 训练主进程及 worker 均已退出；GRAB=1335、ARCTIC=301、总帧=624537、cache=110105920657 bytes；所有序列 shape 校验通过，bad_count=0。
+- conclusion: SUPPORTED（用户要求的停止和 NAS cache 完整性核验完成）。
+
+**原因**
+
+当前训练未包含 OakInk2，且用户要求先停止并只固化 GRAB/ARCTIC 的完整 cache 后重新启动。
+
+**验证**
+
+逐序列检查 `obj_points_pool_world=[T,4096,3]`、`hand_points_world=[T,3076,3]`、pose/raw frame 对齐；索引仍位于 NAS 并保持 GRAB val/test 成员。
+
+## 2026-09-15 02:29:24 +0000 — NAS 完整 cache 核验后重新启动训练
+
+- activity_id: ACT-20260915-022924-OICM-RETRAIN-GRAB-ARCTIC
+- timestamp: 2026-09-15 02:29:24 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation, experiment]
+- primary_task_mode: run-only/operation
+- change_level: L3（NAS 全量 cache 与长时训练）
+- approval: user-approved
+- approval_basis: 用户明确要求停止旧训练、只导出 ARCTIC/GRAB 到 NAS 并重新训练。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 使用 NAS 上已固化的 GRAB/ARCTIC 双手 Inspire geometric cache；不复制大数组到本地；保持 GRAB val/test split。
+- run_id: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758
+- run_status: RUNNING
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/grab_arctic_inspire_geometric_v1_4.yaml --set train.distributed.enable=false --set data.num_workers=4 --set data.persistent_workers=true --device cuda`
+- output: [run directory](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758)
+- manifest: [run manifest](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/run_manifest.json)
+- metrics: [metrics](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/metrics.jsonl)
+- train_log: [train log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/train.log)
+- cache_manifest: [NAS cache manifest](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+- evidence: NAS cache 1636 sequences/624537 frames/110105920657 bytes；shape validation bad_count=0；loader smoke train/val/test=402235/26531/24498；首个有效日志 step=400。
+- max_steps: 1508382；epochs=120；no checkpoint resume。
+- conclusion: SUPPORTED（cache、loader 和训练启动工程证据）；科研效果尚未结论。
+
+**原因**
+
+按用户要求停止未符合范围的旧运行，核验完整 GRAB/ARCTIC cache 后从 NAS 路径重新启动独立训练。
+
+**验证**
+
+逐序列检查对象池 `[T,4096,3]`、双手合并 Inspire 点 `[T,3076,3]`、pose/raw 对齐；loader smoke 取样成功；step 100/200/300/400 日志连续产生。
+
+## 2026-09-15 11:17:00 +0800 — GPU 离线 KNN 生成启动
+
+- activity_id: ACT-20260915-111700-OICM-OFFLINE-KNN-START
+- timestamp: 2026-09-15 11:17:00 +0800
+- modification_version: V1.4.2
+- operation_category: [data, operation]
+- primary_task_mode: run-only/operation
+- change_level: L3（全量 NAS cache 写入与 GPU 长任务）
+- approval: user-approved
+- approval_basis: 用户明确要求开始用 GPU 生成离线 KNN 文件。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 为 NAS 上 GRAB 1335 与 ARCTIC 301 条双手 Inspire geometry 生成 KNN=32 索引及 2 cm mask；复用已有 hand_points_world/hand_normals_world 为 KNN stream，不复制大数组。
+- run_id: oicm_v1_4_offline_knn_gpu1_20260915_111700
+- run_status: RUNNING
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.build_bilateral_offline_knn --roots /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2 /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/arctic_inspire_bilateral_v2 --device cuda:1 --obj-chunk 512`
+- output: [NAS cache roots](../../../../../data/processed_data/oicm_v1_4_raw/)
+- evidence: GPU1 已占用约 7.5 GiB、利用率约 28%；首批 GRAB 序列已写入，过程使用每条序列 `.partial` 文件并在完成后原子切换。
+- files: 每条 geometry 目录新增 `obj_knn_indices.npy`、`obj_candidate_mask_2cm.npy`、`hand_supervision_mask_2cm.npy`、`hand_min_object_distance_m.npy`，并建立 KNN hand 点/法线链接。
+- protected_boundary: 当前训练继续使用 GPU0；GRAB/ARCTIC 原始数据、既有 geometry、训练配置和 checkpoint 未修改。
+- rollback: 停止该进程并删除本次生成的 KNN 文件/链接即可回滚；不触及原始 geometry。
+- conclusion: INCONCLUSIVE（正在生成；完成后需全量计数、shape、索引范围和 loader unique-KNN smoke）。
+
+**原因**
+
+用户要求为当前 GRAB/ARCTIC NAS cache 生成 GPU 离线 KNN 文件，以便后续切换到 unique-KNN stream 或进行独立验证。
+
+**验证**
+
+脚本 `py_compile` 通过；GPU1 进程存活并已生成首批完整序列；首次临时文件命名问题已修正，当前任务从缺失文件序列开始安全补齐。
+
+## 2026-09-15 03:18:24 +0000 — 离线 KNN 生成器修正后重启
+
+- activity_id: ACT-20260915-031824-OICM-OFFLINE-KNN-RESTART
+- timestamp: 2026-09-15 03:18:24 +0000
+- modification_version: V1.4.2
+- operation_category: [code, data, operation]
+- primary_task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户要求 GPU 生成离线 KNN；运行中发现派生最小距离字段需使用全 hand stream 全局最小值，已修正后重启。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: GPU1 重新生成 GRAB/ARCTIC 的离线 KNN；不修改训练进程和原始 geometry；已生成文件按序列原子提交。
+- run_id: oicm_v1_4_offline_knn_gpu1_20260915_031824
+- run_status: RUNNING
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.build_bilateral_offline_knn --roots /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2 /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/arctic_inspire_bilateral_v2 --device cuda:1 --obj-chunk 512`
+- output: [NAS KNN cache](../../../../../data/processed_data/oicm_v1_4_raw/)
+- evidence: GPU1 运行中；已完成若干 GRAB 序列；每条序列新增 KNN=32 索引、物体/手 2 cm mask、全局最小距离和 KNN hand symlink。
+- protected_boundary: 当前训练 GPU0 及其输出、原始 geometry、索引、split 未修改。
+- rollback: 停止 KNN 进程并删除本次 KNN 派生文件/链接即可回滚；不触及原始 geometry。
+- conclusion: INCONCLUSIVE（仍在生成）。
+
+**原因**
+
+修正首批版本的全局最小距离计算，并继续用户要求的 GPU 离线 KNN 导出。
+
+**验证**
+
+`py_compile` 通过；修正后的进程已在 GPU1 启动，训练 GPU0 仍存活。前次临时文件已清理，已完成序列会检查 `offline_knn_min_global` 标记后决定跳过或重算。
+
+## 2026-09-15 03:31:54 +0000 — GPU 离线 KNN 进度与剩余时间诊断
+
+- activity_id: ACT-20260915-033154-OICM-KNN-ETA
+- timestamp: 2026-09-15 03:31:54 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问剩余时间；只读查询已有进程与 cache 完成标记，并记录证据。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 诊断现有 GPU1 KNN 任务并追加 activity；校正上一启动条目的时区误写（北京时间 11:17 对应 UTC 03:17），保留原 activity_id/run_id；不改运行、代码、配置或数据。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: oicm_v1_4_offline_knn_gpu1_20260915_031824
+- run_status: RUNNING
+- command: `ps -p 2422452 -o pid,etime,lstart,args`；`nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader`；graspenv Python 使用 `Path.glob('**/geometry/manifest.json')` 扫描两根目录，按 `offline_knn_min_global` 和六个派生文件/链接存在性统计完成量，以 `np.load(source_frame_id.npy, mmap_mode='r')` 读取帧数，以 `/proc/2422452/stat` 和 `/proc/uptime` 计算进程运行时间。
+- output: [data/processed_data/oicm_v1_4_raw](../../../../../data/processed_data/oicm_v1_4_raw/)
+- cache_manifest: [data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+- completed_manifest_example: [data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2/s10/torussmall_inspect_1/geometry/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2/s10/torussmall_inspect_1/geometry/manifest.json)
+- evidence: 扫描于 UTC 03:30:23 开始，持续数秒；PID 2422452 从 UTC 03:16:55 运行。GRAB 已完成 329/1335 序列、108800/406264 帧；ARCTIC 已完成 0/301 序列、0/218273 帧；合计 108800/624537 帧（17.42%），manifest 读取错误 0。进程 stdout 持续推进至第 330 条附近。
+- eta_basis: 本次进程完成 107066 帧（排除启动前已完成的 1734 帧），启动至采样约 807.73s，平均 132.55 帧/s；近 300s 约 134.49 帧/s；剩余约 515737 帧，线性估计约 65 分钟，考虑 NAS/GPU 波动向用户报告剩余 1–1.5 小时。扫描非原子快照，短窗口速率存在几秒采样误差。
+- scope_limit: ETA 仅适用于当前已有 3076 点双手 Inspire geometry 的 KNN 生成，不代表 MANO/Inspire 完整混训导出或训练完成时间。
+- protected_boundary: 未修改代码、配置、cache、split、训练/KNN 进程或 checkpoint。
+- rollback: 本次仅 activity 文档变更；可移除本条诊断并还原上述时区文字，不涉及运行或数据回滚。
+- conclusion: SUPPORTED（完成标记计数和进程推进证据）；INCONCLUSIVE（ETA 为负载条件下的外推，尚未执行全量 KNN 正确性/loader 验证，也不形成科研效果结论）。
+
+**原因**
+
+用实际完成帧数估计剩余时间；前次仅数索引文件会混入修正前产物，本次统一使用修正后的完整标记。
+
+**验证**
+
+比对进程、stdout、逐序列 manifest 与文件存在性；完成量及速度如上。追加后对本 activity 文档执行 `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/ObjectInteractionCm/docs/logs/activity_log.md --worktree --scope-prefix src/task/ObjectInteractionCm/docs/logs/activity_log.md --check-links`；审计范围只覆盖本日志，不覆盖既有 dirty 代码。
+
+**规范反馈**
+
+既有启动条目将北京时间标成 UTC，导致按 timestamp 选最新记录的审计会误选；本次只纠正该条时区并保留标识。无须修改公共规范，无审批阻碍。
+
+## 2026-09-15 04:59:10 +0000 — OakInk2 主动作工具帧切分启动
+
+- activity_id: ACT-20260915-045910-OICM-OAK-ACTIVE-TOOL
+- timestamp: 2026-09-15 04:59:10 +0000
+- modification_version: V1.4.2
+- operation_category: [code, data, operation]
+- primary_task_mode: run-only/operation
+- change_level: L2（OakInk2 多物体选择与帧筛选语义）
+- approval: user-approved
+- approval_basis: 用户明确确认“只保留主动操作的工具”，并要求在运动区间内按手物距离切分；剪刀剪纸只保留剪刀。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 新增 OakInk2 active-tool 帧选择器；读取 NAS annotation、object_part_tree、object pose 与既有 Stage3 hand_to_obj_min_dist；输出独立 NAS 索引，不复制 Stage3 数组，不修改 GRAB/ARCTIC、既有 OakInk2 cache、split 或训练。
+- files: [src/task/ObjectInteractionCm/tools/data/split_oakink2_active_tool.py](../tools/data/split_oakink2_active_tool.py)
+- run_id: oakink2_active_tool_segments_v1_20260915_045910
+- run_status: RUNNING
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --stage3-root /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1`
+- output: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1) PENDING
+- evidence: 脚本已通过 graspenv `py_compile`；全量进程 PID 2576157 存活并持续读取 NAS，当前运行约 2 分钟，输出尚未 finalize。
+- selection_policy: 先按对象位姿计算运动区间（平移阈值 1 mm 或相邻帧旋转超过 1 度），再在该区间取左右手对所选工具/其部件的最小距离严格小于 2 cm；部件按 object_part_tree 合并；无法唯一确定工具写入 uncertain 清单。
+- protected_boundary: 既有代码、训练、GRAB/ARCTIC cache、OakInk2 Stage3 数组和 split 未修改。
+- rollback: 停止 PID 2576157 并删除独立输出目录；代码删除/恢复入口为本条新增脚本路径。
+- conclusion: INCONCLUSIVE（运行中；完成后需检查选段计数、uncertain 清单、帧 ID、2 cm 条件和剪刀样例）。
+
+**原因**
+
+按用户确认的 active-tool-only 规则生成 OakInk2 帧选择索引，供后续 Inspire 导出使用。
+
+**验证**
+
+已执行 `.../graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/tools/data/split_oakink2_active_tool.py`；进程检查 `ps -p 2576157` 显示运行中。终态验证待 PENDING 输出生成。
+
+## 2026-09-15 04:35:34 +0000 — GRAB/ARCTIC 离线 KNN 生成完成
+
+- activity_id: ACT-20260915-043534-OICM-OFFLINE-KNN-COMPLETE
+- timestamp: 2026-09-15 04:35:34 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation, diagnostic, documentation]
+- primary_task_mode: run-only/operation
+- change_level: L3（全量 NAS cache 写入的既有获批运行；本条终态核对仅追加记录）
+- approval: user-approved
+- approval_basis: 用户已明确要求使用 GPU 为当前 GRAB/ARCTIC 双手 Inspire geometry 生成离线 KNN；本条闭合对应运行并核对终态。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2（终态统一记录；运行发生于原 `oyx` 工作树）
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 核对既有 GRAB/ARCTIC 离线 KNN 运行终态；不重算、不修改 cache、训练配置、split 或 checkpoint。
+- run_id: oicm_v1_4_offline_knn_gpu1_20260915_031824
+- run_status: COMPLETED
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.build_bilateral_offline_knn --roots /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2 /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/arctic_inspire_bilateral_v2 --device cuda:1 --obj-chunk 512`
+- output: [data/processed_data/oicm_v1_4_raw](../../../../../data/processed_data/oicm_v1_4_raw/)
+- cache_manifest: [data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+- completed_manifest_example: [data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2/s7/pyramidmedium_inspect_1/geometry/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2/s7/pyramidmedium_inspect_1/geometry/manifest.json)
+- last_step: N/A（数据处理任务）
+- last_epoch: N/A（数据处理任务）
+- best_metric: N/A（数据处理任务）
+- evidence: 原执行器记录命令于 04:35:34 正常退出，exit code 0；GRAB 1335/1335、ARCTIC 301/301 条序列均存在 `obj_knn_indices.npy` 且 manifest 标记 `offline_knn_min_global=true`，遗留 `.partial` 文件为 0。代表性 GRAB/ARCTIC 数组分别核对为 KNN `[T,4096,32] uint16`、object mask `[T,4096] bool`、hand mask `[T,3076] bool`、min distance `[T] float32`，抽查索引范围小于 3076。
+- protected_boundary: 原始 GRAB/ARCTIC、既有 geometry、训练运行、split、配置和 checkpoint 未修改。
+- rollback: 本条仅补充终态记录；如需回滚数据任务，按启动条目删除四类 KNN 派生文件和对应链接，不触及原 geometry。
+- conclusion: SUPPORTED（任务自然完成、全量完成标记和文件计数）；INCONCLUSIVE（尚未对全部数组逐值校验，也未完成 unique-KNN loader 全量训练）。
+
+**原因**
+
+旧会话结束前运行已完成，但 activity 仍停留在 `RUNNING`；本条将唯一时间线闭合为实际终态。
+
+**验证**
+
+只读比对旧会话执行事件、1636 个逐序列 manifest、派生文件计数、`.partial` 文件和两源代表性数组的 shape、dtype、索引范围。
+
+**规范反馈**
+
+该历史数据处理运行没有独立 `run_manifest.json`，仅更新逐序列 manifest 并复用总 cache manifest；本条保留这一追溯缺口，不事后伪造运行清单。后续 producer 应在启动时生成独立 run manifest。
+
+## 2026-09-15 06:07:28 +0000 — OakInk2 主动作工具帧切分完成
+
+- activity_id: ACT-20260915-060728-OICM-OAK-ACTIVE-TOOL-COMPLETE
+- timestamp: 2026-09-15 06:07:28 +0000
+- modification_version: V1.4.2
+- operation_category: [data, operation, diagnostic, documentation]
+- primary_task_mode: run-only/operation
+- change_level: L2（主动工具、运动区间和 2 cm 帧选择语义）
+- approval: user-approved
+- approval_basis: 用户确认多物体段只保留主动操作工具，剪刀剪纸只保留剪刀，并要求不确定情况显式列出。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2（终态统一记录；运行发生于原 `oyx` 工作树）
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 核对既有 OakInk2 帧选择运行及输出；不把选择结果接入正式 cache、index、scale 或训练。
+- run_id: oakink2_active_tool_segments_v1_20260915_045910
+- run_status: COMPLETED
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --stage3-root /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1`
+- output: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/)
+- manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/manifest.json)
+- index: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/index.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/index.json)
+- last_step: N/A（数据处理任务）
+- last_epoch: N/A（数据处理任务）
+- best_metric: N/A（数据处理任务）
+- evidence: 原执行器记录命令于 06:07:28 正常退出，exit code 0；输出含 2596 个有效选择段、2170451 个原始 frame ID、30 个显式 uncertain 段，其中 25 个主动工具不唯一、5 个没有对象标注；另有 212 个选中对象无显著运动、2 个运动段没有严格小于 2 cm 的帧，按既定筛选条件计数后排除。
+- protected_boundary: OakInk2 原始 annotation、Stage3 数组、GRAB/ARCTIC cache、正式 split、scale、配置和 checkpoint 未修改。
+- rollback: 删除该独立选择目录和本条终态记录即可；不触及源数据或其他 cache。
+- conclusion: SUPPORTED（切分程序自然完成、manifest/index 可读且统计一致）；INCONCLUSIVE（30 个 uncertain 段尚待用户决定，结果尚未进入正式 producer 或训练）。
+
+**原因**
+
+旧会话中的帧选择进程已经自然结束，需要闭合运行状态并将待确认样本显式交接。
+
+**验证**
+
+只读解析 manifest/index，汇总 selected frame ID、uncertain reason 和对象组合；对照脚本确认运动阈值 1 mm/1 度、距离严格小于 2 cm、左右手距离 union 及部件树归并逻辑。
+
+**规范反馈**
+
+该运行生成 cache manifest 和 index，但没有独立 `run_manifest.json`；212 个静止段和 2 个无 2 cm 帧段只保留聚合计数，没有逐段 reject ledger。后续正式 producer 应补充 run manifest 和逐段拒绝清单，避免只靠计数追溯。
+
+## 2026-09-15 08:17:10 +0000 — GRAB/ARCTIC Inspire-only 训练随旧会话中止
+
+- activity_id: ACT-20260915-081710-OICM-GRAB-ARCTIC-TRAIN-STOPPED
+- timestamp: 2026-09-15 08:17:10 +0000
+- modification_version: V1.4.2
+- operation_category: [experiment, operation, diagnostic, documentation]
+- primary_task_mode: run-only/operation
+- change_level: L3（长时训练终态与 checkpoint 解释）
+- approval: user-approved（原训练范围）；auto（只读终态闭合）
+- approval_basis: 用户已批准使用 NAS 上 GRAB/ARCTIC Inspire geometry cache 启动训练；本条仅根据执行器和产物证据记录非正常中止，不恢复 checkpoint。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2（终态统一记录；运行发生于原 `oyx` 工作树）
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: true
+- scope: 闭合既有 Inspire-only 训练终态；保留运行目录和 checkpoint，不恢复、不删除、不把 TACO/OakInk2 静默混入旧运行。
+- run_id: object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758
+- run_status: STOPPED
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.train --config src/task/ObjectInteractionCm/configs/active/grab_arctic_inspire_geometric_v1_4.yaml --set train.distributed.enable=false --set data.num_workers=4 --set data.persistent_workers=true --device cuda`
+- output: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/)
+- manifest: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/run_manifest.json](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/run_manifest.json)
+- metrics: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/metrics.jsonl)
+- train_log: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/train.log](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/train.log)
+- best_checkpoint: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/checkpoints/best.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/checkpoints/best.pt)
+- latest_checkpoint: [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/checkpoints/latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_inspire_geometric_v1_4_20260915_022758/checkpoints/latest.pt)
+- last_step: 157400（日志最后有效训练 step）
+- last_epoch: 13（未完成该 epoch）
+- best_metric: val/obj/flow_epe_mm=6.849145640342794，epoch=12，step=150840
+- latest_checkpoint_state: epoch=12，step=150840；若恢复会从最近完整 checkpoint 开始，不能声称无损续接 step 157400。
+- exit_reason: 旧会话统一执行器结束时命令状态为 failed、exit code -1；训练日志末尾无 Python traceback、NaN 或 CUDA OOM，进程随后不存在，因此按外部中止记为 `STOPPED`，不归因于实现错误。
+- protected_boundary: 运行目录、两个 checkpoint、metrics、train log、NAS cache、split 和配置均保留；没有覆盖或恢复。
+- rollback: 本条仅补充终态记录；运行产物保持原位，可删除本条恢复文档状态，但不能恢复已丢失的 epoch 13 后半段进程状态。
+- conclusion: INCONCLUSIVE（只完成约 10.4% 计划 step，且仅含 Inspire source；中间 validation 不构成完成实验结论）。
+
+**原因**
+
+旧会话结束时训练命令被执行器终止，原 activity 仍显示 `RUNNING`；需要按现有 checkpoint 和日志闭合终态，避免后续误判为存活训练。
+
+**验证**
+
+比对进程表、GPU 状态、旧会话 `item_completed` 事件、metrics/train log 尾部和 best/latest checkpoint 元数据。最佳与最近完整 checkpoint 都是 epoch 12、step 150840；训练日志继续到 step 157400 后中止。
+
+## 2026-09-15 08:32:08 +0000 — 会话续接与 TACO NAS 几何数据盘点
+
+- activity_id: ACT-20260915-083208-OICM-TACO-INVENTORY
+- timestamp: 2026-09-15 08:32:08 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求浏览并续接指定会话，随后明确后续新增改动统一放入 `feature/objectinteractioncmv2-v1.0.2`；本条只读盘点 TACO 数据并记录状态，不改变数据语义。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 只读核对 NAS TACO-Instructions 的几何训练输入、官方列表、既有全量审计和当前分支；不修改 TACO 数据、split、cache、指导、plan、配置或模型，不启动 producer/训练。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- dataset_list: [dataset/TACO-Instructions/data_lists/v1_overall_data_sequences.txt](../../../../../dataset/TACO-Instructions/data_lists/v1_overall_data_sequences.txt)
+- official_split: [dataset/TACO-Instructions/data_lists/v1_overall_data_train_test_split.txt](../../../../../dataset/TACO-Instructions/data_lists/v1_overall_data_train_test_split.txt)
+- prior_audit_summary: [data/outputs/statics_exec/20260703_115622_TACO-Instructions_canonical_streaming_full_fresh_verified/ledgers/manifest.summary.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/statics_exec/20260703_115622_TACO-Instructions_canonical_streaming_full_fresh_verified/ledgers/manifest.summary.json)
+- data_root: `data/TACO-Instructions/data`（NAS 实际路径 `/mnt/ugreen_nas/storage/Ref2Dex_storage/TACO-Instructions/data`）
+- evidence: Hand_Poses 与 Object_Poses 各有 2317 条序列且交集为 2317；覆盖 151 个 `<tool, action, object>` triplet 和 206 个 `_cm.obj` 物体模型，与官方 Whole Dataset V1 数量一致。既有全量几何审计记录 2317 success、0 failed/blocked。官方 split 为 train 953、test_1 225、test_2 234、test_3 354、test_4 551。代表性序列左右手各 259 帧，逐帧字段为 `hand_pose[48]`、`hand_trans[3]`，tool/target pose 均为 `[259,4,4] float32` 且有限值。
+- modality_boundary: NAS 当前没有四类 RGB/depth video 目录，但 OI-Cm 几何 producer 所需的双手 MANO 参数、tool/target SE(3) 和物体模型均存在；是否需要视频不属于当前几何训练范围。
+- pending_semantics: TACO 使用官方 train 953 还是全部 2317；每条只取 `tool_*` 还是 tool/target 各自产生单物体样本；是否同时保留 native MANO 与 Inspire geometric 两个 source。上述选择会改变 split、cache/schema 和训练预算，需进入新的 final guidance/plan 后才能实现。
+- protected_boundary: 当前 GRAB/ARCTIC/OakInk2 数据、V1.4 cache、旧训练 checkpoint、现有 ObjectInteractionCmv2 分支提交和所有用户未提交改动均未修改。
+- rollback: 删除本条及前三条终态补录即可回滚本轮文档变更；不涉及数据或运行产物。
+- conclusion: SUPPORTED（TACO Whole Dataset V1 几何标注在 NAS 上完整可用）；INCONCLUSIVE（尚未确认接入语义，也未实现 TACO producer、cache 或训练）。
+
+**原因**
+
+完成指定会话的状态交接，并在当前统一分支上留下可审计的终态和 TACO 可用性证据。
+
+**验证**
+
+只读比对官方 sequence/split 列表、NAS Hand/Object 目录交集、物体模型计数、代表性 pickle/NPY shape 与 finite、既有 2317 条全量审计结果；核对当前分支、HEAD、dirty worktree 和旧会话执行终态。
+
+**规范反馈**
+
+会话运行结束后、终态补录前发生分支切换，导致运行 provenance 与日志承载分支不同；本条同时保留真实运行 base commit 和当前统一记录分支，不改写历史事实。KNN 与 OakInk2 历史运行缺少独立 run manifest，后续正式 producer 需在启动时补齐。
+
+## 2026-09-15 08:44:58 +0000 — OakInk2 30 条 uncertain 逐条语义诊断
+
+- activity_id: ACT-20260915-084458-OICM-OAK-UNCERTAIN-DIAG
+- timestamp: 2026-09-15 08:44:58 +0000
+- modification_version: V1.4.2
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求先说明并解决 OakInk2 的 30 条 uncertain；本条仅诊断和提出待确认映射，不修改数据选择语义。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 逐条关联 uncertain index、官方 program_info、desc_info、task_target、object_part_tree、obj_desc 和原始 annotation 对象清单；不修改 index、split、cache、producer、配置、模型或 checkpoint。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- index: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/index.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/index.json)
+- manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/manifest.json)
+- selector: [src/task/ObjectInteractionCm/tools/data/split_oakink2_active_tool.py](../../tools/data/split_oakink2_active_tool.py)
+- evidence: 30 条中 25 条为 `active_tool_not_unique`、5 条为 `no_objects`。25 条前者中，24 条是真实双主动物体 primitive：21 条的左右手对象列表可直接区分，3 条（bread+donut、bowl+plate、tripod+asbestos mesh）存在手侧列表重叠但自然语言动作仍明确同时操作两个实例；剩余 1 条 `close_laptop_lid` 将 gamecontroller 与 laptop lid 一并列入左手对象，动作描述和相邻 primitive 均指向 laptop lid。5 条空列表分别是打开 laptop lid、关闭 laptop lid、拉出 drawer、打开 book、把 asbestos mesh 放上 tripod，场景 annotation 中均存在对应对象/部件。
+- proposed_resolution: 24 条双主动物体段按物体根拆成两个共享原时间窗的单物体候选；laptop/gamecontroller 条目只取 `O02@0053@00001` laptop lid；5 条空列表依次恢复为 laptop lid `O02@0053@00001`、laptop lid `O02@0053@00001`、moving drawer `O02@0019@00002`、book 两部件 `O02@0060@00001/00002`（同一实例根）、asbestos mesh `O02@0205@00001`。因此 30 条可先恢复为 54 个 object-segment 候选，再分别执行既有 motion-first 与严格小于 2 cm 过滤；54 不是最终保留数。
+- protected_boundary: uncertain index 和 OakInk2 原始 annotation/Stage3、GRAB/ARCTIC cache、split、训练配置、checkpoint、现有用户未提交改动均未修改。
+- rollback: 删除本条活动记录即可；无数据或运行产物需要回滚。
+- conclusion: SUPPORTED（30 条的标注类型、动作语义和候选对象均可由现有文件复核）；INCONCLUSIVE（候选映射尚未获用户确认，也尚未重新运行运动/距离过滤）。
+
+**原因**
+
+把自动选择器的拒绝原因还原为可决策的具体动作，区分真实双主动物体、过宽对象列表和空对象列表，避免把全部 uncertain 静默删除或任意选择一个物体。
+
+**验证**
+
+只读解析 30 条 index 记录，并按 sequence 与 frame range 精确关联官方 program_info/desc_info/task_target；核对 object_part_tree、obj_desc 与 5 条空列表序列的 annotation 对象根。曾启动可选的逐对象 Stage3 深扫，因需要大量解压且不影响语义分类而主动终止；没有写入输出。
+
+## 2026-09-15 09:00:03 +0000 — OakInk2 uncertain 消解实现与全量索引重算启动
+
+- activity_id: ACT-20260915-090003-OICM-OAK-RESOLVE-START
+- timestamp: 2026-09-15 09:00:03 +0000
+- modification_version: V1.4.3
+- operation_category: [code, data, operation, documentation]
+- primary_task_mode: change → run-only/operation
+- change_level: L2（主动对象选择与 index schema 小版本）+ L3（全量 NAS 数据处理长任务）
+- approval: user-approved
+- approval_basis: 用户逐条查看 30 条 uncertain 后明确回复“是的，你修改”，确认 24 条双主动物体拆分、1 条过宽列表纠正和 5 条空列表恢复，并确认重新生成 index。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 修改 Task-local OakInk2 active-tool selector，新增定向测试、V1.4 final plan 增补和 V1.4.3 版本指针；启动全量 motion-first/严格小于 2 cm 重算到独立 v1.1 目录。旧 v1 index 和其他数据保持只读。
+- files: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/tools/data/split_oakink2_active_tool.py](../../tools/data/split_oakink2_active_tool.py)、[src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py](../../tests/test_split_oakink2_active_tool.py)、[src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: oakink2_active_tool_segments_v1_1_20260915_090003
+- run_status: STARTED
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --stage3-root /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1 --run-id oakink2_active_tool_segments_v1_1_20260915_090003 --modification-version V1.4.3`
+- output: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1) PENDING
+- manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/manifest.json) PENDING
+- run_manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json) PENDING
+- implementation: 双主动物体仅在 `bh_main` 且所有根均属于主手对象时按根拆分；唯一工具仍优先，避免把剪刀/纸等被作用对象纳入；6 条标注异常使用精确 sequence/frame-range override；Stage3 距离数组增加序列内只读缓存；schema 从 1.0.0 增至 1.1.0，并生成独立 run manifest。
+- preflight_evidence: `py_compile` 通过；Task-local 定向测试 `5 passed`；全量 2840 primitive 轻量解析得到 single=2177、unique tool=380、unique main=253、bilateral split=24、semantic override=6、unresolved=0；旧 30 条对应 54 个 motion/distance 过滤前候选。
+- protected_boundary: 旧 `oakink2_active_tool_segments_v1`、原始 OakInk2 annotation/Stage3、GRAB/ARCTIC cache、val/test、模型、训练配置、checkpoint 和其他用户未提交改动均不修改；新 index 尚不接入训练。
+- rollback: 停止本次运行并删除独立 `oakink2_active_tool_segments_v1_1` 目录；恢复 selector/test/plan/version/activity 的本次增量。旧 v1 产物不受影响。
+- conclusion: INCONCLUSIVE（全量数据处理已获批并准备启动；需等待新 index、manifest 和统计完成）。
+
+**原因**
+
+落实用户确认的 30 条 uncertain 确定性消解，同时保持单物体 OI-Cm 输入、唯一工具优先和既有运动/距离筛选语义。
+
+**验证**
+
+已执行 `python -m py_compile`、`pytest -q src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py`（5 passed）和全量 program_info 轻量语义预检；全量几何筛选终态待运行完成后补录。
+
+## 2026-09-15 10:24:12 +0000 — OakInk2 uncertain 消解与 v1.1 索引完成
+
+- activity_id: ACT-20260915-102412-OICM-OAK-RESOLVE-COMPLETE
+- timestamp: 2026-09-15 10:24:12 +0000
+- modification_version: V1.4.3
+- operation_category: [code, data, operation, diagnostic, documentation]
+- primary_task_mode: change → run-only/operation → read-only/diagnostic
+- change_level: L2（主动对象选择、显式 override 与 index schema）+ L3（全量 NAS 数据处理）
+- approval: user-approved
+- approval_basis: 用户确认 30 条 uncertain 的逐条消解方案并明确要求修改；运行范围、独立输出和保护边界见同一 run_id 的启动条目。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 完成 OakInk2 active-tool selector V1.4.3 实现、测试和独立 v1.1 全量 index；核对旧 30 条 uncertain 的逐对象去向，不接入正式 cache、scale 或训练。
+- files: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/tools/data/split_oakink2_active_tool.py](../../tools/data/split_oakink2_active_tool.py)、[src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py](../../tests/test_split_oakink2_active_tool.py)、[src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: oakink2_active_tool_segments_v1_1_20260915_090003
+- run_status: COMPLETED
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool --annotation-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview --object-root /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/data/OakInk-v2-hub --stage3-root /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1 --run-id oakink2_active_tool_segments_v1_1_20260915_090003 --modification-version V1.4.3`
+- output: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/)
+- index: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/index.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/index.json)
+- manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/manifest.json)
+- run_manifest: [data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json)
+- completed_at: 2026-09-15 09:56:23 +0000
+- exit_code: 0
+- last_step: N/A（数据处理任务）
+- last_epoch: N/A（数据处理任务）
+- best_metric: N/A（数据处理任务）
+- result: schema `1.1.0`；selected object-segment 2643；selected frame references 2195908；uncertain 0；static-selected candidates 219；no-2cm candidates 2。旧 v1 为 2596 段、2170451 帧引用、30 uncertain，因此净增 47 段和 25457 帧引用。
+- uncertain_resolution: 旧 30 段解析为 54 个过滤前候选。24 个双主动物体段产生 48 个候选，其中 44 个通过；6 个显式 semantic override 中 3 个通过。7 个未保留候选均落入既有静止规则：`scene_01/A003/c437...` 的 bowl，三个 open/close laptop lid，以及 `scene_03/A004/3b1e...`、`scene_03/A004/b5fa...`、`scene_03/A007/2bae...` 的 alcohol burner。全局 no-2cm 计数仍为 2，说明新增候选没有因 2 cm 规则额外淘汰。
+- validation: 最终进程 exit code 0；run manifest 为 `COMPLETED` 且锁定 627 个 annotation、3 个 Stage3 stats 及 object metadata hash；2643 个 `(sequence, frame_range, selected_root)` key 全部唯一，空 selected object 为 0，frame count 与数组长度全部一致，frame ID 全在 motion bounds 内。旧 uncertain 的 47 个保留候选中 selection reason 为 bilateral split 44、semantic override 3，保存的最小手物距离最大值为 0.0140528 m。
+- tests: `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py src/task/ObjectInteractionCm/tests/test_arctic_landmark_contract.py` → `10 passed in 0.93s`；`py_compile` 与 `git diff --check` 通过。
+- protected_boundary: 旧 v1 index、OakInk2 原始 annotation/Stage3、GRAB/ARCTIC cache、现有 val/test、模型、训练配置、checkpoint 和其他用户未提交改动均未修改；新 index 尚未接入训练。
+- rollback: 删除独立 v1.1 输出目录，并恢复本次 selector/test/plan/version/activity 增量；旧 v1 仍可直接用于对照。
+- conclusion: SUPPORTED（30 条 uncertain 的确定性消解、全量 index 生成和结构验证）；INCONCLUSIVE（尚未生成 OakInk2 正式几何 cache，也未评估训练收益）。
+
+**原因**
+
+闭合已获用户批准的 uncertain 消解实现和全量数据处理，并把语义解析、几何过滤与训练效果结论分开记录。
+
+**验证**
+
+核对进程 exit code、index/manifest/run manifest、v1/v1.1 计数差异、旧 30 条的 54 个候选映射、唯一键、对象/帧字段和定向测试；终态链接审计在本条追加后执行。
+
+**规范反馈**
+
+新版已补齐独立 `run_manifest.json`。当前 producer 对静止和 no-2cm 候选只保存聚合计数，7 个静止候选由新旧 index 与已确认映射反查得到；若后续需要长期逐条审计所有 reject，建议在下一次已确认的 schema 修改中增加 reject ledger，本次不扩大已批准范围。
+
+## 2026-09-15 12:51:41 +0000 — OakInk2 active-tool v1.1 原生轨迹查看器启动
+
+- activity_id: ACT-20260915-125141-OICM-OAK-VIS-RUNNING
+- timestamp: 2026-09-15 12:51:41 +0000
+- modification_version: V1.4.4
+- operation_category: [code, diagnostic, operation, documentation]
+- primary_task_mode: change → run-only/operation
+- change_level: L1（Task-local 只读查看器、定向测试与独立运行目录）
+- approval: user-approved
+- approval_basis: 用户提出先可视化检查 OakInk 切分轨迹，并在确认原始双手 MANO、选中/上下文对象、最终保留帧与 primitive 全帧切换、47 条新增和 7 条静止对照方案后明确回复“可以”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 新增 Task-local OakInk2 active-tool v1.1 交互查看器、实验定义、说明与定向测试；只读重建双手 quaternion MANO，并将 Stage3 对象点按原 annotation 位姿放回 OakInk2 native world。默认查看 v1→v1.1 新增段，可切换双物体拆分、语义修复、静止排除对照和全部有效段。
+- files: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCm/docs/README.md](../README.md)、[src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/README.md](../../research/oakink2_segment_visualizer/README.md)、[src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/experiment.yaml](../../research/oakink2_segment_visualizer/experiment.yaml)、[src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/run.py](../../research/oakink2_segment_visualizer/run.py)、[src/task/ObjectInteractionCm/tests/test_oakink2_segment_visualizer.py](../../tests/test_oakink2_segment_visualizer.py)、[src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: oakink2_segments_v1_1_20260915T125052Z
+- run_status: RUNNING
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.research.oakink2_segment_visualizer.run --category new --host 127.0.0.1 --port 8142 --output src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z`
+- viewer: `http://127.0.0.1:8142`
+- output: [src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z](../../research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z/)
+- run_manifest: [src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z/run_manifest.json](../../research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z/run_manifest.json)
+- viewer_log: [src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z/viewer.log](../../research/oakink2_segment_visualizer/output/oakink2_segments_v1_1_20260915T125052Z/viewer.log)
+- result: v1.1 有效段 2643 条；v1→v1.1 新增 47 条，其中双主物体拆分 44 条、语义修复 3 条；静止排除对照 7 条。默认加载 `selected:0075`。服务监听 `127.0.0.1:8142`，HTTP 检查返回 200。
+- validation: `python -m py_compile` 通过；Task-local pytest 为 `4 passed in 0.84s`；`--category new --check-only` 与 `--category static --check-only` 均通过。两类 smoke 各抽取 3 个原始 frame ID，左右 MANO shape 均为 `[3, 778, 3]`、finite=true，选中对象均得到 4096 个 native-world 点；分类计数一致。新增样例缺少一个非选中上下文对象的 Stage3 点云，已在 GUI 状态中显式报告，不影响选中对象轨迹。
+- protected_boundary: v1/v1.1 index、OakInk2 原始 annotation/Stage3、训练 cache、split、scale、配置、模型、checkpoint、既有运行和其他用户未提交改动均未修改；未批量复制 2643 条轨迹，查看器不写回选择结果。
+- rollback: 停止查看器进程并删除本次独立 output；如需撤回实现，只移除 `oakink2_segment_visualizer/`、对应测试、V1.4 plan 第 11 节、README 链接、V1.4.4 指针及本条活动记录。输入数据不受影响。
+- conclusion: SUPPORTED（v1.1/v1 差异分类、原生坐标读取重建链路和本地交互服务启动）；INCONCLUSIVE（尚需用户通过可视化判断切分数据质量，且不构成训练收益证据）。
+
+**原因**
+
+在正式接入 OakInk2 cache 与训练前，提供不会改变 index 的逐段人工复核入口，并把最终保留帧与原 primitive 时间窗清楚区分。
+
+**验证**
+
+已核对 schema、v1/v1.1 差集、7 条静止对照、原始 frame ID、双手 MANO finite、选中/上下文对象世界坐标、HTTP 可达性、run manifest 和运行日志；最终链接审计在本条追加后执行。
+
+## 2026-09-15 13:47:05 +0000 — V1.4 GRAB stride=10 跨帧点流查看器启动
+
+- activity_id: ACT-20260915-134705-OICM-GRAB-STRIDE10-VIS
+- timestamp: 2026-09-15 13:47:05 +0000
+- modification_version: V1.4.5
+- operation_category: [code, diagnostic, operation, documentation]
+- primary_task_mode: change → run-only/operation
+- change_level: L1（Task-local 查看器兼容当前 V1.4 schema 和只读点流统计）
+- approval: user-approved
+- approval_basis: 用户明确要求复用此前带跳帧选项的 GRAB 可视化，启动 `stride=10` 版本以人工判断跨度是否不合理。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 旧 V1.2.5 index 已不在当前数据盘；最小扩展既有 GRAB Viser，使其在保留旧 v1.1/单手入口兼容的同时，只读加载当前 V1.4 index v1.2 与 bilateral geometry。未来 `Δ=1..10` 继续叠加对应 cache 帧，并新增时间跨度、原始 frame 差和手/物对应点流 median/P95/max；不改变训练 flow。
+- files: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCm/docs/README.md](../README.md)、[src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[src/task/ObjectInteractionCm/visualize_grab.py](../../visualize_grab.py)、[src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py](../../tests/test_visualize_grab_v1_4.py)、[src/task/ObjectInteractionCm/research/grab_stride_visualization/README.md](../../research/grab_stride_visualization/README.md)、[src/task/ObjectInteractionCm/research/grab_stride_visualization/experiment.yaml](../../research/grab_stride_visualization/experiment.yaml)、[src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- run_id: grab_stride10_20260915T134656Z
+- run_status: RUNNING
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/index.json --split train --sequence grab/s1/airplane_fly_1 --frame 103 --future-delta 10 --point-display both --mesh-display off --host 127.0.0.1 --port 8143 --fps 8 --output src/task/ObjectInteractionCm/research/grab_stride_visualization/output/grab_stride10_20260915T134656Z`
+- viewer: `http://127.0.0.1:8143`
+- output: [src/task/ObjectInteractionCm/research/grab_stride_visualization/output/grab_stride10_20260915T134656Z](../../research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/)
+- config: [src/task/ObjectInteractionCm/research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/config.json](../../research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/config.json)
+- run_manifest: [src/task/ObjectInteractionCm/research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/run_manifest.json](../../research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/run_manifest.json)
+- viewer_log: [src/task/ObjectInteractionCm/research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/viewer.log](../../research/grab_stride_visualization/output/grab_stride10_20260915T134656Z/viewer.log)
+- initial_sample: `grab/s1/airplane_fly_1`，cache frame 103→113，source frame 412→452，30 Hz 时间跨度 0.333 秒，未夹到末帧；当前帧 hand-object 最近距离 0.894 mm，candidate active=true。物体点流 median/P95/max 为 181.93/186.74/188.05 mm，双手点流为 161.63/194.75/202.51 mm。
+- trajectory_diagnostic: 该轨迹 279 帧，其中 234 个 current frame 为 2 cm active；对这些 current frame 的 `Δ=10` 双手逐帧 median flow 再统计，median=160.94 mm、P95=301.10 mm、max=694.60 mm。该量级提示 10 stride 可能跨过较大运动甚至接触状态变化，但是否调整训练 stride 等待用户可视化判断，不在本次自动修改。
+- validation: `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py` 通过；Task-local pytest `2 passed in 1.04s`；真实 V1.4 `--check-only` 通过；Viser 监听 `127.0.0.1:8143` 且 HTTP 返回 200。
+- limitation: 当前 V1.4 Inspire-geometric cache 保存了双手点云但没有 viewer 可读取的 Inspire qpos，因此本次默认关闭手 mesh；点流点云和数值统计完整可用，物体 mesh 可用。
+- protected_boundary: GRAB/ARCTIC/OakInk2 cache 和 index、split、flow GT、stride 训练配置、模型、checkpoint、既有 8142 OakInk2 viewer 与其他用户未提交改动均未修改。
+- rollback: 停止 8143 查看器并删除本次独立 output；恢复 `visualize_grab.py` 的 v1.2/bilateral 兼容与统计增量、对应测试/研究定义、plan 第 12 节、README 链接、V1.4.5 指针和本条活动记录。数据无需回滚。
+- conclusion: SUPPORTED（当前 V1.4 GRAB 双手 cache 的 `t→t+10` 读取、时间跨度、点流统计及交互服务启动）；INCONCLUSIVE（单条轨迹与可视化尚不足以决定全局 stride 上限，等待人工检查和更广泛统计）。
+
+**原因**
+
+在继续 OakInk2 30 Hz 导出前，先用与当前训练 cache 一致的 GRAB 双手数据直观看清最大 stride 对应的真实时间与空间跨度，避免沿用不合适的未来帧范围。
+
+**验证**
+
+已验证旧/新 index schema 兼容、bilateral candidate mask、对应点流统计、真实 source frame 关系、运行清单、HTTP 可达性和服务进程；最终链接审计在本条追加后执行。
+
+## 2026-09-15 14:51:31 +0000 — V1.4 GRAB Inspire 手点云散裂诊断
+
+- activity_id: ACT-20260915-145131-OICM-INSPIRE-DOUBLE-FK-DIAG
+- timestamp: 2026-09-15 14:51:31 +0000
+- modification_version: V1.4.5
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读数值诊断与活动记录）
+- approval: auto
+- approval_basis: 用户指出正在运行的 GRAB stride 查看器中手点零散；本次只调查已有 cache 与导出实现，不修复代码或重导数据。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- parent_activity_id: ACT-20260915-134705-OICM-GRAB-STRIDE10-VIS
+- scope: 对查看器初始样例 `grab/s1/airplane_fly_1` 的 frame 103/113，将 bilateral 3076 点拆为左右各 1538 点，检查包围盒、点间距和连通分量，并与同帧 Stage-4 MANO 点云及零姿态 Inspire FK 对照；不改变查看器、导出器、cache、index、split、GT 或 stride。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- evidence_cache: [当前 GRAB bilateral geometry manifest](../../../../../data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2/s1/airplane_fly_1/geometry/manifest.json)
+- evidence_code: [Stage-4 Inspire 导出器](../../tools/data/retarget_stage4_bilateral_inspire.py)、[Inspire canonical pool 构建](../../research/hand_region_sampling/run.py)、[Inspire FK surface 实现](../../tools/data/build_dexplore_rl_cache.py)
+- result: frame 103 单只 Inspire 手 bbox 分别约为 `357×149×402 mm` 和 `350×135×400 mm`，而对应 MANO 手约为 `69×121×179 mm` 和 `109×141×121 mm`。以 20 mm 半径建图时，两只 Inspire 手各仍有 7 个连通分量，MANO 均为 1 个；查看器显示的是完整 3076 点，不存在阈值过滤造成的缺点。全量 manifest 扫描显示 GRAB 1335/1335、ARCTIC 301/301 条 bilateral Inspire 序列都标记为同一 `stage4_mano_to_inspire_position_retarget` producer，因此在重导验证前均应视为受同一结构性错误影响；OakInk2 不属于该脚本的输入范围，本次不据此外推。
+- root_cause: `_build_inspire_pool()` 已在零姿态下将每个 visual 的 mesh-local 三角面乘以 `link_transform @ visual.local_transform`，但 `retarget_stage4_bilateral_inspire.py` 把该整手坐标系采样结果直接交给 `_fk_surface()`；后者再次把它当作 visual-local 点乘同类 link FK，造成逐 link 的二次变换和手掌/指节散裂。零姿态复现实验中，正确单次变换 bbox 为 `95×163×246 mm`，当前双重变换变成 `230×314×384 mm`；先逆回 visual-local 再做 FK 后与原零姿态 cloud 最大误差仅 `0.0000019 mm`。
+- visualization_factor: `future_delta=10` 还会同时叠加左右手在当前帧与未来帧的四组点；frame 103→113 的左右手质心移动约 113/189 mm，会进一步放大“零散”观感，但不是根因。
+- run_status: 既有 `grab_stride10_20260915T134656Z` 查看器仍为 RUNNING；本次未启动新运行、未生成新数据产物。
+- protected_boundary: GRAB/ARCTIC/OakInk2 原始数据与 cache、index、split、坐标系、GT、训练配置、模型、checkpoint、两个既有查看器及用户其他未提交改动均未修改。
+- rollback: 仅删除本条活动记录即可回滚本次文档增量；诊断过程无数据或运行产物需要回滚。
+- conclusion: SUPPORTED（当前样例散裂来自 Stage-4 Inspire surface 的逐 link 双重 FK，而非查看器漏画点）；INVALID_IMPLEMENTATION（现有 GRAB/ARCTIC bilateral Inspire 手几何及其手点流不能作为预期机器人手表面证据）；INCONCLUSIVE（尚未获批修复或重导，OakInk2 不在本次 producer 范围内）。
+
+**原因**
+
+确认用户看到的异常是否来自显示设置、stride 叠帧或已有训练几何，以避免基于损坏的 Inspire 点流判断 stride 合理性。
+
+**验证**
+
+使用 SciPy KDTree/连通分量比较 frame 103/113 的 bilateral Inspire 与 parent MANO；用同一 URDF、seed=2024 和 1538 点复现 `_build_inspire_pool → _sample_uniform_surface → _fk_surface`，并以逆回 visual-local 后的单次 FK 作为控制；扫描 GRAB/ARCTIC bilateral geometry manifest 的 producer 类型与覆盖计数。仅完成工程数据一致性诊断，未形成训练效果结论。
+
+## 2026-09-15 15:00:15 +0000 — 新旧 GRAB 可视化几何链路对照
+
+- activity_id: ACT-20260915-150015-OICM-GRAB-VIS-HISTORY-DIAG
+- timestamp: 2026-09-15 15:00:15 +0000
+- modification_version: V1.4.5
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（只读历史与实现对照、活动记录）
+- approval: auto
+- approval_basis: 用户追问为什么此前 GRAB 可视化没有手点散裂；本次只比较历史 viewer 输入与新旧 producer，不修复或重导。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- parent_activity_id: ACT-20260915-145131-OICM-INSPIRE-DOUBLE-FK-DIAG
+- scope: 对照最早 `cm_object_v2/grab` 原生 bilateral MANO viewer、V1.2.5 MANO/Inspire-RL viewer 和当前 V1.4 GRAB→bilateral Inspire viewer 的手点来源、surface sampling 坐标语义、FK 次数及既有验证覆盖；不改代码、cache、index、训练或运行。
+- files: [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md)
+- evidence_code: [旧 V1.2.5 Inspire cache builder](../../tools/data/build_dexplore_rl_cache.py)、[当前 V1.4 Stage-4 Inspire adapter](../../tools/data/retarget_stage4_bilateral_inspire.py)、[V1.4 数据合同测试](../../tests/test_v1_4_data_contract.py)
+- finding: 2026-09-06 最早 GRAB viewer 直接读取 `cm_object_v2/grab` 的左右 MANO 点，各 1538 点，不经过 Inspire URDF/FK。V1.2.5 的 Inspire-RL producer 使用 `InspireUrdfModel.surface_samples()`，明确保留 mesh-local 点，然后 `_fk_surface()` 只施加一次 `link_transform @ visual.local_transform`；历史验证中 Inspire mesh 与 cache 点云误差为 2.0421 mm。因此此前正常并不能覆盖 2026-09-14 新增的 V1.4 双手 adapter。
+- regression_origin: V1.4 adapter 为完整 GRAB/ARCTIC 双手 geometric 扩容改用 `_build_inspire_pool()`；该 helper 的输出是已摆到 canonical zero-q 整手坐标的点，与旧 `_fk_surface()` 所要求的 mesh-local 输入语义不兼容，由此引入双重 FK。错误不是旧 viewer 或旧 cache 逐渐变化，而是切换到新 V1.4 producer 后出现。
+- missed_gate: V1.4 现有定向测试验证 bilateral 拼接顺序、shape、finite、KNN 索引与文件完整性，但没有逐 side 的 hand bbox/连通性、FK 后 mesh-to-point 距离或 target fingertip residual。全量核验中的 `bad_count=0` 因而只证明 schema/数组可读，不证明几何正确；这是此前把“导出完成”误当成“几何正确”的验证缺口。
+- run_status: 既有 `grab_stride10_20260915T134656Z` 查看器仍为 RUNNING；本次未启动新运行。
+- protected_boundary: 新旧 GRAB/ARCTIC/OakInk2 数据与 cache、index、split、GT、stride、模型、checkpoint、既有 viewer 和用户其他未提交改动均未修改。
+- rollback: 仅删除本条活动记录即可回滚文档增量。
+- conclusion: SUPPORTED（此前正常是因为使用 MANO 或正确的 mesh-local→单次 FK 旧链路；散裂是 V1.4 新 adapter 的回归）；INVALID_IMPLEMENTATION（V1.4 的 shape/KNN smoke 不足以证明手几何有效，相关“全量导出成功”结论需要降级为文件层完成）。
+
+**原因**
+
+区分旧数据本身是否曾经正确、viewer 是否回归和 V1.4 新 producer 是否引入错误，并明确为什么已有完成性检查没有拦截该问题。
+
+**验证**
+
+核对历史 activity 中三代 viewer 的真实命令、index/source 与 mesh 对齐结果；静态对照旧 builder 的 mesh-local 采样注释及调用链、V1.4 adapter 的 canonical pool 调用链和当前 V1.4 测试断言范围。未运行新数据处理或训练。
+
+## 2026-09-15 15:56:11 +0000 — 续接 Inspire 双重 FK 修复 pilot 并交付查看器
+
+- activity_id: ACT-20260915-155611-OICM-FKFIX-PILOT-VIEWER
+- timestamp: 2026-09-15 15:56:11 +0000
+- modification_version: V1.4.6
+- operation_category: [code, data, diagnostic, operation, documentation]
+- primary_task_mode: change → run-only/operation
+- change_level: L2（此前已批准的 surface 坐标修复与两条 pilot）；本次续接的代码增量为 L0 运行版本元数据。
+- approval: user-approved
+- approval_basis: 会话 `01a0a4fb-2cef-70d0-ba2a-1c18c834f686` 中用户先要求“那你解决目前这个问题”，随后明确限定“先导部分然后可视化给我看吧”；本次用户要求浏览该会话并继续。沿用同一授权，不扩展到全量重导。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- parent_activity_id: ACT-20260915-145131-OICM-INSPIRE-DOUBLE-FK-DIAG
+- scope: 完成 V1.4 plan §13 已批准的双重 FK 修复、GRAB/ARCTIC 各一条 pilot 与只读查看器交付；本次复用此前已完成的两条产物，不重复导出。
+- plan: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)
+
+**文件**
+
+- [src/task/ObjectInteractionCm/tools/data/retarget_stage4_bilateral_inspire.py](../../tools/data/retarget_stage4_bilateral_inspire.py) — 此前会话已完成 canonical zero-q → visual-local 的逆变换、单次 FK、指定序列和修复 provenance；本次读取和回归验证，无新增 exporter 改动。
+- [src/task/ObjectInteractionCm/tests/test_retarget_stage4_bilateral_inspire.py](../../tests/test_retarget_stage4_bilateral_inspire.py) — 此前新增真实 URDF 零姿态往返、旧路径显著偏移及采样/法向回归；本次复跑。
+- [src/task/ObjectInteractionCm/research/inspire_fk_repair/run.py](../../research/inspire_fk_repair/run.py)、[src/task/ObjectInteractionCm/research/inspire_fk_repair/experiment.yaml](../../research/inspire_fk_repair/experiment.yaml) — 此前新增两条 pilot 的隔离导出、报告与 viewer-only index；本次无新增修改。
+- [src/task/ObjectInteractionCm/research/inspire_fk_repair/README.md](../../research/inspire_fk_repair/README.md) — 本次补充运行版本参数、Δ 操作和几何验证边界。
+- [src/task/ObjectInteractionCm/visualize_grab.py](../../visualize_grab.py) — 本次新增 `--modification-version` 并由该参数写入 manifest；默认保留 V1.4.5，修复 pilot 显式使用 V1.4.6。原有未提交的 V1.4 查看器扩展保持。
+- [src/task/ObjectInteractionCm/docs/README.md](../README.md)、[src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 此前会话已增加 pilot 导航、final §13 和 V1.4.6 指针；本次保持原样。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 补记因会话中断尚未交付的实现、pilot 终态、旧实例停止和本次运行。
+
+**原因**
+
+此前会话已在 15:49:25 完成两条修复导出，但查看器把 manifest 版本硬编码为 V1.4.5；该实例在
+15:50:25 停止后会话中断。本次恢复实际输入、最终计划与授权，补齐参数、独立重启和证据记录。
+
+**运行与产物**
+
+- pilot_run_id: `inspire_fkfix_pilot_20260915T154906Z`；run_status: `COMPLETED`；完成于 `2026-09-15T15:49:25+00:00`，本次只读确认终态。GRAB `s1/airplane_fly_1` 279 帧，ARCTIC `s01/box_use_01` 889 帧。
+- pilot_command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.research.inspire_fk_repair.run --output src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z`；两个 producer 子命令见 pilot manifest。
+- pilot_output: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/)
+- pilot_manifest: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/run_manifest.json](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/run_manifest.json)
+- pilot_report: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/pilot_report.json](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/pilot_report.json)
+- pilot_index: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/index.json](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/index.json)
+- pilot_export_log: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/export.log](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/export.log)
+- stopped_viewer: 旧嵌套实例 `run_id=viewer`、`run_status=STOPPED`，停止原因是版本元数据误写；原记录与产物保留，不覆写历史版本。[src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/viewer/run_manifest.json](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/viewer/run_manifest.json)
+- run_id: inspire_fkfix_viewer_20260915T155554Z
+- run_status: RUNNING
+- pid: 3338972（独立进程；停止前须再次核对命令，避免 PID 复用）
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/index.json --split train --sequence grab/s1/airplane_fly_1 --frame 103 --future-delta 10 --point-display both --mesh-display off --host 127.0.0.1 --port 8144 --fps 8 --modification-version V1.4.6 --output src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z`
+- viewer: `http://127.0.0.1:8144`
+- viewer_output: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z](../../research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/)
+- viewer_config: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/config.json](../../research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/config.json)
+- viewer_manifest: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/run_manifest.json](../../research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/run_manifest.json)
+- viewer_log: [src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/viewer.log](../../research/inspire_fk_repair/output/inspire_fkfix_viewer_20260915T155554Z/viewer.log)
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_retarget_stage4_bilateral_inspire.py src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：`4 passed in 1.75s`。
+- 两条只读 smoke 的公共命令为 `/home/wbcd/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --check-only --index src/task/ObjectInteractionCm/research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/index.json --split train --future-delta 10 --point-display both --mesh-display off --modification-version V1.4.6`，分别追加 `--sequence grab/s1/airplane_fly_1 --frame 103` 和 `--sequence arctic/s01/box_use_01 --frame 437`，均退出 0。
+- GRAB 103→113 对应 source frame 412→452，Δ=0.333333 s；手点流 median/P95/max=`148.851/184.899/187.091 mm`。ARCTIC 437→447 的手点流为 `72.243/76.449/77.976 mm`。两条均读取 3076 个手点、4096 个物体点，未发生末帧 clamp。
+- 已有 pilot 报告抽查帧中，两数据集左右手在 20 mm 半径下各为 1 个连通分量。GRAB 最大单侧尺寸约 239.813 mm，ARCTIC 约 228.385 mm；最大法向单位误差约 `2.043e-7`。这些数字仅覆盖报告抽查帧，不能外推所有帧和全部数据。
+- `curl --noproxy '*' --max-time 10 -s -o /dev/null -w 'HTTP %{http_code}\n' http://127.0.0.1:8144` 返回 HTTP 200；`ss -ltnp '( sport = :8144 )'` 与 `ps -p 3338972 -o pid,ppid,etime,args` 确认命令及端口；manifest/config 为 V1.4.6，viewer.log 确认初始渲染流程完成且可选两条轨迹。未声称已人工审阅浏览器画面。
+- `git diff --check` 通过；交接审计使用 `audit_diff.py --worktree --check-links`，以本节列出的实现文件、实验目录、计划、指针和 activity 的显式 `--scope-prefix` 限定范围，保护其余未提交改动。
+
+**结论与保护边界**
+
+- conclusion: `SUPPORTED`（单次 FK 回归与两条 pilot 工程读取）；`INCONCLUSIVE`（整体重定向接触保真、左右手资产正确性、stride 合理性及科研效果）。
+- 当前 exporter 仍沿用左手加载失败时使用右手 surface 资产的既有回退；这是与 double-FK 不同的限制，本次未扩展修复。MANO 对照点距不是指尖残差或 mesh 对齐证明。viewer 不支持当前 geometric hand mesh，ARCTIC 物体 mesh 也不在 GRAB mesh 根下，故启动时使用纯点云显示。
+- 旧 v2 全量 cache、KNN/index、OakInk2、原始 annotation/Stage3、val/test、GT 定义、stride、模型、checkpoint 及无关用户改动保持。未创建 v3 全量 root，未全量重导或启动训练。
+- 本次为数据 pilot 与可视化，没有训练 step/epoch、best metric、metrics.jsonl、train.log 或 checkpoint；实际日志为上述 export.log/viewer.log。
+- rollback: 核对 PID 与命令后停止本次 viewer；仅移除本次独立 viewer output 和新增版本参数/README/activity 增量即可撤回本次续接。完整 V1.4.6 修复回滚范围见 final plan §13，不能 reset 整个工作区。当前未删除任何旧产物。
+- 规范反馈：无新增格式、目录、版本、日志或审批阻碍；沿用既有用户批准，使用两个 Skill 补齐运行元数据和审计，不修改治理规则。
+
+## 2026-09-15 16:04:00 +0000 — Inspire pilot 来源与 Dexplore 方案边界纠错
+
+- activity_id: ACT-20260915-160400-OICM-FKFIX-PROVENANCE-DIAG
+- timestamp: 2026-09-15 16:04:00 +0000
+- modification_version: V1.4.6
+- operation_category: [diagnostic, documentation, operation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0（来源审计、运行停止和活动记录；未修改数据、cache 或算法）
+- approval: auto
+- approval_basis: 用户质疑 pilot 的几何重定向数据和 Inspire 来源；本次只读追溯并停止由本 Agent 启动的查看器。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- parent_activity_id: ACT-20260915-155611-OICM-FKFIX-PILOT-VIEWER
+- scope: 审计 V1.4.6 pilot 的 MANO 输入、Inspire URDF/mesh、retargeting 配置、qpos 生成路径，并与 Dexplore RL cache 的真实 qpos 路径对照；停止端口 8144 查看器以避免继续展示未经确认的结果。
+
+**文件与证据**
+
+- [pilot run manifest](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/run_manifest.json) — 两个实际 producer 命令和输入根目录。
+- [pilot geometry manifest](../../research/inspire_fk_repair/output/inspire_fkfix_pilot_20260915T154906Z/cache/grab/s1/airplane_fly_1/geometry/manifest.json) — 明确记录 `source_type: stage4_mano_to_inspire_position_retarget`、`surface_sampling_space: visual_mesh_local`，不是 Dexplore RL source。
+- [V1.4.6 pilot exporter](../../tools/data/retarget_stage4_bilateral_inspire.py) — 第 10–12 行加载 Ref2Dex FK/helper 与 `dex_retargeting`；第 63–93 行加载 Dexplore URDF/mesh，构造临时 URDF，并建立 position retargeting；第 117–133 行从 MANO 顶点或采样点生成每帧 5 个目标点并调用 `rt.retarget`。
+- [Dexplore RL cache builder](../../tools/data/build_dexplore_rl_cache.py) — 第 454–456 行从 Dexplore 的 `interaction_hand_inspire.pt` 读取 native q；第 489–494 行才使用这些 RL q 做 Inspire surface FK。这条路径没有被本 pilot 调用。
+- Dexplore retarget 配置：外部 `dex-retargeting/dex_retargeting/configs/offline/inspire_hand_left.yml` 与 `inspire_hand_right.yml` 定义的是 position retargeting 的 5 个 tip link；pilot 还覆盖了其 URDF、dummy free joint 和 mimic 处理。
+- Dexplore Inspire 资产：外部 `/home/wbcd/workspace/oyx_ws/dexplore/dexplore/data/assets/inspire_hand_new/inspire_hand_{left,right}.urdf` 及对应 `meshes_left/right/*.STL`；这是资产来源，不是已生成的 Inspire 动作数据。
+- viewer: `run_id=inspire_fkfix_viewer_20260915T155554Z` 已发送 SIGTERM，端口 8144 已释放；该查看器的 run manifest 和日志保留为 STOPPED 历史证据。
+
+**原因**
+
+用户指出“几何重定向的数据从哪里来的、Inspire 手数据哪里来的、是否使用 Dexplore 方案”。审计发现此前交付把“使用 Dexplore 的资产与 dex-retargeting 配置”误说成“使用 Dexplore 的完整重定向方案”，两者不等价。
+
+**结论**
+
+- `SUPPORTED`：来源事实已核实——输入是 Ref2Dex 30 Hz MANO，Inspire 点是 Dexplore URDF/mesh 现场表面采样。
+- `REFUTED`：该 pilot 使用 Dexplore 已生成的 Inspire 重定向轨迹，或复现 Dexplore RL/native-q 方案。
+- `INVALID_IMPLEMENTATION`：把该 pilot 的结果作为“Dexplore geometric retarget 方案已修复/已验证”的此前表述无效；pilot cache、报告和查看器不得用于证明 Dexplore 方案正确。
+- 保护边界：未修改原始 MANO、Dexplore 外部仓库、旧 v2 cache、Dexplore RL cache、split、GT、模型或 checkpoint；未启动全量导出或训练。
+
+**验证**
+
+- 逐行静态审计 exporter、pilot manifest、geometry manifest、Dexplore retarget 配置和旧 RL builder；确认实际调用链如上。
+- 检查 pilot 三类输入数组：GRAB `shared.npz`/`left.npz`/`right.npz` 为 30 Hz object + MANO 字段；pilot 输出 manifest 标记 `stage4_mano_to_inspire_position_retarget`。
+- 检查 `ps`、`ss` 和 HTTP：由本 Agent 启动的 8144 服务已停止；无新的数据处理或训练运行。
+
+**纠正后的后续边界**
+
+在用户重新确认前，不会把该 pilot 接入 cache 或训练，也不会继续声称它代表 Dexplore 方案。若要按 Dexplore 方案重做，必须以 Dexplore 已有 `interaction_hand_inspire.pt`/对应 producer 为输入，逐条核对其 MANO→Inspire 生成来源、native q 顺序、左右手资产和 surface correspondence 后另立可审计 pilot；这属于新的 L2/L3 数据与方案变更。
+
+## 2026-09-15 16:26:28 +0000 — GRAB/ARCTIC 原始 MANO 双手轨迹查看器
+
+- activity_id: ACT-20260915-162628-OICM-MANO-VIS-RUNNING
+- timestamp: 2026-09-15 16:26:28 +0000
+- modification_version: V1.4.6
+- operation_category: [diagnostic, operation, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L1（Task-local 只读查看器与独立运行目录）
+- approval: user-approved
+- approval_basis: 用户明确要求“先把 GRAB 和 ARCTIC 的 mano 轨迹给我看”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 直接读取 Ref2Dex 30 Hz MANO cache 的 GRAB `s1/airplane_fly_1` 与 ARCTIC `s01/box_use_01`，显示左右手 MANO mesh/点云和物体点云；不读取 Inspire、Dexplore q、pilot cache 或重定向产物。
+
+**文件与运行**
+
+- [MANO viewer](../../research/mano_trajectory_visualizer/run.py) — 新增只读 Viser 入口，支持两条轨迹切换和帧滑块。
+- run_id: `mano_trajectory_20260915T162523Z`
+- run_status: `RUNNING`
+- viewer: `http://127.0.0.1:8145`
+- output: [src/task/ObjectInteractionCm/research/mano_trajectory_visualizer/output/mano_trajectory_20260915T162523Z](../../research/mano_trajectory_visualizer/output/mano_trajectory_20260915T162523Z)
+- run_manifest: [src/task/ObjectInteractionCm/research/mano_trajectory_visualizer/output/mano_trajectory_20260915T162523Z/run_manifest.json](../../research/mano_trajectory_visualizer/output/mano_trajectory_20260915T162523Z/run_manifest.json)
+
+**输入与验证**
+
+- GRAB 输入：`data/processed_data/oicm_v1_4_raw/grab_mano_30hz/s1/airplane_fly_1`；ARCTIC 输入：`data/processed_data/oicm_v1_4_raw/arctic_mano_30hz/s01/box_use_01`。
+- 两条输入均确认存在 `shared.npz`、`left.npz`、`right.npz`；GRAB 279 帧、左右各 1538 点并有 778 顶点 MANO mesh；ARCTIC 889 帧、左右各 1538 点。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/mano_trajectory_visualizer/run.py` 通过；进程 PID 3389501，`ss` 确认 127.0.0.1:8145，HTTP 200。
+- 本次 viewer 只作轨迹查看，结论为 `INCONCLUSIVE`；不据此判断重定向质量或训练效果。
+
+**保护边界**
+
+- 未修改任何 MANO 输入、Inspire 资产、Dexplore 外部仓库、cache、split、GT、模型或 checkpoint。
+- viewer 由本 Agent 启动；用户确认不再需要后可停止 PID 3389501 并删除独立 output。随后重定向修改仍需按明确的 Dexplore offline 方案进入新的 L2 变更记录。
+
+**原因**
+
+先让用户直接核对未经重定向的左右手 MANO 轨迹，隔离原始 MANO 数据与后续 Inspire 重定向问题。
+
+**验证**
+
+已通过 Python 编译检查、三文件输入存在性检查、进程/端口检查和 HTTP 200 检查；未执行重定向、数据改写或训练。
+
+## 2026-09-15 16:32:14 +0000 — 找回异机已全量导出的 Dexplore geometric 脚本并纠正来源判断
+
+- activity_id: ACT-20260915-163214-OICM-DEXPLORE-HISTORY-RECOVERY
+- timestamp: 2026-09-15 16:32:14 +0000
+- modification_version: V1.4.6
+- operation_category: [diagnostic, documentation]
+- primary_task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户提醒之前已经自写重定向脚本并在另一台机器全量导出；本次只读核查历史与本机文件，纠正此前误判。
+- skills_used: research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: Dexplore 旧 converter、canonical adapter、导出说明与 Git 提交，以及本机 Cmv2 已有导出的只读交叉核验。仅追加本条记录。
+
+**原因**
+
+此前只比较 V1.4 bilateral adapter 与 OICm 旧 RL cache consumer，就把 native tensor 误判为 RL 专属，
+并建议恢复未经对照的上游默认配置；遗漏了用户已经使用并导出过全量数据的 Dexplore geometric producer。
+本条纠正 ACT-20260915-160400 的“应以 RL/native-q 链路替代 geometric”推断，以及随后重写方案的依据。
+
+**文件与证据**
+
+- [../dexplore/data_processing/README_GRAB_INSPIRE_EXPORT.md](../../../../../../dexplore/data_processing/README_GRAB_INSPIRE_EXPORT.md) — 记录旧机器 `/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/inspire_geometric` 的 1335 条 GRAB geometric 导出，及 2026-09-05 从 canonical cache 重导；本机旧绝对路径不可见，不声称已远程核验这些旧文件。
+- [../dexplore/data_processing/adapt_interact_canonical.py](../../../../../../dexplore/data_processing/adapt_interact_canonical.py) — 已有 canonical 输入桥接；README 明确禁止把旧 `prepare_grab.py` 的 upright 旋转结果再次输入 converter，避免重复旋转。
+- [../dexplore/data_processing/convert_grab.py](../../../../../../dexplore/data_processing/convert_grab.py) — 已有 GRAB→Inspire geometric producer，`setup_retargeting`、右手 21 点组装、配置指定的目标点、关节名称映射和 native DOF 重排均已实现。Dexplore Git 提交 `c31f57f` 保存这批导出工具，本机外部仓库工作树干净。
+- [../dexplore/data_processing/robot_configs.py](../../../../../../dexplore/data_processing/robot_configs.py) — Inspire 18 DOF、MANO/SMPL-X landmark 重排和 native 重排合同。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 2026-09-05 的 `ACT-20260905-202524-OICM-DEXPLORE-RL-DATASET-CLARIFICATION` 已明确区分 1335 条 geometric 与 RL；2026-09-14 09:13:27 条目已记录旧 converter 固定 GRAB 右手、21 点输入和 5 tip 位置目标。本次只新增当前条目，不覆写历史。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](../../../ObjectInteractionCmv2/docs/logs/activity_log.md) — 本机独立 Cmv2 导出的既有终态入口，当前只读。
+- [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/) — 本机另有同一 converter 生成的筛选集合，可作对照；不能当作旧 1335 条全量或双手/ARCTIC 结果。
+- [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json) — 既有 `run_id=grab-dexplore-rl-full-20260915T125105Z`、`run_status=COMPLETED`，本次未运行/修改。
+- [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/validation.json](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/validation.json) — 已有验证报告 `num_sequences=656`；未在本次重跑验证。
+- [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/commands.log](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/commands.log) — 确认调用本机 Dexplore `convert_grab.py --robot inspire ... --retarget-iterations 1 --retarget-stride 1`，分别输出 geometric 与后续 RL。
+
+**纠正结果**
+
+1. `interaction_hand_inspire.pt` 在 geometric 和 RL 两种目录中都使用相同 `[T,598]` 格式，native q slice 同为 `[373:391]`；必须由 producer/目录/manifest 区分，不能凭文件名认定 RL。
+2. 旧 converter 同样使用 position optimizer 的五指尖目标。21 点是输入的 landmark 排列，并不表示优化器同时拟合 21 点；“使用五点”本身不能证明偏离原方案。
+3. 旧 `setup_retargeting` 也包含 continuous→revolute 临时 URDF、已有六轴 wrist 时关闭 dummy free joint、18 DOF 全量优化和 `ignore_mimic_joint=True` 的适配。此前把这些设置单独列为错误，并建议一律恢复上游默认配置，依据不足；需以历史实际资产/输入/映射核对，不能擅改耦合语义。
+4. 已证实旧 producer 存在且保存了全量导出历史；当前 bilateral adapter 的 raw MANO 输入、左手使用右手模型回退和自建 surface 路径仍需与旧 converter 对照。double-FK 的独立回归证据不因本次来源纠错而失效，但也不足以证明整体重定向正确。
+5. 后续按用户“自己改重定向”的方向，应复用已找回的 converter 作为 GRAB 基准，先核对 canonical 坐标与 qpos，再处理双手/ARCTIC 接口；撤回从上游默认配置另写一套及将 geometric 换成 RL 的建议。本次尚未实施这些修改。
+
+**验证**
+
+- `git -C /home/wbcd/workspace/oyx_ws/dexplore show --stat c31f57f -- data_processing`、`git ... status --short`；读取 converter 的 `setup_retargeting` 和 retarget/输出段、robot config、README 与历史 activity。
+- `jq` 读取既有 Cmv2 manifest/validation；`rg -n -m 5 'convert_grab.py' .../commands.log` 确认实际命令，`rg --files data/processed_data -g 'interaction_hand_inspire.pt'` 确认 geometric/RL 两类文件在本机存在。
+- conclusion: SUPPORTED（旧 geometric 脚本、历史全量记录及本机另一路复用证据）；REFUTED（native 文件名仅代表 RL、五点/临时 URDF 本身证明偏离旧方案）；INCONCLUSIVE（当前双手/ARCTIC 重定向整体正确性）。仅为来源诊断，不是模型效果结论。
+- 保护边界：本次未修改代码、外部 Dexplore、数据、cache、split、checkpoint 或任何运行；MANO viewer 保持。回滚入口为本条 activity 增量。
+- 规范反馈：无流程阻碍；问题来自 Agent 漏读既有 producer 和历史记录，不能归因于缺少用户确认。未修改 AGENTS、Skill 或其他公共合同。
+
+## 2026-09-16 02:17:52 +0000 — 启动旧 Dexplore geometric 导出只读可视化
+
+- activity_id: ACT-20260916-021752-OICM-DEXPLORE-GEOMETRIC-VIEWER
+- timestamp: 2026-09-16 02:17:52 +0000
+- modification_version: V1.4.6
+- operation_category: [diagnostic, operation, documentation]
+- primary_task_mode: run-only/operation
+- change_level: L0（已有查看器运行和追溯文档，不修改重定向）
+- approval: user-approved
+- approval_basis: 用户在找回旧 geometric producer 后要求“那你现在可视化给我看一下”。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 复用外部旧 viewer，读取本机 Cmv2 的 656 条 GRAB 右手 geometric 轨迹及其物体；只新增诊断说明、独立运行产物和本条记录。
+- run_id: `dexplore_geometric_20260916T021513Z`
+- run_status: `RUNNING`
+- PID: 3847849；exec session: 67591
+- viewer: http://127.0.0.1:8146
+
+**原因**
+
+让用户直接查看旧 Dexplore converter 的已有产物，不再把 V1.4 bilateral pilot、geometric 和 RL 混淆。
+原查看器的 MANO 叠加要求 InterAct `data/grab/sequences_canonical/*/human.npz`，本机未找到这些文件，
+因此本次关闭 MANO 叠加；不使用其他坐标系点云替代。原始 MANO 查看器 8145 保持运行。
+
+**文件与运行入口**
+
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/README.md](../../research/dexplore_geometric_visualization/README.md) — 新增只读查看边界说明。
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/experiment.yaml](../../research/dexplore_geometric_visualization/experiment.yaml) — 外部已有入口和独立 output 路由；未新增实现脚本。
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/)
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/run_manifest.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/run_manifest.json)
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/config.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/config.json) — 完整启动 argv/cwd；进程内只将 Viser 监听地址限制为 127.0.0.1，外部源码不改。
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/viewer.log](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/viewer.log)
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/smoke.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/smoke.json)
+- [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json) — 既有 producer 来源，不修改其状态。
+- [../dexplore/data_processing/visualize_inspire_trajectory.py](../../../../../../dexplore/data_processing/visualize_inspire_trajectory.py) — 原查看器，外部 commit `c31f57f186409ce5f0de47ced2d347abffe45d06`，工作树仍干净。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 仅追加当前活动；保留原有未提交内容。
+
+**验证**
+
+- `graspenv/bin/python ../dexplore/data_processing/visualize_inspire_trajectory.py --all --source geometric --geometric-root <producer>/geometric --object-root <producer>/canonical/objects --check-only`：退出 0，656 条轨迹；首条 `s1_airplane_fly_1` 为 [279,598]，native q 列 [373:391]，18 DOF。
+- 首条 frame 139 为 object-contact，旧 viewer 自带 FK 检查打印 min tip/object-center 距离约 0.017 m；该量不是表面接触误差，不证明重定向质量。
+- `ss -ltnp 'sport = :8146'` 确认上述 PID 监听 localhost；`curl http://127.0.0.1:8146` 返回 HTTP 200。
+- 使用 `viser-v1.1.0` 子协议连接 WebSocket，收到 121 条初始化消息、约 12.8 MB payload，包含 13 个 Inspire link mesh 与 1 个物体 mesh；656 条数据对应物体网格均存在。未执行浏览器截图或人工视觉质量评估。
+- 初次 shell 后台启动未存活，改为保持的 exec 会话后正常；初次通用 WebSocket 探针因缺少版本子协议被拒绝，使用当前 Viser 协议后通过。均未改动输入或依赖。
+- `git diff --check -- src/task/ObjectInteractionCm/research/dexplore_geometric_visualization src/task/ObjectInteractionCm/docs/logs/activity_log.md` 通过；交接前执行当前活动的 scope/link audit。
+- conclusion: SUPPORTED（读取和可视化服务工程 smoke）；INCONCLUSIVE（重定向整体质量）。不是科研效果验证；无训练、checkpoint 或 metrics.jsonl。
+
+**保护边界与回滚**
+
+未修改 Dexplore、converter、URDF、MANO、数据、cache、坐标、GT、split、训练、checkpoint 或旧运行。
+仅为本机 656 条筛选集，不冒充异机 1335 条全量，也不代表 ARCTIC/双手已修好。
+回滚可停止本次 PID 3847849，并仅移除本次新增诊断定义、独立 output 和本条记录；当前不执行删除。
+规范反馈：无审批或目录阻碍；未改治理合同。MANO 同源文件缺失是本机输入限制，不是规则阻碍。
+## 2026-09-16 02:47:14 +0000 — GRAB MANO / Inspire 同序列配对查看器
+
+- activity_id: ACT-20260916-024714-OICM-PAIRED-GRAB-MANO-INSPIRE-VIEWER
+- timestamp: 2026-09-16 02:47:14 +0000
+- modification_version: V1.4.7
+- operation_category: [code, diagnostic, operation, documentation]
+- primary_task_mode: change → run-only/operation
+- change_level: L1（Task-local 只读 viewer adapter；不改变正式数据/schema/科研语义）
+- approval: user-approved
+- approval_basis: 用户确认本机 GRAB MANO/Inspire 数据齐全后明确要求“修改一下然后可视化给我看”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true（保留已有 V1.4、模型、日志、配置和其他 Task 未提交改动）
+- scope: 为现有 GRAB Viser 增加 raw bilateral MANO NPZ 的只读内存适配；生成一条同序列 MANO/Inspire viewer-only 配对 index 并启动查看器。源数据、正式 index/cache、split、GT、重定向、训练、模型和 checkpoint 不修改。
+- prepare_run_id: `paired_grab_mano_inspire_20260916T024600Z`
+- prepare_run_status: `COMPLETED`
+- viewer_run_id: `viewer_paired_grab_mano_inspire_20260916T024600Z`
+- viewer_run_status: `RUNNING`
+- viewer_pid: 3880885
+- viewer: http://127.0.0.1:8147
+- conclusion: SUPPORTED（配对、读取、KNN/距离着色和服务工程链路）；INCONCLUSIVE（Inspire 重定向质量与训练收益）
+
+**文件与运行入口**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针更新为 V1.4.7。
+- [src/task/ObjectInteractionCm/docs/README.md](../README.md) — 增加本诊断入口导航。
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) — 新增已批准的第 14 节实施边界。
+- [src/task/ObjectInteractionCm/visualize_grab.py](../../visualize_grab.py) — 只读加载 `left.npz/right.npz/shared.npz`，按 left-then-right 合并 3076 点；保留原距离/KNN 定义并支持 bilateral MANO mesh。
+- [src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py](../../tests/test_visualize_grab_v1_4.py) — 增加 raw bilateral MANO adapter 回归。
+- [src/task/ObjectInteractionCm/research/paired_grab_visualization/README.md](../../research/paired_grab_visualization/README.md)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/experiment.yaml](../../research/paired_grab_visualization/experiment.yaml)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/prepare.py](../../research/paired_grab_visualization/prepare.py) — viewer-only 配对 index 与严格一致性闸门。
+- [src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/)
+- [src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/run_manifest.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/run_manifest.json)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/index.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/index.json)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/pair_validation.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/pair_validation.json)
+- [src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/check_mano.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/check_mano.json)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/check_inspire.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/check_inspire.json)
+- [src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/viewer_paired_grab_mano_inspire_20260916T024600Z/run_manifest.json](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/viewer_paired_grab_mano_inspire_20260916T024600Z/run_manifest.json)、[src/task/ObjectInteractionCm/research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/viewer_paired_grab_mano_inspire_20260916T024600Z/viewer.log](../../research/paired_grab_visualization/output/paired_grab_mano_inspire_20260916T024600Z/viewer_paired_grab_mano_inspire_20260916T024600Z/viewer.log)
+
+**原因**
+
+现有 Inspire geometric 已是 viewer 原生 `geometry/*.npy`，MANO 则保留为完整的 bilateral NPZ triplet。
+此次不复制大数组、不创建正式 cache；查看器只在选择 MANO 记录时加载 NPZ，并把左右手各 1538 点和
+mesh 按固定顺序合并。配对准备器要求两种表示的 source frame、物体点和物体 pose 逐元素完全相等，
+失败即停止。两条 GUI 记录复用同一 `grab/s1/airplane_fly_1` ID，由 variant 标签区分。
+
+**验证**
+
+- `python -m py_compile`：查看器与 prepare 入口通过。
+- `PYTHONPATH=. .../python -m pytest -q src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：`3 passed in 1.13s`。
+- 配对报告：MANO/Inspire 均 279 帧，source frame `0..1112`；frame count、source frame ID、4096 object points、object pose 全部 exact match。
+- 两条真实 `--check-only`：frame 103 均映射 source frame 412、双手均为 3076 点；MANO/Inspire 最近物距分别 `0.405826 mm` / `0.893608 mm`。KNN n=`1/4/8/16/32/64` 均成功计算；详细计数见两份 check JSON。
+- MANO bilateral mesh 为 2 parts、1556 vertices、3076 faces；Inspire geometric v2 未保存 viewer 可恢复的双手 qpos，因此正式启动使用 surface point cloud、关闭 hand mesh，不伪造几何。
+- `curl http://127.0.0.1:8147` 返回 HTTP 200；Viser `1.1.0` WebSocket 收到 218356-byte 初始化 payload；端口由 PID 3880885 监听。
+- 初次临时输出使用了占位时间 run_id，发现后已停止服务并将该临时目录移至 `/tmp/ref2dex_paired_grab_mano_inspire_bad_run_id_20260916T000000Z`；第二个非唯一 `viewer` 子运行同样停止并移至 `/tmp/ref2dex_paired_grab_viewer_nonunique_run_id_20260916T024600Z`。最终入口只使用上列精确且唯一的 run_id，源数据未受影响。
+- 本次只证明工程读取、配对与显示链路；没有训练、评估、metrics.jsonl 或 checkpoint，不把 smoke 解释为重定向质量成立。
+
+**保护边界与回滚**
+
+未修改 1335 条 MANO/Inspire 源轨迹、正式 V1.4 index/cache、split、坐标、单位、GT、重定向、训练配置、模型、checkpoint 或旧运行。停止前先核对 PID/命令，再停止最终 viewer；删除本次独立 output，并恢复上述 adapter、测试、研究定义、plan 第 14 节、版本指针和本条记录即可回滚。规范反馈：无格式、目录、版本或审批阻碍。
+## 2026-09-16 03:35:27 +0000 — DExplore geometric q 的 MANO 2048 / Inspire 10135 点配对预览
+
+- activity_id: `ACT-20260916-033527-OICM-GEOMETRIC-Q-SURFACE-PREVIEW`
+- timestamp: `2026-09-16 03:35:27 +0000`
+- modification_version: `V1.4.8`
+- operation_category: `[code, data, diagnostic, operation, documentation]`
+- primary_task_mode: `change → run-only/operation`
+- change_level: `L2`（geometric q 来源、共同 object pose 与高分辨率表面数据语义）
+- approval: `user-approved`
+- approval_basis: 用户在 geometric 与 RL 两种 native-q 路线中明确选择“用你建议的方式”，即复用 DExplore geometric q 做同序列右手 MANO/Inspire pilot。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留并避开已有 V1.4、ObjectInteractionCmv2 及其他用户修改）
+- plan: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §15（final）
+- scope: 固定 GRAB `s1/airplane_fly_1`，读取已有 DExplore geometric tensor 的 native q `[373:391]`，在 geometric object pose 下生成右手 MANO 2048 / Inspire 10135 点单次 FK pilot，并启动只读距离/KNN 着色查看器；不使用同级 RL tensor，不重新执行五指尖优化，不扩展到全量或训练。
+
+**文件**
+
+- [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/run.py](../../research/geometric_q_surface_preview/run.py) — 新增当前 GRAB NPZ + DExplore geometric tensor 的严格帧对齐、共同 object-pose 变换、固定表面 correspondence、单次 FK、geometry/index/manifest 与诊断生成入口。
+- [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/README.md](../../research/geometric_q_surface_preview/README.md) 与 [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/experiment.yaml](../../research/geometric_q_surface_preview/experiment.yaml) — 记录入口、输入语义、点数、seed、保护边界和可解释范围。
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §15、[src/task/ObjectInteractionCm/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 写入已批准的 V1.4.8 最终边界、导航和版本指针。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本条实施、运行与验证终态。
+
+**运行与产物**
+
+- run_id: `geometric_q_surface_20260916T033410Z`
+- run_status: `COMPLETED`
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.research.geometric_q_surface_preview.run --output src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z`
+- input geometric q: [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/geometric/s1_airplane_fly_1/interaction_hand_inspire.pt](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/geometric/s1_airplane_fly_1/interaction_hand_inspire.pt)，SHA256 `6c6dfc516787e886ae6a1f394a1186640eb0f0363863f19b570ab527f54d09a4`。
+- output: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/)
+- run_manifest: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/run_manifest.json](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/run_manifest.json)
+- index: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/index.json](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/index.json)
+- diagnostics: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/diagnostics.json](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/diagnostics.json)
+- viewer_run_id: `viewer`
+- viewer_run_status: `RUNNING`
+- viewer_pid: `3919722`（停止前须核对命令，避免 PID 复用）
+- viewer: `http://127.0.0.1:8148`
+- viewer_command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/index.json --split train --sequence-index 1 --frame 103 --future-delta 0 --point-display both --mesh-display off --host 127.0.0.1 --port 8148 --fps 8 --modification-version V1.4.8 --output src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/viewer`
+- viewer_manifest: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/viewer/run_manifest.json](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/viewer/run_manifest.json)
+- viewer_log: [src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/viewer/viewer.log](../../research/geometric_q_surface_preview/output/geometric_q_surface_20260916T033410Z/viewer/viewer.log)
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCm/research/geometric_q_surface_preview/run.py`：退出 0；`--help`：退出 0。
+- 输入 279 帧与 GRAB 30 Hz NPZ 严格等长，tensor `[279,598]` finite；producer 路径明确位于 `/geometric/` 而非 `/rl/`；native q 固定为 `373:391`。
+- 两条 geometry 共同使用同一份 4096 点 object、pose 和 raw frame；object-local 往返最大绝对误差 `7.45e-8 m`。MANO `[279,2048,3]`、Inspire `[279,10135,3]` 全部 finite，最大法向范数误差分别为 `1.79e-7`、`5.96e-8`。
+- frame 103/source frame 412：MANO bbox `109.45×141.69×120.27 mm`，Inspire bbox `151.98×197.22×116.64 mm`；两者在 20 mm 邻接下均为 1 个连通分量。Inspire 相比旧 double-FK 数据不再出现约 350–400 mm、7 个分量的结构性散裂。
+- 同帧 MANO/Inspire 最近手物距离分别为 `0.469/0.197 mm`；object→hand KNN=32 的 union 手点数分别为 `352/1406`。这些无符号距离不能判定 mesh 内外或穿透。
+- 对 index 的 `--check-only --sequence-index 0/1 --frame 103 --future-delta 10` 均退出 0；分别读到 2048/10135 手点、相同 source frame 412→452 和相同 object flow。手 mesh provider 不支持本 preview provenance，但点云 viewer 使用 `--mesh-display off`，未伪造 mesh。
+- `curl --noproxy '*' --max-time 10 http://127.0.0.1:8148` 返回 HTTP 200；`ss` 与 `ps` 确认 PID/端口/命令，viewer manifest 为 V1.4.8、RUNNING。首次 detached `nohup` 在创建 viewer run 前退出，未占端口；随后由统一执行会话正常启动，未覆盖产物。
+- `git diff --check` 通过；交接前使用限定 scope 的 `audit_diff.py --worktree --check-links` 检查本次文档和实现链接。
+
+**结论与保护边界**
+
+- conclusion: `SUPPORTED`（geometric native-q 来源、固定 10135 表面 correspondence、单次 FK、共同 object pose、viewer 距离/KNN 读取链路）；`INCONCLUSIVE`（是否穿透、接触保真、全量序列质量及训练效果）。
+- 当前结果只覆盖 DExplore-compatible 集合中的一条右手 geometric 序列；没有证明左手、完整 1335 条 GRAB 或 ARCTIC 正确。没有把工程 smoke 报告为科研效果。
+- `grab_inspire_bilateral_v2`、旧 10135 预览、DExplore geometric/RL tensor、正式 index/cache/split/GT、模型、训练配置、checkpoint 和用户其他未提交修改均未修改；未启动全量导出或训练。
+- rollback: 核对 PID 与命令后停止本次 viewer，删除独立 output 和 `research/geometric_q_surface_preview/`，恢复 plan §15、README、版本指针与本条 activity；不得 reset 整个 dirty 工作区。
+- 规范反馈：无新增格式、目录、版本、日志或审批阻碍。
+
+**原因**
+
+用历史已验证的 DExplore geometric q 替代当前错误的 bilateral surface adapter，严格复现异机高分辨率
+surface replay 的核心方式，同时保留 geometric/RL 来源边界并以一条隔离 pilot 供人工检查。
+## 2026-09-16 04:00:09 +0000 — 按真实 DExplore 链路启动 geometric 完整 URDF mesh viewer
+
+- activity_id: `ACT-20260916-040009-OICM-DEXPLORE-GEOMETRIC-MESH-VIEWER`
+- timestamp: `2026-09-16 04:00:09 +0000`
+- modification_version: `V1.4.9`
+- operation_category: `[diagnostic, operation, documentation]`
+- primary_task_mode: `read-only/diagnostic → run-only/operation`
+- change_level: `L2`（纠正 geometric tensor 的可视化表示与来源解释；不改变输入数据）
+- approval: `user-approved`
+- approval_basis: 用户明确给出异机 8105 的真实链路，并纠正目标为 `373:391` 驱动完整 URDF mesh、`198:205` 驱动物体，而不是 10135 点 surface cache。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留已有 V1.4、其他 Task 和用户未提交修改）
+- plan: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §16（final）
+- parent_activity_id: `ACT-20260916-033527-OICM-GEOMETRIC-Q-SURFACE-PREVIEW`
+- scope: 核对用户给出的 InterAct canonical→DExplore converter→1335 geometric→规则筛选→660 异机链路；确认本机只有同 converter 生成的 656 条 geometric 集合；停止两条错误点云 viewer，修正消失的旧 8146 状态，并用 DExplore 原 viewer 启动完整 URDF mesh + geometric object 的本机 656 条浏览页面。
+
+**来源纠正**
+
+- [../dexplore/data_processing/adapt_interact_canonical.py](../../../../../../dexplore/data_processing/adapt_interact_canonical.py)、[../dexplore/data_processing/convert_grab.py](../../../../../../dexplore/data_processing/convert_grab.py)、[../dexplore/data_processing/filter_inspire_for_dexplore.py](../../../../../../dexplore/data_processing/filter_inspire_for_dexplore.py) 与 [../dexplore/data_processing/visualize_inspire_trajectory.py](../../../../../../dexplore/data_processing/visualize_inspire_trajectory.py) 均存在于外部 commit `c31f57f186409ce5f0de47ced2d347abffe45d06`，工作树干净，本次只读。
+- 异机事实由用户提供：完整 geometric 根 1335 条；排除 658 条任意左手 contact、再排除 17 条 doorknob，得到 660 条；筛选使用 `shutil.copy2`，不重算 q。本机没有 `data/processed_data/inspire_geometric` 或 `inspire_geometric_dexplore`，无法在本机复核异机 full/filter tensor SHA256。
+- 本机实际输入 [data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/manifest.json](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/manifest.json) 明确为 656 条；其命令日志确认仍调用同一个 `convert_grab.py`、`retarget-iterations=1`、`retarget-stride=1`。筛选统计为 source 1335、left-contact excluded 662、doorknob excluded 17、selected 656，并显式记录与历史 660 相差 -4。
+- 样例 geometric tensor [s1_airplane_fly_1/interaction_hand_inspire.pt](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/geometric/s1_airplane_fly_1/interaction_hand_inspire.pt) 为 `[279,598]`，SHA256 `6c6dfc516787e886ae6a1f394a1186640eb0f0363863f19b570ab527f54d09a4`；本次不与不存在的异机 660 根声称相等。
+
+**文件与运行**
+
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §16、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 记录用户纠正后的 V1.4.9 表示和运行边界。
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/README.md](../../research/dexplore_geometric_visualization/README.md)、[src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/experiment.yaml](../../research/dexplore_geometric_visualization/experiment.yaml) — 明确 660/656 边界以及 viewer 直接渲染 mesh、不消费 10135 点。
+- 旧 `run_id=dexplore_geometric_20260916T021513Z` 的 PID 3847849 与端口 8146 已不存在；其 [run manifest](../../research/dexplore_geometric_visualization/output/dexplore_geometric_20260916T021513Z/run_manifest.json) 从陈旧 RUNNING 修正为 `STOPPED`，停止原因是审计时进程/端口已消失。
+- V1.4.7 错误点云 viewer `viewer_paired_grab_mano_inspire_20260916T024600Z`：PID 3880885 已发送 SIGTERM，run_status `STOPPED`，端口 8147 已释放。
+- V1.4.8 10135 点 viewer `viewer`：PID 3919722 已发送 SIGTERM，run_status `STOPPED`，端口 8148 已释放；数据 pilot 保留作审计，不再声称符合异机 8105 表示。
+- run_id: `dexplore_geometric_mesh_20260916T035811Z`
+- run_status: `RUNNING`
+- PID: `3936819`；exec_session_id: `5136`（停止前须核对命令，避免 PID 复用）
+- viewer: `http://127.0.0.1:8105`
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -c 'import functools,runpy,viser; viser.ViserServer=functools.partial(viser.ViserServer,host="127.0.0.1"); runpy.run_path("/home/wbcd/workspace/oyx_ws/dexplore/data_processing/visualize_inspire_trajectory.py",run_name="__main__")' --all --source geometric --geometric-root data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/geometric --object-root data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/canonical/objects --port 8105 --start-frame 153`
+- output: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/)
+- config: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/config.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/config.json)
+- run_manifest: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/run_manifest.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/run_manifest.json)
+- check_only_log: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/check_only.log](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/check_only.log)
+- viewer_log: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/viewer.log](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/viewer.log)
+- smoke: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/smoke.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T035811Z/smoke.json)
+
+**验证**
+
+- 原 viewer `--all --source geometric ... --check-only`：退出 0；报告 656 条，首条 `s1_airplane_fly_1` 为 `[279,598]`，qpos `[373:391]`，18 个 actuated joints；frame 139 contact 时 fingertip/object-center 最小距离约 0.017 m，此量不是表面穿透或接触误差。
+- 静态 URDF 解析为 18 个非 fixed joints、13 个 visual meshes；viewer log 确认加载 `canonical/objects/airplane/airplane.obj`、656 条轨迹和完整 geometric source。代码中手 mesh 每帧由 q FK 更新，物体 mesh由 tensor `198:205` 更新。
+- `curl --noproxy '*' --max-time 10 http://127.0.0.1:8105` 返回 HTTP 200；`ss` 确认 PID 3936819 仅监听 127.0.0.1:8105；`ps` 命令与 manifest 一致。未执行浏览器截图或人工视觉复核。
+- 外部 viewer SHA256 `f8bd976c375658c86e32dba8ef0212cfd1697ccd03407f9c0586bc33bfe3e5b9`；URDF SHA256 `7d0023168a22191de2126d71f8d2a810f82e8cba56b74c82be6db04812b80f58`。外部 DExplore 工作树保持干净。
+- 交接前执行 `git diff --check` 和限定 scope 的 `audit_diff.py --worktree --check-links`；未修改 viewer 算法或输入。
+
+**结论与保护边界**
+
+- conclusion: `SUPPORTED`（当前页面确实直接用 geometric q 驱动完整 URDF mesh，并用 geometric object pose 显示物体；来源不含 RL/10135 点/V1.4 bilateral adapter）；`REFUTED`（V1.4.8 10135 点 viewer 等同于异机 8105 的解释）；`INCONCLUSIVE`（本机 656 与异机 660 的四条差异原因、重定向质量、穿透与接触保真）。
+- 没有修改 DExplore、URDF、geometric tensor、contact/filter、物体 pose、正式 cache/index/split/GT、模型、训练配置或 checkpoint；没有补造四条数据、重跑 converter/filter 或训练。
+- rollback: 核对 PID 3936819 命令后停止 8105，删除本次独立运行目录，并恢复 plan §16、README/experiment 说明、版本指针和本条 activity；已停止的 8147/8148 不自动重启。
+- 规范反馈：无治理阻碍；本机缺少异机 1335/660 原归档使其 SHA256 同一性无法本机复核，已通过明确 provenance 避免冒充。
+
+**原因**
+
+恢复用户指定的真实可视化语义：查看 DExplore converter 产出的 native 18D geometric 轨迹和完整
+URDF mesh，而不是任何派生手点云；同时诚实保留本机 656 与异机 660 的数据边界。
+## 2026-09-16 04:04:44 +0000 — geometric mesh viewer 更换至 8106
+
+- activity_id: `ACT-20260916-040444-OICM-GEOMETRIC-VIEWER-PORT`
+- timestamp: `2026-09-16 04:04:44 +0000`
+- modification_version: `V1.4.10`
+- operation_category: `[operation, documentation]`
+- primary_task_mode: `run-only/operation`
+- change_level: `L0`（只更换本地监听端口，不改变数据或科研语义）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“换一个端口”。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- parent_activity_id: `ACT-20260916-040009-OICM-DEXPLORE-GEOMETRIC-MESH-VIEWER`
+- plan: [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §16.1（final）
+- scope: 将已验证的 656 条 DExplore geometric 完整 URDF mesh viewer 从 127.0.0.1:8105 移到 127.0.0.1:8106；输入、q/object slice、URDF、物体 mesh、初始轨迹/帧和 FPS 保持。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针更新为 V1.4.10。
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) — 新增用户批准的 §16.1 端口迁移边界。
+- [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/README.md](../../research/dexplore_geometric_visualization/README.md) 与 [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/experiment.yaml](../../research/dexplore_geometric_visualization/experiment.yaml) — 沿用 V1.4.9 已纠正的 656/660 与完整 mesh 说明，实验版本指针更新到 V1.4.10；README 本次无新增语义。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本条停止/启动状态与验证。
+
+**原因**
+
+按用户要求更换访问端口，同时保留原运行作为 STOPPED 历史证据，避免覆盖运行状态或改变已确认的
+geometric mesh 可视化合同。
+
+- stopped_run_id: `dexplore_geometric_mesh_20260916T035811Z`
+- stopped_run_status: `STOPPED`
+- stop_reason: 用户要求换端口；PID 3936819 核对命令后发送 SIGTERM，8105 已释放。
+- run_id: `dexplore_geometric_mesh_20260916T040338Z`
+- run_status: `RUNNING`
+- PID: `3942453`；exec_session_id: `88608`（停止前须核对命令）
+- viewer: `http://127.0.0.1:8106`
+- output: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/)
+- config: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/config.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/config.json)
+- run_manifest: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/run_manifest.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/run_manifest.json)
+- viewer_log: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/viewer.log](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/viewer.log)
+
+**验证**
+
+- 8106 HTTP 200，PID 3942453 仅监听 127.0.0.1:8106；viewer log 确认加载首条 object mesh 和 656 条轨迹。
+- 8105 HTTP 000、无监听；进程命令除端口和独立 output 外与 V1.4.9 一致。
+- `git diff --check` 与限定 scope 的 activity/link audit 在本条补全后执行。
+
+- conclusion: `SUPPORTED`（仅端口迁移与服务 smoke）；原 V1.4.9 的重定向质量结论仍为 `INCONCLUSIVE`。
+- protected_boundary: geometric tensor、URDF、物体、viewer 算法、RL、10135 点、正式 cache/index/split/GT、模型、配置和 checkpoint 均未修改。
+- rollback: 核对 PID 3942453 后停止 8106 并删除本次独立 output；不自动恢复 8105。
+- 规范反馈：无。
+## 2026-09-16 04:09:08 +0000 — 本机 656 geometric 与异机 1335→660 链路差异诊断
+
+- activity_id: `ACT-20260916-040908-OICM-GEOMETRIC-PRODUCER-DIAG`
+- timestamp: `2026-09-16 04:09:08 +0000`
+- modification_version: `V1.4.11`
+- operation_category: `[diagnostic, operation, documentation]`
+- primary_task_mode: `read-only/diagnostic`
+- change_level: `L0`（只读 producer/provenance 审计及停止误导性 viewer）
+- approval: `auto`
+- approval_basis: 用户指出问题在几何重定向本身并要求确认是否真正按异机 DExplore geometric 链路导出；本次不重导或修改数据。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- parent_activity_id: `ACT-20260916-040444-OICM-GEOMETRIC-VIEWER-PORT`
+- scope: 对照异机的 InterAct canonicalize→`adapt_interact_canonical.py`→全量 `convert_grab.py`→filter 链路，与本机 656 条 Cmv2 重导的实际命令、canonical producer、selection 和 converter；停止 8106 viewer。未运行 converter、filter、训练或数据修改。
+
+**文件与证据**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针更新到 V1.4.11。
+- [src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py](../../../ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py) — 本机 656 条使用的自定义 canonical builder；它直接读取 raw GRAB、内部复现 upright/floor/heading canonicalization，并在 build 前按 contact/doorknob 固定 selection。
+- [../dexplore/data_processing/adapt_interact_canonical.py](../../../../../../dexplore/data_processing/adapt_interact_canonical.py) — 异机链路使用的 adapter；它不重算 canonical transform，而是直接读取 InterAct `sequences_canonical/<seq>/human.npz` 和 `object.npz`，再拼回 raw contact/metadata。
+- [../dexplore/data_processing/convert_grab.py](../../../../../../dexplore/data_processing/convert_grab.py) — 两条链路最后都调用的 DExplore geometric converter；使用 SMPL-X 关键点和 `dex_retargeting` position optimizer，按 `INSPIRE_RETARGET_REORDER` 写入 `[373:391]`。
+- [本机 full commands.log](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/commands.log) — 明确先运行 `python -m src.task.ObjectInteractionCmv2.tools.data.build_grab_dexplore_export build --selection ... --stride 4`，随后才调用外部 `convert_grab.py`；没有运行 InterAct `process_grab.py`、`canonicalize_human_multi_thread.py` 或 `adapt_interact_canonical.py`。
+- [本机 selection.json](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/selection.json) — 在 canonical/convert 前即选出 656 条：1335 source、662 left-contact excluded、17 doorknob excluded；与异机用户给出的 658/17/660 不同。
+- 当前 `/home/wbcd/workspace/oyx_ws/InterAct/data/grab/sequences_canonical` 下 `human.npz` 数量为 0；本机也没有异机 `inspire_geometric`/`inspire_geometric_dexplore` 根，无法做 canonical 或 tensor 逐值/SHA256 对照。
+
+**原因**
+
+回答“是否和异机一样”必须区分最后的优化器与端到端 producer。仅看到文件名、q slice 或调用
+`convert_grab.py` 不足以证明输入 canonical 人体/物体相同；几何优化对输入关键点敏感。
+
+**运行状态**
+
+- run_id: `dexplore_geometric_mesh_20260916T040338Z`
+- run_status: `STOPPED`
+- PID 3942453 在核对命令后发送 SIGTERM；127.0.0.1:8106 已释放。
+- stop_reason: 用户指出几何重定向不一致；避免继续把本机 656 重导显示为异机 660 的等价结果。
+- run_manifest: [src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/run_manifest.json](../../research/dexplore_geometric_visualization/output/dexplore_geometric_mesh_20260916T040338Z/run_manifest.json)
+
+**验证**
+
+- 静态读取本机 commands/selection/manifest、自定义 canonical builder、异机 adapter 和 DExplore converter；本机命令证实 `convert_grab.py --robot inspire --retarget-iterations 1 --retarget-stride 1`，因此“使用 DExplore geometric optimizer”成立。
+- 本机完整构建入口和异机 InterAct adapter 不同，且筛选顺序/计数不同；因此“端到端与异机相同、tensor 可视为同一批”不成立。
+- `ss` 确认 8106 无监听；未改外部 DExplore、GRAB、InterAct、tensor、URDF、contact/filter、cache、模型或 checkpoint。
+
+**结论与保护边界**
+
+- conclusion: `SUPPORTED`（本机 `.pt` 最后确实由 DExplore `convert_grab.py`/`dex_retargeting` geometric position optimizer 导出）；`REFUTED`（本机 656 使用了与异机完全相同的端到端 canonical→adapter→全量→filter 链路）；`INCONCLUSIVE`（几何异常具体由 custom canonical 的哪一项差异导致，以及异机 660 的四条计数差异）。
+- 下一步若要严格复现，应优先取得异机的一条 `sequences_canonical` human/object + full/filtered geometric tensor 做逐值/SHA 对照；若无法复制，则需经用户批准运行完整 InterAct canonicalization、adapter、1335 converter 和 filter，这属于新的长时 L3 数据运行。
+- rollback: 本次无数据/代码实现需回滚；恢复 8106 只会恢复已确认不等价的查看器，不建议自动执行。活动/版本增量可按显式路径撤回，不能 reset dirty 工作区。
+- 规范反馈：无治理阻碍；问题来自此前把“相同末端 converter”误当成“相同端到端 producer”。
+## 2026-09-16 04:49:05 +0000 — 正式 InterAct→DExplore exact-chain 单序列 pilot 启动
+
+- activity_id: `ACT-20260916-044905-OICM-INTERACT-DEXPLORE-EXACT-PILOT-START`
+- timestamp: `2026-09-16 04:49:05 +0000`
+- modification_version: `V1.4.12`
+- type: `data / operation / diagnostic`
+- task_mode: `change` 与 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 用户在确认现有 656 条只复用了末端 DExplore optimizer、未复现另一台机器完整链路后明确要求“你继续吧”；V1.4 final 指导与 plan 已批准完整 GRAB、正式 InterAct canonical 和 DExplore geometric 独立导出。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留当前 ObjectInteractionCm、ObjectInteractionCmv2、Cm 及根文档的既有未提交修改）
+- run_id: `grab-interact-dexplore-exact-pilot-s1-airplane-fly-1-20260916T044905Z`
+- run_status: `STARTED`
+- scope: 仅对 `s1_airplane_fly_1` 运行正式 InterAct `process_grab`、`canonicalize_human_multi_thread`、DExplore canonical adapter 和 `convert_grab.py`；在独立目录中验证后再决定是否扩展到 1335 条，不覆盖现有 656 条 custom-canonical 数据。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/docs/指导/V1.4.md`](../指导/V1.4.md) — 已批准的完整 GRAB 与 DExplore geometric 研究边界。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — final 执行计划、坐标停止条件和回滚边界。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 将 ObjectInteractionCm 指针推进到 `V1.4.12`；同文件其他既有修改不属于本次范围。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/) — 独立 pilot 运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json) — `STARTED` 运行合同。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/commands.log` — PENDING。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/validation.json` — PENDING。
+
+**原因**
+
+现有 656 条数据的末端虽调用同一 DExplore optimizer，但上游使用 Ref2Dex 自定义 canonicalization。该 pilot 改为另一台机器记录的正式 InterAct canonical 输入，先消除坐标与手关键点来源差异，再评估 Inspire FK 几何。
+
+**验证**
+
+- 每阶段必须生成且仅生成 `s1_airplane_fly_1`，InterAct 输出为 30 Hz，DExplore tensor shape 为 `[T,598]`，全部有限。
+- 对比正式 InterAct 与旧 custom canonical 的 human/object 位姿和最终 `373:391` q；任何帧长、坐标、对象位姿或 FK 手物对齐异常均停止，不扩大到全量。
+- 当前状态：`STARTED`；工程与科研结论均为 `INCONCLUSIVE`。
+
+**回滚**
+
+停止运行并删除本次独立 pilot 目录、恢复 `ObjectInteractionCm` 指针即可；不触碰原始 GRAB、现有 656 条输出、V1.3 cache、checkpoint、外部仓库代码或其他运行。
+
+## 2026-09-16 04:55:59 +0000 — 正式 InterAct→DExplore exact-chain 单序列 pilot 完成
+
+- activity_id: `ACT-20260916-045559-OICM-INTERACT-DEXPLORE-EXACT-PILOT-COMPLETE`
+- timestamp: `2026-09-16 04:55:59 +0000`
+- modification_version: `V1.4.12`
+- type: `code / data / operation / diagnostic`
+- task_mode: `change` 与 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 延续 `ACT-20260916-044905-OICM-INTERACT-DEXPLORE-EXACT-PILOT-START`；用户已批准复现另一台机器完整链路，pilot 按 final V1.4 plan 的停止条件执行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留所有既有未提交改动）
+- run_id: `grab-interact-dexplore-exact-pilot-s1-airplane-fly-1-20260916T044905Z`
+- run_status: `COMPLETED`
+- last_step: `N/A`（数据处理）
+- last_epoch: `N/A`（数据处理）
+- best_metric: `N/A`（数据处理）
+- checkpoint: `N/A`（纯 geometric retarget）
+- scope: 完成单条正式 InterAct process/canonicalize、DExplore adapter/converter 及新旧链路逐值/FK 对照；未启动 1335 条全量、filter、RL rollout、cache 或训练。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/tools/data/run_interact_grab_canonical.py`](../../tools/data/run_interact_grab_canonical.py) — 仅屏蔽 GRAB 分支未使用的 import-time SMPL-H/BodyPrior 初始化，随后直接调用外部 InterAct 原版 `process_dataset('grab', ...)`。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 当前指针 `V1.4.12`；其他既有修改保持不变。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/) — 138 MiB pilot 运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json) — `COMPLETED` 依赖、输入/输出 hash 与运行合同。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/commands.log) — 启动兼容问题、正式四阶段命令和输出。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/validation.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/validation.json) — 帧数、finite、canonical/q 差异与 FK 检查。
+
+**原因**
+
+pilot 证实旧 custom canonical 与正式 InterAct canonical 在该序列上几乎逐值一致，但单条 geometric q 与旧 656 条批处理结果显著不同。继续把几何异常归因于 canonicalization 不符合证据；必须考虑 converter 在排序后的序列循环中复用同一个 retargeting optimizer、跨序列 warm-start 的实际行为。
+
+**验证**
+
+- 正式四阶段均生成且仅生成 `s1_airplane_fly_1`；279 帧、tensor `[279,598]`、全部 finite，DExplore converter 为 `1 succeeded, 0 failed`。
+- 新旧 canonical：human pose 最大差 `5.74e-08`，human translation 最大差 `4.17e-07 m`，object translation 最大差 `4.16e-07 m`，`[198:205]` 最大差 `1.19e-07`。
+- 新旧 `q[373:391]` 最大差 `16.51 rad`、平均绝对差 `1.90 rad`；新链 contact frame 139 的最小指尖到物体中心距离 `0.011 m`，旧链为 `0.017 m`。
+- 代码审计确认 `convert_grab.py` 在 sorted sequence loop 之前只构建一次 retargeting，且不在序列边界 reset；因此 `--filter` 单序列结果不能复现 1335 条全量运行进入该序列时的 optimizer state。
+- `python -m py_compile src/task/ObjectInteractionCm/tools/data/run_interact_grab_canonical.py`：通过。工程结论：`SUPPORTED`；哪一份 q 的视觉/碰撞质量更好及完整 660 条是否与异机逐值相同仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除新增 GRAB-only 启动器与独立 pilot 目录，并恢复本次版本/activity 增量；原始 GRAB、外部 InterAct/DExplore、旧 656 条、V1.3 数据、checkpoint 和其他运行均未修改。
+
+## 2026-09-16 04:57:05 +0000 — 正式 InterAct→DExplore 1335 条全量 geometric 导出启动
+
+- activity_id: `ACT-20260916-045705-OICM-INTERACT-DEXPLORE-EXACT-FULL-START`
+- timestamp: `2026-09-16 04:57:05 +0000`
+- modification_version: `V1.4.12`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续复现另一台机器完整链路；`ACT-20260916-045559-OICM-INTERACT-DEXPLORE-EXACT-PILOT-COMPLETE` 已证明四阶段单序列可运行，并发现必须保留 1335 条 sorted loop 的跨序列 optimizer warm-start 才能复现批处理语义。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-full-20260916T045705Z`
+- run_status: `STARTED`
+- scope: 在新目录依次生成正式 InterAct processed/canonical 1335 条、DExplore converter 输入、完整 geometric 1335 条，再按原 filter 的 left-contact/doorknob 规则物化 geometric-only DExplore 子集；不运行 RL rollout、cache 或训练。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — 已批准的 L3 全量数据处理、验证和回滚计划。
+- [`src/task/ObjectInteractionCm/tools/data/run_interact_grab_canonical.py`](../../tools/data/run_interact_grab_canonical.py) — GRAB-only 原版 InterAct canonicalizer 启动入口。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/) — 独立全量运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json) — `STARTED` 运行合同。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/commands.log` — PENDING。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/validation.json` — PENDING。
+
+**原因**
+
+单序列 pilot 的 canonical 与旧 custom 数据等价，但 q 不等价；代码确认 converter 的 optimizer 状态跨 sorted sequence loop 延续。为匹配异机“先完整 1335 geometric、再筛 660”的实际语义，必须运行完整序列顺序，而不能在 converter 前筛选或用 `--filter` 逐条生成。
+
+**验证**
+
+- 输入枚举为 1335 条，GPU 3 空闲；GPU 1、2 的既有外部训练不停止、不抢占。
+- 每阶段核对 sequence 集、帧数、finite、shape、失败清单；converter 后按 tensor contact 列 `206:222` 与名称 doorknob 执行相同筛选，并记录实际 658/17/660 是否复现。
+- 当前状态：`STARTED`；工程与科研结论均为 `INCONCLUSIVE`。
+
+**回滚**
+
+安全停止当前进程并删除独立 `full_20260916T045705Z` 目录即可；pilot、旧 656 条、原始 GRAB、外部仓库代码、V1.3、checkpoint 和其他运行均保持不变。
+
+## 2026-09-16 05:10:19 +0000 — 正式 InterAct→DExplore 全量运行进入 process_grab
+
+- activity_id: `ACT-20260916-051019-OICM-INTERACT-DEXPLORE-EXACT-FULL-RUNNING`
+- timestamp: `2026-09-16 05:10:19 +0000`
+- modification_version: `V1.4.12`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续已批准的 `ACT-20260916-045705-OICM-INTERACT-DEXPLORE-EXACT-FULL-START`；用户再次要求“继续”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-full-20260916T045705Z`
+- run_status: `RUNNING`
+- command: `CUDA_VISIBLE_DEVICES=3 PYTHONPATH=/home/wbcd/workspace/oyx_ws/InterAct:/home/wbcd/workspace/oyx_ws/InterAct/text2interaction /home/wbcd/miniconda3/envs/graspenv/bin/python -u /home/wbcd/workspace/oyx_ws/InterAct/process/process_grab.py`
+- process: wrapper PID `3997929`，worker PID `3997936`，GPU `3`。
+- scope: 从完整 1335 条只读 GRAB 输入生成独立 InterAct processed staging；后续阶段尚未启动，旧 656 条、pilot、原始数据和 GPU 1/2 既有训练均未修改。
+
+**文件与产物**
+
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/) — 独立全量运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json) — 当前阶段、PID 与 `RUNNING` 状态。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/commands.log) — 当前命令日志；进程结束时完成刷新。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/validation.json` — PENDING；终态前生成。
+
+**原因**
+
+恢复会话后确认此前只建立了运行合同，没有启动全量进程。本次从既有断点启动第一阶段，不重复 pilot，也不改变已批准的数据语义。
+
+**验证**
+
+- 启动前输入仍为 1335 条，GPU 3 空闲；启动后 worker 存活并持续生成 `data/grab/sequences/`。
+- 初始检查已生成 23 条 processed sequence；运行按实验工作流采用分钟级等待。
+- 当前仅证明进程已启动，最终完整性与几何质量为 `INCONCLUSIVE`。
+
+**回滚**
+
+向 wrapper/worker 发送安全停止信号并保留或删除本次独立运行目录；不影响任何旧数据或其他 GPU 进程。
+
+## 2026-09-16 05:19:25 +0000 — 全量导出停止并切换到 12 条 optimizer-prefix 可视化
+
+- activity_id: `ACT-20260916-051925-OICM-INTERACT-DEXPLORE-PREFIX12-START`
+- timestamp: `2026-09-16 05:19:25 +0000`
+- modification_version: `V1.4.13`
+- type: `data / diagnostic / operation / documentation`
+- task_mode: `change` 与 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“先不要完整导出，用一部分给我可视化再导出”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- stopped_run_id: `grab-interact-dexplore-exact-full-20260916T045705Z`
+- stopped_run_status: `STOPPED`
+- stopped_stage: `interact_process_grab`，已生成 `433/1335` 条独立 processed staging；canonical、adapter、converter、filter 均未启动。
+- run_id: `grab-interact-dexplore-exact-prefix12-20260916T051925Z`
+- run_status: `STARTED`
+- scope: 安全停止全量 worker；新建一次性 prefix pilot，按未来全量 lexicographic 顺序处理前 12 条并用完整 URDF mesh viewer 可视化。人工确认前不恢复全量。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §17 固化 12 条 strict prefix、warm-start、viewer 和停止边界。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.13`。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/) — 已停止的全量 staging，保留不覆盖。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/full_20260916T045705Z/run_manifest.json) — `STOPPED`、433 条和停止原因。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/` — PENDING；新的 prefix 运行目录。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/run_manifest.json` — PENDING。
+
+**原因**
+
+随意抽样或单条 converter 会改变已确认存在的跨序列 optimizer warm-start，无法代表未来全量。使用完整排序的严格前缀既满足“先看部分”，又使这 12 条在未来全量中可逐值复现。
+
+**验证**
+
+- 已向 worker PID `3997936` 发送 `SIGINT`，wrapper/worker 均退出；GPU 1/2 既有进程未改动。
+- 停止时独立 staging 有 433 条 processed sequence，命令日志已刷新；原始 GRAB 和旧输出均未写入。
+- prefix 尚未完成，工程与几何质量结论均为 `INCONCLUSIVE`。
+
+**回滚**
+
+停止 prefix 进程/viewer并删除其独立目录；保留或删除已停止全量 staging均不影响原始数据。全量 run 不自动恢复。
+
+## 2026-09-16 05:25:53 +0000 — 12 条 exact prefix geometric 导出完成并启动完整 mesh viewer
+
+- activity_id: `ACT-20260916-052553-OICM-INTERACT-DEXPLORE-PREFIX12-VIEWER`
+- timestamp: `2026-09-16 05:25:53 +0000`
+- modification_version: `V1.4.13`
+- type: `data / diagnostic / operation`
+- task_mode: `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 延续用户“先不要完整导出，用一部分给我可视化再导出”的明确要求与 V1.4 plan §17。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-prefix12-20260916T051925Z`
+- run_status: `RUNNING`（数据阶段完成；等待用户视觉复核）
+- viewer_run_id: `grab-interact-dexplore-prefix12-viewer-20260916T052329Z`
+- viewer_run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8107`
+- process: wrapper PID `4019264`，worker PID `4019276`，HTTP `200`。
+- last_step / last_epoch / best_metric / checkpoint: `N/A`（数据导出与可视化，无训练）。
+- scope: 完成全量排序前 12 条的正式 InterAct→DExplore geometric 一次性批处理，并用 native `373:391` q、完整 URDF mesh 和 `198:205` reference object 启动浏览器；1335 条全量仍为 STOPPED。
+- conclusion: `SUPPORTED`（12 条数据导出、tensor 合同、viewer/FK/object mesh 工程链路）；`INCONCLUSIVE`（几何重定向视觉质量、穿透/接触保真以及是否批准全量）。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 当前指针 `V1.4.13`。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §17 记录本次用户批准的 prefix-first 执行顺序与保护边界。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/) — prefix 运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/run_manifest.json) — 数据完成、viewer 关联和当前 visual review 状态。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/selected_sequences.txt`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/selected_sequences.txt) — 固定的全量排序前 12 条。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/commands.log) — 四阶段命令、初始 staging 兼容错误与成功重试记录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/validation.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/validation.json) — 12/12、帧数、shape、finite 和 viewer check。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/geometric/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/geometric/) — 12 条 geometric tensor。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/run_manifest.json) — 8107 viewer 状态、PID 和 HTTP 证据。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/viewer.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/viewer.log) — URDF FK、object mesh、Viser 启动日志。
+
+**原因**
+
+将人工复核放在全量前，并严格使用 converter 的排序前缀，使这 12 条在未来全量中保留相同 optimizer warm-start 状态。第一次 viewer 未显式传 object root，只显示手；已停止该实例并用 prefix InterAct object assets 原样重启。
+
+**验证**
+
+- 四阶段计数均为 12，DExplore converter：`12 succeeded, 0 failed`；所有 tensor `[T,598]` 且 finite，序列集合和顺序与 `selected_sequences.txt` 完全一致。
+- viewer `--check-only`：12 条、18 个 URDF actuated joints、q columns `[373:391]`；默认 `s10_airplane_fly_1` 为 212 帧，frame 106 最小指尖到 object center 距离约 `0.027 m`。
+- 在线 viewer 显式加载 `airplane.obj`，8107 HTTP 返回 `200`；完整手 mesh 与 reference object 均可见。以上是工程 smoke，不是几何质量结论。
+
+**回滚**
+
+停止 PID `4019264/4019276` 并移除 prefix 独立目录；全量 run 继续保持 STOPPED，不自动恢复。原始和旧数据不受影响。
+
+## 2026-09-16 07:13:13 +0000 — 12 条 prefix viewer 从 8107 切换到 8108
+
+- activity_id: `ACT-20260916-071313-OICM-PREFIX12-VIEWER-PORT-8108`
+- timestamp: `2026-09-16 07:13:13 +0000`
+- modification_version: `V1.4.14`
+- type: `operation / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“换一个端口”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- stopped_run_id: `grab-interact-dexplore-prefix12-viewer-20260916T052329Z`
+- stopped_run_status: `STOPPED`
+- run_id: `grab-interact-dexplore-prefix12-viewer-8108-20260916T071155Z`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8108`
+- process: wrapper PID `4083441`，worker PID `4083442`，HTTP `200`。
+- scope: 仅更换同一 12 条 prefix geometric viewer 的监听端口和独立运行记录；数据、序列、q、物体、URDF、默认序列和全量停止状态保持不变。
+- conclusion: `SUPPORTED`（端口切换和 viewer 工程 smoke）；几何质量仍为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.14`。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §17.1 记录同参数端口切换与回滚边界。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/run_manifest.json) — 父运行改指向 8108 viewer。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer/run_manifest.json) — 8107 旧实例 `STOPPED`。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/) — 8108 独立运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/run_manifest.json) — `RUNNING`、PID 与 HTTP 状态。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/viewer.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/viewer.log) — URDF、物体与 Viser 启动日志。
+
+**原因**
+
+按用户要求更换端口，同时保留旧 viewer 终态与新 viewer 独立证据，不覆盖先前运行记录。
+
+**验证**
+
+- 8107 已停止，HTTP `000` 且无监听进程；8108 HTTP `200`，worker PID `4083442` 正在监听。
+- 新实例加载 12 条相同轨迹、相同 `airplane.obj` 与完整 18-joint Inspire URDF；启动日志未出现数据或 mesh 缺失。
+- 本次仅为运行端口 smoke，不构成新的几何或科研结论。
+
+**回滚**
+
+停止 PID `4083441/4083442`；不自动恢复 8107，也不恢复已暂停的 1335 条全量导出。
+
+## 2026-09-16 07:26:29 +0000 — DExplore Inspire geometric 解唯一性与异机差异诊断
+
+- activity_id: `ACT-20260916-072629-OICM-DEXPLORE-RETARGET-UNIQUENESS`
+- timestamp: `2026-09-16 07:26:29 +0000`
+- modification_version: `V1.4.14`
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前部分导出为何与另一台机器观感不同，以及重定向结果是否唯一；本轮只读核对 converter、dex-retargeting、运行环境和 URDF hash，并追加诊断记录。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- scope: 判断 geometric retarget 的解唯一性、确定性来源和异机复现条件；不修改 converter、optimizer、资产、tensor、viewer、全量暂停状态或科研结论。
+- conclusion: `SUPPORTED`（当前求解不是全局唯一，且对初值、帧/序列顺序和求解器版本路径依赖）；`INCONCLUSIVE`（缺少异机同序列 tensor 与环境 hash，不能确定具体差异源）。
+
+**文件与证据**
+
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/validation.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/validation.json) — 当前 12 条 prefix 的 shape/finite/FK 工程证据。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_13/prefix12_20260916T051925Z/viewer_8108_20260916T071155Z/run_manifest.json) — 当前 viewer 仍为 8108 `RUNNING`。
+- `dexplore/data_processing/convert_grab.py`（外部只读）— 当前 Inspire 分支将 18 个 active joint 全部设为优化变量，一次构造 retargeting 后按排序序列和逐帧连续调用，不在序列边界 reset。
+- `dex-retargeting/dex_retargeting/seq_retarget.py` 与 `optimizer.py`（外部只读）— `last_qpos` 作为下一次 SLSQP 初值；position 目标仅为 5 个指尖位置，并在梯度中加入相对上一解的正则。
+
+**原因**
+
+1. 当前优化变量为 18D，而位置目标只有 5 个指尖的 15 个坐标，几何约束本身不足以保证唯一关节解；关节限位和 temporal prior 只是在多解中选取路径相关的局部解。
+2. `SeqRetargeting.last_qpos` 每帧更新，且 converter 对全部排序序列复用同一实例；因此前一帧、前一序列、筛选方式、处理顺序和调用次数都会改变后续解。
+3. 求解器为 NLopt `LD_SLSQP`。当前 `PositionOptimizer` 返回的 objective value 只有 Huber 位置损失，但提供给求解器的 gradient 额外包含 temporal norm 项；值与梯度并非同一标量目标的严格导数，可能进一步放大不同 NLopt/数值栈的路径敏感性。
+4. q 求解主路径没有随机采样；对象 surface sampling 固定 seed=2024，且不参与默认 q 优化。因此在完全相同输入、排序、converter/dex-retargeting/URDF、NLopt/Pinocchio/NumPy/Torch 版本和调用次数下，应当可重复到很接近，而不应把明显异机差异解释为普通随机波动。
+
+**验证**
+
+- 本机实际加载 `dex-retargeting 0.4.6`，源码来自 commit `8632b2cab32e1b51ce379940c414a0f78332ff6b`；环境为 NLopt `2.7.1`、Pinocchio `2.7.0`、NumPy `1.24.4`、Torch `2.0.1+cu118`。
+- converter commit `c31f57f186409ce5f0de47ced2d347abffe45d06`，`convert_grab.py` SHA256 `0662ade4…aeea`；右手 URDF SHA256 `7d002316…0f58`。
+- converter 的 `inspire_hand/` 与 viewer 的 `inspire_hand_new/` 右手 URDF SHA256 完全相同，排除当前优化资产与显示资产不一致。
+- 未运行新数据处理或优化器实验；以上为源码/环境诊断，不证明哪台机器的视觉结果更正确。
+
+**下一步与回滚**
+
+最小判别应直接取得异机同一 sequence 的 `interaction_hand_inspire.pt`，先比较 `[198:205]`、`[373:391]` 和 SHA256，再核对上述四类源码/资产/依赖 hash。若 object pose 相同而 q 不同，差异锁定在 optimizer 状态或软件栈；若 q 相同而显示不同，差异锁定在 viewer/资产。删除本诊断条目即可回滚文档记录；运行和数据无需回滚。
+
+## 2026-09-16 07:30:49 +0000 — exact-chain `s1_airplane_fly_1` 完整 mesh viewer 启动
+
+- activity_id: `ACT-20260916-073049-OICM-EXACT-S1-AIRPLANE-VIEWER`
+- timestamp: `2026-09-16 07:30:49 +0000`
+- modification_version: `V1.4.15`
+- type: `diagnostic / operation / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户判断 `.pt` 应一致并明确要求“用 s1_airplane_fly_1 试试看，给我可视化”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- stopped_run_id: `grab-interact-dexplore-prefix12-viewer-8108-20260916T071155Z`
+- stopped_run_status: `STOPPED`
+- run_id: `grab-interact-dexplore-exact-s1-airplane-viewer-8108-20260916T072922Z`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8108`
+- process: wrapper PID `4101873`，worker PID `4101880`，HTTP `200`。
+- scope: 使用已完成 exact-chain 单序列 geometric tensor 显示 `s1_airplane_fly_1`；不重新优化、不读取 custom 656/RL、不修改数据、资产、viewer 或全量暂停状态。
+- conclusion: `SUPPORTED`（同名序列 tensor 读取、native q FK、完整 mesh/object viewer 工程链路）；异机数值一致性与视觉质量仍为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.15`。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §17.2 固化同名序列对照与 warm-start 边界。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/run_manifest.json) — exact-chain parent run 与输入/输出 hash。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/validation.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/validation.json) — 279 帧、finite 与 frame 139 FK 检查。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/) — 新 viewer 独立运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/run_manifest.json) — `RUNNING`、PID、tensor SHA256 与 HTTP 状态。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/viewer.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/viewer.log) — URDF FK、object mesh 与 Viser 启动日志。
+
+**原因**
+
+用同名 `s1_airplane_fly_1` 排除上一页面默认 `s10_airplane_fly_1` 带来的受试者/动作差异，并避免重新生成数据引入新的变量。
+
+**验证**
+
+- 输入 tensor SHA256 `ef7c31e7…330ad2`，279 帧；启动时 frame 139 最小指尖到 object center 距离约 `0.011 m`。
+- viewer 明确加载 prefix pilot 的 `airplane.obj` 与完整 18-joint Inspire URDF；8108 HTTP `200`。
+- 当前 tensor 是从 optimizer 初始状态开始的单序列结果，不包含 full-batch 前序 warm-start；因此视觉 smoke 不能替代异机 `.pt` 逐值比较。
+
+**回滚**
+
+停止 PID `4101873/4101880`；不恢复 prefix12 viewer，也不恢复已暂停的 1335 条全量导出。
+
+## 2026-09-16 07:34:24 +0000 — 按用户纠正将 s1_airplane_fly_1 viewer 从 8108 切换到 8112
+
+- activity_id: `ACT-20260916-073424-OICM-EXACT-S1-AIRPLANE-PORT-8112`
+- timestamp: `2026-09-16 07:34:24 +0000`
+- modification_version: `V1.4.16`
+- type: `operation / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户明确纠正“不要用这个端口”，并指定换成 `8112`。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- stopped_run_id: `grab-interact-dexplore-exact-s1-airplane-viewer-8108-20260916T072922Z`
+- stopped_run_status: `STOPPED`
+- run_id: `grab-interact-dexplore-exact-s1-airplane-viewer-8112-20260916T073334Z`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: wrapper PID `4106340`，worker PID `4106366`，HTTP `200`；旧端口 8108 为 HTTP `000`（无监听）。
+- scope: 仅迁移同一个 `s1_airplane_fly_1` viewer 的监听端口和运行记录；不重新优化、不修改 tensor、数据、资产、viewer 实现或全量暂停状态。
+- conclusion: `SUPPORTED`（8112 viewer 工程链路）；异机数值一致性仍为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.16`。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8108_20260916T072922Z/run_manifest.json) — 旧运行终态 `STOPPED` 及原因。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/) — 新 viewer 独立运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/run_manifest.json) — `RUNNING`、PID、tensor SHA256 与 HTTP 状态。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/viewer.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_12/pilot_s1_airplane_fly_1_20260916T044905Z/viewer_8112_20260916T073334Z/viewer.log) — 启动与 FK/contact 检查日志。
+
+**原因**
+
+前一轮错误复用了端口 8108；本次严格按用户指定改为 8112，并保留旧运行终态供审计。
+
+**验证**
+
+- `curl http://127.0.0.1:8112/` 返回 HTTP `200`；`curl http://127.0.0.1:8108/` 返回 HTTP `000`。
+- 新 viewer 进程仅携带 `--port 8112`；序列仍为 `s1_airplane_fly_1`，起始帧仍为 139。
+- 新旧 manifest 与 config 通过 `python -m json.tool`；最新 activity 通过 `audit_diff.py --check-links`。
+
+**回滚**
+
+停止 wrapper PID `4106340`（会连带停止 worker PID `4106366`），并将新 viewer manifest 更新为 `STOPPED`；不会删除或改写 tensor。
+
+## 2026-09-16 07:46:37 +0000 — NAS 全量 GRAB Inspire 导出重启并启动 ARCTIC MANO viewer
+
+- activity_id: `ACT-20260916-074637-OICM-FULL-NAS-EXPORT-ARCTIC-MANO`
+- timestamp: `2026-09-16 07:46:37 +0000`
+- modification_version: `V1.4.18`
+- type: `data / diagnostic / operation / documentation`
+- task_mode: `run-only/operation`（plan/activity/manifest 同步记录）
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认 Inspire 视觉结果无问题，明确要求开始完整 GPU 导出并查看 ARCTIC MANO；随后明确要求导出必须位于 NAS、不得放本地。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-full-20260916T074233Z`
+- run_status: `RUNNING`
+- current_stage: `interact_process_grab`
+- process: wrapper PID `4119323`，worker PID `4119331`，物理 GPU `3`，复核时显存约 `10680 MiB`。
+- progress_at_check: `46/1335` processed staging；终态 sequence/frame/finite/失败清单仍为 `PENDING`。
+- viewer_run_id: `arctic_mano_viewer_20260916T074556Z`
+- viewer_run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8113`，PID `4121020`，HTTP `200`。
+- scope: 在 NAS 新目录运行完整 1335 条 GRAB exact InterAct→DExplore geometric 链路；ARCTIC viewer 复用既有 bilateral MANO viewer 和 `s01/box_use_01`。不启动 ARCTIC/OakInk2 Inspire 导出、cache、scale、训练或 RL，不修改原始数据、V1.3、checkpoint、GPU 1/2 运行或当前 8112 viewer。
+- conclusion: `SUPPORTED`（NAS 路由、GPU 3 进程和 ARCTIC MANO viewer 工程启动）；完整导出与几何质量仍为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.18`。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §18–18.1 固化全量范围、GPU、ARCTIC viewer 与 NAS 边界。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/) — 逻辑路径；实际解析到 NAS NFS。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json) — `RUNNING`、NAS resolved root、PID、GPU 和误停/重启记录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log) — 当前阶段实时日志。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/validation.json` — PENDING，终态前生成。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_viewer_20260916T074556Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_viewer_20260916T074556Z/) — NAS viewer 运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_viewer_20260916T074556Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_viewer_20260916T074556Z/run_manifest.json) — ARCTIC/GRAB MANO 输入、PID 与 HTTP 状态。
+
+**原因**
+
+用户已完成 prefix/同名序列视觉复核，允许进入完整导出；所有批量产物必须留在 NAS。`data/processed_data` 经 `readlink -f`、inode/device 和 `findmnt` 核验为 NAS 软链接。Agent 曾误看仓库根容量而在 29 条时停止，确认后从头覆盖这 29 条并重启，避免误留不完整状态。
+
+**验证**
+
+- `data/processed_data` 解析为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data`；逻辑路径与 NAS 绝对路径的 device/inode 均为 `62/525666022`，NFS 可用约 `52 TiB`。
+- worker PID `4119331` 只占用 GPU 3；GPU 1/2 既有进程未改动。复核时 staging 已从头推进至 46 条。
+- 8113 HTTP `200`；viewer 列出 `GRAB / s1/airplane_fly_1` 与 `ARCTIC / s01/box_use_01`。页面需在下拉框选择后者。
+- 当前只是工程启动证据；完整性和科研质量保持 `INCONCLUSIVE`。
+
+**回滚**
+
+安全停止 wrapper PID `4119323`/worker PID `4119331` 与 viewer PID `4121020`，将两个 manifest 更新为 `STOPPED`；保留 NAS 运行目录供审计，不删除原始或既有产物。
+
+## 2026-09-16 07:53:06 +0000 — ARCTIC MANO 切换为 KNN/累计距离着色 viewer
+
+- activity_id: `ACT-20260916-075306-OICM-ARCTIC-MANO-KNN-VIEWER`
+- timestamp: `2026-09-16 07:53:06 +0000`
+- modification_version: `V1.4.19`
+- type: `code / diagnostic / operation / documentation`
+- task_mode: `change` 后切回 `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确纠正需要此前可查看 KNN 和距离着色的脚本，并要求以后统一使用该脚本；同时已授权兼容困难时重写/适配。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- stopped_viewer_run_id: `arctic_mano_viewer_20260916T074556Z`
+- stopped_viewer_run_status: `STOPPED`
+- run_id: `arctic_mano_knn_viewer_20260916T075013Z/viewer`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8113`
+- process: PID `4128922`，HTTP `200`。
+- concurrent_export: `grab-interact-dexplore-exact-full-20260916T074233Z` 仍为 `RUNNING`，GPU 3，复核时 `330/1335` processed staging。
+- scope: 复用 `src.task.ObjectInteractionCm.visualize_grab` 的红色累计距离与黄色 object-to-hand KNN 着色；仅补充 ARCTIC raw bilateral MANO 的无单刚体 pose/无 mesh viewer-only 兼容。不修改 raw NPZ、训练 index、cache、GT、split、全量导出语义或其他运行。
+- conclusion: `SUPPORTED`（ARCTIC 889 帧 point/KNN/distance viewer 工程链路）；mesh、完整导出和科研质量仍为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进到 `V1.4.19`。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §18.2 固化以后统一使用 KNN/距离 viewer 的用户要求与兼容边界。
+- [`src/task/ObjectInteractionCm/visualize_grab.py`](../../visualize_grab.py) — 支持 ARCTIC 无单刚体 pose、无 MANO mesh 的 point-only viewer；禁止伪造 articulated object mesh。
+- [`src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`](../../tests/test_visualize_grab_v1_4.py) — 新增 ARCTIC 缺失 pose/mesh 定向回归。
+- [`src/task/ObjectInteractionCm/docs/logs/repo_memory.md`](repo_memory.md) — 记录默认 viewer 固定偏好。
+- [`src/task/ObjectInteractionCm/docs/README.md`](../README.md) — 增加 Task repo memory 导航。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/) — NAS viewer-only index 与运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/viewer/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/viewer/run_manifest.json) — PID、HTTP、着色能力与输入快照。
+
+**原因**
+
+前一实例只显示普通 MANO 点/mesh，不具备用户要求的交互式 KNN 与累计距离着色。正确 viewer 已有这两项能力，但 ARCTIC raw 数据因铰接物体没有 `obj_pose_world`，且当前 NPZ 未保存 MANO mesh，需做最小 viewer-only 兼容。
+
+**验证**
+
+- `pytest -q src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：`4 passed`。
+- `visualize_grab --check-only`：889 帧、object `[889,4096,3]`、merged hands `[889,3076,3]`；frame 0 object-to-hand KNN 命中数 n=1/4/8/16/32/64 分别为 `17/38/60/89/147/234`。
+- 8113 HTTP `200`；manifest 明确累计距离为红色、object-to-hand KNN 为黄色。object/hand mesh 在缺失可靠字段时保持关闭。
+- 完整导出进程未中断，复核时推进至 `330/1335`。以上为工程证据，不构成科研效果结论。
+
+**回滚**
+
+停止 viewer PID `4128922`，删除 viewer-only index/运行目录，并恢复本次代码、测试、plan、memory、README、版本和 activity 增量；raw NPZ、完整导出及旧运行无需恢复。
+## 2026-09-16 09:19:34 +0000 — NAS 全量 GRAB Inspire 导出进入 DExplore converter
+
+- activity_id: `ACT-20260916-091934-OICM-FULL-NAS-CONVERTER-START`
+- timestamp: `2026-09-16 09:19:34 +0000`
+- modification_version: `V1.4.18`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求先启动最终转换；延续 V1.4 plan §18–18.1 已批准的完整 1335 条 GRAB exact InterAct→DExplore geometric NAS 导出。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-full-20260916T074233Z`
+- run_status: `RUNNING`
+- current_stage: `dexplore_convert_grab`
+- process: wrapper PID `174637`，worker PID `174638`，物理 GPU `3`；启动复核时显存约 `1920 MiB`。
+- scope: 复用已完成的 1335/1335 InterAct processed/canonical 数据，在 NAS 完成 1335/1335 adapter 后启动一次性 DExplore Inspire converter；保持排序、跨序列 optimizer warm-start、`iterations=1`、`stride=1`。不重跑前两阶段，不修改原始 GRAB、旧 geometric、V1.3、split、cache、checkpoint 或 GPU 1/2 运行。
+- conclusion: `SUPPORTED`（adapter 完整性、NAS 路由、GPU 3 converter 启动）；完整 geometric 计数、finite、失败清单和几何质量仍为 `INCONCLUSIVE`。
+
+**原因**
+
+canonical 阶段此前已正常完成，但四阶段链路由独立命令手工衔接，未自动提交 adapter/converter。用户本轮明确要求先启动最终转换，因此从现有完整 canonical 结果续跑，避免无意义地重做前两阶段。
+
+**文件与证据**
+
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/) — NAS NFS 运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json) — 已更新为 converter `RUNNING` 和当前 PID/GPU。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log) — process、canonical、adapter 和 converter 命令/退出状态。
+- `data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/validation.json` — PENDING，converter 终态后生成。
+
+**验证**
+
+- adapter 输出 `converter_input/sequences` 为 `1335/1335`；converter 已在 `geometric_full` 产生首批序列目录。
+- `nvidia-smi` 确认 worker PID `174638` 位于物理 GPU 3；GPU 1/2 既有进程未改变。
+- 当前仅为工程启动证据。终态需核对 1335 条序列、tensor shape/finite、失败清单并生成 `validation.json`。
+
+**回滚**
+
+安全停止 wrapper PID `174637` / worker PID `174638` 并保留 NAS 目录，不删除既有中间产物。
+## 2026-09-16 09:29:28 +0000 — OakInk2 运动优先与 2 cm 双侧搜索 pilot 完成
+
+- activity_id: `ACT-20260916-092928-OICM-OAKINK2-TEMPORAL-PILOT`
+- timestamp: `2026-09-16 09:29:28 +0000`
+- modification_version: `V1.4.20`
+- type: `code / data / diagnostic / documentation`
+- task_mode: `change` 后切回 `read-only/diagnostic`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户指出旧 motion-first 由单零件抖动错误裁剪，并确认采用“先检测可靠运动，再从运动区间向前后搜索 2 cm”的时序方案。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `pilot_20260916T092715Z`
+- run_status: `COMPLETED`
+- scope: 新增隔离的 OakInk2 时序切分 helper、合成测试和 10 条真实 pilot；保持 v1/v1.1 index、annotation、Stage3、split、cache、训练与 viewer staging 只读，不自动重建正式 index。
+- conclusion: `SUPPORTED`（运动优先时无可靠整体运动不会读取距离；削笔器降级为 part-only；2 cm 双侧扩展按合同执行）；`INCONCLUSIVE`（阈值与扩展后的正式样本质量尚待人工复核）。
+
+**原因**
+
+旧 `_motion_span` 以任一零件单帧 `>1 mm / >1°` 为运动证据，并用全局最早/最晚事件合成一个 span。削笔器的一个零件小幅转动触发该规则，而更早的连续 `<2 cm` 帧被 motion span 先行裁掉。新 pilot 改用 7 帧净运动、多零件共识和独立时序分量，并把 Stage3 缓存距离延迟到可靠运动候选之后读取。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — §19 final 科研语义、参数、保护边界和回滚。
+- [`src/task/ObjectInteractionCm/tools/data/oakink2_temporal_segments.py`](../../tools/data/oakink2_temporal_segments.py) — motion-first、多零件共识、时序分量与接触扩展实现。
+- [`src/task/ObjectInteractionCm/tests/test_oakink2_temporal_segments.py`](../../tests/test_oakink2_temporal_segments.py) — 无运动不读距离、part-only、多片段与接触边界测试。
+- [`src/task/ObjectInteractionCm/research/oakink2_temporal_segmentation/README.md`](../../research/oakink2_temporal_segmentation/README.md) — pilot 入口与只读边界。
+- [`src/task/ObjectInteractionCm/research/oakink2_temporal_segmentation/run.py`](../../research/oakink2_temporal_segmentation/run.py) — 3 条代表样本和 7 条旧静止对照运行入口。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/) — NAS pilot 运行目录。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/run_manifest.json) — `COMPLETED` 运行合同。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json) — 逐段旧/新 mask、motion、part-only 和距离读取证据。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进至 `V1.4.20`。
+
+**验证**
+
+- `pytest -q src/task/ObjectInteractionCm/tests/test_oakink2_temporal_segments.py src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py`：`10 passed`。
+- 两个新 Python 入口 `py_compile` 通过；pilot manifest/report 通过 `json.tool`。
+- 真实 pilot：10 条中 `part_only_motion=1`、`selected=7`、`no_reliable_motion=2`。削笔器由旧 12 帧变为 `part_only_motion`、新选择 0 帧且距离 provider 调用 0 次；烧杯由 34 帧扩展为 149 帧；三脚架由 43 帧扩展为 639 帧。后者表明长期持握时 `<2 cm` 可覆盖几乎整个 primitive，是否增加最长上下文或保持完整持握需用户复核，不能自动定稿。
+- 同期 GRAB full converter 保持 `RUNNING`，本次复核时 `459/1335`；本 pilot 未修改其进程、顺序或输出。
+
+**回滚**
+
+删除本次 temporal helper、测试、研究入口和独立 NAS pilot 目录，并恢复 plan §19、版本指针、README 与本 activity 增量；v1/v1.1、annotation、Stage3 和训练数据无需恢复。
+## 2026-09-16 10:14:58 +0000 — NAS 全量 GRAB Inspire geometric 导出完成
+
+- activity_id: `ACT-20260916-101458-OICM-FULL-NAS-GEOMETRIC-COMPLETE`
+- timestamp: `2026-09-16 10:14:58 +0000`
+- modification_version: `V1.4.18`
+- type: `data / operation / diagnostic`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续 V1.4 plan §18–18.1 已批准的 1335 条完整 GRAB exact InterAct→DExplore geometric NAS 导出；用户本轮查询终态，补做全量 tensor 验证并闭合运行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `grab-interact-dexplore-exact-full-20260916T074233Z`
+- run_status: `COMPLETED`
+- last_step: `N/A`（数据处理）
+- last_epoch: `N/A`（数据处理）
+- best_metric: `N/A`（数据处理）
+- checkpoint: `N/A`（geometric retarget 数据导出）
+- scope: 闭合 1335 条 GRAB process/canonical/adapter/converter 链路，逐个加载最终 tensor 检查序列集合、帧数、shape、dtype 和 finite；不执行筛选、RL、V1.4 cache 接入或训练。
+- conclusion: `SUPPORTED`（1335/1335、406264 帧、0 失败、全量 `[T,598] float32` finite）；几何接触/穿透质量仍为 `INCONCLUSIVE`。
+
+**原因**
+
+converter 已于 `2026-09-16 09:50:08 +0000` 正常退出，但运行 manifest 仍为 `RUNNING` 且缺少终态 `validation.json`。本次根据用户状态查询完成全量只读验证并修正终态，避免仅以目录计数宣称成功。
+
+**文件与产物**
+
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/) — NAS NFS 完整运行目录。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/run_manifest.json) — `COMPLETED` 终态、序列/帧计数和验证摘要。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/validation.json`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/validation.json) — 全量 tensor shape/frame/finite/失败清单。
+- [`data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log`](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/commands.log) — 四阶段命令、历史恢复过程与 converter `1335 succeeded, 0 failed`。
+
+**验证**
+
+- converter exit code `0`；输出序列集合与 1335 条 adapter 输入完全一致，无 missing/extra。
+- 逐个读取 1335 个 `interaction_hand_inspire.pt`：总计 `406264` 帧，全部 `[T,598]`、`torch.float32`、finite；逐序列 `T` 与 converter 输入 `motion.npz:n_frames` 一致，failure_count=`0`。
+- 工程导出结论为 `SUPPORTED`；该验证不评价视觉接触、穿透或训练收益。
+
+**回滚**
+
+保留 NAS 运行目录作为独立产物；如需回滚，只移除该 run 及本终态 activity，不修改原始 GRAB、旧 geometric、cache、split 或 checkpoint。
+
+## 2026-09-16 10:47:42 +0000 — 双手 MANO2048 cache producer 完成并启动全量 NAS 导出
+
+- activity_id: `ACT-20260916-104742-OICM-BILATERAL-MANO-CACHE-START`
+- timestamp: `2026-09-16 10:47:42 +0000`
+- modification_version: `V1.4.21`
+- type: `code / data / operation / diagnostic`
+- task_mode: `change` 后切换为 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认复用仓库现有 V1.3 MANO2048/KNN 实现，继续适配当前双手 GRAB/ARCTIC NPZ 并启动全量 cache 导出。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `RUNNING`
+- scope: 复用 V1.3 固定表面积采样和离线 KNN 合同，新增当前 V1.4 bilateral Stage-4 NPZ producer；decoder 流保持每侧 1538 点，高分辨率 KNN 流使用每侧 MANO 2048 点，GPU 0/3 分两个确定性 shard 导出全部 1335 条 GRAB 与 301 条 ARCTIC。输出只写 NAS 独立目录，不覆盖源 NPZ、Inspire cache、split、checkpoint 或旧运行。
+- conclusion: `SUPPORTED`（两数据集 pilot 与代码验证）；全量终态与训练效果当前为 `INCONCLUSIVE`。
+
+**原因**
+
+仓库已有 V1.3 单右手 MANO2048 producer，但当前 bilateral 快速脚本把 3076 点 decoder 流直接链接为
+KNN 流，且不能读取 Stage-4 双侧 NPZ 或恢复 ARCTIC MANO mesh。新 producer 只补齐这层 schema/输入适配，
+不重新定义采样、KNN、半径、split 或训练语义。
+
+**实现与 pilot**
+
+- [`src/task/ObjectInteractionCm/tools/data/build_bilateral_mano_v1_4_cache.py`](../../tools/data/build_bilateral_mano_v1_4_cache.py) — 双流生成、ARCTIC MANO 参数重建、GPU KNN、worker/finalize/resume 和全量验证。
+- [`src/task/ObjectInteractionCm/tests/test_bilateral_mano_v1_4_cache.py`](../../tests/test_bilateral_mano_v1_4_cache.py) — 面积采样、固定 correspondence、跨帧一致性和法向测试。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针推进至 `V1.4.21`。
+- [`data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/`](../../../../../data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/) — NAS pilot，GRAB/ARCTIC 各一条，共 1168 帧。
+- [`data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/run_manifest.json) — pilot `COMPLETED` manifest。
+- [`data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/validation_summary.json`](../../../../../data/processed_data/object_interaction_cm_bilateral_mano_v1_4_21_pilot_20260916T104526Z/validation_summary.json) — pilot shape、finite、index 范围和帧统计。
+
+**全量运行**
+
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — NAS 正式输出，`RUNNING`。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — `STARTED`；预期 1636 条、两个 shard。
+- `data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json` — PENDING（`run_status=RUNNING`，worker 全部完成并 finalize 后生成）。
+- `data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/validation_summary.json` — PENDING（`run_status=RUNNING`，全量逐数组验证后生成）。
+
+**验证**
+
+- `py_compile` 通过；`pytest -q src/task/ObjectInteractionCm/tests/test_bilateral_mano_v1_4_cache.py src/task/ObjectInteractionCm/tests/test_v1_3_offline_knn.py`：`6 passed`。
+- pilot decoder `[T,3076,3]` 左右半区与源 NPZ 逐元素完全一致；高分辨率流 `[T,4096,3]`、KNN index `[T,4096,32] uint16`，索引最大值 4095，法向范数最大误差 `1.79e-7`。
+- ARCTIC pilot 保存两个 object part、逐帧 articulation 和真实 root pose；按相同 seed 重建的 object correspondence 与现有 4096 点 cache 最大误差 `0 m`。
+- 正式运行已确认两个 worker 分别在 GPU 0/3 连续产出，首批序列均 `COMPLETED`；GPU 1/2 的既有满载任务未改变。
+
+**回滚**
+
+安全停止两个 worker 并保留或移除独立 NAS 输出；恢复新增 producer、测试、`V1.4.21` 指针和本 activity。源 GRAB/ARCTIC NPZ、Inspire cache、split、checkpoint 与其他运行无需恢复。
+
+## 2026-09-16 11:43:42 +0000 — OakInk2 V1.4.20 时序切分 KNN/距离查看器启动于 8112
+
+- activity_id: `ACT-20260916-114342-OICM-OAKINK2-TEMPORAL-KNN-VIEWER`
+- timestamp: `2026-09-16 11:43:42 +0000`
+- modification_version: `V1.4.21`
+- type: `data / diagnostic / operation`
+- task_mode: `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户要求查看 OakInk2 数据切分，并已固定以后统一使用带 object-to-hand KNN 与累计距离着色的 `visualize_grab.py`；端口沿用用户指定的 `8112`。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `310853`，HTTP `200`。
+- scope: 将 V1.4.20 motion-first + 2 cm 双侧搜索 pilot 中实际选中的 7 条轨迹只读投影为 viewer-only bilateral MANO NPZ/index，并用统一 KNN/累计距离 viewer 展示；停止旧 8112 GRAB viewer 和旧 8113 三轨迹 OakInk2 viewer。不修改 OakInk2 v1/v1.1 index、时序 pilot 报告、annotation、Stage3、正式 cache、split 或训练。
+- conclusion: `SUPPORTED`（7 条 adapter、KNN/距离 viewer 和 HTTP 工程链路）；切分科研质量仍为 `INCONCLUSIVE`。
+
+**原因**
+
+旧 8113 OakInk2 index 只有修复前的削笔器、烧杯、三脚架三条，仍显示削笔器错误的 12 帧；旧切分专用
+viewer 又没有用户要求的 KNN/距离着色。因此本次仅对 V1.4.20 pilot 的实际新选中帧生成隔离的 viewer
+adapter，不把 0 帧结果伪造成轨迹。
+
+**产物与验证**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/) — NAS viewer-only adapter，共 7 条、4145 帧。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/adapter_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/adapter_manifest.json) — 7 条选中轨迹和 3 条 0 帧排除原因。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/index.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/index.json) — viewer-only index。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112/run_manifest.json) — `RUNNING` viewer manifest。
+
+**验证**
+
+- 7/7 条 `visualize_grab --check-only` 均退出 0；每帧 object 4096 点、bilateral MANO 1556 顶点，hand mesh 两部分可用。初始烧杯轨迹 149 帧，首帧最近距离 `17.891 mm`，object-to-hand KNN n=1/4/8/16/32/64 的手点并集为 `28/51/72/109/158/221`。
+- 未纳入 viewer：削笔器 `part_only_motion`、bowl `no_reliable_motion`、一条 laptop `no_reliable_motion`，均为 0 帧。MANO cache 全量 worker 未停止，复核时已完成 1080/1636 条。
+
+**回滚**
+
+停止 PID `310853`，移除独立 viewer adapter/run 和本 activity；所有输入 index、报告和正在运行的正式 cache 不受影响。
+
+## 2026-09-16 11:52:17 +0000 — OakInk2 烧杯首条切分静止段诊断与 viewer 定位
+
+- activity_id: `ACT-20260916-115217-OICM-OAKINK2-BEAKER-TAIL-DIAG`
+- timestamp: `2026-09-16 11:52:17 +0000`
+- modification_version: `V1.4.21`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic` 后切换为 `run-only/operation`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户指出 8112 第一条烧杯轨迹看起来没有明显运动，要求复核当前可视化结果。
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112_motion_core`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `324546`，HTTP `200`。
+- scope: 只读核对第一条烧杯的 motion/contact component 与 viewer object trajectory，并把 viewer 初始帧定位到 motion core；不修改切分算法、index、报告、adapter NPZ、正式 cache 或训练。
+- conclusion: `SUPPORTED`（运动核心存在但无上限 2 cm 扩展带入长静止尾部）；正式切分策略是否增加扩展上限仍为 `INCONCLUSIVE`。
+
+**原因**
+
+烧杯 motion core 为原始帧 `1322–1390`，但连续 `<2 cm` 接触分量覆盖 `1265–1413`；当前算法按已确认的
+“从运动段向两侧搜索 2 cm”语义吞入整个接触分量，因此 viewer 前 57 帧和后 23 帧几乎静止。
+
+**验证**
+
+- 运动核心 69 帧内，object centroid 净移动 `44.673 mm`，7 帧窗口 translation 的 median/P95/max 为
+  `3.492/7.235/7.296 mm`，rotation 为 `5.367/10.384/10.511°`。
+- 前 57 帧 centroid 净移动 `0.317 mm`，后 23 帧 `0.157 mm`；静止观感真实，不是 viewer 选错对象。
+- 将 8112 初始位置改为轨迹内 frame index `57`（原始 frame `1322`），不修改 index、报告或 NPZ。
+
+**产物**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json) — motion/contact component 证据。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112_motion_core/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/viewer_8112_motion_core/run_manifest.json) — 新 viewer 运行状态。
+
+**回滚**
+
+停止 PID `324546` 并恢复从 frame index 0 启动；所有切分输入和 cache 不变。
+
+## 2026-09-16 12:06:49 +0000 — OakInk2 烧杯完整 primitive 与场景上下文 viewer
+
+- activity_id: `ACT-20260916-120649-OICM-OAKINK2-BEAKER-FULL-SCENE`
+- timestamp: `2026-09-16 12:06:49 +0000`
+- modification_version: `V1.4.21`
+- type: `code / data / diagnostic / operation`
+- task_mode: `change` 后切换为 `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户澄清需要先查看第一条烧杯轨迹的完整 primitive 和场景，以判断目标对象是否真的被移动；继续使用固定的 KNN/累计距离 viewer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/full_scene_selected_1772/viewer_8112`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `336329`，HTTP `200`。
+- scope: 将烧杯 `selected:1772` 的完整 primitive 原始帧 `941–1413` 投影为 viewer-only bilateral MANO 轨迹；橙色 4096 点仅为被选中烧杯，灰色 1536 点为同场景另外 3 个对象，KNN/红色距离仍只对烧杯计算。不修改时序切分、index、annotation、Stage3、正式 cache 或训练。
+- conclusion: `SUPPORTED`（完整场景读取、上下文显示和 viewer 工程链路）；目标对象语义及切分科研质量等待用户人工判断，保持 `INCONCLUSIVE`。
+
+**原因**
+
+此前 8112 只显示时序筛选后的 149 帧和选中对象，无法判断该 primitive 的前因后果或场景中是否存在
+更合理的主动物体。本次增加 viewer-only 可选 `context_points_world`，上下文不参与 KNN/距离，避免改变目标对象定义。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCm/visualize_grab.py`](../../visualize_grab.py) — raw bilateral viewer 可选读取并灰色显示场景上下文点。
+- [`src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`](../../tests/test_visualize_grab_v1_4.py) — context 点读取回归。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/full_scene_selected_1772/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/full_scene_selected_1772/) — 完整 primitive viewer-only adapter。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/full_scene_selected_1772/viewer_8112/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/full_scene_selected_1772/viewer_8112/run_manifest.json) — `RUNNING` viewer manifest。
+
+**验证**
+
+- `py_compile` 通过；`pytest -q src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：`4 passed`。
+- `visualize_grab --check-only`：473 帧、目标物体 4096 点、上下文 1536 点、双手 1556 顶点、finite；首帧原始 frame `941`。
+- adapter 确认上下文对象 3 个、缺失上下文对象 0；HTTP 8112 返回 `200`。
+
+**回滚**
+
+停止 PID `336329`，删除独立 full-scene adapter/run，并恢复 viewer context 可选字段及测试；源数据和切分结果无需恢复。
+
+## 2026-09-16 12:27:39 +0000 — OakInk2 任务优先语义复核与其余六条完整轨迹 viewer
+
+- activity_id: `ACT-20260916-122739-OICM-OAKINK2-TASK-FIRST-REVIEW`
+- timestamp: `2026-09-16 12:27:39 +0000`
+- modification_version: `V1.4.21`
+- type: `data / diagnostic / operation`
+- task_mode: `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户确认“拿试管放进烧杯”任务应以试管为主导对象，烧杯几乎不动，要求排除烧杯候选，并继续展示其他轨迹。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/viewer_8112`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `178759`，HTTP `200`。
+- scope: 按“任务主导对象语义先于运动/contact”的人工复核规则，将烧杯 `selected:1772` 标记为 viewer/formal 候选排除；其余 6 条非零时序候选以完整 primitive、双手 MANO、橙色当前候选和灰色场景上下文生成只读 viewer adapter。不修改 v1/v1.1 source index、V1.4.20 时序报告、annotation、Stage3、正式 cache、split 或训练。
+- previous_run: `full_scene_selected_1772/viewer_8112` 已于 `2026-09-16T12:27:05+00:00` 停止，终态 `STOPPED`。
+- conclusion: `SUPPORTED`（任务优先排除规则、六条完整轨迹 adapter、KNN/距离 viewer 和 HTTP 工程链路）；其余六条的任务语义正确性等待用户逐条人工判断，保持 `INCONCLUSIVE`。
+
+**原因**
+
+前一条烧杯结果证明仅凭物体运动与手物距离，无法决定任务中的主导对象；“试管放入烧杯”的语义要求先选试管，再对试管执行运动与接触检测。因此先排除已确认错误的烧杯候选，并把剩余非零候选连同完整场景交给人工复核。
+
+**语义结论与展示范围**
+
+- 烧杯 `selected:1772` 是“试管放入烧杯”任务中的被作用容器，不是主导移动对象；不得进入后续正式候选。该结论来自用户对完整 primitive 的明确确认，不由运动或 2 cm 距离阈值覆盖。
+- viewer 展示 6 条待复核候选，共 5314 个完整 primitive 帧：tripod/rearrange 641 帧、laptop/open 1930 帧、laptop/close 882 帧、三条 alcohol burner/rearrange 分别 641/540/680 帧。
+- tripod 与第一条 alcohol burner 是同一双物体 rearrange 的两个候选视角，故并列保留供任务语义判断；不因两者均有运动/contact 就自动同时接纳。
+- 另有 3 条零帧候选不展示：pencil sharpener `part_only_motion`、bowl `no_reliable_motion`、laptop `no_reliable_motion`。
+
+**产物与验证**
+
+- [`src/task/ObjectInteractionCm/visualize_grab.py`](../../visualize_grab.py) — 复用本轮前一活动已增加的灰色上下文读取与显示能力，本次未继续改动代码。
+- [`src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`](../../tests/test_visualize_grab_v1_4.py) — 覆盖上述上下文读取合同，本次未继续改动测试。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/) — NAS viewer-only adapter；烧杯排除原因与六条轨迹明细见 `adapter_manifest.json`。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/index.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/index.json) — 6 条完整 primitive viewer-only index。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/viewer_8112/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/viewer_8112/run_manifest.json) — `RUNNING` viewer manifest。
+
+**验证**
+
+- 6/6 条 `visualize_grab --check-only` 均退出 0；每条目标物体 4096 点、双手 MANO 1556 顶点，灰色上下文为 512–7680 点；hand mesh 两部分可用。
+- viewer 仅将橙色当前候选用于累计距离红色着色和 object-to-hand KNN 黄色着色；灰色上下文只用于理解任务，不参与 KNN/距离。
+- `curl http://127.0.0.1:8112` 返回 HTTP `200`，监听进程 PID 为 `178759`。
+
+**回滚**
+
+停止 PID `178759` 并删除独立 `task_first_review_remaining_6/` adapter/run；源 index、时序报告和正式数据不受影响。烧杯排除是用户确认的任务语义决定，若要恢复须重新获得用户确认。
+
+## 2026-09-16 12:46:06 +0000 — OakInk2 alcohol burner 与 laptop 视觉重复诊断
+
+- activity_id: `ACT-20260916-124606-OICM-OAKINK2-REPEAT-DIAG`
+- timestamp: `2026-09-16 12:46:06 +0000`
+- modification_version: `V1.4.21`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户指出 `2647/2648/2649` 看起来没有区别，两条 laptop 轨迹也近似相同，要求解释。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/viewer_8112`
+- run_status: `RUNNING`
+- scope: 只读比较五条 adapter NPZ 的 hash、源 sequence、primitive、对象 ID、帧区间、位移统计及 V1.4.20 motion component；不修改 viewer、adapter、source index、时序报告、正式 cache 或训练。
+- conclusion: `SUPPORTED`（确认不存在误加载同一文件，同时确认候选语义重复和慢动作检测稀疏）；这些候选是否保留仍为 `INCONCLUSIVE`。
+
+**原因**
+
+需要区分两种可能：viewer 下拉选择失效导致同一轨迹重复显示，或源数据本身是相同任务的不同 take。另需检查 laptop 开/关动作相似是否来自长静止区间及运动阈值漏检。
+
+**验证**
+
+- `2647/2648/2649` 的 `shared/left/right.npz` SHA-256 前缀均不同，源 sequence 和 primitive frame range 分别为 `9240–9880`、`4510–5049`、`19940–20619`；不是同一文件或同一帧区间。
+- 三条均为 `rearrange`，目标均为 alcohol burner `O02@0206@00002`，并具有相同双手任务分工；因此是不同录制的同语义重复 take。目标质心首尾净位移分别为 `104.681/110.582/88.805 mm`。
+- laptop 两条来自不同 sequence，分别为 `open_laptop_lid` 的 `2784–4713` 和 `close_laptop_lid` 的 `360–1241`，目标均为 lid `O02@0053@00001`；目标质心首尾净位移分别为 `179.243/175.658 mm`，说明不是静态复制，而是同一铰链路径的相反动作。
+- open laptop 的可靠运动证据仅 `25/1930` 帧（`1.3%`），却经连续 `<2 cm` 接触扩展为 `1345` 帧；close laptop 为 `157/882` 帧（`17.8%`），扩展为 `532` 帧。完整 primitive 播放中的大量慢速/静止帧会掩盖开关方向。
+- `2647/2648/2649` 的运动证据比例分别为 `22.0%/40.2%/19.4%`；三条动作本就相同，并均包含明显非运动区间。
+- viewer 轨迹 label 使用唯一 `sequence_id`，下拉框不存在同名匹配到第一条的问题；HTTP 8112 服务保持运行。
+
+**产物**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json) — motion component 与 2 cm 扩展证据。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/index.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/index.json) — 五条轨迹的唯一 sequence/path 映射。
+
+**回滚**
+
+本次仅新增诊断记录，无数据或代码变更；删除本 activity 条目即可回滚记录。viewer 与所有输入保持不变。
+
+## 2026-09-16 12:55:44 +0000 — OakInk2 当前 viewer 与时序 pilot 帧率语义诊断
+
+- activity_id: `ACT-20260916-125544-OICM-OAKINK2-FPS-DIAG`
+- timestamp: `2026-09-16 12:55:44 +0000`
+- modification_version: `V1.4.21`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 帧率是否为 30 Hz。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `oakink2_temporal_mano_knn_viewer_20260916T114011Z/task_first_review_remaining_6/viewer_8112`
+- run_status: `RUNNING`
+- scope: 只读核对 OakInk2 toolkit 帧率常量、adapter `source_fps/ds_rate/raw_frame_id` 与 viewer 播放参数；不修改 viewer、adapter、时序报告、source index、正式 cache 或训练。
+- conclusion: `INVALID_IMPLEMENTATION`（当前 OakInk2 viewer adapter 和 V1.4.20 时序 pilot 错把连续 120 Hz mocap 帧按 30 Hz 语义处理）；OakInk2 源数据本身未损坏。
+
+**原因**
+
+需要区分 OakInk2 的 RGB 视频帧率、MANO/物体 mocap 帧率以及 viewer GUI 播放 FPS。三者不能仅凭 adapter 元数据视为同一时间轴。
+
+**验证**
+
+- `dataset/OakInk2/src/oakink2_toolkit/meta.py` 明确定义 `FPS_MOCAP=120`、`FPS_VIDEO=30`；preview stream 也定义 `FPS_MOCAP=120`。
+- 当前 6 条 adapter 的 `raw_frame_id` 均逐帧连续，例如 `9240,9241,9242`，说明保留的是完整 120 Hz mocap，并未执行每 4 帧下采样。
+- adapter 却写入 `source_fps=30.0`、`ds_rate=1`；viewer 以 `--fps 30` 顺序播放所有源帧，因此视觉时间被放慢 4 倍。
+- V1.4.20 temporal pilot 直接在相邻 mocap frame 上使用 7 帧窗口和按 30 Hz 讨论的位移/旋转阈值；实际窗口物理时长仅为预期的四分之一，上一活动发现的 laptop 慢动作漏检与此一致。
+- 当前 8112 仅作为错误定位证据继续运行；其视觉速度、运动分段和基于该分段的 2 cm 扩展不得作为有效数据结论。
+
+**产物**
+
+- [`dataset/OakInk2/src/oakink2_toolkit/meta.py`](../../../../../dataset/OakInk2/src/oakink2_toolkit/meta.py) — OakInk2 mocap/video 帧率事实源。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_20/pilot_20260916T092715Z/temporal_segmentation_report.json) — 当前被判无效的时序 pilot 证据入口；产物保留用于审计，不覆盖。
+
+**回滚**
+
+本次仅新增诊断记录，无代码或数据改动；删除本 activity 条目即可回滚记录。修复需另建独立产物，旧 pilot 保留只读。
+
+## 2026-09-16 13:14:05 +0000 — OakInk2 官方 30 Hz 时序切分重跑与 8112 viewer
+
+- activity_id: `ACT-20260916-131405-OICM-OAKINK2-OFFICIAL30HZ`
+- timestamp: `2026-09-16 13:14:05 +0000`
+- modification_version: `V1.4.22`
+- type: `code / data / diagnostic / operation`
+- task_mode: `change` 后切换为 `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户在确认 OakInk2 mocap 为 120 Hz、当前 pilot 错按 30 Hz 处理后，明确同意按真实 30 Hz 时间轴修正并重跑；最终 plan 已要求 OakInk2 使用 30 Hz 时间轴。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `pilot_official30hz_20260916T130328Z`
+- run_status: `COMPLETED`
+- adapter_run_id: `viewer_adapter_official30hz_20260916T130706Z`
+- adapter_run_status: `COMPLETED`
+- viewer_run_id: `viewer_adapter_official30hz_20260916T130706Z/viewer_8112`
+- viewer_run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `2430234`，HTTP `200`。
+- previous_run: V1.4.20 `task_first_review_remaining_6/viewer_8112` 已于 `2026-09-16T13:13:33+00:00` 停止，终态 `STOPPED`。
+- scope: 使用 annotation 官方 `frame_id_list` 将 OakInk2 120 Hz mocap 对齐到连续 30 Hz 视频时间轴；在任务语义计算前显式排除烧杯 `selected:1772`，重新运行运动优先与 2 cm 双侧搜索，并生成 7 条候选的 cut/full 成对 KNN/距离 viewer adapter。旧 V1.4.20 产物、v1/v1.1 index、annotation、Stage3、正式 cache、split 和训练保持只读。
+- conclusion: `SUPPORTED`（官方 30 Hz 采样、时序连通、任务排除、adapter 与 viewer 工程链路）；7 条候选最终数据质量和训练收益仍为 `INCONCLUSIVE`。旧 V1.4.20 时序结论保持 `INVALID_IMPLEMENTATION`。
+
+**原因**
+
+OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 mocap frame 上应用按 30 Hz 设计的窗口，并把连续帧 adapter 标记为 30 Hz，导致运动窗口物理时长缩短四倍、播放慢四倍。官方 annotation 的 `frame_id_list` 是视频帧到 mocap frame 的对齐事实源，相邻 raw ID 实测可为 3、4 或 5，不能用固定 `%4` 或固定 raw stride 替代。
+
+**文件**
+
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — ObjectInteractionCm 指针更新为 `V1.4.22`。
+- [`src/task/ObjectInteractionCm/tools/data/oakink2_temporal_segments.py`](../../tools/data/oakink2_temporal_segments.py) — 时序组件支持独立 timeline position，输出仍保留原始 mocap frame ID。
+- [`src/task/ObjectInteractionCm/research/oakink2_temporal_segmentation/run.py`](../../research/oakink2_temporal_segmentation/run.py) — 使用官方 `frame_id_list`、记录 120→30 Hz 合同，并支持在运动/contact 前显式排除任务语义错误候选。
+- [`src/task/ObjectInteractionCm/research/oakink2_temporal_segmentation/build_viewer_adapter.py`](../../research/oakink2_temporal_segmentation/build_viewer_adapter.py) — 生成 cut/full 成对的双手 MANO、灰色上下文及 KNN/距离 viewer adapter。
+- [`src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/run.py`](../../research/oakink2_segment_visualizer/run.py) — trajectory loader 支持经过验证的显式 frame ID 子集。
+- [`src/task/ObjectInteractionCm/tests/test_oakink2_temporal_segments.py`](../../tests/test_oakink2_temporal_segments.py) — 覆盖官方非固定 raw ID 对齐和独立时序连通位置。
+- [`src/task/ObjectInteractionCm/research/oakink2_temporal_segmentation/README.md`](../../research/oakink2_temporal_segmentation/README.md) 与 [`experiment.yaml`](../../research/oakink2_temporal_segmentation/experiment.yaml) — 更新 30 Hz 数据合同、运行入口和产物根。
+- [`src/task/ObjectInteractionCm/docs/plan/V1.4.md`](../plan/V1.4.md) — 已定稿且经用户确认的 30 Hz、任务语义优先、运动后 2 cm 搜索边界。
+
+**产物**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/) — 新 30 Hz pilot 与终态 manifest。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/temporal_segmentation_report.json) — 9 条计算结果、1 条任务语义排除与采样 provenance。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/) — 14 条 cut/full viewer adapter 和终态 manifest。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/viewer_8112/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/viewer_8112/run_manifest.json) — `RUNNING` viewer manifest。
+
+**验证**
+
+- `py_compile`：temporal helper、pilot runner、viewer adapter builder 和 segment visualizer 均通过。
+- `pytest -q test_oakink2_temporal_segments.py test_oakink2_segment_visualizer.py test_visualize_grab_v1_4.py`：`15 passed`。
+- pilot：烧杯 `selected:1772` 在计算前排除；其余 9 条中 7 条 `selected`、削笔器和 bowl 为 `no_reliable_motion`。修正后此前漏掉的 laptop `2646` 检出 22 个运动证据帧并得到 103 帧 cut。
+- adapter：7 条候选生成 14 条 cut/full 记录；完整片段共 1435 个 30 Hz 帧，cut 共 1102 帧；每条保存 `source_fps=120`、`ds_rate=4` 和官方映射的原始 frame ID。
+- 14/14 条 `visualize_grab --check-only` 退出 0；目标对象 4096 点、双手 1556 顶点、灰色上下文 512–7680 点，hand mesh 可用。
+- 8112 返回 HTTP `200`；初始项为 `official30hz_selected_1726_cut`，同一候选的 `full` 项紧随其后。
+
+**回滚**
+
+停止 PID `2430234`，删除独立 `oakink2_temporal_segmentation_v1_4_22/` 产物，恢复上述 Task-local 代码、测试、README/experiment、版本指针和本 activity。旧 V1.4.20、源 index、annotation、Stage3 和正式训练数据无需恢复。
+
+## 2026-09-16 13:19:44 +0000 — KNN/距离 viewer 未来帧上限扩展至 30
+
+- activity_id: `ACT-20260916-131944-OICM-VIEWER-FUTURE30`
+- timestamp: `2026-09-16 13:19:44 +0000`
+- modification_version: `V1.4.22`
+- type: `code / diagnostic / operation`
+- task_mode: `change` 后切换为 `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“把未来可视化里面未来帧的上限设置为30”。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- run_id: `viewer_adapter_official30hz_20260916T130706Z/viewer_8112_future30`
+- run_status: `RUNNING`
+- viewer_url: `http://127.0.0.1:8112`
+- process: PID `2435936`，HTTP `200`。
+- previous_run: `viewer_adapter_official30hz_20260916T130706Z/viewer_8112` 已于 `2026-09-16T13:19:23+00:00` 停止，终态 `STOPPED`。
+- scope: 仅将统一 KNN/累计距离 viewer 的未来帧 CLI 与 GUI 范围从 `0..10` 扩展为 `0..30`，同步帮助文本和测试，并用同一 OakInk2 V1.4.22 index 重启 8112。不修改当前/未来帧索引语义、末帧夹取、数据、KNN、距离、训练 stride、cache、split 或模型。
+- conclusion: `SUPPORTED`（未来帧 30 的参数、索引、时间跨度和 viewer 服务工程验证）；不形成科研效果结论。
+
+**文件**
+
+- [`src/task/ObjectInteractionCm/visualize_grab.py`](../../visualize_grab.py) — 新增统一 `FUTURE_DELTA_MAX=30`，供 GUI slider、CLI choices、帮助文本共同使用。
+- [`src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`](../../tests/test_visualize_grab_v1_4.py) — 覆盖 30 可接受、31 被拒绝及末帧夹取。
+
+**原因**
+
+原 viewer 将未来叠加范围硬编码为 `0..10`；仅修改 GUI 会导致 CLI 和帮助文本仍拒绝 30，因此用单一常量同步三个入口，保持既有未来帧计算不变。
+
+**产物**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/viewer_8112_future30/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/viewer_8112_future30/run_manifest.json) — `RUNNING` viewer manifest。
+
+**验证**
+
+- `python -m py_compile src/task/ObjectInteractionCm/visualize_grab.py` 通过。
+- `pytest -q src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：`5 passed`。
+- CLI `--help` 显示 `--future-delta {0,...,30}`，帮助文本声明 `1..30`。
+- 对当前 OakInk2 首条 cut 运行 `--future-delta 30 --check-only`：frame `0→30`、raw mocap frame `9240→9360`、物理跨度 `1.0 s`、`future_clamped=false`。
+- 8112 返回 HTTP `200`，监听 PID `2435936`。
+
+**回滚**
+
+停止 PID `2435936`，恢复 viewer 常量/GUI/CLI/帮助文本及对应测试，并可用原 index 重新启动；所有数据与 cache 无需恢复。
+
+## 2026-09-16 13:26:22 +0000 — OakInk2 全量导出状态核对
+
+- activity_id: `ACT-20260916-132622-OICM-OAKINK2-FULL-EXPORT-STATUS`
+- timestamp: `2026-09-16 13:26:22 +0000`
+- modification_version: `V1.4.22`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问是否所有 OakInk2 数据均已导出。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- scope: 只读核对 NAS 上 OakInk2 Stage3、active-tool index、V1.4.22 pilot/viewer adapter 与正式 V1.4 cache/index manifest；不启动任务或修改数据、代码、cache、split、配置和训练。
+- conclusion: `SUPPORTED`（当前仅完成 9 条官方 30 Hz pilot 与 7 条 viewer adapter，尚未完成 OakInk2 全量正式导出）。
+
+**原因**
+
+需要区分全量上游 Stage3/旧选择索引、少量时序 pilot/viewer adapter，以及可直接供正式训练使用的双手几何/KNN cache；这些产物不能互相替代。
+
+**验证**
+
+- V1.4.22 pilot manifest 为 `COMPLETED`，范围仅 9 条：7 条 selected、2 条 no-reliable-motion；viewer adapter 为 7 条候选、14 个 cut/full 展示项。
+- OakInk2 v1.1 active-tool 是全量旧索引，但尚未按 V1.4.22 官方 30 Hz 时间轴全量重算，且其 manifest 明确没有自动接入正式 cache/训练。
+- 未找到 OakInk2 V1.4.22 全量时序 report、全量双手 MANO/Inspire geometric cache、全量 KNN cache 或正式训练 index/manifest。
+- 当前 `object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json` 仍为 `STARTED`，目录名与输入范围仅为 GRAB/ARCTIC，且顶层 `manifest.json`、`index.json` 尚不存在；它不能证明 OakInk2 已导出。
+
+**证据入口**
+
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/run_manifest.json) — 已完成的 9 条 pilot。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/viewer_adapter_official30hz_20260916T130706Z/run_manifest.json) — 已完成的 7 条 viewer adapter。
+- [`data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json`](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/run_manifest.json) — 修正前的全量 active-tool 索引运行记录。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 尚未 finalize 且不含 OakInk2 的 GRAB/ARCTIC cache 运行。
+
+**回滚**
+
+本次仅新增状态核对记录，无代码或数据改动；删除本 activity 条目即可回滚记录。
+
+## 2026-09-16 13:32:37 +0000 — OakInk2 后续人工切分审查范围诊断
+
+- activity_id: `ACT-20260916-133237-OICM-OAKINK2-REVIEW-SCOPE`
+- timestamp: `2026-09-16 13:32:37 +0000`
+- modification_version: `V1.4.22`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问还有哪些 OakInk2 切分需要人工审查。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户与当前任务修改）
+- scope: 只读归组 v1→v1.1 的新增候选、selection reason、primitive、目标对象和当前 V1.4.22 pilot 覆盖；不生成新 viewer、不修改筛选、数据、cache、split 或训练。
+- conclusion: `SUPPORTED`（确定后续应以语义风险和全量 30 Hz 异常值抽样审查，不需要逐条审查全部数据）。
+
+**原因**
+
+旧 v1.1 新增项包含同一任务的双对象候选和多个重复 take；在官方 30 Hz 全量重算前逐条观看旧 cut 会混入已知无效的时间尺度。人工成本应集中在任务主导对象可能选反、显式 semantic override 和全量重跑后的定量异常项。
+
+**验证**
+
+- v1→v1.1 有 47 条新增 selected candidate：44 条 `bilateral_multi_active_split`、3 条 `semantic_object_override`，按 sequence/primitive 合并后为 27 个任务场景。
+- 3 条 override 为 drawer `selected:1081`、book `selected:1511`、asbestos mesh `selected:2258`，应全部人工查看。
+- 已确认错误的 beaker `selected:1772` 的同场景 counterpart 为 test tube `selected:1773`，后者必须在官方 30 Hz 下补看。
+- 高风险关系 primitive 包括 `place_inside`、`take_outside`、`assemble`、成对 `hold` 及 tripod/asbestos mesh 组合；普通独立 `rearrange` 只需代表样本和异常项。
+- 当前 V1.4.22 viewer 的三条 laptop 以及 cut/full 差异较大的 alcohol burner `2649` 仍需人工复核；`2647/2648` 是同任务重复 take，可只看代表。
+- 全量 V1.4.22 尚未运行，因此短 cut、超高 contact-extension ratio、多 motion component 和重复 take 的最终审查名单仍为 `PENDING`，不能用旧 v1.1 frame count 代替。
+
+**证据入口**
+
+- [`data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/index.json`](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/index.json) — 47 条新增候选及任务语义字段。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/temporal_segmentation_report.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/pilot_official30hz_20260916T130328Z/temporal_segmentation_report.json) — 当前 9 条 pilot 覆盖。
+
+**回滚**
+
+本次仅新增诊断记录，无代码或数据改动；删除本 activity 条目即可回滚记录。
+
+## 2026-09-16 14:00:46 +0000 — OakInk2 待审查完整轨迹可视化与 GRAB/ARCTIC cache 状态核对
+
+- activity_id: `ACT-20260916-140046-OICM-OAKINK2-REVIEW-GRAB-ARCTIC-STATUS`
+- timestamp: `2026-09-16 14:00:46 +0000`
+- modification_version: `V1.4.22`
+- type: `diagnostic / operation / documentation`
+- task_mode: `read-only/diagnostic` 后切换为 `run-only/operation`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户要求展示拿不准的 OakInk2 轨迹，并在运行中要求核对 GRAB/ARCTIC 导出及 OakInk2 实际播放速度。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有工作区修改）
+- run_id: `review_uncertain_full30hz_20260916T133856Z/viewer_8112_full`
+- run_status: `RUNNING`（adapter `COMPLETED`；GRAB/ARCTIC MANO2048/KNN 全量 cache 进程已退出，终态原因未知）
+- viewer_url: `http://127.0.0.1:8112`
+- scope: 仅为人工复核构建 29 条官方映射 30 Hz 完整 primitive 的独立 viewer adapter，并沿用上一轮 14 个 cut/full 项；核对已存在的 GRAB/ARCTIC 原始 MANO 与后续正式 cache 状态。不修改源 annotation、v1/v1.1 index、V1.4.22 时序 pilot、正式 cache、split、训练或科研结论。
+- conclusion: `SUPPORTED`（29 条完整场景和现有 14 项可由统一 KNN/累计距离 viewer 读取，且使用官方 30 Hz 映射）；`INCONCLUSIVE`（样本保留判定、浏览器实际播放 FPS、GRAB/ARCTIC cache worker 退出原因）。
+
+**原因**
+
+上一诊断列出任务主导对象、显式语义修复、关系任务和重复 take 等待审查项。用户指出视觉上仍慢，因此同时区分源 mocap 120 Hz、官方映射后 30 Hz 帧序列与浏览器实际渲染帧率。旧 V1.4.20 的连续 120 Hz 误播产物未加入新 index。
+
+**命令与产物**
+
+- `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u /tmp/oakink2_review_build.py`；脚本快照：[`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/build.py`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/build.py)。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/) — NAS 独立诊断运行目录，29 条完整轨迹与原有 14 项合成 43 项。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/index.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/index.json) — viewer-only 目录。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/run_manifest.json) — adapter `COMPLETED`。
+- [`data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/viewer_8112_full/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22/review_uncertain_full30hz_20260916T133856Z/viewer_8112_full/run_manifest.json) — 8112 viewer `RUNNING`。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — GRAB/ARCTIC 后续正式 cache 仍为过期 `STARTED` 状态，不代表进程仍在运行。
+
+**验证**
+
+- 29/29 新完整轨迹生成；index 共 43 项，每项 `shared.npz`、`left.npz`、`right.npz` 均存在。初始 laptop `2644` 的 483 个 viewer 帧对应 raw mocap `2784–4713`，相邻 raw ID 主要差 4，`source_fps=120`、`ds_rate=4`，理想播放时长约 16.1 秒；第 42 项 `--check-only --future-delta 30` 成功。
+- 4 个关系任务候选有少量 raw ID 差 6 或 8，来自官方 `frame_id_list`；未使用固定 `%4` 或固定 raw stride。`curl http://127.0.0.1:8112` 返回 HTTP `200`，新 viewer 载入 43 项。
+- `visualize_grab.py` 逐帧同步执行 `render()`，播放设置 30 FPS 不保证浏览器实际达到 30 FPS；本次没有测得客户端实际 FPS。
+- GRAB/ARCTIC 原始 MANO 中间数据分别有 1335/301 条。后续 MANO2048/KNN cache 仅有 GRAB 1068/1335、ARCTIC 65/301，合计 1133/1636 条逐序列 manifest；两个 worker 进程均不存在，最后产物时间约 11:49 UTC，顶层 `index.json`、`manifest.json`、`validation_summary.json` 均不存在。旧 worker 报告仍为 `STARTED`，无法据此认定正常结束或失败原因。
+
+**回滚**
+
+停止当前 8112 viewer 并移除独立 `review_uncertain_full30hz_20260916T133856Z` 诊断目录及本 activity；源数据和正式 cache 不受影响。GRAB/ARCTIC cache 只读核对没有改变其状态或产物。
+
+## 2026-09-16 14:07:53 +0000 — GRAB/ARCTIC MANO2048/KNN cache NAS 恢复启动
+
+- activity_id: `ACT-20260916-140753-OICM-MANO-CACHE-RESUME`
+- timestamp: `2026-09-16 14:07:53 +0000`
+- modification_version: `V1.4.22`
+- type: `diagnostic / operation / data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求继续完成 GRAB/ARCTIC cache 导出，并重点核对本地磁盘是否耗尽；沿用已定稿 V1.4 计划和 V1.4.21 producer 合同。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留既有用户修改）
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `RUNNING`
+- scope: 仅从已完成 1133/1636 条恢复缺失 503 条；保持每侧 MANO2048 KNN、每侧 1538 decoder、K=32、2 cm 半径和既有 split。GPU 0 单 worker；不占用 GPU 3，不重写已完成序列或源 NPZ、旧 cache、训练配置。
+- conclusion: `SUPPORTED`（输出路径确认为 NAS，前 4 条恢复序列成功）；全量结果仍为 `INCONCLUSIVE`。
+
+**原因**
+
+先前两个 worker 进程已经退出，旧 worker report 留在 `STARTED`，无法确定退出原因。根盘 99%（剩余约 42 GB），但 `data/processed_data` 与 NAS NFS 目标具有相同 device/inode，目标 NAS 剩余约 52 TB；现有约 190 GB cache 实际写在 NAS。本次将临时目录、命令脚本和 stdout log 也放在 NAS，避免本地根盘继续承载产物。
+
+**命令与产物**
+
+- `bash data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_worker_20260916T1402.sh`；脚本：[`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_worker_20260916T1402.sh`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_worker_20260916T1402.sh)。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — NAS 输出目录。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — `RUNNING`，保留原 `run_id` 并记录恢复时间。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_missing_20260916T1402.txt`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_missing_20260916T1402.txt) — 固定缺失 503 条清单。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_worker_20260916T1402.log`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_worker_20260916T1402.log) — 恢复运行 stdout/stderr。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1149/`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1149/) — 两份旧 `.partial` 与旧 worker 启动报告的 NAS 留档。
+- `index.json` 与 `validation_summary.json`：PENDING（`run_status=RUNNING`，503 条完成并 finalize 后生成）。
+
+**验证**
+
+- `df -hT`、`readlink -f`、`findmnt`、`stat -L`：输出与 `data/processed_data` 为同一 NFS 目录；本地根盘剩余 42 GB，NAS 剩余 52 TB。
+- `_entries` 精确比对：GRAB 1068/1335、ARCTIC 65/301 已完成，缺 GRAB 267、ARCTIC 236；两份 `.partial` 原样移至 NAS 留档，未删除。
+- 恢复 worker 前 4 条 `COMPLETED`，输出路径均为 NAS；启动时没有修改代码、配置、split、GT 或 checkpoint。
+
+**回滚**
+
+停止恢复 worker；保留已完成的独立逐序列产物和旧 `.partial` 留档供审计，必要时仅回滚本次新增的运行状态、脚本和活动条目。源数据与旧 cache 不受影响。
+
+## 2026-09-16 14:20:22 +0000 — GRAB/ARCTIC cache 恢复改为 GPU 0 双 worker
+
+- activity_id: `ACT-20260916-142022-OICM-MANO-CACHE-RESHARD`
+- timestamp: `2026-09-16 14:20:22 +0000`
+- modification_version: `V1.4.22`
+- type: `operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求继续完成已批准的 GRAB/ARCTIC 全量 cache；本次只调整同一 GPU 0 上的恢复并行度，不改变研究变量或输出合同。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `RUNNING`
+- scope: 单 worker 已完成 68/503 条后安全中断，保存其一份未完成 `.partial` 至 NAS；从剩余 435 条按确定性索引奇偶拆为 218/217 条，在 GPU 0 启动两个独立 worker，继续保持 GPU 3 上的其他任务不受本运行占用。
+- conclusion: `SUPPORTED`（两个 shard 前各 6 条无失败）；全量仍为 `INCONCLUSIVE`。
+
+**原因**
+
+单 worker 受 NAS 等待影响，剩余时间较长；两进程只在同一已批准 GPU 0 上处理互斥的序列集合，并保持源数据、采样/KNN 参数和输出 schema 不变。
+
+**产物与命令**
+
+- `bash data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_sharded_20260916T1418.sh 0` 与同命令参数 `1`。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_sharded_20260916T1418.sh`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_sharded_20260916T1418.sh) — NAS 上可复现命令。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_missing_20260916T1418.txt`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_missing_20260916T1418.txt) — 两 shard 的固定输入全集。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_0_20260916T1418.log`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_0_20260916T1418.log) 与 [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_1_20260916T1418.log`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_1_20260916T1418.log) — 实时 stdout/stderr。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1418/`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1418/) — 中断单 worker 的一份 `.partial` 原样留档。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — `RUNNING` 与重分片信息。
+
+**验证**
+
+- `_entries` 在中断后重新计算缺失 435 条，shard 0/1 分别 218/217 条；目标路径均不存在 `.partial` 或不完整正式目录。
+- 两 shard 各 6 条 `COMPLETED`、0 `FAILED`，GPU 0 可用显存充足，输出仍在同一 NAS NFS 目录。
+
+**回滚**
+
+停止两个 worker，保留已完成逐序列产物、两份中断 `.partial` 留档和运行日志；无需恢复源数据或旧 cache。
+
+## 2026-09-16 15:11:18 +0000 — GRAB/ARCTIC cache 会话中断后恢复
+
+- activity_id: `ACT-20260916-151118-OICM-MANO-CACHE-SESSION-RESUME`
+- timestamp: `2026-09-16 15:11:18 +0000`
+- modification_version: `V1.4.22`
+- type: `diagnostic / operation / data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在前序会话明确要求完成 GRAB/ARCTIC cache，并在本会话要求读取前序会话后继续；仅恢复同一 run_id、同一固定清单和既有数据合同。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `RUNNING`
+- scope: 核对上一会话两个 GPU 0 worker 已退出后，从现有 1315/1636 条继续原 435 条互斥分片；不改变每侧 MANO2048、decoder 1538、K=32、2 cm、split、GT 或输出 schema。
+- conclusion: `SUPPORTED`（恢复进程已独立运行且路径仍为 NAS）；全量与 finalize 结论仍为 `INCONCLUSIVE`。
+
+**原因**
+
+上一会话结束后两份 shard 日志均停在 57 条、失败 0，worker 进程不存在，顶层 manifest 仍为 `RUNNING`。目标目录有两份约 211 MB/148 MB 的 `.partial`；为避免 `--resume` 将其当作已存在而跳过，先原样移入 NAS 审计目录，再恢复同一脚本。
+
+**命令与产物**
+
+- `nohup setsid bash data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_sharded_20260916T1418.sh 0` 与参数 `1`；PID `2920190`、`2920191`。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 同一 run 的恢复状态。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_0_20260916T1433.log`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_0_20260916T1433.log) 与 [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_1_20260916T1433.log`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/resume_shard_1_20260916T1433.log) — 本次恢复日志。
+- [`data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1433/partials/`](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/interrupted_20260916T1433/partials/) — 两份未完成目录的 NAS 留档。
+- `index.json` 与 `validation_summary.json`：PENDING（`run_status=RUNNING`，所有序列完成并 finalize 后生成）。
+
+**验证**
+
+- 只读计数：恢复前 GRAB 1068/1335、ARCTIC 247/301，合计 1315/1636；旧 shard 各 57 条完成、失败 0。
+- `ps` 显示两个 worker 的 PPID 均为 1；GPU 0 恢复前剩余约 39.8 GiB，GPU 1/2/3 上既有进程未被改动。
+- `df -hT`：NAS 剩余约 52 TB；本地根盘仍剩约 42 GB。新日志、临时目录和 cache 均位于 NAS。
+
+**回滚**
+
+停止 PID `2920190`、`2920191`；保留已完成序列、恢复日志和 `.partial` 审计目录。源数据、旧 cache 与 V1.2 计划无需恢复。
+
+## 2026-09-16 15:54:39 +0000 — 接续会话并恢复 MANO cache 全量 finalize
+
+- activity_id: `ACT-20260916-155438-OICM-MANO-FINALIZE-RESUME`
+- timestamp: `2026-09-16 15:54:39 +0000`
+- modification_version: `V1.4.22`
+- type: `operation / diagnostic / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户要求读取会话 `01a0aac3-48ec-7620-a492-634f1c26a297` 后继续，沿用已批准的全量 GRAB/ARCTIC MANO cache 导出；不新增数据合同或训练变量。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `RUNNING`
+- scope: 重跑既有 producer 的 finalize；仅追加本活动记录与 NAS 运行记录/校验产物，保留源码、GT、split、坐标、MANO correspondence、旧 cache 和其他运行。producer/index 继续使用原产物版本 `V1.4.21`，本次运行状态记录沿用当前 Task `V1.4.22`。
+
+**原因**
+
+两个恢复 worker 已于 15:30:52/53 UTC 正常完成各 217/218 条，均无失败。前会话 finalize 在等待期间被用户中断，本次检查不存在 producer 进程，且顶层 index/validation 未生成，因此恢复同一校验，并将进程与会话分离，记录 stdout、退出码和开始/结束时间。
+
+**文件、命令与产物**
+
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本次恢复与终态入口。
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) — 既有 final plan；MANO producer 的后续用户批准见 `ACT-20260916-104742-OICM-BILATERAL-MANO-CACHE-START`。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — 同一 NAS cache 目录。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.json) — 完整命令 argv、wrapper PID `2974798` 和本次校验状态。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.log](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.log) — 本次校验 stdout/stderr。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z_previous_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z_previous_manifest.json) — finalize 前 manifest 原样留档，保存历史恢复记录。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 本次 finalize 信息及 producer 终态写入入口。
+- 命令：`PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.tools.data.build_bilateral_mano_v1_4_cache finalize --grab-root data/processed_data/oicm_v1_4_raw/grab_mano_30hz --arctic-root data/processed_data/oicm_v1_4_raw/arctic_mano_30hz --split-index data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/index.json --output-root data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4 --run-id object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`。
+
+**验证**
+
+- `workers/shard_00.json` 和 `workers/shard_01.json` 均为 `COMPLETED`，failures 为 0；原逐序列几何保持原样。
+- 启动前按 `/proc/*/cmdline` 精确匹配 producer module，未发现重复进程；本次 wrapper 独立 session 启动。
+- 最终 shape、finite、KNN 范围、覆盖和 index 仍待 finalize 结果；当前结论为 `INCONCLUSIVE`。
+
+**回滚**
+
+如需停止，仅停止本次 wrapper 的进程组，保留已有逐序列 cache、NAS 日志和前 manifest 快照，不删除或重建已完成序列。
+
+## 2026-09-17 02:12:44 +0000 — GRAB/ARCTIC MANO cache 全量校验终态核对
+
+- activity_id: `ACT-20260917-021244-OICM-MANO-FINALIZE-COMPLETE`
+- timestamp: `2026-09-17 02:12:44 +0000`
+- modification_version: `V1.4.22`
+- type: `operation / diagnostic / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L0`（仅补记已完成运行的终态）
+- approval: `user-approved`
+- approval_basis: 用户此前批准完成同一 GRAB/ARCTIC cache 导出及 finalize；本次要求浏览会话后继续，延续同一 `run_id`，不重跑或更改数据。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `object_interaction_cm_grab_arctic_mano_geometric_v1_4_20260916T105100Z`
+- run_status: `COMPLETED`
+- conclusion: `SUPPORTED`（全量 cache 工程校验）；模型训练效果 `INCONCLUSIVE`。
+- scope: 只读核对已结束的 finalize 并补记终态；未修改 cache 数组、index、manifest、GT、split、源码或其他运行。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 本次终态记录及回滚入口。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — NAS 运行目录。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — producer `COMPLETED` 终态。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json) — 顶层序列索引。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/validation_summary.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/validation_summary.json) — 全量校验结果。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.json) 与 [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.log](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/finalize_20260916T155438Z.log) — finalize 命令、退出码及标准输出。
+
+**原因**
+
+前一条活动记录停在 `RUNNING`，而独立 wrapper 和 producer manifest 已于 2026-09-16 16:23:08 UTC 进入终态；活动时间线需与已生成证据一致。
+
+**验证**
+
+- 只读解析 `finalize_20260916T155438Z.json`：`exit_code=0`、`run_status=COMPLETED`；日志末行同样为 `COMPLETED`。
+- `validation_summary.json`：1636 条、624537 帧通过，GRAB 1335、ARCTIC 301，`failures=[]`；split 为 train 1369、val 134、test 133。
+- `run_manifest.json`：`run_status=COMPLETED`、结果 `SUPPORTED`；顶层 `index.json` 与校验报告均已存在。
+- `readlink -f` 和 `df -hT`：运行目录解析到 `/mnt/ugreen_nas/.../processed_data`，文件系统为 NFS，剩余约 52 TB；无本地根盘 cache 输出证据。
+- 本次没有训练 step、epoch、best metric、checkpoint、`metrics.jsonl` 或 `train.log`；这是数据 cache 运行。
+
+**回滚**
+
+如记录需修正，仅撤销本条终态说明；保留已完成的 NAS cache、index、manifest、校验报告和先前运行记录。
+
+## 2026-09-17 07:31:41 +0000 — 归档提交 V1.4 已完成实现
+
+- timestamp: `2026-09-17 07:31:41 +0000`
+- activity_id: `ACT-20260917-073141-OICM-V14-COMMIT`
+- modification_version: `V1.4.22`
+- type: `operation, documentation`
+- change_level: `L0`（仅整理和提交既有工作区内容；原实现影响等级见各历史活动）
+- approval: `user-approved`
+- approval_basis: 用户明确要求将其他代码分门别类提交。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `0cd030831307ea1d97223a00e69f37129acdae44`
+- worktree_dirty: `true`
+- scope: 归档本 Task 已完成的 V1.4 数据工具、可视化、研究脚本、测试及其文档；不修改科研语义或运行产物。
+
+**文件**
+
+- `src/task/ObjectInteractionCm/` — 本次提交的 Task 内源码、配置、测试、研究定义与文档；逐项路径以提交 diff 为准。
+- [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) 和 [src/task/ObjectInteractionCm/docs/指导/V1.4.md](../指导/V1.4.md) — 原有最终计划和指导。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](activity_log.md) — 已发生变更和运行的原始活动记录。
+- `src/task/ObjectInteractionCm/research/full_export_smoke/grab/` — 生成的 NPZ、CSV、JSON 样本继续留在工作区，不纳入提交。
+
+**原因**
+
+按用户要求将此前已实现、已记录的本 Task 工作独立提交，保持与 Cmv2 及根级记录的提交边界。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_arctic_landmark_contract.py src/task/ObjectInteractionCm/tests/test_bilateral_mano_v1_4_cache.py src/task/ObjectInteractionCm/tests/test_merge_dual_hand_stream.py src/task/ObjectInteractionCm/tests/test_oakink2_segment_visualizer.py src/task/ObjectInteractionCm/tests/test_oakink2_temporal_segments.py src/task/ObjectInteractionCm/tests/test_retarget_stage4_bilateral_inspire.py src/task/ObjectInteractionCm/tests/test_split_oakink2_active_tool.py src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py src/task/ObjectInteractionCm/tests/test_visualize_grab_v1_4.py`：30 passed。
+- `git diff --check` 通过；暂存差异及链接另行审计。既有运行结论沿用各历史记录，本次提交本身不产生新科研结论。
+
+**回滚**
+
+本次提交作为独立 Git commit，可按提交范围反向应用；NAS cache、旧 checkpoint 和运行输出未修改。

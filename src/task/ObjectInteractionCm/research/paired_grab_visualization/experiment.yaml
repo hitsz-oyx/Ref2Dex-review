@@ -1,0 +1,16 @@
+name: paired_grab_visualization
+task: ObjectInteractionCm
+modification_version: V1.4.7
+importance: exploratory
+pinned: false
+tags: [diagnostic, visualization, grab, mano, inspire]
+entrypoint: src/task/ObjectInteractionCm/research/paired_grab_visualization/prepare.py
+output_root: src/task/ObjectInteractionCm/research/paired_grab_visualization/output
+inputs:
+  mano_root: data/processed_data/oicm_v1_4_raw/grab_mano_30hz
+  inspire_root: data/processed_data/oicm_v1_4_raw/grab_inspire_bilateral_v2
+invariants:
+  - source_frame_id exact match
+  - object points exact match
+  - object pose exact match
+  - source data remains read-only

@@ -1,0 +1,14 @@
+name: inspire_fk_repair
+task: ObjectInteractionCm
+modification_version: V1.4.6
+importance: reference
+pinned: true
+tags: [data-quality, inspire, fk, visualization]
+hypothesis: >-
+  将 canonical zero-q surface 逆回 visual-local 后再施加逐帧 FK，可消除 V1.4 bilateral Inspire
+  点云的逐 link 散裂，同时保持采样身份、帧、物体和 split 语义不变。
+scope:
+  datasets: [grab, arctic]
+  sequences_per_dataset: 1
+  full_export: false
+conclusion: PENDING_USER_VISUAL_REVIEW

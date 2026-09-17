@@ -1,0 +1,16 @@
+name: oakink2_segment_visualizer
+task: ObjectInteractionCm
+modification_version: V1.4.4
+importance: exploratory
+pinned: false
+tags: [oakink2, active-tool, segmentation, visualization, mano]
+entrypoint: src.task.ObjectInteractionCm.research.oakink2_segment_visualizer.run
+default_output_root: src/task/ObjectInteractionCm/research/oakink2_segment_visualizer/output
+plan: src/task/ObjectInteractionCm/docs/plan/V1.4.md
+hypothesis: OakInk2 active-tool v1.1 的帧选择与对象选择可在原生世界坐标中被逐段人工复核。
+constraints:
+  source_index_read_only: true
+  training_cache: false
+  preserve_native_world: true
+  display_bilateral_mano: true
+  display_context_objects: true

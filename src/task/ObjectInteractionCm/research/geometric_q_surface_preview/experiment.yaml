@@ -1,0 +1,20 @@
+name: geometric_q_surface_preview
+task: ObjectInteractionCm
+modification_version: V1.4.8
+importance: exploratory
+pinned: false
+tags: [grab, mano, inspire, geometric-retarget, native-q, visualization]
+entrypoint: src.task.ObjectInteractionCm.research.geometric_q_surface_preview.run
+default_output_root: src/task/ObjectInteractionCm/research/geometric_q_surface_preview/output
+plan: src/task/ObjectInteractionCm/docs/plan/V1.4.md
+hypothesis: >-
+  Replaying the existing DExplore geometric native q with one mesh-local FK yields a coherent
+  10135-point Inspire surface aligned with the corresponding right-hand GRAB MANO trajectory.
+contracts:
+  sequence: s1/airplane_fly_1
+  tensor_variant: geometric
+  native_q_slice: [373, 391]
+  hand_side: right
+  point_counts: {mano: 2048, inspire_geometric: 10135}
+  surface_seed: 2024
+  output_only: true

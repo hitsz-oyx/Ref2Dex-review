@@ -1,0 +1,13 @@
+name: dexplore_geometric_visualization
+task: ObjectInteractionCm
+modification_version: V1.4.10
+importance: reference
+pinned: false
+tags: [grab, dexplore, geometric, visualization]
+entrypoint: ../dexplore/data_processing/visualize_inspire_trajectory.py
+default_output_root: src/task/ObjectInteractionCm/research/dexplore_geometric_visualization/output
+purpose: 只读查看既有 Dexplore geometric 导出，不改变重定向或科研变量。
+constraints:
+  input_read_only: true
+  rerun_retargeting: false
+  source: geometric
