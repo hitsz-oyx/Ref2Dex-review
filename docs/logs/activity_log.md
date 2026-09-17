@@ -952,3 +952,41 @@
 **回滚**
 
 本次文档提交可独立反向应用；已有运行、checkpoint、cache 和其他 Task 文件不受影响。
+
+## 2026-09-17 07:59:56 +0000 — 将功能分支合并到远端更新后的 oyx
+
+- timestamp: `2026-09-17 07:59:56 +0000`
+- activity_id: `ACT-20260917-075956-ROOT-OYX-MERGE`
+- modification_version: `V1.2.15`
+- type: `operation, governance`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求 fetch 远端、合并到 `oyx`、以 `oyx` 为准，并在有冲突时报告。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `4f1a8d33de809e3356e75894802a400dbe406a82`
+- worktree_dirty: `false`（追加本条之前）
+- scope: 在独立工作树合并 `origin/oyx` 和 `feature/objectinteractioncmv2-v1.0.2`，保留远端 `oyx` 的 CmResidual/CmDecoderv2 工作与功能分支的 ObjectInteractionCm/Cmv2 工作；不改变正在运行的训练进程、数据、checkpoint 或远端分支。
+
+**文件与提交**
+
+- [docs/current_versions.yaml](../current_versions.yaml) — 合并后版本指针同时包含 CmResidual `V1.11.2`、ObjectInteractionCm `V1.4.22` 与 ObjectInteractionCmv2 `V1.3.4`。
+- [docs/logs/activity_log.md](activity_log.md) — 本次分支操作记录。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](../../src/task/ObjectInteractionCmv2/docs/logs/activity_log.md) — 功能分支训练活动仍保留。
+- `368dcb6b63deccbfa4ffd874fdf7cb5909dd9863`：本地 `oyx` 合并 `origin/oyx`；`4f1a8d33de809e3356e75894802a400dbe406a82`：功能分支并入 `oyx`。
+- 工作树：`/home/wbcd/workspace/oyx_ws/Ref2Dex_oyx`；原工作树继续承载运行中的 GRAB 训练。
+
+**原因**
+
+本地 `oyx` 相对远端多 4 个提交、落后 40 个；先接入远端更新，再在其基础上并入功能分支，以合并后的 `oyx` 继续后续工作。
+
+**验证**
+
+- `git fetch origin --prune` 成功；两次 `git merge-tree --write-tree` 预演及两次实际 `git merge --no-ff` 均无冲突。
+- `git diff --name-only feature/objectinteractioncmv2-v1.0.2 -- src/task/ObjectInteractionCmv2 src/task/ObjectInteractionCm` 为空；相对 `origin/oyx` 的 CmResidual/IsaacGymEnvs 文件差异为空。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q` 定向运行上述两个 ObjectInteraction Task 的测试：45 passed。此为工程回归，科研效果结论仍 `INCONCLUSIVE`。
+- `oyx` 本地领先 `origin/oyx` 16 个提交；本次未推送远端。
+
+**回滚**
+
+两个合并提交及功能分支均保留；如需撤销本地合并，可从合并前 `85e70edffa85d8d1698a3e8adb22e111033cb892` 创建新分支复核，避免改写或覆盖原训练工作树。
