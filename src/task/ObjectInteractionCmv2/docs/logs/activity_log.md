@@ -1568,3 +1568,41 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 本次仅为 Task-local V1.4 增量；回滚入口是本次实现提交的父提交与 [V1.4 最终计划](../plan/V1.4.md) §6。不会删除或覆盖旧 OakInk2 full、partial 或 pilot 目录。
+
+## 2026-09-17 13:43:00 +0000 — OakInk2 高分辨率原始帧回填全量启动
+
+- timestamp: `2026-09-17 13:43:00 +0000`
+- activity_id: `ACT-20260917-134300-CMV2-V142-OAKINK2-HIGHRES-START`
+- modification_version: `V1.4.2`
+- type: `data, operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求从原始 OakInk2 数据补齐失败帧，并已确认 V1.4 三域范围、高分辨率手点合同和全量 cache 前置步骤。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `3243a8ed7eb053fe5ee47b7a052ff80c1d5a7ff1`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `STARTED`
+- scope: 在 GPU2 从原始 OakInk2 annotation 的 `obj_transf` 和 Stage3 静态几何重建 1849 个 selected segment 的 Inspire 20270 KNN cache；V1.3、旧 Task 及旧 OakInk2 3076 full/partial/pilot 输出保持不变。
+- conclusion: `INCONCLUSIVE`（运行中；仅此前 1-segment 高分辨率 smoke 已证明工程链路）。
+
+**命令与状态**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.tools.data.backfill_oakink2_inspire_v1_4 --selection-index …/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/index.json --annotation-root …/OakInk-v2/anno_preview --stage3-root …/stage3/oakink2_object_centered_v1 --existing-root …/full_20260917T091507Z --output-root …/cmv2_highres_full_20260917T134300Z --mano-root …/mano --dex-root …/dex-retargeting --device cuda:2 --mano-batch-size 128 --knn-frame-batch 2 --knn-object-chunk 512 --run-id cmv2_highres_full_20260917T134300Z`。
+- [高分辨率运行目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z)、[run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json)、[实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log)。
+- 启动状态：`expected_segments=1849`、`reused_segments=0`、`backfilled_segments=0`、`completed_frames=0`、`failures=[]`；预计只有全量成功时才会生成正式 `index.json` 和 `cache_manifest.json`，当前 PENDING。
+
+**原因**
+
+先前 full export 的 1656 个完成段及 193 个 partial 段均为 3076 高分辨率错误合同或失败残留，不能拼接为本轮训练输入。因此新根目录从头重建所有 1849 段；输入选择 index、原始数据和旧输出全部只读保留。
+
+**验证**
+
+- `run_id=cmv2_highres_backfill_smoke_20260917T134100Z` 的失败段 smoke 已 `COMPLETED`：637 帧、`failures=[]`、KNN hand shape `[637,20270,3]`、decoder compatibility shape `[637,3076,3]`、KNN32 最大 index `20268`；Cmv2 `InspireSequenceView(..., hand_variant="inspire_f1")` 实际读取为 20270 点。
+- NAS 可用空间约 52 TB；该 637 帧 high-resolution smoke 占约 567 MB。GPU2 启动后进程存活，当前正式运行尚未生成效果结论。
+
+**回滚**
+
+停止该独立 PID/运行即可；新运行根与旧 full/partial/pilot 根隔离，不覆盖原始 annotation、Stage3、旧 cache、训练输出或 checkpoint。终态将以本 activity 为唯一状态入口补充。
