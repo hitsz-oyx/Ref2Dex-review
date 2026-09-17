@@ -1825,3 +1825,46 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 仅终止此 run；不删除其已有输出，也不修改基线 `run_manifest.json` 或任何已验证段。
+
+## 2026-09-17 14:19:14 +0000 — GPU2 KNN batch=8 恢复 smoke 完成
+
+- timestamp: `2026-09-17 14:19:14 +0000`
+- activity_id: `ACT-20260917-141914-CMV2-HIGHRES-RESUME-BATCH8-SMOKE-COMPLETED`
+- modification_version: `V1.4.3`
+- type: `operation, data, diagnostic`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 V1.4.3 限量批处理恢复 smoke 的明确批准。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `b55afe93d8ad3fb5fb93bc9f8c8c6394e28c15c8`
+- worktree_dirty: `false`（终态检查时）
+- run_id: `cmv2_highres_resume_batch8_smoke_20260917T142000Z`
+- run_status: `COMPLETED`
+- last_step: `2/2 segments`
+- best_metric: `N/A`（数据回填，无训练指标）
+- checkpoint: `N/A`（数据回填，无 checkpoint）
+- scope: GPU2 单 writer 对 selection offset `102:104` 的两个未完成段执行 `knn_frame_batch=8` 限量恢复；不启动全量恢复、不改变并发模型，也不发布局部正式 index/cache manifest。
+- conclusion: `SUPPORTED`（cache 恢复与高分辨率合同 smoke）；模型效果结论为 `INCONCLUSIVE`。
+
+**原因**
+
+该终态用于验证同 root 的完整段复用设计和 KNN frame batch 参数能在真实未完成段上写出合规数据，再决定是否启动受同一计划约束的余下恢复；两段样本不足以量化全量吞吐收益，也不能据此证明 CPU worker 的价值。
+
+**产物与结果**
+
+- [恢复 smoke manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_smoke_20260917T142000Z.json) — `COMPLETED`，`backfilled_segments=2`、`completed_frames=389`、`reused_segments=0`、`failures=[]`，从 `2026-09-17T14:17:46+00:00` 至 `14:18:20+00:00`。
+- [恢复 smoke 日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T142000Z.log) — writer 输出 `segments=2`、`backfilled=2`、`failures=0`。
+- [共享高分辨率输出根](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z) — 基线的 102 个加本次 2 个，共 104 个 complete geometry 段；基线仍由其独立 manifest 标记 `STOPPED`。
+
+**验证**
+
+- 对新段 `0102`（89 帧）和 `0103`（300 帧）逐段执行 `_validate_v1_4_geometry`：`hand_variant=inspire_f1`、KNN bilateral `20270` 点、KNN32 index 上界、数组 shape 与 sampled finite 均通过。
+- 输出根无 `.partial` 目录；`index.json` 和 `cache_manifest.json` 均不存在，确认限量 smoke 没有发布误导性的局部正式 cache。
+- 运行结束后 GPU2 恢复空闲（`0 MiB / 48509 MiB free`）；未生成 `metrics.jsonl`、`train.log` 或 checkpoint，因为本运行是数据回填而非训练/评估。
+- smoke 总墙钟约 34 秒（含模型/retarget 初始化），约 11.4 frame/s；样本段长度与单 writer 基线不同，因此仅作为可运行证据，不报告相对加速比。
+
+**回滚**
+
+无需删除任何 cache；若不继续，保持基线 `STOPPED` 和这 104 个 complete 段即可。若继续，恢复入口会先校验并跳过它们；若出现错误，停止新的 run 并保留所有已完成段。
