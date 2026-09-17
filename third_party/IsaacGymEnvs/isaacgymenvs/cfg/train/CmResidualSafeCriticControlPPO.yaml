@@ -1,0 +1,13 @@
+defaults:
+  - CmResidualSafePPO
+  - _self_
+
+params:
+  network:
+    actor_input_dim: 1442
+    critic_input_dim: 1442
+    critic_candidate_input_dims: [1442, 2005]
+
+  config:
+    name: CmResidualSafeCriticControl
+    full_experiment_name: CmResidualSafeCriticControl

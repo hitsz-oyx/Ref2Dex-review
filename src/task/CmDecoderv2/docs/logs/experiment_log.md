@@ -1,5 +1,88 @@
 # CmDecoderv2 实验记录
 
+## 2026-09-13 — V1.1.16 并行离线消融与 GPU contact 能力核验
+
+- modification_version: `V1.1.16`；operation_category: diagnostic / experiment / operation；approval: user-approved。
+- 计划：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)；状态唯一入口：[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+- B1 主训练继续在 GPU7 运行；本次 GPU1 固定 epoch3 checkpoint，GPU0 单独执行 instrument-only
+  contact probe，CPU 核验 D 输入来源；没有改变训练、GT、physics 或主 run checkpoint。
+
+### B1/C0/Cs 离线诊断
+
+- 固定 checkpoint：`step_000012969_epoch_000003.pt`，SHA256 记录在本次 manifest；不是读取不断变化的 best.pt。
+- 全部 30 val sequences、4254 windows，active horizon 共16260，active h1共4065；C0置零raw F7，
+  Cs以seed42对每个window取独立anchor permutation，K内共享，anchor geometry不动。
+
+| 条件 | active sample-horizon point EPE/mm | h1 EPE/mm | 相对B1的预测腕平移变化/mm |
+| --- | ---: | ---: | ---: |
+| B1 | 31.96618123 | 13.64633166 | 0 |
+| C0 | 31.96618122 | 13.64633171 | 0.00001262 |
+| Cs | 31.96618118 | 13.64633168 | 0.00000064 |
+
+- q预测变化：C0 `4.23e-8 rad`，Cs `2.05e-9 rad`。该中间checkpoint对F7干预几乎不敏感，
+  但不能据此否定F7 representation；需要区分训练/实现/信息合同，并以终态统一权重复核。
+- 本次用全体active sample-horizon的micro汇总；训练日志用batch汇总，因此31.966与此前32.054
+  不能被解释为性能提升。结果只是offline sensitivity，未发生物理rollout。
+- conclusion: `SUPPORTED`（本checkpoint输出对这些干预近乎不变）；`INCONCLUSIVE`（Field增量控制价值）。
+- 证据：[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json)、[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/evaluation.json](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/evaluation.json)。
+
+### 真实 GPU contact probe
+
+- 使用contact50 source、64env、原GPU pipeline，连续4个控制步后查询env0；Gym明确返回
+  `GymGetEnvRigidContacts cannot be used with the GPU pipeline after simulation starts`，同时返回空数组。
+- 先前静态hasattr检查不足以通过此Gate；现有tracker的空接触结果不能作为有效指标。按final plan
+  暂停依赖pairwise指标的正式物理Gate，不用net force替代、不切CPU physics。
+- conclusion: `REFUTED`（此API可用于当前GPU pipeline的假设）；`INVALID_IMPLEMENTATION`（现有tracker作为正式接触评估器）；完整Gate仍`INCONCLUSIVE`。
+- 证据：[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/capability.json](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/capability.json)、[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log)。
+
+### D 数据来源核验
+
+- 284/284原始GRAB序列包含24D hand_pose、orient/transl和存在的subject template；parent与actual
+  Inspire raw frame ids逐位一致。此前“MANO-H数据不足”的表述过强，准确状态是尚未完成D接线。
+- 现有GRABSeqData在缺显式betas时采用zero beta + subject template；parent wrist原点是MANO
+  joint0，不能直接拿raw transl代替。mesh/template parity和D相同object-geometry输入仍待实现，未开训。
+- conclusion: `SUPPORTED`（来源可用、帧对齐）；`INCONCLUSIVE`（几何等价及D控制效果）。
+- 证据：[src/task/CmDecoderv2/research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/availability.json](../../research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/availability.json)。
+
+## 2026-09-13 - V1.1.15 接触起点残差抬升 pilot
+
+- 假设：把 episode 初始化切到原参考轨迹第50帧、避开远距离接近阶段后，冻结 Cm base 上的残差策略是否能改善物体抬升。
+- 固定：`s1/airplane_lift` train 单序列、decoder epoch14 best、OICM/奖励/动作参数化/PPO 超参不变、64env、seed42、100更新/204800 samples。source 从第50帧截取378个窗口，valid比例0.8756614；不提供未来 Inspire 目标动作。
+- source run：[contact50 source](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json)；gate run：[contact50 gate](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/gate.json)。
+
+| 64个同初态 episode | 零残差 | epoch100残差，独立重载 |
+| --- | ---: | ---: |
+| 平均累计回报 | -258.1657 | -341.9249 |
+| 平均最大抬升 | 2.4400 mm | 2.7103 mm |
+| 最大抬升 | 2.4401 mm | 15.5768 mm |
+| 瞬时抬升>8cm成功率 | 0/64 | 0/64 |
+
+- 训练输出：[contact50 PPO](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/)、[metrics](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/metrics.jsonl)、[train log](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/train.log)、[最终checkpoint](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth)。重载结果：[evaluation](../../../../../outputs/cmdecoderv2/rl_online_eval_contact50_v15_20260913/evaluation.json)。
+- 解释：gate说明接触起点和在线闭环接口有效；100更新没有达到8cm抬升，故“接触起点已解决抬升”被否定。残差策略的最大单次抬升略高于base，但平均值仅高0.27mm，尚不足以支持Cm带来有效抓持控制的结论。
+- conclusion: `SUPPORTED`（source截取、物理gate、PPO保存/恢复）；`REFUTED`（本预算内已学会抬升）；`INCONCLUSIVE`（更长训练、奖励设计、接触动力学和Cm实际贡献）。不把该pilot扩展为泛化结果。
+
+## 2026-09-13 - V1.1.15 在线冻结 base 与单序列残差 PPO pilot
+
+- modification_version: V1.1.15；operation_category: code / experiment / operation；approval: user-approved；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- 假设：在真实airplane/table与实际状态反馈下，冻结Cm base上的12维残差短训能否提高单序列抬升成功率。只检查train `s1/airplane_lift`，不是held-out测试。
+- 固定：decoder epoch14 SHA `0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494`；OICM SHA `3a3d6c0f88565b9e41f257e4f8b87a3ca5731fd356a98f4514091754036a7283`；K4、30Hz、frame0固定实际native18/object/table初始化、64env、seed42、原奖励/8cm瞬时lift阈值。仅PPO参数更新，100迭代/204800样本，GPU7/graspenv，约123.14秒含训练后回放。
+- 训练run_id: `rl_online_ppo_airplane_v15_20260913`；run_status: COMPLETED。CPU9测试、4/64env完整物理gate通过；正式状态和失败尝试见唯一时间线 [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md)。
+- 工程证据：Gym/native按名称映射；15mm腕残差产生15.006mm实际位移；64env FK最大位置差1.1341e-6m，query差1.2517e-6；reset隔离和冻结权重逐位检查通过。物理状态不是6维耦合参考重建。
+
+| 64个同初态episode | 零残差 | epoch100残差（重新加载） |
+| --- | ---: | ---: |
+| 平均原始累计回报 | -1317.6615 | -912.3494 |
+| 平均最大抬升/mm | 1.18053 | 1.18042 |
+| 瞬时抬升>8cm成功率 | 0/64 | 0/64 |
+
+- 训练滚动episode回报从epoch25约-1409.16升到epoch94约-755.38；这是PPO探索策略的滚动训练统计，不是验证集指标，也不能与表中确定性回放直接混用。按该统计保存的best为epoch94/frame192512；最终epoch100/frame204800。所有保存policy模型tensor有限。
+- epoch100内存模型回放回报-912.4229；独立进程重新加载相同checkpoint回报-912.3494，均0/64成功。只证明恢复/完整回放可运行和近似一致，不声称逐位确定性。
+- source artifact的frame0窗口4个Cm均invalid，第一个至少1个valid的窗口为50、全4个valid为53（0-based）；原初始化腕部距物体中心1.5238m。在线provider延续原core前向，不添加未批准的hold/oracle接近轨迹；invalid窗口的raw输出不能解释为有物理意义的Cm。
+- 首个env非末帧轨迹中，腕物中心距离均值从零残差1.531m降至残差1.061m，最小仍0.643m；这一观察与回报改善主要来自接近项相符，但不是所有env的接触率统计。不能据短训无lift判定Cm不可用，也不能据回报上升声称学会抓取。
+- conclusion: SUPPORTED（在线冻结base、物理接口、PPO更新和保存/恢复）；REFUTED（本次100更新策略已学会抬升）；INCONCLUSIVE（接触起点后的残差可学性、Cm跨手和泛化）。64个相同初态env不是64种独立泛化条件。
+- 下一步建议仅讨论：先确认并设置原轨迹的有效接触起点，隔离接近与抓持/抬升，再做同预算base/残差对照；不立即把本次frame0条件扩大长训，也不修改Cm主干。该初始化变更尚未执行。
+- 证据：[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl)、[training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json)、[重新加载评估](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/evaluation.json)。
+
 ## 2026-09-13 — V1.1.14 IsaacGymEnvs CmResidual wiring smoke
 
 - modification_version: `V1.1.14`；category: code / operation / diagnostic；approval: user-approved；计划见 [plan/v1.1.md](../plan/v1.1.md)。
@@ -887,3 +970,22 @@ viewer 的 `教师强制` 是“GT 当前 Inspire state → decoder 预测下一
 - result: decoder bank 432 帧/覆盖428帧；RL task 成功加载 bank、18-DOF Inspire 资产，action `(12,)`、observation `(71,)`，PPO 单迭代 exit_code=0。
 - output: 外部 `/home2/wyy/oyx_ws/IsaacGymEnvs/runs/CmResidual_13-10-13-11/`；Ref2Dex bank 在 `outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/`。
 - conclusion: `SUPPORTED_FOR_INTERFACE_SMOKE_ONLY`；`INCONCLUSIVE`（在线 decoder 闭环、残差策略训练、物理抓取）。由于单 epoch 未完成 episode，`rew=-inf` 不作策略指标。
+
+## 2026-09-14 — V1.1.16 B1 终态及 F7 敏感性诊断
+
+- experiment_id: `cmdecoderv2-field-realizer-gate-v1.1.16`
+- modification_version: `V1.1.16`
+- hypothesis: 在冻结训练合同下，object-indexed F7 是否被 Inspire FieldRealizer 用作动作条件，并具备可检验的增量控制价值。
+- B1 training: `cm_decoder_v2_field_realizer_v1_1_16_20260913_224249`，20 epochs / 86460 steps，GPU7，run_status=`COMPLETED`；best epoch19/step82137，val loss `0.0124190375`，point-flow EPE `32.0424307 mm`；latest epoch20 EPE `32.0400469 mm`。
+- final offline conditions: `field_conditions_best_v116_20260914_010500`，best checkpoint SHA256 `caaf37736d0bbcb72bf8087dcc6e06b2dcc12c391cb5cfaa9caed0182f490dc7`，4254 val windows（active horizon 16260，h1 4065）。B1 EPE `31.951362 mm`；C0（F7=0）`31.951363 mm`；Cs（anchor shuffle）`31.951362 mm`。相对 B1 的 q 变化分别为 `2.72e-5 rad` 和 `6.36e-7 rad`，说明当前 Realizer 对 F7 几乎不敏感。
+- conclusion: `SUPPORTED`（B1 训练、验证、终态 checkpoint 和离线敏感性运行完成）；`INCONCLUSIVE`（不能据此判定 F7 在物理控制中无价值，也不能完成 A/R/B1/D 的 representation attribution）。
+- evidence: [B1 结果报告](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md)、[B1 run_manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/run_manifest.json)、[终态 conditions run_manifest](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/run_manifest.json)、[终态 evaluation](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/evaluation.json)。
+
+- limitation: contact50 正式 physics Gate 尚未完成。GPU pipeline 下 `GymGetEnvRigidContacts` 在 simulation start 后被 Isaac Gym 明确拒绝，返回空 structured contacts；因此不能把 net contact force 或空 pairwise 输出当作 hand-object 接触结论。D 目前仅完成 284 条 MANO-H source cache，尚未完成满足 geometry parity 的正式训练。
+
+## 2026-09-14 — V1.1.16 D Direct MANO-H 实际 cache 前向 smoke
+
+- run_id: `field_direct_mano_h_smoke_v116_20260914_102000`；run_status=`COMPLETED`；使用一条真实 paired train window，RTX 3090 前向约 `0.238 s`。
+- MANO-H `[4,43]` 成功进入 DirectManoHModel，输出 q/wrist 和 `[1,4,10135,3]` point-flow，全部 finite。
+- conclusion: `SUPPORTED`（D 的真实 cache/model 工程接线）；`INCONCLUSIVE`（D 尚未加入与 B1 对等的当前 object anchors/geometry，未进行正式训练或物理 rollout）。
+- evidence: [smoke.json](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/smoke.json)、[run_manifest](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/run_manifest.json)。

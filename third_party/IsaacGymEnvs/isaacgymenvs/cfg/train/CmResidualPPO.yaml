@@ -3,10 +3,11 @@ params:
   algo:
     name: a2c_continuous
   model:
-    name: continuous_a2c_logstd
+    name: cm_continuous
   network:
-    name: actor_critic
-    separate: False
+    name: cm_actor_critic
+    separate: True
+    cm_feature_dim: 32
     space:
       continuous:
         mu_activation: None
@@ -34,6 +35,7 @@ params:
     multi_gpu: ${....multi_gpu}
     ppo: True
     mixed_precision: False
+    torch_compile: False
     normalize_input: True
     normalize_value: True
     value_bootstrap: True

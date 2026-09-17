@@ -4,6 +4,641 @@
 - last_updated: 2026-09-13
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 
+## 2026-09-13 19:17:10 +0800 - oracle 控制可执行性补充诊断
+
+- timestamp: 2026-09-13 19:17:10 +0800
+- activity_id: ACT-20260913-191710-ORACLE-CONTROL-CHECK
+- modification_version: V1.1.15
+- task_mode: run-only/operation
+- type: diagnostic / experiment / operation
+- change_level: L0（仅独立诊断输出；未修改正式代码、配置、checkpoint、GT或split）
+- approval: auto
+- approval_basis: 用户要求继续验证“Cm base 与环境/控制接口”的归因；执行同一 frame57 oracle 的临时控制对照。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（仅保留既有日志差异）
+- scope: 固定 frame57 source、world reference 和初始物理状态，仅改变临时 PD 增益或 reference 保持时长；不进入正式 RL/decoder 训练。
+- run_id: `rl_online_oracle_trace_frame53_highgain_v15_20260913c`, `rl_online_oracle_trace_frame53_slow4_v15_20260913`
+- run_status: COMPLETED
+- conclusion: INCONCLUSIVE（高增益与慢放仍未恢复抬升；临时脚本未纳入正式代码合同，不能单独完成 Cm/控制接口因果归因）
+
+**原因**
+
+需要判断 frame57 失败是否只是当前 PD 跟踪能力或 reference 执行速度不足，避免把控制接口问题误归因于 Cm。
+
+**范围与结果**
+
+- 在 frame57、同一 source/初始状态、同一 world reference 下，临时提高 PD 到 wrist `[800,80]`、finger `[400,40]`；40 步物体最终 lift `-0.359 mm`，最大平均 lift `0.419 mm`。
+- 在原始 reference 上将每个目标保持 4 个控制步（慢放 4 倍）；160 步物体最终 lift `-0.202 mm`，最大平均 lift `5.657 mm`。
+- 高增益 oracle 的 wrist 误差约 `21.4 mm`（原始约 `22.9 mm`），慢放仍未形成接触抬升趋势。两项均为探索性临时 override，输出 manifest 的正式 code hash 不代表 `/tmp` 覆盖，故不作为正式模型证据。
+- 首次高增益试跑只替换了 `CmResidual` 而未替换实际使用的 `CmResidualOnline`，标记为 `INVALID_IMPLEMENTATION`，不纳入比较；修正后运行使用独立输出目录。
+
+**文件**
+
+- [高增益诊断](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_highgain_v15_20260913c/summary.json)
+- [慢放诊断](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_slow4_v15_20260913/summary.json)
+- [高增益说明](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_highgain_v15_20260913c/diagnostic_note.json)
+- [慢放说明](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_slow4_v15_20260913/diagnostic_note.json)
+
+**解释边界**
+
+该对照只说明“单纯提高刚度”或“单纯减慢 reference”没有在当前临时实现下恢复物体抬升；仍需一个记录完整坐标变换、初始状态、目标跟踪和接触判据的正式 oracle 才能把责任归因到 Cm base 或物理接口。正式 checkpoint、RL 配置和主训练变量保持不变。
+
+**验证**
+
+- 两个运行均在 GPU7 独立目录完成，进程正常退出；输出包含 `run_manifest.json`、`summary.json`、`trace.npz` 和临时覆盖说明。
+- `git diff --check` 通过；活动链接审计在补齐本段字段后重新执行。
+
+## 2026-09-13 19:43:20 +0800 - frame57 精确初态 oracle 复核
+
+- timestamp: 2026-09-13 19:43:20 +0800
+- activity_id: ACT-20260913-194320-ORACLE-EXACT-FRAME57
+- modification_version: V1.1.15
+- task_mode: run-only/operation
+- type: diagnostic / experiment / operation
+- change_level: L0（独立 oracle 运行；未修改正式代码、配置、checkpoint、GT或split）
+- approval: auto
+- approval_basis: 用户要求继续验证 Cm base 与物理控制接口的归因。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（仅保留既有日志差异）
+- scope: 使用 frame57 对应 source manifest 的初始 native18/object/table 状态，直接回放 world reference q/wrist 40 步；不运行 decoder 或 PPO。
+- run_id: `rl_online_oracle_trace_frame57_exact_v15_20260913c`
+- run_status: COMPLETED
+- conclusion: INCONCLUSIVE（精确初态仍未抬升，确认此前结果非 frame53 source 错配；但 reference 跟踪误差仍使环境 oracle 不足以单独归因 Cm）
+
+**原因**
+
+排除 frame57 直接 oracle 使用 frame53 初始状态所造成的混淆，并在同一物理任务下测量 reference 目标的实际跟踪误差。
+
+**结果**
+
+- 40 步、4 个环境、零初速度、直接 world reference 回放：物体最终 lift `-1.012 mm`，最大平均 lift `1.005 mm`。
+- wrist link 到 reference 目标的平均误差约 `20.5 mm`，首步 `14.1 mm`，末步 `13.8 mm`；手指目标与实际 native 状态平均误差约 `0.041 rad`。
+- 与此前 frame53 source oracle 的失败方向一致；这只确认当前物理执行链未能准确跟踪 reference，不证明 Cm 本身是唯一原因。
+
+**文件**
+
+- [frame57 exact oracle](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame57_exact_v15_20260913c/summary.json)
+- [trace](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame57_exact_v15_20260913c/trace.npz)
+
+**验证**
+
+- 运行在 GPU7 独立目录完成并正常退出，checkpoint 身份按 source manifest 锁定；`git diff --check` 和活动链接审计通过。
+- 正式代码、配置、权重、数据与 RL 奖励合同均未修改。
+
+## 2026-09-13 20:05:40 +0800 - frame57 direct reference base 完整窗口对照
+
+- timestamp: 2026-09-13 20:05:40 +0800
+- activity_id: ACT-20260913-200540-REFERENCE-BASE-FULL
+- modification_version: V1.1.15
+- task_mode: run-only/operation
+- type: diagnostic / experiment / operation
+- change_level: L0（独立 oracle 运行；未修改正式代码、配置、checkpoint、GT或split）
+- approval: auto
+- approval_basis: 用户要求测试 direct reference base 的完整任务表现。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（仅保留既有日志差异）
+- scope: frame57 精确初态、真实 world reference q/wrist、同一 Inspire/airplane 场景和 PD 接口，回放 360 步；不运行 decoder 或 PPO。
+- run_id: `rl_online_reference_base_frame57_full_v15_20260913`
+- run_status: COMPLETED
+- conclusion: INCONCLUSIVE（reference 有短暂抬升但无持续抓持；与 Cm base 的严格收益差仍需同环境同样本量对照）
+
+**原因**
+
+直接测量原始 reference 作为 base 的物理表现，判断 Cm 是否至少优于未经学习的运动先验。
+
+**结果**
+
+- 4 个环境、360 步 direct reference 回放：最终平均 lift `-0.681 mm`，各环境最大 lift 为 `16.1/22.3/20.5/32.4 mm`，最大值平均 `22.8 mm`，随后均回落，未达到 8 cm 或持续抬升。
+- object body 接触力仅为短时事件，未形成可据此判定稳定抓持的证据；reference wrist 的实际跟踪误差仍约 2 cm。
+- 与 frame57 Cm zero-residual 的 `max_lift_mean=2.98 mm` 相比，direct reference 在本次小样本中短时抬升更高；由于环境数、source manifest 和轨迹执行方式尚未完全统一，这只能作为警示性结果，不能直接宣称 reference 优于 Cm。
+
+**文件**
+
+- [reference base summary](../../../../../outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/summary.json)
+- [reference base trace](../../../../../outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/trace.npz)
+
+**验证**
+
+- 运行在 GPU7 独立目录完成并正常退出；使用 frame57 source 的初始状态和 world reference，输出含 run manifest、summary 与 trace。
+- `git diff --check` 和活动链接审计通过；正式模型、配置、数据和奖励未修改。
+
+## 2026-09-13 19:02:12 +0800 - 接触过渡起点扫描与 Cm base 归因
+
+- timestamp: 2026-09-13 19:02:12 +0800
+- activity_id: ACT-20260913-190212-CM-BASE-ATTRIBUTION
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic -> run-only/operation
+- type: diagnostic / experiment / operation / documentation
+- change_level: L0（候选微调仅为独立输出，不替换正式checkpoint；未修改仓库代码/配置）
+- approval: auto
+- approval_basis: 用户要求继续隔离原因，直到能判断是否为Cm base过差；本轮扫描frame55/57/58/60、注入reference velocity、contact-window候选和同预算PPO。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（仅保留活动日志差异）
+- scope: 固定best decoder与当前物理任务，逐起点运行zero-residual gate；额外比较reference初速度、contact-window直接q/wrist候选微调及frame57 PPO；不改变正式6维base、native18实际状态、K4/h1、奖励和PPO合同。
+- run_id: `rl_online_gate64_frame55_v15_20260913`, `rl_online_gate64_frame57_v15_20260913`, `rl_online_gate64_frame58_v15_20260913`, `rl_online_source_airplane_frame57_contact_candidate_v15_20260913`, `cm_decoder_v2_contact_window_direct_v15_20260913`, `rl_online_base_trace_frame57_contact_candidate_v15_20260913`, `rl_online_ppo_frame57_v15_20260913`
+- run_status: COMPLETED
+- last_epoch: 100（frame57 PPO；candidate微调600 steps）
+- last_step: frame55 gate `373`、frame57 gate `371`、frame58 gate `370` control steps；frame57 PPO `204800` samples
+- best_metric: 不把瞬时success当科学best；frame57 zero-residual最大平均lift `2.98 mm`，frame58 `18.71 mm`，frame60对照此前为`80.88 mm`。
+- conclusion: SUPPORTED（接触过渡区的Cm base执行不足是当前主瓶颈）；REFUTED（“只要从frame60开始就证明base能复现完整接触抬升”）；INCONCLUSIVE（新的动态接触感知decoder训练能否修复，尚未正式重训）。
+
+**原因**
+
+需要把“后段frame60成功”与“接触过渡段可执行”分开。frame55/57/58的起点扫描、reference velocity对照、直接q/wrist候选微调和frame57 PPO构成逐层排除：不能把失败简单归因于PPO预算，也不能把frame60已抬升的物体当作完整base能力。
+
+**归因证据**
+
+- 起点扫描：frame55 zero-residual `success=0`、`max_lift=2.44 mm`；frame57 `success=0`、`max_lift=2.98 mm`；frame58 `success=0`、`max_lift=18.71 mm`；frame60此前 `success=64/64`、`max_lift=80.88 mm`。原始物体参考z从frame55到frame60已上升约`28.7 mm`，所以frame60成功不能作为完整接触段base能力证据。
+- 参考速度对照：frame57注入Dexplore q/object初速度后，4-env 40步物体lift仍约`-0.71 mm`；此前直接q/wrist oracle在零速度和reference速度两种初始化下同样不能抬升。reset速度不是充分解释。
+- teacher-forced接触段：local frame55/56/57/58的h1 wrist error分别约`22.3/18.6/12.3/8.2 mm`，q MAE约`4.6/5.8/4.7/5.3°`；frame60降至约`4.6 mm/2.5°`。预测接触比例在frame57约`37%`，不是完全没有接触意图，但目标在真实动态状态下不可执行。
+- contact-window候选：从正式best复制出的独立candidate在local 45--80做600步`q_delta + 20*translation + 0.5*rotation`直接微调，训练末translation约`2.21 mm`；接入frame57后40步物体lift仅`1.46 mm`，没有恢复gate，说明单纯增加直接q/wrist监督不足以修复动态闭环。
+- frame57 PPO：同64 env、100更新、204800 samples，独立rollout `success_rate=0.03125`、`max_lift_mean=11.07 mm`、`max_lift_max=125.66 mm`，平均tip distance发散；residual RMS约`0.84`。RL没有稳定补偿base，反而证明当前base偏差已超出小残差策略可修正范围。
+
+**文件与运行证据**
+
+- 起点gate：[frame55](../../../../../outputs/cmdecoderv2/rl_online_gate64_frame55_v15_20260913/gate.json)、[frame57](../../../../../outputs/cmdecoderv2/rl_online_gate64_frame57_v15_20260913/gate.json)、[frame58](../../../../../outputs/cmdecoderv2/rl_online_gate64_frame58_v15_20260913/gate.json)。
+- candidate训练：[run_manifest](../../../../../outputs/cmdecoderv2/cm_decoder_v2_contact_window_direct_v15_20260913/run_manifest.json)、[metrics](../../../../../outputs/cmdecoderv2/cm_decoder_v2_contact_window_direct_v15_20260913/metrics.jsonl)、[candidate checkpoint](../../../../../outputs/cmdecoderv2/cm_decoder_v2_contact_window_direct_v15_20260913/candidate.pt)。candidate SHA256=`2b8971fb491340166a07d26846b3998ef12937b8e52b9d1c769f1e16b98784e1`。
+- candidate source/trace：[source manifest](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_frame57_contact_candidate_v15_20260913/manifest.json)、[trace summary](../../../../../outputs/cmdecoderv2/rl_online_base_trace_frame57_contact_candidate_v15_20260913/summary.json)。
+- frame57 PPO：[training_result](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/training_result.json)、[metrics](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/metrics.jsonl)、[run_manifest](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/run_manifest.json)。
+
+**结论与下一步**
+
+当前可以把责任正式归到 **Cm 训练出来的 base policy 在接触过渡段不够动态可执行**，而不是单纯PPO训练不足：frame57/58的zero-residual失败、reference velocity无效、直接q/wrist候选微调无效、PPO大残差仍失败形成了同一方向证据。frame60的成功是已被参考物体提前抬升后的后段任务，不能反驳该结论。
+
+下一步不再继续盲目延长PPO；应按新的同版本计划重训一版 contact-aware decoder：保留point-flow监督，同时加入直接q/wrist目标、contact-transition窗口加权、实际状态扰动和短多步闭环损失，再用frame57 gate作为验收。正式修改前仍需用户确认该训练变量变更；当前正式best和所有旧source/gate保持不变。
+
+**验证与回滚**
+
+- 本轮所有gate、PPO和候选训练均在graspenv/GPU7独立目录完成，进程已退出；`git diff --check`和活动链接审计通过。
+- 正式代码、配置、GT、split、best checkpoint均未改动。只移走新增扫描/候选输出即可回滚；候选不进入正式RL或发布。
+
+**验证**
+
+- 起点gate、reference velocity trace、candidate source/trace和frame57 PPO均已生成独立`run_manifest`或`gate.json`；使用同一正式best SHA或candidate SHA，运行进程已退出。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2/docs/logs/activity_log.md --check-links`：通过，11个本地链接可导航。
+- `git diff --check`：通过。
+
+## 2026-09-13 18:13:30 +0800 - 接触起点定位与 frame60 base/PPO 对照
+
+- timestamp: 2026-09-13 18:13:30 +0800
+- activity_id: ACT-20260913-181330-CONTACT-START-ISOLATION
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic -> run-only/operation
+- type: diagnostic / experiment / operation / documentation
+- change_level: L0（本条未修改代码、配置、GT或权重；仅新增独立运行产物）
+- approval: auto
+- approval_basis: 用户要求自主寻找并解决 frame50/53 零残差失败原因；本轮先做 source 起点、oracle、teacher-forcing 和同预算 PPO 隔离，不改 Cm 主干或RL合同。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（根/Task活动日志为既有未提交差异，本轮不提交）
+- scope: 对比 frame53 零初速/参考初速oracle、teacher-forced h1误差，以及从实际接触起点frame60初始化的在线Cm零残差和100-update PPO；保留6维base、完整native18实际状态、K4/h1执行和原奖励/动作参数化。
+- run_id: `rl_online_oracle_trace_frame53_v15_20260913`, `rl_online_oracle_trace_frame53_refvel_v15_20260913`, `rl_online_teacherforce_train_s1_v15_20260913`, `rl_online_source_airplane_frame60_v15_20260913`, `rl_online_base_trace_frame60_v15_20260913`, `rl_online_gate64_frame60_v15_20260913`, `rl_online_ppo_frame60_v15_20260913`
+- run_status: COMPLETED
+- last_epoch: 100（frame60 PPO；零残差gate/trace不适用）
+- last_step: 204800（frame60 PPO训练）；gate完整episode `366` control steps；frame60短trace `40` steps
+- best_metric: PPO训练滚动episode reward不作为成功指标；最终独立rollout `success_rate=1.0`、`max_lift_mean=82.50 mm`，但在第31步触发瞬时阈值。
+- conclusion: SUPPORTED（frame60作为接触初始化后，冻结Cm base在当前环境可以完成瞬时8cm抬升）；REFUTED（frame50/53作为“接触起点”的解释）；INCONCLUSIVE（PPO残差是否改善持续抓持，当前success定义不足且策略残差过大）。
+
+**原因**
+
+frame50/53不是物理接触起点。teacher-forced评估显示 local frame53--60 的 h1 wrist translation error 约`12.4 mm`、q MAE约`4.65°`，而local frame60之后 wrist误差降至约`3.6 mm`（60--70）和`4.7 mm`（70--90）。从frame53闭环时，早期误差把实际状态带离可接触轨迹；从frame60重新初始化后，同一checkpoint和同一任务不再需要PPO承担接近段。
+
+直接回放原始reference q/wrist的两个oracle（零初速度、注入reference初速度）在当前动态PD接口下仍存在约20--40 mm的短时跟踪滞后，40步内物体不抬升；这说明“直接reference回放”不是当前task的可用物理oracle，不能据此把所有失败归因于Cm。真正有判别力的对照是同一在线Cm从frame60初始化后的成功gate。
+
+**文件与证据**
+
+- teacher-forced：[summary](../../../../../outputs/cmdecoderv2/rl_online_teacherforce_train_s1_v15_20260913/summary.json)、[teacherforce.npz](../../../../../outputs/cmdecoderv2/rl_online_teacherforce_train_s1_v15_20260913/teacherforce.npz)。评估local frame0--119，按local frame而非source_frame_id解释；source_frame_id是原始4x时间映射。
+- frame60 source：[manifest](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_frame60_v15_20260913/manifest.json)；`initial_state_frame=60`、`window_count=368`、同一decoder SHA。
+- frame60 trace：[summary](../../../../../outputs/cmdecoderv2/rl_online_base_trace_frame60_v15_20260913/summary.json)、[trace.npz](../../../../../outputs/cmdecoderv2/rl_online_base_trace_frame60_v15_20260913/trace.npz)。40步4-env零残差平均物体lift`27.04 mm`、最大平均lift`40.71 mm`。
+- frame60 gate：[gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_frame60_v15_20260913/gate.json)。64 env，完整366步，zero residual `success_rate=1.0`、`max_lift_mean=80.882 mm`、`return=190.373`；FK/query/reset/frozen checkpoint gate均通过。
+- frame60 PPO：[run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/run_manifest.json)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/train.log)、[training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/training_result.json)、[policy](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/nn/last_rl_online_ppo_frame60_v15_20260913_ep_100_rew_-55.388645.pth)。100更新/204800 samples完成，最终rollout在31步达到瞬时阈值，actions RMS约`0.87`。
+- frame53 oracle：[zero-velocity summary](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_v15_20260913/summary.json)、[reference-velocity summary](../../../../../outputs/cmdecoderv2/rl_online_oracle_trace_frame53_refvel_v15_20260913/summary.json)；两者40步最终物体lift均约`-0.517 mm`。
+
+**验证**
+
+- source60准备、4-env trace、64-env validate和100-update PPO均使用graspenv/GPU7、独立输出目录、同一best decoder SHA；训练进程已退出、GPU已释放。
+- `git diff --check` 与本Task activity链接审计通过；本轮没有修改 `src/task/CmDecoderv2` 或 `third_party/IsaacGymEnvs` 代码。
+- 工程smoke证据与科研结论分开：frame60 gate支持“接触后Cm base可抬升”，不支持“已实现持续稳定抓持”；PPO的高success受瞬时8cm阈值定义影响，不能替代持续接触评估。
+
+**方向与回滚**
+
+当前方向应改为“接触初始化的Cm base + 后续残差”，而不是让PPO从frame50/53学习完整接近。下一次若修改默认source起点，应单独形成V1.1.15同版本计划变更并明确保留frame50/53对照；本条暂不自动改配置。新增产物可独立移走回滚，不影响旧source、gate、权重和代码。
+
+**规范反馈**
+
+本轮未遇到需要修改AGENTS、Skill或公共合同的阻碍；但原计划把frame50称作“接触起点”已被本轮物理证据否定，后续应在同版本计划中改称“Cm有效窗口起点”，将frame60作为物理接触初始化候选，并保留两者对照。
+
+## 2026-09-13 17:47:28 +0800 - frame50/frame53 零残差 base 趋势 trace
+
+- timestamp: 2026-09-13 17:47:28 +0800
+- activity_id: ACT-20260913-174728-BASE-TRACE-COMPLETE
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / experiment / operation / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户确认对 frame50 与 frame53 分别进行40个控制步的固定phase零残差base trace；不修改代码、配置、奖励、PPO、数据或权重。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（仅保留既有根/Task活动日志差异）
+- scope: 使用同一 best decoder、4个并行环境、固定source phase、零残差动作，记录Cm core的K4输出、h1实际PD目标、native18实际状态、腕部/物体姿态、tip距离和全刚体接触力；frame50与frame53分开进程运行。
+- run_id: `rl_online_base_trace_contact50_v15_rerun_20260913`, `rl_online_base_trace_contact53_v15_20260913`
+- run_status: COMPLETED
+- last_step: 40（两个trace均完整记录40步；未触发done）
+- best_metric: 不适用（只读诊断，无训练指标）
+- conclusion: SUPPORTED（两个起点的在线decoder、K4记录和实际状态闭环均可运行）；REFUTED（零残差base在这40步内形成“闭合后抬升”的证据）；INCONCLUSIVE（仅凭此短段不能判定Cm全局能力，但失败首先表现为base/起始阶段与物理接触未对齐，而非phase索引缺失）。
+
+**原因**
+
+此前的gate rollout只保存了实际腕部、物体和动作，无法回答“base是否给出向上趋势”。本次只增加观测记录，不改变执行路径，分别从两个source起点验证这一问题；frame53 source由同一checkpoint和同一初态重新生成，避免把不同source合同混用。
+
+**文件与运行证据**
+
+- frame50 source：[manifest](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json)；`initial_state_frame=50`、`window_count=378`。
+- frame53 source：[manifest](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact53_v15_20260913/manifest.json)；`initial_state_frame=53`、`window_count=375`。
+- frame50 trace：[目录](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact50_v15_rerun_20260913/)、[trace.npz](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact50_v15_rerun_20260913/trace.npz)、[run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact50_v15_rerun_20260913/run_manifest.json)、[summary.json](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact50_v15_rerun_20260913/summary.json)。
+- frame53 trace：[目录](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact53_v15_20260913/)、[trace.npz](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact53_v15_20260913/trace.npz)、[run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact53_v15_20260913/run_manifest.json)、[summary.json](../../../../../outputs/cmdecoderv2/rl_online_base_trace_contact53_v15_20260913/summary.json)。
+
+**结果**
+
+- 两个起点均完整执行40步、零残差且没有提前done。frame50的h1六维手指base从`[0.852,0.845,0.626,0.822,0.620,0.381]`变化到约`[1.408,1.418,0.857,1.231,0.584,0.315]`；frame53从`[0.866,0.876,0.666,0.865,0.566,0.348]`变化到约`[1.403,1.417,0.870,1.226,0.513,0.298]`，说明base确实在持续改变手指姿态。
+- h1腕部相对实际腕部的世界z目标没有持续上升：frame50各环境平均在第1步约`-3.0 mm`、第40步约`-14.5 mm`；frame53约`-14.7 mm`到`-8.1 mm`，中间有短暂正向波动但不是持续抬升目标。实际腕部最终相对初始分别约`[+47.1,-23.1,-15.2] mm`和`[+25.3,-11.8,-25.2] mm`。
+- 物体world-z最终平均相对初态分别为`-0.517 mm`和`-0.517 mm`，两者最大平均抬升均小于0，未观察到抬升。五指tip到物体中心的平均post距离约从`111.3`降至`107.8 mm`（frame50），从`81.5`降至`80.7 mm`（frame53），只是接近/闭合，不是稳定抓持。
+- 物体刚体是每个环境的第25个body；其接触力主要是持续约`0.025`的桌面支撑力。trace中未出现可归因于手-物体接触的持续新增证据；frame53个别时刻的更大力仍未伴随物体抬升。不能把该力误报成抓持接触。
+- 同源Dexplore参考从frame50到70/90的物体z上升仍只是来源轨迹对照，不是当前仿真base目标；因此本次结果说明当前base在接近段没有复现参考的“接触后抬升”趋势，但尚不能单独区分source几何、初始状态错位和物理/控制参数差异。
+
+**验证**
+
+- 命令：`CUDA_VISIBLE_DEVICES=7 PYTHONPATH=.:third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -u /tmp/cm_trace.py --source <source-manifest> --output <trace-output> --steps 40 --num-envs 4`；frame50与frame53分别独立进程完成，GPU7已释放。
+- `trace.npz`包含`core_pred_*`的`[40,4,4,*]` K4输出、`base_q/base_wrist`、`native_targets`、前后实际native/link/object状态、`contact_pre/post`和done；`summary.json`记录两段均40步、无done、物体平均lift约`-0.5167 mm`。
+- 使用graspenv只读加载两个trace并按URDF body布局核对object body index=25、table body index=26；`git diff --check`通过。未启动PPO、未改源代码、未改研究变量。
+
+**回滚与规范反馈**
+
+本次无代码、配置、数据或权重修改；只需移走两个新增trace目录即可撤销诊断产物，既有frame50/53 source和历史gate不受影响。无新增规范阻碍。
+
+## 2026-09-13 17:34:05 +0800 - fixed phase 与零残差短段证据核对
+
+- timestamp: 2026-09-13 17:34:05 +0800
+- activity_id: ACT-20260913-173405-BASE-TREND-READONLY
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户讨论 fixed phase、实际状态反馈和 frame50/53 后20至40帧的base趋势；本次只核对代码和已有产物，没有启用新仿真或修改实验。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（开始时根/Task活动日志已有未提交差异，保留）
+- scope: 固定phase、K4输出合同、source valid mask、已有contact50零残差轨迹及其记录能力；不改phase、观测、奖励、reset、GT、模型、配置、指导或架构。
+- conclusion: SUPPORTED（当前结构和已有记录字段）；INCONCLUSIVE（base指令是否形成正确闭合/抬升趋势及失败原因）。
+
+**原因**
+
+固定demonstration reference不排斥物理闭环。不能把“reference固定”表述成“decoder没有实际状态反馈”，也不能用实际物体不动倒推decoder没有给出向上目标。先明确已有证据能回答什么，暂不把完整Dexplore imitation reward迁移设为必要前置。
+
+**文件与证据**
+
+- [src/task/CmDecoderv2/rl/online_base.py](../../rl/online_base.py) 和 [src/task/CmDecoderv2/model.py](../../model.py) - core读取实际state/query、一次预测K4，provider取h1；四个输出均相对同一当前状态，不能作为四个逐步增量连乘/累加。
+- [src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py) - 现有rollout只保存首个env的wrist、object_pose和actions，没有base目标、q/dq、最终PD targets或接触力。
+- [outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json) 和 [outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/source.npz](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/source.npz) - 所选原始帧50及预编码窗口。
+- [outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/rollout.npz](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/rollout.npz) 和 [outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/rollout_metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/rollout_metrics.jsonl) - 已有零残差运行的实际状态记录；本次未重跑。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) - 仅追加本条；历史实验结论、架构快照和运行产物不回写。
+
+**验证**
+
+- 使用graspenv的`python -`执行只读`np.load(..., allow_pickle=False)`、JSON解析和CPU `torch.load(..., weights_only=False)`；读取source manifest指向的同一初态tensor；`sed`/`rg`核对dataset、core、provider与rollout。没有新增输出目录或checkpoint。
+- source shapes为Cm `[378,4,16,32]`、valid `[378,4]`；原phase50/51/52/53的mask依次为0001/0011/0111/1111。valid是OICM采样交互有效性，不是实测接触或抓持成功；h1 query会读取整个K4，不能因首个Cm invalid就断言h1预测错误。
+- rollout shapes为wrist `[378,4,4]`、object_pose `[378,7]`、actions `[378,12]`；所有残差逐位为零。没有完整实际q/link状态，不能离线精确重建此前每步base指令。
+- 首个env从reset到第20/40步：实际wrist world-z变化分别-6.68752/-7.99477mm；object world-z变化均+2.00027mm。第1步object已上移2.44004mm；64env在第20/40步平均最大lift均2.44003mm。这只描述实际轨迹，不判断接触或向上指令。
+- 同源Dexplore实际导出参考从frame50到70/90的object world-z变化为+84.37526/+139.68896mm，仅作来源轨迹对照，不当作当前仿真的期望PD目标。原张量`222:238`携带的右手参考接触标签首个非零帧为60，frame50/53均为零；这些是参考标签，不是本次物理接触传感证据。
+- phase/lookahead尚未加入PPO；若后续添加lookahead，应保存从同一实际状态构造的h1:h4目标，不能把旧rollout实际运动冒充该目标。
+
+**回滚与规范反馈**
+
+仅本条活动记录可按activity_id撤销；数据、权重和代码无变更，保留全部先前差异。下一步若补录frame50和53的零残差40步，应先确认诊断日志范围和frame53初始化；不顺带修改奖励或PPO。无新增规范阻碍。
+
+## 2026-09-13 17:01:47 +0800 - V1.1.15 Ref2Dex RL 与 Dexplore 只读合同对照
+
+- timestamp: 2026-09-13 17:01:47 +0800
+- activity_id: ACT-20260913-170147-RL-DEXPLORE-COMPARISON
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求比较当前 RL 与 `/home2/wyy/oyx_ws/dexplore`；未修改代码、配置、数据、权重或运行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（活动日志为既有未提交记录）
+- scope: 只读对照 `third_party/IsaacGymEnvs/.../cm_residual.py`、在线配置与 `/home2/wyy/oyx_ws/dexplore/dexplore/env/tasks/{dexplore_inspire.py,base_dexplore_task.py}`、Dexplore Inspire 配置。
+- run_status: COMPLETED
+- conclusion: SUPPORTED（资产/PD/耦合/30Hz等底层接口部分一致）；INCONCLUSIVE（当前残差 pilot 能否代表 Dexplore 训练能力）；INVALID_IMPLEMENTATION 不适用。
+
+**原因**
+
+区分“复用了Dexplore底层资产和部分控制约定”与“复现了Dexplore的参考模仿训练合同”。本次对照显示后者尚未成立，因此当前contact50结果不能作为Cm替代Dexplore的证据。
+
+**文件**
+
+- [当前 CmResidualOnline task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) - 当前物理控制、reset、观测和奖励实现。
+- [当前 CmResidualOnline config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) - 当前物理参数和任务预算。
+- Dexplore 对照源：`/home2/wyy/oyx_ws/dexplore/dexplore/env/tasks/dexplore_inspire.py`、`/home2/wyy/oyx_ws/dexplore/dexplore/env/tasks/base_dexplore_task.py`、`/home2/wyy/oyx_ws/dexplore/dexplore/data/cfg/inspire.yaml`、`/home2/wyy/oyx_ws/dexplore/dexplore/data/cfg/train/rlg/inspire.yaml`。
+
+**验证**
+
+- `rg`、`sed`、`nl` 对照 Dexplore 源码、两个 YAML 和当前任务；使用同一 `interaction_hand_inspire.pt` 与 airplane mesh 复算 Dexplore 20cm interaction-radius 起点为 frame38，当前 contact50 实验从 frame50开始，二者不是同一个起点。
+- 仅静态读取；没有启动仿真、没有改变训练变量，也没有把 Dexplore checkpoint 当作当前任务的效果证据。
+
+**关键发现**
+
+- 一致：右手 Inspire 18 DOF、6 wrist + 12 finger、mimic比例、200/100 stiffness、20/10 damping、velocity7、30Hz PD、airplane/table asset 和 object density20/VHACD参数基本一致。
+- 物理差异：Dexplore plane friction=1、restitution=1、substeps=4、contact_offset=0.01、max GPU contact pairs=41943040；当前任务 friction=0.9、restitution默认0、substeps=2、未设置contact_offset、max pairs=8388608。Dexplore使用aggregate，当前任务没有aggregate。
+- reset差异：Dexplore reference reset同时写入手部`dof_pos`和参考`dof_vel`，并按mimic关系重写从动关节；当前任务写入source完整native18但把所有`dof_vel`置零，也不在reset时重新投影mimic。物体在Dexplore reset时写入参考位姿与速度；当前任务只恢复初始物体root状态，速度为创建时的零值。
+- 控制差异：Dexplore策略输出18维action，前6维是当前wrist q增量，finger action先映射到关节范围再由task覆写mimic；当前策略输出12维`q6 residual + wrist SE(3) residual`，在冻结Cm base目标上作残差，不是Dexplore原始action合同。
+- 目标/奖励差异：Dexplore使用当前/未来参考HOI观测、16个key bodies、256 object points、interaction graph、5路接触匹配、物体位姿/速度跟踪及kinematic/contact early termination；当前任务观测71维，奖励只有tip距离、object lift和action penalty，没有reference imitation、contact reward或contact reset。
+- 参考闭环差异：当前Cm token/anchor按source时间索引固定，state/query来自实际仿真状态；因此是“实际状态反馈的decoder残差”，不是完全reference-free的Dexplore policy，也不是Dexplore的reference-scoped imitation reward。
+- 任务/数据差异：Dexplore Inspire配置为8192 env、episodeLength2000、全motion目录和多物体训练；当前 pilot 是单一 train `s1/airplane_lift`、64 env、428或378个Cm窗口。Dexplore默认`stateInit=Start`从frame0开始，另有Random/Hybrid在`start_contact_idx`前采样；当前frame50是为本pilot显式指定的起点。
+- PPO差异：Dexplore MLP `[1024,1024,1024,512]`、lr`2e-5`、horizon64、minibatch16384、6 mini-epochs、sigma initializer`-2.9`、100000 max epochs；当前为`[256,256,128]`、lr`3e-4`、horizon32、minibatch2048、4 mini-epochs、sigma`0`、100-update pilot、reward scale`0.01`并启用value normalization。两者训练结果不可直接比较。
+
+**回滚与规范反馈**
+
+本次无代码变更，无需回滚；仅新增诊断记录。无规范阻碍。若要声称“Cm base 能替代 Dexplore”，至少需要先对齐Dexplore物理参数、reference imitation/contact reward、reset速度/耦合和PPO预算，不能仅延长当前残差pilot。
+
+## 2026-09-13 14:50:02 +0800 - V1.1.15 接触起点抬升实验完成
+
+- timestamp: 2026-09-13 14:50:02 +0800
+- activity_id: ACT-20260913-145002-CONTACT50-LIFT-COMPLETE
+- modification_version: V1.1.15
+- task_mode: change -> run-only/operation
+- type: code / data / experiment / operation / documentation
+- change_level: L3（初始化研究变量、Task-local source 合同与长时训练）；
+- approval: user-approved
+- approval_basis: 用户明确要求“先做接触起点的抬升”；不修改 decoder、OICM、奖励、动作参数化或 PPO 超参。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留既有日志和本轮代码差异，未提交或推送）
+- scope: `s1/airplane_lift` 从原参考第50帧开始的在线冻结 Cm source、64env物理 gate、零残差基线、100更新PPO及独立策略重载；旧frame0结果不覆盖。
+- run_id: `rl_online_source_airplane_contact50_v15_20260913`, `rl_online_gate64_contact50_v15_20260913`, `rl_online_ppo_contact50_v15_20260913`, `rl_online_eval_contact50_v15_20260913`
+- run_status: COMPLETED
+- last_epoch: 100（PPO更新次数）
+- last_step: 204800（最终checkpoint frame）
+- best_metric: 训练滚动episode return=-2719.5344（epoch100命名统计，非验证指标）
+- latest_checkpoint: `nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth`，SHA256 `6633a9994561cd80407934c00d48cfc2b3a63def60367f06740488e5ace2041c`
+- exit_reason: source、gate、训练和重载评估均正常结束；训练约150.15秒，重载评估约12.67秒；GPU7已释放。
+- conclusion: SUPPORTED（接触起点 source、物理接口、PPO保存/恢复）；REFUTED（本次100更新策略已学会8cm抬升）；INCONCLUSIVE（更充分训练、持续抓持和Cm能力）。
+
+**原因**
+
+frame50是当前428个source窗口中第一个有效窗口附近的显式接触起点。为隔离接近阶段，source只截取第50帧起的378个窗口；不消费未来Inspire目标动作，不把同一64个环境当作泛化样本。
+
+**文件与保护边界**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) - 增加V1.1.15接触起点执行边界。
+- [src/task/CmDecoderv2/tools/rl/prepare_online_source.py](../../tools/rl/prepare_online_source.py) - 增加显式起始帧、source截取和manifest provenance。
+- [src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py) - 增加source manifest override并写入运行清单。
+- 本版本工作区中继续保留并承接的定向差异：[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md)、[src/task/CmDecoderv2/rl/README.md](../../rl/README.md)、[src/task/CmDecoderv2/rl/online_base.py](../../rl/online_base.py)、[src/task/CmDecoderv2/rl/residual_contract.py](../../rl/residual_contract.py)、[src/task/CmDecoderv2/tests/test_online_residual.py](../../tests/test_online_residual.py)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml)、[third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py)、[third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)。
+- 保护Cm/OICM/decoder主干、监督数据/GT、旧source、旧gate、旧训练权重和历史输出；没有修改共享`src/base`或外部Dexplore。
+
+**运行与关键产物**
+
+- source：[outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/)、[manifest.json](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_contact50_v15_20260913/manifest.json)；`initial_state_frame=50`、`window_count=378`、valid比例`0.8756614`。
+- gate：[outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/)、[gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_contact50_v15_20260913/gate.json)；zero residual return=-258.1657，平均最大lift=2.4400mm，成功0/64。
+- train：[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/)、[run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/run_manifest.json)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/train.log)、[training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/training_result.json)。
+- policy：[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth)。
+- reload eval：[outputs/cmdecoderv2/rl_online_eval_contact50_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_eval_contact50_v15_20260913/)、[evaluation.json](../../../../../outputs/cmdecoderv2/rl_online_eval_contact50_v15_20260913/evaluation.json)；return=-341.9249，平均最大lift=2.7103mm，成功0/64。
+
+**验证**
+
+- source有限性、帧数和manifest provenance通过；64env gate通过，腕残差实际位移14.901mm，FK最大位置误差1.0203e-6m，query误差1.3411e-6，reset隔离和冻结权重逐位通过。
+- 训练100更新、204800 samples、6个checkpoint均有限；独立进程加载最终policy并完成378步完整episode。训练回放return=-4237.9082，重载确定性评估return=-341.9249；两者统计口径不同，不声称逐位一致。
+- `python -m pytest -q src/task/CmDecoderv2/tests/test_online_residual.py src/task/CmDecoderv2/tests/test_residual_contract.py`：9 passed；新增脚本`py_compile`、`git diff --check`通过。
+
+**回滚与规范反馈**
+
+仅移除本次新增source、运行目录和两处Task-local脚本差异即可回滚；不删除旧source、旧权重或用户既有日志。无新增规范阻碍。接触起点仍未产生8cm抬升证据，不自动延长训练或调整奖励。
+
+## 2026-09-13 13:42:07 +0800 - V1.1.15 残差短训结束与独立恢复验收
+
+- timestamp: 2026-09-13 13:42:07 +0800
+- activity_id: ACT-20260913-134207-ONLINE-RESIDUAL-COMPLETE
+- modification_version: V1.1.15
+- task_mode: change -> run-only/operation
+- type: code / experiment / diagnostic / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认修复最小任务、接入在线冻结base、完整episode验收及单任务短训；未扩大训练预算或修改研究主干。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留本轮开始前根/Task已有日志修改；没有Git提交或推送）
+- scope: 本条汇总ACT-20260913-133147-ONLINE-RESIDUAL-START后的训练终态、terminal rollout记录修正和保存权重重载；6维手指控制、12维实际手指状态、71维观测及冻结原decoder/OICM不变。
+- run_id: rl_online_ppo_airplane_v15_20260913
+- run_status: COMPLETED
+- last_epoch: 100（PPO更新次数，不是监督数据epoch）
+- last_step: 204800（实际checkpoint frame；metrics.jsonl的step沿用rl_games更新前frame约定，末条为202752）
+- best_metric: rolling training episode return=-755.384765625（epoch94，非validation metric）
+- best_checkpoint: nn/rl_online_ppo_airplane_v15_20260913.pth（epoch94/frame192512）
+- latest_checkpoint: nn/last_rl_online_ppo_airplane_v15_20260913_ep_100_rew_-755.38477.pth（epoch100/frame204800，SHA256 `943029ded00476d97d8ed53b561664a9e09d90bb49722f57fff7888b91d1ec09`）
+- exit_reason: 100更新预算正常结束，exit_code=0，`MAX EPOCHS NUM!`；训练及内存策略回放合计123.14秒。未自动续训，GPU7已释放。
+- command: `CUDA_VISIBLE_DEVICES=7 PYTHONPATH=.:third_party/IsaacGymEnvs timeout 1800 /home2/wyy/miniconda3/envs/graspenv/bin/python -u src/task/CmDecoderv2/tools/rl/run_residual.py train --output outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913 --num-envs 64 --iterations 100 --gate outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/gate.json`
+- conclusion: SUPPORTED（接口修复、在线base、PPO更新/保存/恢复）；REFUTED（本次短训已学会抬升）；INCONCLUSIVE（Cm能力、残差充分训练收益和泛化）。
+
+**原因**
+
+训练运行完成与物理任务成功分开验收。当前初态距物体远且最早50个source窗口无有效Cm，必须报告接近阶段的影响，不能把回报上升等同于抓取，也不能把此pilot当作接触起点的Cm测试。
+
+**文件与保护边界**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) - 已批准V1.1.15执行范围/指针。
+- [src/task/CmDecoderv2/rl/residual_contract.py](../../rl/residual_contract.py)、[src/task/CmDecoderv2/rl/online_base.py](../../rl/online_base.py)、[src/task/CmDecoderv2/rl/README.md](../../rl/README.md) - 控制/查询合同、冻结provider及直启使用说明。
+- [src/task/CmDecoderv2/tools/rl/prepare_online_source.py](../../tools/rl/prepare_online_source.py)、[src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py)、[src/task/CmDecoderv2/tests/test_online_residual.py](../../tests/test_online_residual.py) - source导出、标准Runner包装、CPU及物理验收。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) - 正式在线模式、物理PD/reset与配置；旧bank/placeholder模式fail-closed。
+- [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md)、[src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) - 实验边界/结果与唯一终态。
+- 未改Cm/OICM/decoder主干、监督训练配置、正式split/cache/GT、原始权重、共享src/base、外部Dexplore、指导或架构快照；根活动日志先前差异未纳入本轮改写。
+
+**运行与关键产物**
+
+- 训练：[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json)。
+- [outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/rl_online_ppo_airplane_v15_20260913.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/rl_online_ppo_airplane_v15_20260913.pth)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/last_rl_online_ppo_airplane_v15_20260913_ep_100_rew_-755.38477.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/last_rl_online_ppo_airplane_v15_20260913_ep_100_rew_-755.38477.pth)。rl_games在100次更新出口保存了两个同终态命名，均保留，不自动清理。
+- 最新gate run_id=`rl_online_gate64_terminal_v15_20260913`，run_status=COMPLETED：[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/)、[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/gate.json)、[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/rollout_metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/rollout_metrics.jsonl)、[outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_gate64_terminal_v15_20260913/train.log)。
+- 重载eval run_id=`rl_online_eval_reload_airplane_v15_20260913_b`，run_status=COMPLETED：[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/)、[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/config.json](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/config.json)、[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/run_manifest.json)、[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/evaluation.json](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/evaluation.json)、[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/rollout_metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/rollout_metrics.jsonl)、[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/train.log](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913_b/train.log)。命令为同wrapper `evaluate --num-envs 64 --checkpoint <上述最终checkpoint> --gate <最新gate.json> --output <eval目录>`，GPU7/graspenv。
+- 原source：[outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json)。旧source、失败gate/首次smoke等产物不覆盖，前一条活动记录继续导航。
+
+**验证**
+
+- 同一64env/428步：零残差return=-1317.661499、平均最大lift=1.180534mm、成功0/64；最终策略重新加载return=-912.349426、平均最大lift=1.180422mm、成功0/64。内存策略回放return=-912.422913；重载近似一致，不声称逐位确定性。
+- 保存policy的CPU `torch.load`核对best/latest epoch/frame正确，6个保存文件的model tensor均有限。训练指标100条、终态step204800；没有非有限/OOM或自动延长训练。
+- 首次重载eval run_id=`rl_online_eval_reload_airplane_v15_20260913`，run_status=FAILED：[outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_eval_reload_airplane_v15_20260913/train.log)。原因是Player默认无batch，误把64x71展平；修复wrapper中调用`player.get_batch_size`后新目录重跑exit0，未改变训练权重/预算。
+- 原rollout NPZ末帧记录了自动reset后的初态，而episode统计正确；仅补terminal位姿copy和记录选择，最新gate/重载NPZ保存真正terminal状态。旧训练NPZ的末帧不可解释为动作跳回初态，历史文件不回写；新64env零残差gate指标与修正前一致。
+- 初态腕物中心距1.523776m，source前50个window全invalid，窗口50开始至少一个valid、53开始四个全valid。未添加未批准的dummy-Cm语义、hold或oracle参考回退；inactive窗口raw输出不作为物理Cm证据。
+- `python -m pytest -q src/task/CmDecoderv2/tests/test_online_residual.py src/task/CmDecoderv2/tests/test_residual_contract.py`（graspenv）：9 passed；`py_compile`与`git diff --check`通过。最新gate复验通过，后续新训练必须使用匹配当前代码SHA的gate。
+- 交接审计：`python .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2 --scope-prefix third_party/IsaacGymEnvs/isaacgymenvs --scope-prefix docs/current_versions.yaml --check-links`通过，12个变更路径已登记、34个本地链接可导航；用户原有根活动日志差异不属于本轮审计范围。
+
+**回滚与规范反馈**
+
+仅回滚本次Task/vendor定向差异和新增配置/模块；原checkpoint/cache、用户开始时的两份活动日志差异及所有历史输出受保护。本轮没有提交/推送。无规范阻碍；下一步接触起点初始化属于新的研究运行变量，尚未执行，也未自动延长到1000迭代。
+
+## 2026-09-13 13:31:47 +0800 - V1.1.15 在线冻结 base 验收与残差短训启动
+
+- timestamp: 2026-09-13 13:31:47 +0800
+- activity_id: ACT-20260913-133147-ONLINE-RESIDUAL-START
+- modification_version: V1.1.15
+- task_mode: change -> run-only/operation
+- type: code / data / diagnostic / experiment / operation / documentation
+- change_level: L3（含控制、状态与坐标接口L2）
+- approval: user-approved
+- approval_basis: 用户在上一轮明确的最小任务修复、在线冻结base、完整episode零残差基线和单任务PPO短训范围后回复“可以”。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留用户已有根/Task活动记录；未提交或推送）
+- scope: 按名称映射native/Gym、实际link query、腕关节PD、真实airplane/table、reset隔离、在线冻结core、专属启动与验收；不改Cm/OICM/decoder主干、监督配置、split、原始cache/权重、共享src/base、外部dexplore、指导与架构。
+- run_id: rl_online_ppo_airplane_v15_20260913
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=7 PYTHONPATH=.:third_party/IsaacGymEnvs timeout 1800 /home2/wyy/miniconda3/envs/graspenv/bin/python -u src/task/CmDecoderv2/tools/rl/run_residual.py train --output outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913 --num-envs 64 --iterations 100 --gate outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/gate.json`
+- conclusion: SUPPORTED（CPU合同与4/64env物理gate）；INCONCLUSIVE（残差收益、任务成功与收敛）。零残差64episode成功率0，不能据此否定Cm。
+
+**文件**
+
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) - 新增已批准的V1.1.15执行边界及指针。
+- [src/task/CmDecoderv2/rl/residual_contract.py](../../rl/residual_contract.py)、[src/task/CmDecoderv2/rl/online_base.py](../../rl/online_base.py)、[src/task/CmDecoderv2/rl/README.md](../../rl/README.md) - 名称映射、XYZ分支、实际query、冻结在线provider与使用说明。
+- [src/task/CmDecoderv2/tools/rl/prepare_online_source.py](../../tools/rl/prepare_online_source.py)、[src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py) - 固定source编码、训练/验收包装、manifest与指标输出。
+- [src/task/CmDecoderv2/tests/test_online_residual.py](../../tests/test_online_residual.py) - CPU合同回归。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py)、[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualOnline.yaml) - 新物理控制路径和配置；旧smoke mode显式拒绝，不静默替换base。
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) - 本次记录。
+
+**原因**
+
+原single-update smoke未证明腕部动作进入物理系统、reset或任务资产正确。进一步加载资产事实确认Gym采用native顺序，不是XML顺序；本轮不只反转原gather，而是在控制与观测两端统一按名称解析。在线状态使用actual12手指和刚体link；控制保持6独立量。
+
+**验证与产物**
+
+- CPU命令：`python -m pytest -q src/task/CmDecoderv2/tests/test_online_residual.py src/task/CmDecoderv2/tests/test_residual_contract.py`（graspenv）；9 passed。新模块与vendor任务`py_compile`、`git diff --check`通过。
+- source run_id=`rl_online_source_airplane_v15_20260913`，run_status=COMPLETED：[outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/)、[outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/manifest.json)、[outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_source_airplane_v15_20260913/run_manifest.json)。428个K4窗口，valid比例0.77336；仅Cm/anchor及frame0初始化，不导出逐时刻目标动作。
+- 首次`-m src...`导入提前触发torch，被Isaac Gym拒绝，未创建仿真/运行目录；改为脚本直启，不换环境。首个gate run_id=`rl_online_gate_airplane_v15_20260913`，run_status=FAILED：[outputs/cmdecoderv2/rl_online_gate_airplane_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_gate_airplane_v15_20260913/train.log)，原因是保存reset快照前未refresh root-state；修复后新目录复验，不覆盖失败记录。
+- 4env gate run_id=`rl_online_gate_airplane_v15_20260913_b`，run_status=COMPLETED：[outputs/cmdecoderv2/rl_online_gate_airplane_v15_20260913_b/gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate_airplane_v15_20260913_b/gate.json)。完整428步、冻结权重逐位不变、reset隔离、15mm腕残差实际位移15.006mm。
+- 64env gate run_id=`rl_online_gate64_airplane_v15_20260913`，run_status=COMPLETED：[outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/)、[outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/gate.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/gate.json)、[outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/evaluation.json](../../../../../outputs/cmdecoderv2/rl_online_gate64_airplane_v15_20260913/evaluation.json)。最大FK位置差1.1341e-6m，query差1.2517e-6；zero residual return=-1317.6615，平均最大lift=1.1805mm，瞬时8cm成功率0/64。
+- 训练输出：[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl) - PENDING（启动中，终态另记）。
+
+**回滚与规范反馈**
+
+本轮所有输出使用独立目录；移除本次新增文件并还原本次定向差异可回滚，不覆盖开始时已有两份活动日志差异。旧smoke配置保留为历史但不再被新task接受。预算固定单GPU7/64env/seed42/100PPO更新，未占用他人进程；无规范阻碍。
+
+## 2026-09-13 13:07:18 +0800 - 微调终态与残差 RL 开训条件核对
+
+- timestamp: 2026-09-13 13:07:18 +0800
+- activity_id: ACT-20260913-130718-FINETUNE-END-RL-READINESS
+- modification_version: V1.1.14
+- task_mode: read-only/diagnostic
+- type: diagnostic / operation / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问训练是否结束及能否开始残差策略训练；本轮只读进程、配置、源码、metrics、checkpoint，并做 CPU 张量语义复现。修复、在线 provider 和正式 PPO 长训未执行。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留根级和 Task 级已有活动日志差异）
+- scope: MANO/actual 微调终态，以及 vendor CmResidual 当前实现和 decoder bank 身份；仅追加本条活动，不更新指导、计划、架构或实验结论。
+- run_id: cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251
+- run_status: COMPLETED
+- last_epoch: 20
+- last_step: 31940
+- best_metric: val/loss=0.005904600172269421（epoch 14 / step 22358）
+- best_checkpoint: best.pt（SHA256 `0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494`）
+- latest_checkpoint: latest.pt（epoch 20 / step 31940）
+- exit_reason: train.log 明确记录 `Training finished at step 31940 in 02:34:10.`；对应训练进程已不存在。
+- conclusion: SUPPORTED（监督微调完成）；INVALID_IMPLEMENTATION（当前 RL 腕部写回、状态映射和 reset 路径不能作为正式任务训练依据）；INCONCLUSIVE（base 物理效果、残差学习和跨手泛化）。
+
+**原因**
+
+训练完成不等于残差任务已具备研究验收条件。既有 smoke 只验证单次 PPO 更新，未覆盖完整 episode、物理腕部控制和在线 decoder 反馈，不能直接把当前任务长训结果用于评估 Cm。
+
+**文件与证据**
+
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) - 本次唯一新增记录及微调终态入口。
+- [outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/) - 原训练输出，未修改。
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/train.log)、[run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/run_manifest.json)。
+- [best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/best.pt)、[latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/latest.pt)。
+- [third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[CmResidualDecoderBank.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDecoderBank.yaml) - 只读核对，未修复。
+- [旧 decoder bank manifest](../../../../../outputs/cmdecoderv2/rl_decoder_bank_s1_airplane_best_20260913/manifest.json)、[原 vendor smoke manifest](../../../../../runs/CmResidual_13-10-29-45/run_manifest.json)。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) - 第 17 节限于 smoke，明确排除正式 RL 与在线 decoder 闭环；下一阶段需确认新增执行范围。
+
+**验证**
+
+- `ps -u wyy -o pid,etime,args -ww` 与 `nvidia-smi`：没有当前微调 worker 或残差训练；其他用户任务与历史 viewer 保持不变。
+- `tail -n 10 outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/train.log`；用 graspenv Python 的 JSON parser 聚合 `metrics.jsonl`，CPU `torch.load(..., map_location='cpu', weights_only=False)` 核对 best/latest：20 个 epoch 完成；best h1 EPE=8.249811 mm、q MAE=0.053351 rad、wrist 平移=8.170522 mm、旋转=2.351038 deg。final loss=0.005971314，h1 EPE=8.259459 mm；epoch 15--20 未刷新 best，仅支持当前验证指标平台判断。
+- `hashlib.sha256` 核对：旧 bank SHA=`420ba5798bb668cc96bbef266bf999bb17ef920b247410afc860245eca276201`，与最终 best 不同；现有配置会在 `_load_reference` 身份校验处拒绝加载。旧 bank 继续作为历史 smoke 保留，不覆盖或绕过校验。
+- CPU 最小复现：`state=torch.zeros(4,13); root=state[torch.tensor([0,2])]; root[:,:3]=1` 后 `state` 仍全零。对应 task 223--230 行只改 advanced-indexing 副本，再将未改的原 tensor 交给 Gym，腕部目标没有写回。
+- 用 `torch.arange(18)` 经 `native_to_urdf` 后执行现有 observation 的 `argsort(NATIVE_TO_URDF)`：12 个手指索引全部不一致；使用 forward map gather 可回到原 native 顺序。现有测试仅覆盖正向映射，没有覆盖 task 的逆映射。
+- `reset_idx` 没有恢复 hand/object root 初始 pose 或 velocity，仅提交当前 root 并把当前物体高度当新基线；任务仍加载 `cube_multicolor.urdf`，不是 airplane 资产。
+- `_reference_targets` 按时间索引离线 teacher-forced bank；不调用在线 decoder、不使用当前仿真实际状态重算 base。手腕 `hand_base_link` 与 actor root 的固定变换、场景初态和参考坐标对齐仍需在修复中明确验收，不能只补 tensor 写回就宣称物理控制正确。
+- 以上为源码与 CPU 语义诊断；没有运行新 PPO、物理 rollout 或完整成功率评估。交接前执行 `audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2/docs/logs/activity_log.md --check-links` 与 `git diff --check`。
+
+**回滚与规范反馈**
+
+本次仅新增本 activity_id 条目，移除该条即可回滚；代码、配置、权重、数据、旧运行和版本指针均未变。无规范阻碍；后续控制/坐标接口修复和在线 base、正式长训属于新增 L2/L3 执行范围，须先确认并更新 final plan。
+
+## 2026-09-13 11:27:30 +0800 - MANO actual Inspire 微调中期状态
+
+- timestamp: 2026-09-13 11:27:30 +0800
+- activity_id: ACT-20260913-112730-MANO-ACTUAL-FINETUNE-STATUS
+- modification_version: V1.1.14
+- type: diagnostic / operation / documentation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问当前训练结果；只读进程、日志、metrics 和 checkpoint，不改变运行或训练变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留此前活动日志和清理记录差异）
+- scope: `cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251` 的三卡 MANO source→actual Inspire 微调。
+- run_id: `cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251`
+- run_status: RUNNING
+- last_step: 25700（epoch 17 进行中；最近完整 epoch 为 16 / step 25552）
+- best_metric: `val/loss=0.0059046002`（epoch 14 / step 22358，`best.pt`）
+- latest_checkpoint: `latest.pt`（epoch 16 / step 25552）
+- conclusion: SUPPORTED（运行正常、数值有限、checkpoint持续写入）；INCONCLUSIVE（最终收敛、微调收益、跨手和RL效果）。
+
+**文件**
+
+- [运行目录](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/)
+- [metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/metrics.jsonl)
+- [train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/train.log)
+- [best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/best.pt)
+- [latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/checkpoints/latest.pt)
+
+**原因**
+
+区分中期验证平台、运行健康和最终训练终态，避免把当前 best 或尚未完成的 20 epoch 运行解释为已经收敛。
+
+**验证**
+
+- 三个 DDP worker 和 timeout 进程仍存在；未发现 OOM、NaN、Traceback 或 NCCL 错误。
+- 训练配置为 20 epoch；已完成 16 epoch，当前吞吐约 88--91 samples/s，日志 ETA 约 0.5 小时，实际结束时间随验证开销变化。
+- 验证 `val/loss`：epoch 1=`0.0061571`，epoch 3=`0.0059695`，epoch 14 最佳=`0.0059046`，epoch 16=`0.0059348`；epoch 7 之后主要在窄区间波动。
+- epoch 16 验证 h1 point-flow EPE=`8.2482 mm`（当前各 epoch 最低）；h1 wrist translation=`8.1726 mm`，h1 wrist rotation=`2.3855 deg`，h1 q MAE=`0.05295 rad`。
+- 与 epoch 16 identity baseline 比较：wrist translation=`13.9546 mm`，rotation=`2.3271 deg`，q=`0.01647 rad`；当前主要改善平移，q 与旋转未超过 identity baseline。
+- 工程证据不等同科研结论；尚未运行完整 test/rollout 或物理 RL 评估。
+
+**规范反馈**
+
+本次只追加 Task 活动记录，没有遇到计划、版本、目录或链接规范阻碍。
+
 ## 2026-09-13 10:29:45 +0800 - V1.1.14 IsaacGymEnvs vendor 迁移记录
 
 - timestamp: 2026-09-13 10:29:45 +0800
@@ -2959,3 +3594,666 @@ Temporal-D2 与 receding-horizon 假设，同时避免把同一 parent 的 MANO/
 
 - 本次未遇到需要修改 AGENTS、Skill 或公共合同的阻碍。Task 级测试不在根 `pytest.ini` 的默认
   `testpaths` 中，因此按目录规范显式传入 `src/task/CmDecoderv2/tests`；无需改变共享 pytest 配置。
+
+
+## 2026-09-13 21:55:41 +0800 - V1.1.16 F7 Realizer 与合同审计首闸门
+
+- timestamp: 2026-09-13 21:55:41 +0800
+- activity_id: ACT-20260913-215541-FIELD-REALIZER-GATE
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: architecture / code / diagnostic / experiment / operation
+- change_level: L3（新增 Realizer、数据合同审计与物理评估闸门）+ L2（F7 坐标、GT、split、指标和 checkpoint 解释）
+- approval: user-approved
+- approval_basis: 用户明确确认“V1.1.16 计划定稿，按草案实施”
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true（保留本次开始前已有根级与 Task activity 日志差异）
+- scope: 按最终 V1.1.16 计划新增 F7/D matched Temporal-D2 实现、C0/Cs 工具、Task 定向测试和只读合同审计；未启动训练或物理 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/field_realizer.py](../../field_realizer.py) — 新增 F7 构造、C0/Cs 干预、matched Temporal-D2 InspireFieldRealizer 与 DirectManoHRealizer；保持 delta_q6+delta_wrist6 输出，不经过 MANO-H。
+- [src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — 新增 F7 parity、消融、形状、初始化和 finite 定向测试。
+- [src/task/CmDecoderv2/research/field_realizer_gate/README.md](../../research/field_realizer_gate/README.md) — 新增 V1.1.16 审计入口说明。
+- [src/task/CmDecoderv2/research/field_realizer_gate/__init__.py](../../research/field_realizer_gate/__init__.py) — 新增实验包入口。
+- [src/task/CmDecoderv2/research/field_realizer_gate/audit.py](../../research/field_realizer_gate/audit.py) — 新增只读 source/split/checkpoint/contact capability 审计。
+- [src/task/CmDecoderv2/research/field_realizer_gate/experiment.yaml](../../research/field_realizer_gate/experiment.yaml) — 固定审计 metadata 和运行边界。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — 将已协商草案标记为 V1.1.16 final。
+
+**原因**
+
+先把 F7 表示和 matched realizer 的信息合同落实，再决定是否构造新的训练 view；禁止复用带 actual object pose 的 transported MANO source 作为 B1 的无未来运动输入。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py`：5 passed。
+- `python3 -m py_compile src/task/CmDecoderv2/field_realizer.py src/task/CmDecoderv2/tests/test_field_realizer.py src/task/CmDecoderv2/research/field_realizer_gate/audit.py`：通过。
+- `git diff --check`：通过。
+- 审计 run_id：`field_gate_audit_20260913_215500`；run_status：COMPLETED；产物：[run_manifest.json](../../research/field_realizer_gate/output/field_gate_audit_20260913_215500/run_manifest.json)、[audit.json](../../research/field_realizer_gate/output/field_gate_audit_20260913_215500/audit.json)。
+- 审计结论：SUPPORTED（F7/split/contact50 固定合同、source provenance 和 checkpoint 身份均核对通过）；INCONCLUSIVE（pairwise hand-object contact 在当前 task 源码未实现，尚未进入物理 Gate）。
+- Task 全量 pytest：64 passed、3 failed；3 个失败均为历史 pilot/V1.3 cache 文件缺失（FileNotFoundError），与本次新增测试无关，未修改旧测试或补造数据。
+
+**回滚**
+
+仅移除本次新增模块、测试、审计目录和隔离输出；不删除或 reset 旧日志、正式 cache、checkpoint 或历史运行。
+
+
+## 2026-09-13 21:59:31 +0800 - V1.1.16 pairwise contact API capability probe
+
+- timestamp: 2026-09-13 21:59:31 +0800
+- activity_id: ACT-20260913-215931-CONTACT-API
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: code / diagnostic / operation
+- change_level: L3（物理 evaluator 观测适配）+ L2（contact 指标合同）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 54c845dee4ca696e7f1a1ad92031cbf890e1d408
+- worktree_dirty: true
+- scope: 新增只读 Isaac Gym structured rigid-contact 过滤器，并在干净 subprocess 中探测 API；未创建 simulator、未改变 physics、未训练、未 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/field_realizer.py](../../field_realizer.py) — V1.1.16 F7/D matched Temporal-D2 Realizer。
+- [src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — F7、消融、shape 与 contact 定向测试。
+- [src/task/CmDecoderv2/research/field_realizer_gate/README.md](../../research/field_realizer_gate/README.md) — Gate 入口说明。
+- [src/task/CmDecoderv2/research/field_realizer_gate/__init__.py](../../research/field_realizer_gate/__init__.py) — 实验包入口。
+- [src/task/CmDecoderv2/research/field_realizer_gate/audit.py](../../research/field_realizer_gate/audit.py) — source/split/checkpoint/capability 审计。
+- [src/task/CmDecoderv2/research/field_realizer_gate/experiment.yaml](../../research/field_realizer_gate/experiment.yaml) — 审计 metadata。
+- [src/task/CmDecoderv2/research/field_realizer_gate/contact_logging.py](../../research/field_realizer_gate/contact_logging.py) — pairwise structured contact 过滤器。
+- [src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) — V1.1.16 final plan。
+- [src/task/CmDecoderv2/research/field_realizer_gate/contact_logging.py](../../research/field_realizer_gate/contact_logging.py) — 读取 hand/object body pair、保留 normal-force 缺失为 NaN，不使用 net force 冒充 pairwise label。
+- [src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — 新增 structured-contact 过滤测试。
+- [src/task/CmDecoderv2/research/field_realizer_gate/audit.py](../../research/field_realizer_gate/audit.py) — 接入 clean-subprocess capability probe。
+
+**原因**
+
+本机 Isaac Gym binding 提供 'get_env_rigid_contacts' 与 'get_env_rigid_contact_forces'，但现有 CmResidual 仍只读取 net-contact tensor；先把 API 可用性与 task 集成状态分开记录。
+
+**验证**
+
+- /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py：6 passed。
+- python3 -m py_compile src/task/CmDecoderv2/research/field_realizer_gate/*.py：通过。
+- 审计 run_id：field_gate_audit_20260913_220100；run_status：COMPLETED；[audit.json](../../research/field_realizer_gate/output/field_gate_audit_20260913_220100/audit.json) 报告 API capability true，task_currently_uses_net_force_only true，结论 SUPPORTED（仅 capability，不代表 rollout contact 指标已接入）。
+- git diff --check：通过。
+
+**回滚**
+
+移除本次新增 contact adapter、测试增量和隔离审计输出；不修改现有物理任务控制或历史产物。
+
+
+## 2026-09-13 22:02:10 +0800 - V1.1.16 rollout contact tracker 接入 Task-local wrapper
+
+- timestamp: 2026-09-13 22:02:10 +0800
+- activity_id: ACT-20260913-220210-CONTACT-TRACKER
+- modification_version: V1.1.16
+- task_mode: change
+- type: code / diagnostic
+- change_level: L3（物理 evaluator 观测适配）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan 已冻结 evaluator-only contact logging
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 51324be 实现 V1.1.16 F7 Realizer 与合同审计 Gate
+- worktree_dirty: true（activity 日志为本次未提交记录）
+- scope: 在 Task-local residual rollout wrapper 中调用 structured hand↔object contact tracker；不修改 reward、physics、reset 或控制动作
+
+**文件**
+
+- [src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py) — rollout 每步记录 pairwise occupancy、pair count、normal-force 汇总和 longest contiguous contact；若 API 不存在则显式失败。
+- [src/task/CmDecoderv2/research/field_realizer_gate/contact_logging.py](../../research/field_realizer_gate/contact_logging.py) — 复用已提交的 structured contact 过滤器。
+- [src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — 保留 contact filter 合同测试。
+
+**原因**
+
+Isaac Gym binding capability 已通过，下一步把 tracker 接入实际 rollout 入口，同时保留 body-order 假设和 evaluator-only 边界，避免 net force 冒充 pairwise label。
+
+**验证**
+
+- python3 -m py_compile src/task/CmDecoderv2/tools/rl/run_residual.py src/task/CmDecoderv2/research/field_realizer_gate/contact_logging.py：通过。
+- /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py：6 passed。
+- 尚未创建 simulator 或启动 rollout；接触字段的物理数值仍待合法 contact50 evaluator 运行后验证。
+- git diff --check：通过。
+
+**回滚**
+
+只回滚 Task-local wrapper 的 tracker 调用；不改第三方物理代码、reward、旧运行或数据。
+
+
+## 2026-09-13 22:05:47 +0800 - V1.1.16 contact 采样时序修正
+
+- timestamp: 2026-09-13 22:05:47 +0800
+- activity_id: ACT-20260913-220547-CONTACT-TIMING
+- modification_version: V1.1.16
+- task_mode: change
+- type: code / diagnostic
+- change_level: L2（评估帧语义）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: d0887ea 接入 V1.1.16 rollout pairwise contact tracker
+- worktree_dirty: true
+- scope: 将 contact 读取固定在每个控制区间起始，规避 CmResidual.step 对 done env 的自动 reset；reward、physics、action 和 reset 行为不变
+
+**文件**
+
+- [src/task/CmDecoderv2/tools/rl/run_residual.py](../../tools/rl/run_residual.py) — contact tracker 在 env.step 前采样，并记录为当前控制区间的接触状态。
+
+**原因**
+
+step 后读取会把终止环境的 reset 状态混入最后一帧，无法与 contact occupancy/longest duration 合同一致。
+
+**验证**
+
+- python3 -m py_compile src/task/CmDecoderv2/tools/rl/run_residual.py：通过。
+- 尚未启动 simulator；具体 body-order 和控制起始接触需在正式 contact50 evaluator 中验证。
+- git diff --check：通过。
+
+**回滚**
+
+仅恢复 contact 采样位置；不改变物理任务和历史输出。
+
+
+## 2026-09-13 22:16:44 +0800 - V1.1.16 parent-only F7 cache smoke
+
+- timestamp: 2026-09-13 22:16:44 +0800
+- activity_id: ACT-20260913-221644-PARENT-F7-SMOKE
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: data / experiment / operation
+- change_level: L2（新增 F7 cache、坐标系和 GT provenance）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 823dce94fa37305cf7390c8b5639bf0a970dc462
+- worktree_dirty: true
+- scope: 仅构造 s1/airplane_lift 原始 MANO parent object-frame 的 128-anchor F7 smoke cache；不读取 actual Inspire object pose，不训练、不 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/research/field_realizer_gate/build_parent_f7.py](../../research/field_realizer_gate/build_parent_f7.py) — 新增 parent-only F7 builder，记录 raw frame、parent pose、anchor 和输入 hash。
+- [data/processed_data/cm_decoder_v2/field_f7_parent_smoke_v1_1_16_s1_airplane_lift/](../../../../../data/processed_data/cm_decoder_v2/field_f7_parent_smoke_v1_1_16_s1_airplane_lift/) — 生成的 cache、manifest 和 run_manifest（按目录规范不纳入 Git）。
+
+**原因**
+
+先验证没有 actual future object motion 的 F7 数据链路和时间对齐，避免直接生成全量大 cache。
+
+**验证**
+
+- builder run_id：field_f7_parent_smoke_v1_1_16_s1_airplane_lift；run_status：COMPLETED；frame_count=432，field_frame_count=431，field shape=[431,128,7]。
+- field_f7[t] 明确对应 raw frame t+1，作为 t→t+1 控制目标；tau=0.015 m，无 p/c/contact/E。
+- 所有 field、anchor normals 有限；normal 范数范围 [0.99999994,1.0]；raw frame stride=4。
+- 结果属于 SUPPORTED（parent-only F7 cache smoke）；不代表 Realizer 学习或物理效果。
+- python3 -m py_compile src/task/CmDecoderv2/research/field_realizer_gate/build_parent_f7.py、git diff --check：通过。
+
+**回滚**
+
+只移除该隔离 cache 和 builder；不删除正式 paired view、原始 MANO provenance 或旧输出。
+
+
+## 2026-09-13 22:21:27 +0800 - V1.1.16 全量 parent-only F7 cache
+
+- timestamp: 2026-09-13 22:21:27 +0800
+- activity_id: ACT-20260913-222127-PARENT-F7-ALL
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: data / experiment / operation
+- change_level: L2（新增 254/30 paired F7 cache）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: d020863513b9edcddd20e99774cbf4598a0451c1
+- worktree_dirty: true
+- scope: 从既有 paired index 的 train/val entries 重建原始 MANO parent object-frame F7；不读取 actual Inspire object pose 作为 source，不训练、不 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/research/field_realizer_gate/build_parent_f7.py](../../research/field_realizer_gate/build_parent_f7.py) — 增加全量 train/val 构建入口。
+- [data/processed_data/cm_decoder_v2/field_f7_parent_v1_1_16_all/](../../../../../data/processed_data/cm_decoder_v2/field_f7_parent_v1_1_16_all/) — run_id 对应的全量 cache、manifest 和 run_manifest（按目录规范不纳入 Git）。
+
+**原因**
+
+parent-only source 已通过单序列和前三序列 smoke，需要生成与当前训练合同相同的 254 train / 30 val 输入候选，供后续 B1/D view 构造。
+
+**验证**
+
+- run_id：field_f7_parent_v1_1_16_all；run_status：COMPLETED；requested=284、built=284（train=254、val=30）。
+- 每个序列均记录 source_type=mano_parent_surface_in_parent_object_pose、128 anchors、tau=0.015、无 p/c/contact/E。
+- 所有序列 field 文件 finite；每个 field_f7[t] 对应 raw frame t+1。
+- 结果属于 SUPPORTED（数据构造与 provenance）；不代表 Realizer 学习或物理效果。
+- builder 用时约 102 秒，输出约 255 MiB；无异常停止或覆盖既有 cache。
+
+**回滚**
+
+只隔离该新 cache 和 builder 的全量入口；不删除原始 MANO、paired view、旧 cache 或 checkpoint。
+
+
+## 2026-09-13 22:27:40 +0800 - V1.1.16 FieldRealizer paired dataset smoke
+
+- timestamp: 2026-09-13 22:27:40 +0800
+- activity_id: ACT-20260913-222740-FIELD-DATASET
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: code / data / experiment
+- change_level: L2（新增训练 view reader、GT 对齐和 cache schema）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 33c17b2 生成全量 parent-only F7 训练候选 cache
+- worktree_dirty: true
+- scope: 新增 FieldRealizerDataset，将 parent-only F7 与实际 Inspire current state/未来 q-wrist supervision 对齐；未训练、未 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/field_dataset.py](../../field_dataset.py) — 读取 254/30 F7 cache，输出 F7 anchors、current actual state、q/wrist targets 和 active mask。
+- [src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — 新增 dataset shape/finite 合同测试。
+
+**原因**
+
+为后续 B1 训练提供与当前 paired split 同窗口的 F7 reader，同时把 actual Inspire state 只作为 current/监督字段，不写入 F7 source。
+
+**验证**
+
+- python3 -m py_compile src/task/CmDecoderv2/field_dataset.py：通过。
+- /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py：7 passed。
+- train cache 254、val cache 30 均已生成；本次 dataset smoke 使用 train s1/airplane_lift，输出 F7 [4,128,7]、anchor [4,128,3]、target q [4,6]。
+- 结论：SUPPORTED（数据 reader 合同 smoke）；不代表 B1/D 学习或物理效果。
+
+**回滚**
+
+只移除 FieldRealizerDataset 和测试增量；不删除 F7 cache、paired view 或原始数据。
+
+
+## 2026-09-13 22:33:10 +0800 - V1.1.16 B1 FieldRealizer 接线与 CPU smoke
+
+- timestamp: 2026-09-13 22:33:10 +0800
+- activity_id: ACT-20260913-223310-FIELD-TRAIN-WIRING
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: code / experiment / operation
+- change_level: L2（新增 B1 runner/config；接入 point-flow 监督）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 7102147
+- worktree_dirty: true
+- scope: 新增 B1 FieldRealizerModel、FieldRealizerRunner、配置和训练入口；F7 source 仍为 parent-only，actual Inspire 仅 current/监督；未启动正式训练或 contact50 rollout
+
+**文件**
+
+- [src/task/CmDecoderv2/field_realizer.py](../../field_realizer.py) — 为 B1 增加 v1.3 surface FK point-flow 输出和 BaseRunner config adapter。
+- [src/task/CmDecoderv2/field_dataset.py](../../field_dataset.py) — 增加 actual Inspire 10135-point target flow supervision。
+- [src/task/CmDecoderv2/field_runner.py](../../field_runner.py) — 使用现有 point-flow Smooth-L1、rotation/q/wrist diagnostics 的 B1 runner。
+- [src/task/CmDecoderv2/field_config.py](../../field_config.py)、[src/task/CmDecoderv2/field_train.py](../../field_train.py) — V1.1.16 B1 配置和入口。
+- [outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_223152/](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_223152/) — CPU smoke 的 config、metadata、train.log、metrics.jsonl、run_manifest。
+
+**原因**
+
+让冻结 F7 representation 的 B1 训练合同可执行，并确认模型输出能通过同一 differentiable Inspire surface 生成 point-flow loss。
+
+**验证**
+
+- python3 -m py_compile 五个新增/修改 Python 文件：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py`：7 passed。
+- `field_train` CPU smoke run_id：cm_decoder_v2_field_realizer_v1_1_16_20260913_223152；run_status：STOPPED（完成 1 个 train step 后因 CPU 上 10135-point FK 的 eval 成本过高而手动停止）；step=1，loss=0.00685637，point-flow EPE=11.4663 mm，q MAE=0.0147247 rad，wrist translation=10.7277 mm。以上仅为工程接线证据，不是效果结论。
+- 结论：SUPPORTED（B1 数据/模型/损失接线）；科研效果仍 INCONCLUSIVE，尚未完成正式训练、R/A/B1/D 对照或 contact50 rollout。
+
+**回滚**
+
+移除本次新增 B1 文件并删除隔离 smoke output；不修改 CmDecoderV2 主线、既有 checkpoint、paired view、F7 cache 或 contact50 物理配置。
+
+
+## 2026-09-13 22:35:30 +0800 - V1.1.16 B1 GPU 前向与反向 smoke
+
+- timestamp: 2026-09-13 22:35:30 +0800
+- activity_id: ACT-20260913-223530-FIELD-GPU-SMOKE
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: operation / diagnostic
+- change_level: L2（GPU 前向、点流反向链路 smoke）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: f42fa5b
+- worktree_dirty: true
+- scope: 单条 train paired sample，CUDA_VISIBLE_DEVICES=7；不训练、不更新 checkpoint、不 rollout
+
+**输出**
+
+- 使用 [field_config.py](../../field_config.py)、[field_dataset.py](../../field_dataset.py) 和 [field_realizer.py](../../field_realizer.py)；无新持久化产物。
+
+**原因**
+
+确认上一轮 CPU smoke 的耗时是否来自实现问题，并验证 B1 的 10135-point differentiable FK 在可用 GPU 上能够运行。
+
+**验证**
+
+- run_id：field_gpu_forward_smoke_20260913；run_status：COMPLETED。
+- GPU：NVIDIA GeForce RTX 3090；forward `0.233 s`，backward `0.113 s`，peak memory `33.5 MiB`。
+- 输出：q `[1,4,6]`、wrist translation `[1,4,3]`、rotation `[1,4,3]`、point flow `[1,4,10135,3]`；loss finite，反向梯度通过。
+- 结论：SUPPORTED（GPU 前向/反向工程链路）；不代表训练收敛或物理效果。
+
+**回滚**
+
+无代码或数据产物需要回滚；仅删除本条 activity 即可移除记录。
+
+
+## 2026-09-13 22:43:11 +0800 - V1.1.16 B1 GPU 正式训练启动
+
+- timestamp: 2026-09-13 22:43:11 +0800
+- activity_id: ACT-20260913-224311-FIELD-TRAIN-GPU
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: experiment / operation
+- change_level: L2（按 final plan 启动 B1 supervised training）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: f42fa5b
+- worktree_dirty: true
+- scope: 全量 254 train / 30 val parent-only F7；GPU 7；10135-point v1.3 surface；不改 PPO、物理环境、Cm 主线或 D/R/A 对照
+
+**输出**
+
+- run_id：cm_decoder_v2_field_realizer_v1_1_16_20260913_224249；run_status：RUNNING。
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/run_manifest.json)（已生成）。
+- PENDING：[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/train.log)、[checkpoints/](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/checkpoints/)。
+
+**原因**
+
+GPU smoke 已确认 B1 point-flow 前向/反向可运行；正式训练用于获得 B1 的收敛曲线和 checkpoint，之后再进行 A/R/B1/D 同合同物理比较。
+
+**验证**
+
+- 启动命令：`CUDA_VISIBLE_DEVICES=7 python -u -m src.task.CmDecoderv2.field_train --device cuda:0 --set data.num_workers=4 --set data.persistent_workers=true`。
+- 当前 `total_steps=86460`；step 100：loss `0.00532152`、point-flow EPE `16.1342 mm`、吞吐 `85.39 samples/s`、估计剩余约 `2.25 h`。
+- 运行属于 RUNNING；当前没有科研结论。
+
+**回滚**
+
+停止该 run 的进程并隔离删除其 output；不回滚代码、F7 cache、paired view 或既有 checkpoint。
+
+
+## 2026-09-13 23:29:00 +0800 - V1.1.16 B1 GPU 训练阶段结果提交
+
+- timestamp: 2026-09-13 23:29:00 +0800
+- activity_id: ACT-20260913-232900-FIELD-TRAIN-PROGRESS
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: experiment / operation / documentation
+- change_level: L2（记录运行阶段指标与证据入口）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: f42fa5b
+- worktree_dirty: true
+- scope: B1 GPU 正式训练阶段快照；不停止运行、不修改研究变量
+
+**文件**
+
+- [V1.1.16_B1_progress_20260913.md](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md) — 当前阶段指标、解释边界和证据入口。
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/run_manifest.json)、[metrics.jsonl](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/metrics.jsonl)、[train.log](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/train.log)。
+
+**原因**
+
+用户要求提交当前结果；以独立 tracked report 固化阶段性证据，避免把既有未提交 activity log 改动带入代码提交。
+
+**验证**
+
+- run_id：cm_decoder_v2_field_realizer_v1_1_16_20260913_224249；run_status：RUNNING；step `30,800 / 86,460`，epoch 8 train phase。
+- val epoch 1–7 point-flow EPE：`32.064 / 32.291 / 32.054 / 32.101 / 32.124 / 32.212 / 32.188 mm`；best epoch 3，loss `0.0124443`。
+- 结论：SUPPORTED（运行和证据记录）；科研结论 INCONCLUSIVE，尚未完成终态训练和物理对照。
+
+**回滚**
+
+只删除阶段性 report；不停止当前 run，不删除 metrics、train.log 或 checkpoint。
+
+
+## 2026-09-13 23:53:02 +0800 — V1.1.16 并行消融与物理Gate可用性核验
+
+- timestamp: 2026-09-13 23:53:02 +0800
+- activity_id: ACT-20260913-235302-FIELD-PARALLEL
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: code / diagnostic / experiment / operation / documentation
+- change_level: L2（独立诊断入口与结果记录；GPU physics不变）
+- approval: user-approved
+- approval_basis: 用户已定稿V1.1.16，并要求其他实验并行；[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md)。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: ce30b4e12af85666dd5c767e2a58323381c01575
+- worktree_dirty: true
+- scope: B1训练之外并行GPU1离线B1/C0/Cs、GPU0 contact50仪器smoke、CPU D来源核验；不改主训练、physics、GT或cache。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/field_realizer_gate/evaluate_conditions.py](../../research/field_realizer_gate/evaluate_conditions.py) — 固定checkpoint的全部val干预比较，保存config/metadata/metrics及finite checks。
+- [src/task/CmDecoderv2/research/field_realizer_gate/probe_gpu_contacts.py](../../research/field_realizer_gate/probe_gpu_contacts.py) — 真实GPU simulation启动后的pairwise API能力检查。
+- [src/task/CmDecoderv2/research/field_realizer_gate/audit_mano_h_source.py](../../research/field_realizer_gate/audit_mano_h_source.py) — 284条原始MANO来源与raw frame对齐。
+- [src/task/CmDecoderv2/research/field_realizer_gate/README.md](../../research/field_realizer_gate/README.md)、[src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md) — 入口与证据解释，修正静态API和缺H数据的过强表述。
+
+**原因**
+
+GPU资源允许并行，但正式A/R/B1物理比较需要有效的接触记录；先完成独立诊断，不把缺失指标记为0。
+
+**验证**
+
+- run_id: `field_conditions_epoch3_v116_20260913_234700`；run_status: `COMPLETED`；last_step: 532 eval batches；固定checkpoint epoch3/step12969，4254 val windows；B1/C0/Cs EPE均31.966181mm（active sample-horizon micro），h1均13.646332mm。
+  命令：`CUDA_VISIBLE_DEVICES=1 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 /home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.CmDecoderv2.research.field_realizer_gate.evaluate_conditions --checkpoint outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/checkpoints/step_000012969_epoch_000003.pt --output outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700`。
+  产物：[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/)、[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/run_manifest.json)、[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/metrics.jsonl](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/metrics.jsonl)、[outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/train.log](../../../../../outputs/cmdecoderv2/field_conditions_epoch3_v116_20260913_234700/train.log)。
+- run_id: `field_contact_gpu_probe_v116_20260913_234700`；run_status: `FAILED`；原因：父包先import torch导致Isaac Gym import-order错误，未创建sim；独立失败输出保留：[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234700/](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234700/)。
+- run_id: `field_contact_gpu_probe_v116_20260913_234820`；run_status: `COMPLETED`；last_step: 4；64env原GPU pipeline；修正启动顺序后，Gym明确报告GPU仿真启动后此API不可用；空contact数组无物理意义。
+  启动使用GPU0、相同contact50 manifest，`python -u -c 'import isaacgym; import runpy; runpy.run_module("src.task.CmDecoderv2.research.field_realizer_gate.probe_gpu_contacts", run_name="__main__")'`；完整参数、source SHA、config和代码SHA记录在manifest中。
+  产物：[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/)、[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/run_manifest.json](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/run_manifest.json)、[outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log](../../../../../outputs/cmdecoderv2/field_contact_gpu_probe_v116_20260913_234820/train.log)。
+- run_id: `mano_h_availability_v116_20260913_235000`；run_status: `COMPLETED`；284/284原始pose与template可用，raw frame对齐；未做geometry parity，未训练D。
+  命令：`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=2 /home2/wyy/miniconda3/envs/graspenv/bin/python -m src.task.CmDecoderv2.research.field_realizer_gate.audit_mano_h_source --output src/task/CmDecoderv2/research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000`。
+  产物：[src/task/CmDecoderv2/research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/](../../research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/)、[src/task/CmDecoderv2/research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/run_manifest.json](../../research/field_realizer_gate/output/mano_h_availability_v116_20260913_235000/run_manifest.json)。
+- 三个脚本py_compile与git diff --check通过；`pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py`：7 passed。所有定量值有限。运行主训练未停止，未把中间权重当终态；未重选超参。
+- conclusion: SUPPORTED（离线干预近乎不改变输出、D来源可用）；REFUTED（当前GPU pairwise API可用）；INVALID_IMPLEMENTATION（现有tracker用于正式Gate）；增量控制科学结论仍INCONCLUSIVE。
+
+**回滚**
+
+只移除本次独立诊断脚本与新增记录、隔离新output；不覆盖用户原有日志差异、不停止B1、不删原始数据或checkpoint。
+
+
+## 2026-09-14 00:01:04 +0800 — V1.1.16 parent MANO-H cache 构造
+
+- timestamp: 2026-09-14 00:01:04 +0800
+- activity_id: ACT-20260914-000104-FIELD-MANOH-CACHE
+- modification_version: V1.1.16
+- task_mode: change -> run-only/operation
+- type: data / diagnostic / operation
+- change_level: L2（新增 D 输入 cache，不改变现有 split 或 GT）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan 与用户要求并行推进其他实验
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 70c59f4
+- worktree_dirty: true
+- scope: 从原始 GRAB MANO pose、parent object pose 和 joint0 wrist 构造 D 的 43D parent-only H；不训练、不读取 future Inspire target、不改物理。
+
+**文件**
+
+- [src/task/CmDecoderv2/research/field_realizer_gate/build_parent_mano_h.py](../../research/field_realizer_gate/build_parent_mano_h.py) — 构造 `wrist_object_t[3]+wrist_object_rot6d[6]+hand_pose[24]+betas[10]`。
+- [src/task/CmDecoderv2/field_dataset.py](../../field_dataset.py)、[src/task/CmDecoderv2/field_realizer.py](../../field_realizer.py)、[src/task/CmDecoderv2/tests/test_field_realizer.py](../../tests/test_field_realizer.py) — D dataset/model point-flow wiring 与合同测试。
+- [data/processed_data/cm_decoder_v2/field_mano_h_parent_v116_all_20260914/](../../../../../data/processed_data/cm_decoder_v2/field_mano_h_parent_v116_all_20260914/) — 284 条 cache 及 run_manifest（按目录规范不入 Git）。
+
+**原因**
+
+已确认原始 MANO-H 来源存在，先把 D 的 source cache 固化，避免把“数据不可用”和“尚未接线”混为一谈。
+
+**验证**
+
+- run_id：field_mano_h_parent_v116_all_20260914；run_status：COMPLETED；requested=284、built=284；每条 H shape `[T,43]`，finite，raw frame 对齐。
+- smoke cache 三条序列通过，`pytest -q src/task/CmDecoderv2/tests/test_field_realizer.py`：8 passed；py_compile 与 git diff --check：通过。
+- 仍未完成 MANO mesh/template parity、D 正式训练或物理 rollout；结论为 SUPPORTED（输入 cache/wiring），科研效果 INCONCLUSIVE。
+
+**回滚**
+
+隔离删除该 D cache 和新增 wiring；不删除原始 GRAB、parent source、paired view 或 B1 运行。
+
+
+## 2026-09-14 00:52:00 +0800 — V1.1.16 B1 GPU 训练完成
+
+- timestamp: 2026-09-14 00:52:00 +0800
+- activity_id: ACT-20260914-005200-FIELD-TRAIN-GPU-DONE
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: experiment / operation / documentation
+- change_level: L2（训练终态与 checkpoint 记录）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: f42fa5b
+- worktree_dirty: true
+- scope: B1 parent-only F7 全量 supervised training 终态；不执行 physics rollout，不修改 Cm/OICM/PPO。
+
+**文件**
+
+- [V1.1.16_B1_progress_20260913.md](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md) — 更新完整 epoch1–20 验证曲线和终态判断。
+- [outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/) — 运行目录、manifest、metrics、train log 和 checkpoints。
+- [best.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/checkpoints/best.pt)、[latest.pt](../../../../../outputs/cmdecoderv2/cm_decoder_v2_field_realizer_v1_1_16_20260913_224249/checkpoints/latest.pt)。
+
+**原因**
+
+完成 V1.1.16 B1 计划的全量训练，固化终态 checkpoint，供后续 B1/C0/Cs 物理对照使用。
+
+**验证**
+
+- run_id：cm_decoder_v2_field_realizer_v1_1_16_20260913_224249；run_status：COMPLETED；last_step=86460，last_epoch=20；训练耗时约 02:07:29。
+- best_metric=`val/loss=0.0124190375`，best epoch=19 / step=82137；best point-flow EPE=`32.0424307 mm`。latest epoch20：val/loss=`0.0124190644`，EPE=`32.0400469 mm`。
+- best checkpoint SHA256：`caaf37736d0bbcb72bf8087dcc6e06b2dcc12c391cb5cfaa9caed0182f490dc7`；latest SHA256：`5ec77fa9e0ae1ccd87829e902af7d5d6e6bc70dce3ccb4ae6339106b14565760`。
+- conclusion：SUPPORTED（训练、验证、checkpoint 终态）；INCONCLUSIVE（F7 是否有增量控制价值，尚未做物理对照）。
+
+**回滚**
+
+只隔离本次 B1 output/checkpoint；不删除代码、F7 cache、D cache 或旧运行。
+
+## 2026-09-14 10:18:30 +0800 — V1.1.16 终态 B1/C0/Cs 离线敏感性
+
+- timestamp: 2026-09-14 10:18:30 +0800
+- activity_id: ACT-20260914-101830-FIELD-CONDITIONS-BEST
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: diagnostic / operation / documentation
+- change_level: L2（终态 checkpoint 离线评估与证据归档）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- branch: oyx
+- base_commit: b107af1dbaac8bd5bb6548e5e2b902c0319e89fa
+- worktree_dirty: true
+- scope: 使用 B1 best checkpoint 对 B1、C0、Cs 做 F7 敏感性对照；不执行 physics rollout，不改变训练变量。
+
+**文件**
+
+- [evaluation.json](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/evaluation.json)
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/field_conditions_best_v116_20260914_010500/run_manifest.json)
+- [B1 结果报告](../../research/field_realizer_gate/results/V1.1.16_B1_progress_20260913.md)
+- [experiment_log.md](experiment_log.md)
+
+**原因**
+
+确认终态 Realizer 是否响应 F7 内容，为后续是否继续做 physics Gate 提供诊断依据。
+
+**验证**
+
+- run_id：`field_conditions_best_v116_20260914_010500`；run_status：`COMPLETED`；4254 val windows，active horizon=16260，h1=4065。
+- B1/C0/Cs active EPE 分别为 `31.951362/31.951363/31.951362 mm`；q change 分别为 `0/2.72e-5/6.36e-7 rad`；结论为 `SUPPORTED`（运行证据）/`INCONCLUSIVE`（科研归因）。
+
+**回滚**
+
+删除本次 ignored output 目录即可；不删除 checkpoint、F7 cache 或代码。
+
+## 2026-09-14 10:20:00 +0800 — V1.1.16 Direct MANO-H 实际 cache GPU 前向 smoke
+
+- timestamp: 2026-09-14 10:20:00 +0800
+- activity_id: ACT-20260914-102000-D-MANO-H-SMOKE
+- modification_version: V1.1.16
+- task_mode: run-only/operation
+- type: diagnostic / operation
+- change_level: L1（只读真实 cache 接线 smoke）
+- approval: user-approved
+- approval_basis: V1.1.16 final plan
+- branch: oyx
+- base_commit: 43ee093
+- worktree_dirty: true
+- scope: 一个真实 paired train window 从 MANO-H cache 进入 DirectManoHModel 的 CUDA 前向；不训练、不执行 physics rollout、不改变 D 合同。
+
+**文件**
+
+- [smoke.json](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/smoke.json)
+- [run_manifest.json](../../../../../outputs/cmdecoderv2/field_direct_mano_h_smoke_v116_20260914_102000/run_manifest.json)
+- [experiment_log.md](experiment_log.md)
+
+**原因**
+
+区分 D 的数据/模型接线问题与尚未满足 geometry parity 的研究实现问题。
+
+**验证**
+
+- run_id：`field_direct_mano_h_smoke_v116_20260914_102000`；run_status：`COMPLETED`；RTX 3090 前向约 `0.238 s`。
+- MANO-H 输入 `[4,43]`，输出 q/wrist 及 `[1,4,10135,3]` point-flow，全部 finite；结论为 `SUPPORTED`（工程 smoke），D 科研效果仍 `INCONCLUSIVE`。
+
+**回滚**
+
+删除本次 ignored output 目录即可；不删除 MANO-H cache 或 D wiring。
+
+
+## 2026-09-14 13:21:52 +0800 - 几何重定向 base 与残差 PPO 历史核验
+
+- timestamp: 2026-09-14 13:21:52 +0800
+- activity_id: ACT-20260914-132152-GEOMETRIC-BASE-RESIDUAL-AUDIT
+- modification_version: V1.1.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求浏览仓库，确认是否尝试过几何重定向作为 base 的残差 RL；仅查阅已有实现、配置、活动和运行产物。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: ffdb9b30a92fda24894fba3964185d4e72fd6748
+- worktree_dirty: true（保留进入任务时根级和 Task activity 的全部既有差异）
+- scope: CmDecoderv2/IsaacGymEnvs 历史 reference_frozen、在线 Cm base PPO 与 direct reference 回放；本次只追加本条记录。
+- conclusion: SUPPORTED（几何 base 单迭代 PPO smoke 与四组在线 Cm base 短训的存在及身份）；INCONCLUSIVE（几何 base 残差 RL 的学习效果、持续抓持和相对 Cm 的收益）。
+
+**原因**
+
+区分几何参考直接充当base、decoder充当base，以及不训练策略的reference回放，避免把三者统称为“几何重定向 + 残差 RL 已经训练验证”。
+
+**文件与发现**
+
+- [src/task/CmDecoderv2/docs/logs/activity_log.md](activity_log.md) — 本次唯一追加文件；历史内容和既有差异逐字节保留。
+- 历史计划：[src/task/CmDecoderv2/docs/plan/v1.1.md](../plan/v1.1.md) 第17节与 V1.1.15 增补；本次未修改计划。
+- 几何base smoke：`run_id=cm_residual_isaac_smoke_20260913_001902`，历史 `run_status=COMPLETED`，V1.1.14，4env、1个PPO epoch。[third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidual.yaml) 保留 `basePolicy.mode=reference_frozen`，q/wrist来自 `coupled_geometric_v1_1_14_20260912`。外部历史运行配置与此来源一致；未完成episode，`rew=-inf`不能作为策略效果。历史状态为 ACT-20260913-001902-CM-RESIDUAL-SMOKE，另见 [src/task/CmDecoderv2/docs/logs/experiment_log.md](experiment_log.md)。
+- 外部smoke目录：[../IsaacGymEnvs/runs/CmResidual_13-00-18-30](../../../../../../IsaacGymEnvs/runs/CmResidual_13-00-18-30)；[../IsaacGymEnvs/runs/CmResidual_13-00-18-30/config.yaml](../../../../../../IsaacGymEnvs/runs/CmResidual_13-00-18-30/config.yaml)；[../IsaacGymEnvs/runs/CmResidual_13-00-18-30/nn/last_CmResidual_ep_1_rew_-inf.pth](../../../../../../IsaacGymEnvs/runs/CmResidual_13-00-18-30/nn/last_CmResidual_ep_1_rew_-inf.pth)。实际仅有配置、checkpoint与TensorBoard events，没有run_manifest.json、metrics.jsonl或train.log；本次不补造历史产物。
+- 四组后续PPO的配置均为 `CmResidualOnline`、`basePolicy.mode=online_decoder`，冻结同一个MANO/actual微调decoder，SHA为 `0814bdabcbdf484d90c6855a50e3bfebc1053b4d085ebde152b15f65aa8c4494`。[src/task/CmDecoderv2/rl/online_base.py](../../rl/online_base.py) 从实际仿真状态重算base、执行h1；[third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) 叠加12维q/wrist残差，当前已拒绝旧reference/bank模式。四组均为64env、100更新、204800 samples，每组有100行metrics、train.log和policy文件。
+- `run_id=rl_online_ppo_airplane_v15_20260913`；历史 `run_status=COMPLETED`；`last_epoch=100`、`last_step=204800`。证据：[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/training_result.json)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/metrics.jsonl)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/last_rl_online_ppo_airplane_v15_20260913_ep_100_rew_-755.38477.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_airplane_v15_20260913/nn/last_rl_online_ppo_airplane_v15_20260913_ep_100_rew_-755.38477.pth)。
+- `run_id=rl_online_ppo_contact50_v15_20260913`；历史 `run_status=COMPLETED`；`last_epoch=100`、`last_step=204800`。证据：[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/training_result.json)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/metrics.jsonl)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_contact50_v15_20260913/nn/last_rl_online_ppo_contact50_v15_20260913_ep_100_rew_-2719.5344.pth)。
+- `run_id=rl_online_ppo_frame57_v15_20260913`；历史 `run_status=COMPLETED`；`last_epoch=100`、`last_step=204800`。证据：[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/training_result.json)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/metrics.jsonl)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/nn/last_rl_online_ppo_frame57_v15_20260913_ep_100_rew_-2538.3677.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame57_v15_20260913/nn/last_rl_online_ppo_frame57_v15_20260913_ep_100_rew_-2538.3677.pth)。
+- `run_id=rl_online_ppo_frame60_v15_20260913`；历史 `run_status=COMPLETED`；`last_epoch=100`、`last_step=204800`。证据：[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/config.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/config.json)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/run_manifest.json)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/training_result.json](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/training_result.json)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/metrics.jsonl](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/metrics.jsonl)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/train.log](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/train.log)、[outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/nn/last_rl_online_ppo_frame60_v15_20260913_ep_100_rew_-55.388645.pth](../../../../../outputs/cmdecoderv2/rl_online_ppo_frame60_v15_20260913/nn/last_rl_online_ppo_frame60_v15_20260913_ep_100_rew_-55.388645.pth)。
+
+- direct reference对照：`run_id=rl_online_reference_base_frame57_full_v15_20260913`，历史 `run_status=COMPLETED`，4env/360步，未运行decoder或PPO。[outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/run_manifest.json](../../../../../outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/run_manifest.json) 的reference_q/reference_wrist来自 `dexplore_rl_v1_3_full10135`；[data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/sequences/train/s1_airplane_lift/manifest.json](../../../../../data/processed_data/cm_decoder_v2/dexplore_rl_v1_3_full10135/sequences/train/s1_airplane_lift/manifest.json) 明确 `variant=inspire_rl` 且源tensor来自 `inspire_rl_object_dexplore`。因此它不属于原始几何重定向base的残差训练。[outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/summary.json](../../../../../outputs/cmdecoderv2/rl_online_reference_base_frame57_full_v15_20260913/summary.json) 的平均最大抬升为22.8313mm；不据此作几何base与Cm收益结论。
+
+**验证**
+
+- `rg -n -i 'residual.?rl|残差.*(RL|强化)|几何重定向|geometric.*retarget' src docs` 与 `rg --files --hidden --no-ignore outputs/cmdecoderv2` 定位实现和运行产物。
+- Python标准库只读解析四组config、run_manifest、training_result，核对base模式、固定checkpoint身份、epoch/step、metrics行数与policy存在性；读取oracle来源view manifest确认 `inspire_rl`。
+- `git diff --check -- src/task/CmDecoderv2/docs/logs/activity_log.md`；`python3 .agents/skills/research-change-control/scripts/audit_diff.py --log src/task/CmDecoderv2/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmDecoderv2/docs/logs/activity_log.md --check-links`：均通过；最新条目40个本地链接可导航。
+- 未启动训练、仿真或测试；smoke只支持工程接通，100更新是探索性pilot，不能宣称几何base残差RL已收敛或物理效果成立。首次记录脚本因系统Python缺少zoneinfo在写入前退出；改用标准库本地时区读取后追加成功。
+
+**回滚与规范反馈**
+
+按activity_id删除本条即可回滚；代码、配置、GT、split、cache、checkpoint、旧输出与已有日志内容均保留。无本次审批或目录阻碍；历史外部smoke缺少manifest，采用现存配置、checkpoint与历史活动交叉核验，不修改治理合同或补造历史证据。

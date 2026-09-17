@@ -1,9 +1,185 @@
 # Ref2Dex 活动记录
 
 - scope: root
-- last_updated: 2026-09-12
+- last_updated: 2026-09-13
 - current_pointer: [docs/current_versions.yaml](../current_versions.yaml)
 - historical_audit: [modification_log.md](modification_log.md)
+
+## 2026-09-13 12:05:18 +0800 - 独立权重仓库建立与 Git LFS 推送
+
+- timestamp: 2026-09-13 12:05:18 +0800
+- activity_id: ACT-20260913-120518-WEIGHTS-LFS-PUSH
+- modification_version: V1.2.15
+- task_mode: change / run-only/operation
+- type: data / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求在本地创建独立权重仓库并推送到已创建的 GitHub 仓库。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（Ref2Dex 保留既有活动日志差异；未将代码、数据或训练输出纳入本次提交）
+- scope: 独立仓库 `/home2/wyy/oyx_ws/Ref2Dex-weights`；远端 `https://github.com/hitsz-oyx/Ref2Dex-weights.git`；仅归档 3 个已完成训练的 `best.pt`、对应 config/run manifest、`weights_manifest.json`、`SHA256SUMS` 和 README。
+- run_id: ref2dex_weights_lfs_archive_20260913_120518
+- run_status: COMPLETED
+- commit: `bdacfddd0743250f41a6148174fc930fef1ad9af`
+- conclusion: SUPPORTED（工程归档、远端可见性和 LFS 完整性均已验证）；上传权重本身不构成科研效果结论。
+
+**原因**
+
+将完成训练的 best checkpoint 与其运行 provenance 从 Ref2Dex 主仓库分离，避免把大文件、cache 或机器绝对路径带入代码仓库，同时为其他服务器提供可审计的 LFS 下载入口。本次不改变训练结果、模型接口或数据合同。
+
+**产物**
+
+- 外部仓库说明：`/home2/wyy/oyx_ws/Ref2Dex-weights/README.md`
+- 权重 provenance：`/home2/wyy/oyx_ws/Ref2Dex-weights/weights_manifest.json`
+- SHA256 清单：`/home2/wyy/oyx_ws/Ref2Dex-weights/SHA256SUMS`
+- [MANO/actual 微调源 manifest](../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/run_manifest.json)
+- 远端仓库：[Ref2Dex-weights](https://github.com/hitsz-oyx/Ref2Dex-weights)
+
+**验证**
+
+- `git lfs ls-files` 显示 3 个 checkpoint；三者均按 `checkpoints/**/*.pt` 进入 LFS，而非普通 Git blob。
+- `git lfs fsck` 返回 `Git LFS fsck OK`；`sha256sum -c SHA256SUMS` 三个文件均为 `OK`。
+- `git ls-remote origin refs/heads/main` 返回提交 `bdacfddd0743250f41a6148174fc930fef1ad9af`；本地 `main` 与 `origin/main` 一致且工作区干净。
+- 归档策略为 best-only；未上传 `latest.pt`、逐 epoch checkpoint、cache、原始数据或绝对路径配置。
+
+**回滚入口**
+
+删除或回退独立仓库提交 `bdacfdd` 即可撤销本次归档版本；Ref2Dex 主仓库代码和研究数据未因本次操作改变。
+
+## 2026-09-13 11:34:30 +0800 - Git LFS 环境与权重归档路径诊断
+
+- timestamp: 2026-09-13 11:34:30 +0800
+- activity_id: ACT-20260913-113430-GIT-LFS-DIAGNOSTIC
+- modification_version: V1.2.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问 graspenv 是否具备 Git LFS 及配置方式；只读检查环境、Git 配置、远端和忽略规则，未安装、跟踪或上传文件。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（保留已有活动日志差异）
+- scope: 系统/graspenv 的 git-lfs 可用性、当前仓库 LFS filter、远端 LFS endpoint、`.gitattributes` 和 checkpoint 忽略规则。
+- run_id: git_lfs_diagnostic_20260913_113430
+- run_status: COMPLETED
+- conclusion: SUPPORTED（系统 LFS 可用）；INCONCLUSIVE（GitHub LFS 上传权限和配额尚未验证）。
+
+**文件**
+
+- [`.gitignore`](../../.gitignore) - 当前忽略 `outputs/*` 和 `*.pt`，checkpoint 不能直接被普通 `git add` 纳入。
+- [`docs/logs/activity_log.md`](activity_log.md) - 记录本次只读诊断。
+
+**原因**
+
+区分运行环境依赖和仓库归档合同：`/usr/bin/git-lfs` 已安装，`graspenv` 内没有独立可执行文件并不构成阻碍；当前仓库没有 `.gitattributes` 或 LFS tracked file，且 origin LFS endpoint 显示 `auth=none`，不能把“本地可用”误报为“已能上传”。
+
+**验证**
+
+- `/usr/bin/git-lfs` 版本 `3.2.0`；`git lfs env` 正常，Git 版本 `2.25.1`，LFS filter 已在系统和仓库 Git 配置中生效。
+- `git lfs ls-files` 为空；仓库根没有 `.gitattributes`；origin endpoint 为 `https://github.com/hitsz-oyx/Ref2Dex-review.git/info/lfs`，当前状态 `auth=none`。
+- 当前 decoder checkpoint 单个约 9.2 MiB，但位于 ignored `outputs/`；未修改 `.gitignore`、未创建 LFS track、未触网 push。
+- 工程诊断不涉及训练、模型效果或科研结论；后续新增 tracked 权重路径或修改忽略规则属于 L3 治理/数据归档变更，需要单独确认。
+
+**规范反馈**
+
+当前目录规范把 `outputs/` 和 Task-local `assets/` 作为机器本地产物，不适合直接塞入 LFS。建议使用独立权重 LFS 仓库，或在用户确认后建立专用 tracked 权重路径并配套 manifest；本次不修改治理合同。
+
+## 2026-09-13 11:18:51 +0800 - 失败缓存与旧 hrdexdb 数据清理
+
+- timestamp: 2026-09-13 11:18:51 +0800
+- activity_id: ACT-20260913-111851-DATA-CLEANUP
+- modification_version: V1.2.15
+- task_mode: change / run-only/operation
+- type: data / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求删除前一轮盘点的约 14 GiB 失败/试运行大文件，并删除旧 Cm/CmDecoder hrdexdb 数据。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: true（开始时已有本次活动日志未提交差异；未纳入数据删除）
+- scope: 仅删除 `disk_inventory_20260913_110056` 列出的 19 个失败/smoke/pilot 根中的非审计二进制文件，以及 `data/processed_data/cm_decoder/hrdexdb_*` 中的非审计数据和内部软链接；保留 JSON/YAML/TXT/MD/LOG/SHA256 审计文件。
+- run_id: cleanup_20260913_111342
+- run_status: COMPLETED
+- conclusion: SUPPORTED（限定路径删除与当前运行保护）；不涉及科研效果结论。
+
+**原因**
+
+按用户确认执行前一轮盘点中已明确的失败/smoke/pilot 大文件和旧 hrdexdb 派生数组清理，以释放共享磁盘空间；保留可审计元数据和当前研究主线输入，避免把历史追溯合同一并删除。
+
+**文件与产物**
+
+- [cleanup manifest](../../src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/cleanup_manifest.json) - 删除范围、计数、容量和保留规则。
+- [原始盘点报告](../../src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/report.md) - 清理前分类与依赖条件。
+- [当前微调运行目录](../../outputs/cmdecoderv2/cm_decoder_v2_mano_actual_finetune_v1_batch8_20260913_092251/) - 核对后仍在运行，未删除。
+
+**结果**
+
+- 删除列表共 `107686` 个文件/软链接，预扫描大小 `506572000000` bytes（约 `471.9 GiB`；du/df 的块统计会有差异）。
+- 失败/smoke/pilot 根保留 manifest、index、assignment、summary、validation 和日志等审计文件；各根不再含非元数据文件。
+- hrdexdb 七个根保留选择清单和元数据，共 `98316288` bytes（约 `93.8 MiB`）；旧二进制 episode/cache 数据已删除。
+- `df -h` 核对：`/home2` 可用空间由约 `594G` 增至约 `1.1T`，使用率由 `98%` 降至 `95%`。
+- 当前三卡 `mano_actual_finetune_v1_batch8` 仍存在；当前 V1.3 OICM、eligible 微调 view、耦合 cache、原始数据和 checkpoint 未被删除。
+- 未停止旧查看器、未删除 `object_interaction_cm_dexplore_rl_v1`、旧 `cm_object_v2*`、stage4 或 outputs 历史运行；这些不属于本次用户确认范围。
+
+**验证**
+
+- 删除命令使用 `find -P`，不跟随软链接；非审计文件先写入 `/tmp/ref2dex_delete_20260913_111342.list`，随后限定 `rm -f`，未使用仓库级 `rm -rf`。
+- `du`/`find` 复核 hrdexdb 无残留非元数据文件；19 个候选根的非元数据文件计数均为 `0`。
+- `ps -u wyy -o pid,etime,args -ww` 复核当前微调和 viewer 状态；未发现命令行指向 hrdexdb 的运行进程。
+- `git diff --check` 与 activity 链接审计通过；本次不运行模型测试，不能从清理结果推断科研结论。
+
+**回滚与规范反馈**
+
+这是已执行的破坏性清理；没有仓库内回滚副本。保留的 manifest/日志可追溯删除范围，但被删数组只有从原始数据重新生成。未遇到规范阻碍；后续若要退役旧 OICM 或 `cm_object_v2*`，需单独确认其历史复现边界。
+
+## 2026-09-13 11:00:56 +0800 - 数据磁盘占用与清理候选只读核对
+
+- timestamp: 2026-09-13 11:00:56 +0800
+- activity_id: ACT-20260913-110056-DISK-INVENTORY
+- modification_version: V1.2.15
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问哪些数据不再需要或有错误，以便清理磁盘；仅授权调查和建议，删除、移动和停止旧服务尚未批准。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 2fc7b921ddcc78103efb3dcc9958ba1c282cbcac
+- worktree_dirty: false（调查开始时；本次仅追加记录及 ignored 诊断产物）
+- scope: Ref2Dex 派生数据、历史输出、当前配置/index 和现存进程；未逐文件验证全部数据正确性，未删除数据或停止训练/查看器。
+- run_id: disk_inventory_20260913_110056
+- run_status: COMPLETED
+- conclusion: SUPPORTED（实测占用、失败缓存与路径依赖核对）；INCONCLUSIVE（全部旧缓存的科学有效性、所有历史消费者是否可放弃）。
+
+**文件**
+
+- [docs/logs/activity_log.md](activity_log.md) - 追加跨 Task 清理候选摘要，未改科研结论、版本指针或历史事件。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056](../../src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/) - 只读调查产物。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/report.md](../../src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/report.md) - 分类清单、容量、保留条件、调查局限和验证命令。
+- [src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/run_manifest.json](../../src/task/CmDecoderv2/research/dexplore_contract_audit/output/disk_inventory_20260913_110056/run_manifest.json) - 诊断范围及输入追溯。
+
+**原因**
+
+磁盘使用率为 98%，仓库约 1.4 TiB，其中 processed_data 为 1234192908288 bytes 的实际分配占用。不能把版本旧、训练单右手或有状态/动作参数化差异等同于原始数据错误，也不能删除仍被当前 view 或旧服务使用的输入。
+
+**验证**
+
+- `df -h . /home2/wyy/oyx_ws`、`du -x -h --max-depth=1 .`、`du -x -B1 --max-depth=1 data/processed_data`：仓库内统计完成；未把整个共享磁盘的使用量归于本项目。
+- `ps -u wyy -o pid,etime,args -ww`：当前 MANO/actual 微调仍运行；旧 v1.1.1 查看器以及 stage4/InteractionTransfer 查看器仍存在，不能直接删其历史数据。
+- JSON parser 核对当前 paired/coupled view 的所有 entry 外部路径；paired view 引用 `object_interaction_cm_dexplore_rl_v1_3` 和 `cm_decoder_v2/dexplore_rl_v1_3_full10135`，不是独立可搬走的数据集。
+- 失败 paired 根 `cm_decoder_v2/mano_actual_finetune_v1_1_14_20260913` 占 12.2 GiB，缺少根 index/manifest；prep log 确认缺失 MANO provenance 时退出，成功 eligible 根已有 254/30 条序列。18 个 smoke/pilot 根合计约 2.1 GiB，均只列为需保留小型证据后可清理的大文件候选，不用通配符执行删除。
+- 旧错误 object trajectory 的判断引用 [src/task/ObjectInteractionCm/docs/logs/activity_log.md](../../src/task/ObjectInteractionCm/docs/logs/activity_log.md) 中 2026-09-07 22:37:40 的既有诊断；本次没有重跑其全量数值实验。
+- 最大旧 CmDecoder 缓存 457.8 GiB 仍被旧 Task 配置和一个 episodes 软链接引用，属于放弃旧实验线后才能清理的候选，不认定为坏数据。
+- `audit_diff.py --log docs/logs/activity_log.md --worktree --scope-prefix docs/logs/activity_log.md --check-links` 与 `git diff --check`：交接前校验本次记录。
+- 无训练、模型评估或工程 smoke；以上结果不证明或否定 Cm 表征能力。
+
+**回滚与规范反馈**
+
+本次仅新增摘要和 ignored 报告，回滚只需移除本 activity_id 条目及本次报告目录；所有数据、checkpoint、运行和原始资产未变。没有遇到审批阻碍；旧配置的 `active` 目录仍含历史实验入口，清理时按实际依赖而不是目录名判断，本次不调整配置或治理规则。
 
 ## 2026-09-13 10:29:45 +0800 — IsaacGymEnvs vendor 迁移与路径 smoke
 
