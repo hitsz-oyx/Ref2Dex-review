@@ -8779,3 +8779,47 @@ OakInk2 导出已处理完全部 `472` 个 selection sequence，但 `193` 条记
 **保护与回滚**
 
 - 本条目与 pipeline manifest 状态修正均可回滚；回滚入口为恢复 pipeline manifest 的原 JSON，并删除本 activity 条目。已完成的 `1656` 个目录和 `193` 个 `.partial` 目录不作任何破坏性处理。
+
+## 2026-09-17 12:25:52 +0000 — OakInk2 Stage3 覆盖缺口诊断
+
+- timestamp: `2026-09-17 12:25:52 +0000`
+- activity_id: `ACT-20260917-122552-OICM-OAKINK2-STAGE3-COVERAGE`
+- modification_version: `V1.4.24`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 缺少 Stage3 geometry 的原因和补全方式。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `474e6b6d3e4dad4b587322b0e8eeb767ddc3c0e7`
+- worktree_dirty: `false`
+- scope: 只读检查 Stage3 生成器、OakInk2 selection/export 代码、全量失败记录和 NAS Stage3 stats；未修改代码、selection、Stage3 NPZ、cache 内容或研究变量。
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`（被诊断的全量 export）
+- run_status: `FAILED`
+- conclusion: `INCONCLUSIVE`（根因已定位；补全方案尚未执行）。
+
+**原因**
+
+- [correspondence_ptv3_v2/research/oakink2_conversion/convert_oakink2_stage3.py](../../../correspondence_ptv3_v2/research/oakink2_conversion/convert_oakink2_stage3.py) 的 Stage3 生成器先计算全序列距离，再用 `min(distance) <= 0.05 m` 保留帧；因此每个 NPZ 只包含该 object/side 的交互帧，非交互帧被主动裁掉，并可能记录 `no_interacting_frame`。
+- [ObjectInteractionCm/tools/data/export_oakink2_inspire_v1_4.py](../../tools/data/export_oakink2_inspire_v1_4.py) 的 selection 阶段对所有 object part 和两只手取距离最小值；某一 part 接触即可选中该帧。export 阶段随后要求每个 `selected_object_id` 的某个 Stage3 side 对 `selected_frame_ids` 全覆盖，任一 part 缺帧就抛出 `no Stage3 geometry`。
+- 因此这次不是 193 个 NPZ 路径全部不存在，而是 Stage3 文件存在但只覆盖部分 selected frame。逐条核对 193 条失败记录均属于 partial frame coverage；首条 `.../0011` 示例中选中 `637` 帧，`O02@0015@00001` 的 left Stage3 文件从 `1576` 帧开始，选中区间从 `1334` 帧开始，缺少 `61` 个 selected frame。
+- wrapper 的 `RUN_DIR: unbound variable` 是失败后的状态收尾 bug，不是 Stage3 缺口的原因。
+
+**验证**
+
+- Stage3 stats：3 个 shard、`4742` 个 NPZ、`627` 个序列；生成器的交互帧裁剪位置见上述代码的 `active` / `frame_ids_active`。
+- 失败 export manifest：`1656/1849` segments 完成、`193` 条失败，正式 `index` 和 `cache_manifest` 仍为 `PENDING`。
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/stage3/oakink2_object_centered_v1/split_manifest.json](../../../../../data/processed_data/stage3/oakink2_object_centered_v1/split_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+
+**补全路径**
+
+- 推荐先走低成本路径：保持现有 Stage3 只负责 selection 的交互距离；让 OICm export 使用现有 NPZ 的静态 `obj_points/obj_normals`，对 selected frame 的 `obj_root_pose_world` 直接读取同一 annotation 的 `obj_transf`。这不制造几何或姿态，只消除“非接触 object part 没有被 Stage3 保留”的错误假设；需要新增覆盖检查、定向重跑失败 segment，再重新生成正式 index/cache_manifest。
+- 若必须保持当前 exporter 的严格 Stage3 frame 覆盖合同，则生成一个新的 full-frame Stage3 variant：对失败涉及的 sequence/object/side 输出全部官方 raw frame（或至少所有 selected frame），不要应用 `<=5 cm` 裁剪；用新 root 重新导出并验证所有 `selected_frame_ids` 完整覆盖。现有 `oakink2_object_centered_v1` 不覆盖写。
+- 不建议直接删除 193 条 segment 或把缺帧用最近帧填充；前者改变 split/样本分布，后者会伪造物体姿态或接触标签，需另行用户确认。
+
+**保护与回滚**
+
+- 本次仅新增诊断记录；既有 Stage3、selection、失败 cache 和 pipeline manifest 均未改动。删除本条 activity 即可回滚记录。
