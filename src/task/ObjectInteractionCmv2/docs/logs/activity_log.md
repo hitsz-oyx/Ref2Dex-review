@@ -2129,3 +2129,43 @@ queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将�
 **回滚**
 
 纯诊断，无需回滚；保持当前 OakInk2 Inspire run 与双域训练不变。后续需先实现并小规模验证三个缺失高分辨率 producer，才生成 queue JSON 并启动后台连续任务。
+
+## 2026-09-17 15:31:58 +0000 — 实现 V1.4.5 缺失高分辨率 cache producer
+
+- timestamp: `2026-09-17 15:31:58 +0000`
+- activity_id: `ACT-20260917-153158-CMV2-V145-HIGHRES-PRODUCER-IMPLEMENTATION`
+- modification_version: `V1.4.5`
+- type: `code, data, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在 producer 审计后明确回复“可以，你先实现吧”；范围限定为新增 GRAB/ARCTIC Inspire-20270/KNN32 与 OakInk2 MANO-4096/KNN32 producer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `2c3df4df64ddd66a49f3696cc3121848b4245864`
+- worktree_dirty: `true`（本条所列 V1.4.5 实现和记录尚未提交）
+- scope: 新 producer 只写 Cmv2 新 output root，保存 decoder 3076 compatibility stream 和独立高分辨率 KNN stream；不修改 `ObjectInteractionCm`、旧 3076/KNN8 cache、原 MANO cache、正在运行的 GPU0 训练或 GPU2 OakInk2 Inspire 回填。
+- conclusion: `INCONCLUSIVE`（实现和无 GPU contract smoke 已通过；真实数据 GPU smoke 尚未运行，不能作为数据或效果结论）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — 指向已定稿的 V1.4.5 producer/queue 边界。
+- [multi_domain.py](../../multi_domain.py) — 仅新增两种 Cmv2 producer schema 的显式 reader 白名单；保持既有 schema 和点数检查不变。
+- [tools/data/build_stage4_inspire_highres_v1_4.py](../../tools/data/build_stage4_inspire_highres_v1_4.py) — 以只读 Stage4 MANO、固定 Inspire visual surface sample（每侧 10135）和 KNN32 生成 GRAB/ARCTIC Inspire cache；来源 split 逐项沿用现有 MANO index。
+- [tools/data/build_oakink2_mano_highres_v1_4.py](../../tools/data/build_oakink2_mano_highres_v1_4.py) — 以官方 OakInk2 annotation、固定 MANO triangle/barycentric correspondence（每侧 2048）和 KNN32 生成 train segment cache。
+- [tests/test_v1_4_5_highres_producers.py](../../tests/test_v1_4_5_highres_producers.py) — 验证双侧 high-res→3076 decoder 派生、两 producer schema、4096/20270 shape 与 reader 接受路径。
+- [docs/logs/activity_log.md](activity_log.md) — 本次实现的唯一活动时间线。
+
+**原因**
+
+审计确认旧 GRAB/ARCTIC Inspire 为 3076/KNN8，且 OakInk2 MANO producer 缺失；它们不能被重新标记为新合同。新实现将 KNN 永远建立在 `knn_hand_points_world.npy` 的 4096/20270 点流上，decoder 仅由该流确定性下采样，避免 3076 点意外成为训练输入。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/tools/data/build_stage4_inspire_highres_v1_4.py src/task/ObjectInteractionCmv2/tools/data/build_oakink2_mano_highres_v1_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py src/task/ObjectInteractionCmv2/tests/test_v1_4_5_highres_producers.py`：`8 passed`。
+- `git diff --check` 通过。真实 cache smoke 遵循 [docs/plan/V1.4.md](../plan/V1.4.md) 的 GPU2 串行闸门，当前 OakInk2 Inspire writer 完成前不与之并发；因此三个新 producer 均未入 queue。
+
+**回滚**
+
+恢复本条列出的版本控制文件并把 Cmv2 指针回退至 `V1.4.4` 即可；不删除任何已有 cache、checkpoint、输出或运行进程。后续 smoke/full run 使用独立 root，停止时保留其 manifest 和日志审计。

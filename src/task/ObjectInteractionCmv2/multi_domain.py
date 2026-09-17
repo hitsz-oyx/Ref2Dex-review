@@ -128,6 +128,8 @@ class InspireSequenceView:
             "ref2dex_object_interaction_cm_bilateral_geometry_v1",
             "ref2dex_object_interaction_cm_bilateral_mano_v1_4",
             "ref2dex_object_interaction_cm_oakink2_inspire_v1_4",
+            "ref2dex_object_interaction_cmv2_stage4_inspire_v1_4",
+            "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4",
         }
         if self.manifest.get("schema_name") not in supported_schema:
             raise ValueError(f"{self.path}: unsupported geometry schema")
