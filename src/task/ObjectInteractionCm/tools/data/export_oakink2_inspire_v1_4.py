@@ -592,17 +592,24 @@ class _Stage3GeometryStore:
     def parts(self, object_ids: Sequence[str], frame_ids: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         local_points, local_normals, poses, part_ids = [], [], [], []
         for part_index, object_id in enumerate(object_ids):
-            data = self._load(str(object_id), "right") or self._load(str(object_id), "left")
-            if data is None:
-                raise FileNotFoundError(f"no Stage3 geometry for {self.sequence}/{object_id}")
-            source_ids = np.asarray(data["raw_frame_id"], dtype=np.int64)
+            candidates = [
+                value for value in (self._load(str(object_id), "right"), self._load(str(object_id), "left"))
+                if value is not None
+            ]
             wanted = np.asarray(frame_ids, dtype=np.int64)
-            positions = np.searchsorted(source_ids, wanted)
-            valid = (positions < len(source_ids)) & (source_ids[np.minimum(positions, len(source_ids) - 1)] == wanted)
-            if not np.all(valid):
-                missing = wanted[~valid][:5].tolist()
-                raise KeyError(f"Stage3 geometry missing {self.sequence}/{object_id} frames {missing}")
-            selected = positions.astype(np.int64)
+            data = None
+            selected = None
+            for candidate in candidates:
+                source_ids = np.asarray(candidate["raw_frame_id"], dtype=np.int64)
+                positions = np.searchsorted(source_ids, wanted)
+                valid = (positions < len(source_ids)) & (
+                    source_ids[np.minimum(positions, len(source_ids) - 1)] == wanted
+                )
+                if np.all(valid):
+                    data, selected = candidate, positions.astype(np.int64)
+                    break
+            if data is None or selected is None:
+                raise FileNotFoundError(f"no Stage3 geometry for {self.sequence}/{object_id}")
             object_points = np.asarray(data["obj_points"], dtype=np.float32)
             object_normals = np.asarray(data["obj_normals"], dtype=np.float32)
             if object_points.shape != (OBJECT_POINTS, 3) or object_normals.shape != object_points.shape:
