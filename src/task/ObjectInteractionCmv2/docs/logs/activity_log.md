@@ -2169,3 +2169,37 @@ queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将�
 **回滚**
 
 恢复本条列出的版本控制文件并把 Cmv2 指针回退至 `V1.4.4` 即可；不删除任何已有 cache、checkpoint、输出或运行进程。后续 smoke/full run 使用独立 root，停止时保留其 manifest 和日志审计。
+
+## 2026-09-17 15:35:55 +0000 — 双域 MANO 训练状态检查
+
+- timestamp: `2026-09-17 15:35:55 +0000`
+- activity_id: `ACT-20260917-153555-CMV2-V144-TWO-DOMAIN-MANO-STATUS`
+- modification_version: `V1.4.4`
+- type: `operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户已批准的 GPU0、8 小时 GRAB/ARCTIC MANO 双域训练；本条仅查询状态。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `a6c3f2062b6fc567da05cde5cf96810bcc60900c`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`
+- scope: 查询既有 GPU0 训练和独立 GPU2 OakInk2 Inspire cache 回填；不停止、重启或改写任何运行。
+- conclusion: `INCONCLUSIVE`（训练仍在进行，当前指标不是最终跨域结论）。
+
+**原因**
+
+用户询问训练是否仍在运行；需以 PID、GPU 和实际 epoch 指标区分“进程存在”与“有有效训练进度”。
+
+**状态与证据**
+
+- 训练 PID `516837` 仍存活；已完成 epoch `2`、step `4550`。当前 `selection_metric=0.1935872248433341`（GRAB val `0.3062595267893915`，ARCTIC val `0.08091492289727668`），优于 epoch 1，因此已有新的 [best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt) 和 [latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt)。
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 与 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 已存在。
+- GPU2 OakInk2 Inspire backfill PID `443044` 也仍存活；其 manifest 当前累计 `reused_segments=104`、`backfilled_segments=516`、`completed_frames=182654`、`failures=[]`，尚未完成，故 V1.4.5 smoke/queue 仍不启动。
+
+**验证**
+
+- `ps -p 516837,443044` 确认两个 PID 均为 `Rsl`；`nvidia-smi` 显示训练 GPU0 利用率 `100%`。
+- 仅检查 [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 的最新两条完整 epoch 记录，未作额外训练或 cache 操作。
