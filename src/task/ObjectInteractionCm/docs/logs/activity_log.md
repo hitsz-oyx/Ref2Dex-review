@@ -8604,3 +8604,42 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 
 - 现有 GRAB/ARCTIC cache、旧 OakInk2 v1/v1.1 index、训练权重、split、源 annotation/Stage3 和外部仓库未修改。
 - 停止入口为 wrapper PID `4002771`；保留已写入的选择/缓存和 manifest，不删除既有产物。
+
+## 2026-09-17 09:31:38 +0000 — OakInk2 全量 cache 流水线状态核对
+
+- timestamp: `2026-09-17 09:31:38 +0000`
+- activity_id: `ACT-20260917-093138-OICM-OAKINK2-CACHE-STATUS`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 cache 是否仍在导出。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9f9b827db662aaa7d1c51754d083e421ccf06150`
+- worktree_dirty: `false`
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`
+- run_status: `RUNNING`
+- scope: 只读核对 OakInk2 全量选择与 Inspire cache 流水线的进程、pipeline manifest 和实时日志；不停止进程、不修改代码、输入数据、选择规则或 cache。
+- conclusion: `INCONCLUSIVE`（全量运行尚未完成，不能据此下科研结论）。
+
+**原因**
+
+确认用户需要当前后台任务的真实阶段，避免把“全量选择”误报成“cache 已导出”。
+
+**验证**
+
+- wrapper PID `4002771` 与选择子进程 PID `4002773` 仍存活。
+- 实时日志已处理 `100/517` 个序列，得到 `343` 个候选，失败 `0`；pipeline manifest 的进度字段仍停留在 `40/517`，以实时日志和存活进程作为当前进度依据。
+- 流水线配置为选择完成后才启动 `export`；因此当前 Inspire cache 导出尚未开始，目标 cache 目录仍未形成终态 manifest。
+- 诊断命令：`ps -eo pid,ppid,etime,stat,cmd`、`cat pipeline_manifest.json`、`tail -n 12 pipeline.log`。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+
+**回滚**
+
+本次仅新增诊断记录，无代码、配置或数据改动；删除本 activity 条目即可回滚记录。
