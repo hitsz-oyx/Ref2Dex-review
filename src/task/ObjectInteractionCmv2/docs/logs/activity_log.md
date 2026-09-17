@@ -1868,3 +1868,42 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 无需删除任何 cache；若不继续，保持基线 `STOPPED` 和这 104 个 complete 段即可。若继续，恢复入口会先校验并跳过它们；若出现错误，停止新的 run 并保留所有已完成段。
+
+## 2026-09-17 14:23:05 +0000 — OakInk2 高分辨率 batch=8 全量恢复已启动
+
+- timestamp: `2026-09-17 14:23:05 +0000`
+- activity_id: `ACT-20260917-142305-CMV2-HIGHRES-RESUME-BATCH8-FULL-STARTED`
+- modification_version: `V1.4.3`
+- type: `operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在限量 smoke 成功后明确要求“那你继续吧”；运行遵循已定稿 [docs/plan/V1.4.md](../plan/V1.4.md) 的同 root 恢复边界。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `3d590398fcb7459ae01b7ac22895960c2bf08d3c`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_highres_resume_batch8_full_20260917T142300Z`
+- run_status: `RUNNING`
+- scope: 对完整 1849 个 selected OakInk2 segment 恢复；先校验并跳过 current root 中已完成的 104 段，再用 GPU2 单 writer 回填余下段。参数固定为 `mano_batch_size=128`、`knn_frame_batch=8`、`knn_object_chunk=512`，不改变 cache schema、selection、split、坐标、KNN32、2 cm、MANO 4096 或 Inspire KNN 20270 合同。
+- conclusion: `INCONCLUSIVE`（工程数据运行中；不是模型效果结论）。
+
+**原因**
+
+限量 smoke 已证明 batch=8 的恢复路径能在未完成真实段生成合规高分辨率 cache；全量运行沿用同一 writer 与参数，以避免把未测量的 CPU 多进程预取和正式数据回填混为一次变量变化。
+
+**命令与产物**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py ... --device cuda:2 --mano-batch-size 128 --knn-frame-batch 8 --knn-object-chunk 512 --run-id cmv2_highres_resume_batch8_full_20260917T142300Z`。
+- [全量恢复 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) — 当前 `STARTED`，将记录复用/回填段数、frames 和失败清单。
+- [全量恢复日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_full_20260917T142300Z.log) — `RUNNING`。
+- [共享高分辨率输出根](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z) — 只追加缺失 sequence；不覆盖 104 个已验证 complete 段或已暂停基线 manifest。
+
+**验证**
+
+- 启动约 4 秒后 PID `443044` 存活，manifest 的 `expected_segments=1849`；前 100 个已完成段已校验复用、`failures=[]`，GPU2 已分配 `417 MiB`。
+- 每完成 10 段刷新运行 manifest；终态前将检查 failures、formal `index.json`/`cache_manifest.json`、完整段数、schema/KNN 合同和 `.partial` 残留。未生成 `metrics.jsonl` 或 checkpoint，因为是数据回填。
+
+**回滚**
+
+终止此 `run_id` 即可；其此前已经完成的完整段仍可被后续 resume 校验复用。不得删除、覆盖或移动基线及本次生成的 cache。
