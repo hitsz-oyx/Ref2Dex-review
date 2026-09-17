@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 from torch.utils.data import DataLoader
@@ -13,13 +15,16 @@ from .oakink2 import OakInk2RigidDataset
 
 
 def main():
+    if "--config" in sys.argv:
+        from .eval_grab import main as grab_main
+        return grab_main()
     p = argparse.ArgumentParser()
     p.add_argument("--checkpoint", type=Path, required=True)
     p.add_argument("--data-root", type=Path, required=True)
     p.add_argument("--max-files", type=int, default=2)
     p.add_argument("--max-frames", type=int, default=8)
     args = p.parse_args()
-    model = ObjectInteractionCmv2Model()
+    model = ObjectInteractionCmv2Model(SimpleNamespace(interaction_mode="static"))
     payload = torch.load(args.checkpoint, map_location="cpu")
     model.load_state_dict(payload["model"])
     model.eval()

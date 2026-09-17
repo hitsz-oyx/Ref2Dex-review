@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,6 +17,9 @@ from .synthetic import make_synthetic_batch
 
 
 def main():
+    if "--config" in sys.argv:
+        from .train_grab import main as grab_main
+        return grab_main()
     p = argparse.ArgumentParser()
     p.add_argument("--data-root", type=Path, default=None)
     p.add_argument("--max-files", type=int, default=4)
@@ -33,7 +38,7 @@ def main():
     else:
         loader = [make_synthetic_batch(batch_size=2)] * args.max_steps
         source = {"kind": "synthetic", "seed": args.seed}
-    model = ObjectInteractionCmv2Model()
+    model = ObjectInteractionCmv2Model(SimpleNamespace(interaction_mode="static"))
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     metrics = []
     step = 0
