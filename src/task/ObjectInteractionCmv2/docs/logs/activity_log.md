@@ -1678,3 +1678,37 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 本条仅追加诊断更正；不涉及权限变更或数据写入。临时 smoke 输出仍按上一条记录保留，不能据此推断正式 NAS output 不可用。
+
+## 2026-09-17 14:03:02 +0000 — OakInk2 高分辨率回填吞吐瓶颈诊断
+
+- timestamp: `2026-09-17 14:03:02 +0000`
+- activity_id: `ACT-20260917-140302-CMV2-HIGHRES-BACKFILL-BOTTLENECK`
+- modification_version: `V1.4.2`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问全量 cache 导出耗时原因；只读检查运行进程、GPU、I/O 计数和 exporter hot path。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `ae3d6ab4e10bafa1357d85dd28ad493c283a95ee`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `RUNNING`
+- scope: 解释高分辨率 OakInk2 cache 的吞吐瓶颈；不改变 exporter、GPU 分配、参数、输入或输出。
+- conclusion: `SUPPORTED`（工程性能诊断）；与模型科研结论无关。
+
+**原因**
+
+每个 selected frame 必须生成双手 Inspire 20270 点训练流、KNN32、2 cm/5 cm object masks 和 hand supervision mask。相较旧 3076 点流，高分辨率手点数约为 6.6 倍；exporter 又按 segment 串行处理，逐帧 Python retarget、FK、chunked pairwise distance 与 NAS memmap 写出不能重叠。
+
+**验证**
+
+- 当时完成 `60/1849` segment、`27899` frame、`failures=[]`；进程墙钟约 19 分 41 秒，RSS 约 3.5 GiB、CPU 约 70%。[run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) 与 [实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log)。
+- 每帧 object→hand KNN 需要 `4096×20270≈8300 万` 距离；反向 hand→object supervision 再做一次 chunked distance。GPU2 显存约 675 MiB、采样瞬时利用率为 0%，符合 KNN 短 burst 与 CPU 串行 retarget/FK 交替的行为，而非 GPU 持续饱和。
+- 内核累计 I/O 约读取 11.9 GB、写入 42.8 GB，输出约 26 GB；`pidstat` 采样写入约 25 MB/s、无 iodelay，说明 NAS 写入有成本但不是已观测的唯一或主导饱和点。
+- 当前实现不会跨 segment 缓存重叠帧的 retarget/KNN 结果；优化该点需要停止/重启并改变数据处理实现，本次未做。
+
+**回滚**
+
+只读诊断，无需回滚；当前导出继续使用已批准的参数与独立输出根。
