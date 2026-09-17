@@ -1712,3 +1712,37 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 只读诊断，无需回滚；当前导出继续使用已批准的参数与独立输出根。
+
+## 2026-09-17 14:10:22 +0000 — 高分辨率 cache 可复用性与并行化预检
+
+- timestamp: `2026-09-17 14:10:22 +0000`
+- activity_id: `ACT-20260917-141022-CMV2-HIGHRES-PARALLEL-PREFLIGHT`
+- modification_version: `V1.4.2`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问能否尝试批量并行以及既有结果是否可复用；本条只读核查当前 completed cache、partial 状态与 selection 重叠。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `a76f23603c24eae529f2f0eb573c21ce83684505`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `RUNNING`
+- scope: 判断在不覆盖当前高分辨率输出的前提下实施并行 producer 的可行性；未停止、修改或重启导出。
+- conclusion: `SUPPORTED`（可复用性诊断）；不涉及模型效果。
+
+**原因**
+
+并行化需要停止/恢复当前 L3 数据任务并修改 producer，必须先确认已完成段是否符合 V1.4 高分辨率合同，以及跨 segment 重叠能带来多少缓存收益。
+
+**验证**
+
+- 当时 run manifest 记录 `90/1849` 完成、`34950` 帧、`failures=[]`；磁盘扫描发现 94 个 complete geometry manifest、`0` 个 `.partial` 目录。逐段校验 `hand_variant=inspire_f1`、`knn_hand_points=20270`、`knn_points_per_side=10135`、实际 KNN points shape 与 KNN indices `<20270`，全部通过。已完成段可原样复用。
+- selection 共有 379591 个 segment-frame occurrence、359857 个唯一 `(sequence, raw_frame_id)`，重复 19734 个（约 5.20%）；333 个 sequence 有多个 segment，单 sequence 最多 28 个。跨段 frame cache 有帮助但其理论上限约为 5%，不是主瓶颈。
+- 当前 producer 只从旧 3076 `existing_root` 复用，若改造必须增加“先校验当前 `output_root` 中已完成的 20270 段再跳过”的 resume 行为；不能让新 worker 与当前 writer 并发写同一 root。
+- [run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) 与 [实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log) — 当前运行状态入口。
+
+**回滚**
+
+只读预检，无代码或数据改动。后续若获得批准，先安全停止当前 writer、保留/验证 complete 段、使用独立并行实现恢复未完成段；旧 full/partial 与当前 complete cache 均不覆盖。
