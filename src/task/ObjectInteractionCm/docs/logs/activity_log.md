@@ -8564,3 +8564,39 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 
 - 既有 GRAB/ARCTIC cache、旧 OakInk2 index、训练输出和外部 DExplore/dex-retargeting 仓库保持只读。
 - 代码回滚入口为本次 producer 与版本/activity 增量；运行回滚只停止对应 run 并保留 NAS 审计产物，不删除既有数据。
+
+## 2026-09-17 09:17:05 +0000 — OakInk2 全量选择与 cache 流水线后台运行
+
+- timestamp: `2026-09-17 09:17:05 +0000`
+- activity_id: `ACT-20260917-091705-OICM-OAKINK2-FULL-RUNNING`
+- modification_version: `V1.4.23`
+- type: `operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户“现在开始导出 OakInk2 的 cache”的明确指令和 V1.4 §9/§10/§19；smoke 已通过后启动全量。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9f9b827db662aaa7d1c51754d083e421ccf06150`
+- worktree_dirty: `false`（启动时；运行日志不写 Git 工作区）
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`
+- run_status: `RUNNING`
+- command: NAS `run_full.sh`；先执行 `export_oakink2_inspire_v1_4.py select`，成功后执行 `export ... export --device cuda:2 --resume`。
+- pid: `4002771`（wrapper）；selection 子进程 `4002773`。
+- scope: 全部 `2177` 条单物体 primitive 候选；选择输出和 cache 输出均为独立 NAS 目录。GPU 2 仅用于后续 MANO/KNN，GPU 3 外部仿真保持不动。
+
+**运行与证据**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json) — `STARTED/RESTARTED` wrapper manifest；首次普通 `nohup` 子进程组被执行器回收，未产生选择产物，随后用 `setsid` 重启，未修改输入。
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log) — 实时日志；当前已处理 `10/517` 个序列，`19` 个候选，`0` 个失败。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/` — 选择输出尚未终态，当前目录在选择完成后写入；运行中不把 `PENDING` 路径当作终态证据。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/` — cache 输出尚未开始，保持 `PENDING`。
+
+**验证与状态**
+
+- smoke selection：`1` 段、`1246` 帧、`0` 失败；smoke cache：双手 `3076` 点、物体 `4096` 点、KNN `K=32`、所有数组 finite，工程结论 `SUPPORTED`。
+- full 运行阶段结论仍为 `INCONCLUSIVE`；最终以 selection/export 两个 run manifest、index、cache_manifest 和全量校验为准，不把 smoke 结果外推到全量或科研效果。
+
+**保护与回滚**
+
+- 现有 GRAB/ARCTIC cache、旧 OakInk2 v1/v1.1 index、训练权重、split、源 annotation/Stage3 和外部仓库未修改。
+- 停止入口为 wrapper PID `4002771`；保留已写入的选择/缓存和 manifest，不删除既有产物。
