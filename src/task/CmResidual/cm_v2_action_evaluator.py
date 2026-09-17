@@ -19,6 +19,8 @@ from typing import Any
 
 import torch
 
+from src.task.CmResidual.cm_v2_adapter import encode_tokens
+
 from src.task.CmDecoderv2.kinematics import QUERY_LINKS, InspireKinematics
 
 
@@ -334,6 +336,11 @@ class Cmv2ActionEvaluator:
             if key in output:
                 value = output[key]
                 result[key] = value.view(batch, candidates, *value.shape[1:])
+        # This is the one canonical 16×40 representation consumed by the V1.15
+        # actor.  It remains an inference-only Cmv2 output; no Cmv2 tensor enters
+        # the critic or an optimizer through this evaluator.
+        result["encoded_tokens"] = encode_tokens(output, object_batch).view(
+            batch, candidates, 16, 40)
         result["predicted_delta_xi"] = result["delta_xi_root"]
         result["predicted_obj_flow"] = result["obj_flow_pred"]
         if desired_delta_xi is not None:

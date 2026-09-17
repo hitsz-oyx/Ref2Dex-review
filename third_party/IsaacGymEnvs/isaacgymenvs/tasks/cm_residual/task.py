@@ -78,17 +78,34 @@ class CmResidual(VecTask):
         self.base_observation_dim = 68 if self.retargeted_base else OBSERVATION_DIM
         self.use_oi_cm_context = bool(cfg["basePolicy"].get("useOiCmContext", True))
         self.use_cmv2_context = bool(cfg["basePolicy"].get("useCmv2Context", False))
+        self.use_cmv2_actor_context = bool(
+            cfg["basePolicy"].get("useCmv2ActorContext", False))
         self.use_cmv2_action_evaluator = bool(
             cfg["basePolicy"].get("useCmv2ActionEvaluator", False))
-        if self.use_oi_cm_context and (self.use_cmv2_context or self.use_cmv2_action_evaluator):
+        if self.use_oi_cm_context and (self.use_cmv2_context or self.use_cmv2_actor_context or
+                                       self.use_cmv2_action_evaluator):
             raise ValueError("Select only one Cm context version")
-        if self.use_cmv2_context and self.use_cmv2_action_evaluator:
+        if self.use_cmv2_context and (self.use_cmv2_actor_context or self.use_cmv2_action_evaluator):
             raise ValueError("Select either Cmv2 observation context or action evaluator")
+        if self.use_cmv2_actor_context and (not self.retargeted_base or
+                                             not self.use_cmv2_action_evaluator):
+            raise ValueError("Cmv2 actor context requires retargeted reference and action evaluator")
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
         self.cm_context_dim = (
             self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
             if self.use_oi_cm_context else CMV2_CONTEXT_DIM if self.use_cmv2_context else 0)
+        self.cmv2_actor_effect_dim = 18
+        self.actor_observation_dim = (
+            self.base_observation_dim + CMV2_CONTEXT_DIM + self.cmv2_actor_effect_dim
+            if self.use_cmv2_actor_context else self.base_observation_dim + self.cm_context_dim)
+        self.cmv2_effect_translation_scale_m = float(
+            cfg["basePolicy"].get("cmv2EffectTranslationScaleM", 0.02))
+        self.cmv2_effect_rotation_scale_rad = float(
+            cfg["basePolicy"].get("cmv2EffectRotationScaleRad", 0.05))
+        if (self.cmv2_effect_translation_scale_m <= 0 or
+                self.cmv2_effect_rotation_scale_rad <= 0):
+            raise ValueError("Cmv2 effect normalization scales must be positive")
         residual_cfg = cfg["residual"]
         self.residual_translation_scale = float(residual_cfg["translationScaleM"])
         self.residual_rotation_scale = float(residual_cfg["rotationScaleRad"])
@@ -122,7 +139,7 @@ class CmResidual(VecTask):
                 raise ValueError("Reference tracking reward scales/weights must be non-negative with positive scales")
         else:
             self.reference_tracking_reward = {}
-        cfg["env"].update(numObservations=self.base_observation_dim + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
+        cfg["env"].update(numObservations=self.actor_observation_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
         self.initial_native = self.reference.robot_q[0].clone()
         self.initial_native_velocity = self.reference.robot_dq[0].clone()
@@ -192,9 +209,12 @@ class CmResidual(VecTask):
         self.cm_buffer_pending = None
         self.cm_buffer_prediction_translation_error_m = torch.zeros(self.num_envs, device=self.device)
         self.cm_buffer_prediction_rotation_error_rad = torch.zeros(self.num_envs, device=self.device)
+        self.cmv2_base_effect_translation_error_m = torch.zeros(self.num_envs, device=self.device)
+        self.cmv2_base_effect_rotation_error_rad = torch.zeros(self.num_envs, device=self.device)
         if self.cm_buffer_enabled and (not self.retargeted_base or not self.use_cmv2_action_evaluator):
             raise ValueError("CmBuffer requires retargeted_reference with Cmv2 action evaluator")
-        if self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_action_evaluator:
+        if (self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_actor_context or
+                self.use_cmv2_action_evaluator):
             self.cm_geometry = SurfaceGeometry(
                 hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
                 object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
@@ -655,7 +675,33 @@ class CmResidual(VecTask):
         table_state = self.actor_root_state[self.table_indices.long()]
         self.reset_table_position_error_m = (
             table_state[:, :3] - self.initial_table[:3]).norm(dim=-1)
-        if self.use_oi_cm_context or self.use_cmv2_context:
+        if self.use_cmv2_actor_context:
+            # Actor-side Cmv2 is evaluated before the action is selected, with a
+            # literal zero residual around the current reference controller target.
+            # It therefore cannot observe the future simulator state or the action
+            # that PPO will subsequently execute.
+            reference_delta = object_pose_delta_to_xi(
+                pose_matrix(ref_object[:, :7]), pose_matrix(next_object[:, :7]))
+            zero_residual = torch.zeros((self.num_envs, 1, ACTION_DIM), device=self.device)
+            prediction = self.evaluate_cmv2_actions(
+                zero_residual, desired_delta_xi=reference_delta)
+            tokens = prediction["encoded_tokens"][:, 0]
+            predicted_effect = prediction["predicted_delta_xi"][:, 0]
+            effect_scales = torch.tensor(
+                [self.cmv2_effect_translation_scale_m] * 3 +
+                [self.cmv2_effect_rotation_scale_rad] * 3,
+                device=self.device, dtype=predicted_effect.dtype)
+            predicted_normalized = (predicted_effect / effect_scales).clamp(-5.0, 5.0)
+            reference_normalized = (reference_delta / effect_scales).clamp(-5.0, 5.0)
+            effect_error = (reference_normalized - predicted_normalized).clamp(-5.0, 5.0)
+            base_effect_metrics = effect_metrics(predicted_effect, reference_delta)
+            self.cmv2_base_effect_translation_error_m.copy_(
+                base_effect_metrics["translation_error_m"])
+            self.cmv2_base_effect_rotation_error_rad.copy_(
+                base_effect_metrics["rotation_error_rad"])
+            obs = torch.cat((base_obs, tokens.flatten(1), predicted_normalized,
+                             reference_normalized, effect_error), dim=-1)
+        elif self.use_oi_cm_context or self.use_cmv2_context:
             obj_points, obj_normals = self.cm_geometry.object(obj)
             hand_points, hand_normals = self.cm_geometry.hand(links)
             hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
@@ -745,6 +791,8 @@ class CmResidual(VecTask):
                           reference_object_transition_rotation_error_rad=self.reference_object_transition_rotation_error_rad.mean(),
                           cm_buffer_prediction_translation_error_m=self.cm_buffer_prediction_translation_error_m.mean(),
                           cm_buffer_prediction_rotation_error_rad=self.cm_buffer_prediction_rotation_error_rad.mean(),
+                          cmv2_base_effect_translation_error_m=self.cmv2_base_effect_translation_error_m.mean(),
+                          cmv2_base_effect_rotation_error_rad=self.cmv2_base_effect_rotation_error_rad.mean(),
                           reference_tip_position_error_m=self.reference_tip_position_error_m.mean(),
                           reference_start_index_mean=self.reference_start_index.float().mean(),
                           reference_start_index_min=self.reference_start_index.min(),

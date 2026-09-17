@@ -6,7 +6,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.14.5`
+- `modification_version`: `V1.15`
+- V1.15：冻结 Cmv2 的零 residual nominal-base effect 仅进入 PPO actor：raw transport 为 `68+16×40+18=726-D`，网络内以 masked self-attention/effect-conditioned pooling 形成 `214-D` actor 表示；critic 严格只读 `68-D` base prefix。GPU5/1 env/8 step/1 epoch smoke 的 checkpoint、optimizer 与动作均 finite，重载 action diff=`0`、saturation=`0`，CmBuffer 写入 8 个无点云 shard；这只支持工程接线，attention utility、Cmv2 微调资格与科研效果仍为 `INCONCLUSIVE`。
 - V1.14.5：保持 68-D PPO actor/critic 与 frozen Cmv2；仅为已执行 residual 做 action-conditioned effect inference，并把无点云、可离线重建的 pre/post state、prediction、reference/PhysX effect 写入 per-rank CmBuffer。GPU5/1 env smoke 生成 1 条完整 shard、无 target saturation；buffer 未参与 PPO reward、actor/critic 或 Cmv2 更新。
 - V1.14.4：用户批准的局部可行动作映射已将 reference-boundary 的外向 residual authority 收缩到实际可行余量，并保留原 18-D action、global scale、reward 与 mimic 合同。GPU5 单环境 zero/nonzero smoke 的 target saturation 为 `0`；其后 64-step/64-env/seed42 的 2+8 epoch PPO 完成 `40960` env-steps，10 个 epoch saturation 均为 `0`、checkpoint finite 且重载差为 `0`。这是工程协议 `SUPPORTED`，单 seed/单 reference 的 tracking、residual utility 与抓取效果仍为 `INCONCLUSIVE`。
 - V1.14.3：固定 `sigma=0.1` 的无更新回放显示 saturation 集中于 native finger DOF 8、14、15；它们在部分 reference phase 的名义 target margin 已为零。该诊断支持“局部 reference-boundary 问题”，不支持直接缩小全局 scale；未改代码或重训。
@@ -93,6 +94,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.13 最终执行计划](plan/V1.13.md)
 - [V1.14 用户指导](指导/V1.14.md)
 - [V1.14 最终执行计划](plan/V1.14.md)
+- [V1.15 用户指导](指导/V1.15.md)
+- [V1.15 最终执行计划](plan/V1.15.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

@@ -28,8 +28,8 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def encode_context(output: dict, object_points: torch.Tensor) -> torch.Tensor:
-    """Encode 16 ordered tokens; every invalid token contributes 40 zeros."""
+def encode_tokens(output: dict, object_points: torch.Tensor) -> torch.Tensor:
+    """Encode ordered 16×40 tokens; every invalid token is exactly zero."""
     if object_points.ndim != 3 or object_points.shape[1:] != (1024, 3):
         raise ValueError("Cmv2 object_points must be [B,1024,3]")
     batch = object_points.shape[0]
@@ -62,7 +62,15 @@ def encode_context(output: dict, object_points: torch.Tensor) -> torch.Tensor:
     features = torch.cat((output["cm_tokens"], relative_anchor, normal,
                           log_mass[..., None], mask[..., None].to(object_points.dtype)), -1)
     features = torch.where(mask[..., None], features, torch.zeros_like(features))
-    context = features.flatten(1)
+    if features.shape != (batch, 16, 40) or not torch.isfinite(features).all():
+        raise ValueError("Invalid Cmv2 token encoding")
+    return features
+
+
+def encode_context(output: dict, object_points: torch.Tensor) -> torch.Tensor:
+    """Flatten the canonical 16×40 token encoding for legacy callers."""
+    context = encode_tokens(output, object_points).flatten(1)
+    batch = object_points.shape[0]
     if context.shape != (batch, CONTEXT_DIM) or not torch.isfinite(context).all():
         raise ValueError("Invalid Cmv2 context")
     return context

@@ -62,6 +62,8 @@ def test_action_evaluator_uses_nominal_sweep_and_selects_effect():
         desired_delta_xi=desired)
     assert result["schema"] == "cmv2_action_effect_v1"
     assert result["predicted_delta_xi"].shape == (1, 3, 6)
+    assert result["encoded_tokens"].shape == (1, 3, 16, 40)
+    assert torch.equal(result["encoded_tokens"], torch.zeros_like(result["encoded_tokens"]))
     assert result["effect_score"].shape == (1, 3)
     assert evaluator.select_best(result).tolist() == [1]
     assert torch.isinf(result["effect_score"][0, 2]).item() is True

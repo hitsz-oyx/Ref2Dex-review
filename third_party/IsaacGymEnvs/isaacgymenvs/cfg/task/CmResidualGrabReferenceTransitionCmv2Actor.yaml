@@ -1,0 +1,17 @@
+defaults:
+  - CmResidualGrabReferenceTransitionCmBuffer
+  - _self_
+
+name: CmResidualGrabReferenceTransitionCmv2Actor
+
+env:
+  # Raw transport: base 68 + canonical Cmv2 16*40 + (base/ref/error) 3*6.
+  numObservations: 726
+
+basePolicy:
+  useOiCmContext: false
+  useCmv2Context: false
+  useCmv2ActionEvaluator: true
+  useCmv2ActorContext: true
+  cmv2EffectTranslationScaleM: 0.02
+  cmv2EffectRotationScaleRad: 0.05

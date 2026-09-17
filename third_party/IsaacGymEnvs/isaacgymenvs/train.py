@@ -192,6 +192,7 @@ def launch_rlg_hydra(cfg: DictConfig):
         model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
         model_builder.register_model('cm_continuous', lambda network, **kwargs: cm_models.ModelCmContinuous(network))
         model_builder.register_network('cm_actor_critic', lambda **kwargs: cm_network_builder.CmBuilder())
+        model_builder.register_network('cm_effect_actor_critic', lambda **kwargs: cm_network_builder.CmEffectBuilder())
 
         return runner
 

@@ -3851,3 +3851,45 @@ V1.14 的 current PPO 已完成 no-Cm baseline；用户要求按指导中的 act
 **保护与回滚**
 
 回滚仅删除 V1.14.5 的 CmBuffer module/config/registry/runner option/test 和文档记录；生成 shard 保留为证据。三卡分布式 capacity probe 与正式训练尚未启动，需在 rank-to-GPU、每卡容量和有限总 env-step/人工停止记录确定后单列 operation。
+
+## 2026-09-18 00:10:06 +0800 — V1.15 Cmv2 effect-conditioned actor
+
+- timestamp: `2026-09-18 00:10:06 +0800`
+- activity_id: `ACT-20260918-110000-CMRESIDUAL-V115-ACTOR`
+- modification_version: `V1.15`
+- operation_category: `architecture`、`code`、`experiment`、`operation`、`documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L2`（Task-local actor observation、PPO builder、config/runner/test）；GPU5 smoke 为 `L3`。
+- approval: `user-approved`
+- approval_basis: 用户确认 V1.15 方案“就按照你想的那样，开始吧”；此前明确 Cmv2 不进入 critic，CmBuffer 不存点云且只积累可重建必要状态。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `a4b3d447d4c0ce0f4e51a97eee08edc612352f57`
+- worktree_dirty: `true`（只暂存本次 V1.15 明列路径；根 activity、ObjectInteractionCm activity、V1.12–14 指导、V1.13 plan 与诊断工具保持不触碰）。
+- scope: actor raw observation 为 `[base68, token16x40, normalized predicted6, reference6, error6]` 共 `726-D`；actor 内 token `40→128`、单层 4-head masked self-attention 与 effect-conditioned attention pooling 后为 `214-D`。critic 只切 `68-D` prefix；冻结 Cmv2 保持 inference/eval/`requires_grad=False`，不进 reward、critic、optimizer 或 buffer 在线更新。actor 使用 action 前的 zero residual nominal sweep；CmBuffer 仍独立标记实际 executed residual 的 pre/post PhysX transition。
+- run_id: `cmresidual_v115_cmv2_actor_smoke_20260918_1100`
+- run_status: `COMPLETED`；GPU5、seed42、1 env、8 step、1 PPO epoch，`last_step=8`、`last_epoch=1`，最近 checkpoint 已生成。
+- best_metric: `checkpoint_reload_action_max_abs_diff=0.0`；checkpoint 为 `last_CmResidualGrabReferenceTransitionCmv2ActorPPO_ep_1_rew_-inf.pth`。
+- conclusion: actor/critic/Cmv2/CmBuffer 工程合同 `SUPPORTED`；attention utility、effect prediction accuracy、Cmv2 微调资格、PPO tracking 与抓取科研效果 `INCONCLUSIVE`。
+
+**文件**
+
+- [V1.15 最终计划](../plan/V1.15.md)、[V1.15 用户指导](../指导/V1.15.md)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — 版本、批准边界和当前状态入口。
+- [adapter](../../cm_v2_adapter.py)、[action evaluator](../../cm_v2_action_evaluator.py)、[Task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 规范 token、action 前 base-effect actor transport，以及实际 residual buffer label 的语义分离。
+- [PPO builder](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py)、[train registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/train.py)、[task registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) — masked attention actor 与 68-D critic 的显式非对称合同。
+- [task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransitionCmv2Actor.yaml)、[PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceTransitionCmv2ActorPPO.yaml)、[runner](../../tools/run_grab_reference_transition_ppo.py)、[contract helper](../../tools/run_ppo_stability.py)、[network contract test](../../tests/test_reference_contract.py)、[evaluator test](../../tests/test_cmv2_action_evaluator.py)、[experiment log](experiment_log.md) — opt-in V1.15 config 和可复现的 `--cmv2-actor --smoke` 入口。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/run_manifest.json)、[resolved config](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/checkpoint_validation.json)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/smoke/CmResidualGrabReferenceTransition_smoke/nn/last_CmResidualGrabReferenceTransitionCmv2ActorPPO_ep_1_rew_-inf.pth)、[CmBuffer manifest](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/cm_buffer/rank_000/manifest.json) — GPU5 smoke 证据。
+
+**原因**
+
+V1.14.5 已证明 executed-action Cmv2 buffer 能无点云记录，但未让 Cmv2 参与策略。V1.15 按用户指导把其限定为 actor 的 nominal-base effect context，并将 critic/reward/frozen checkpoint/update 边界保留不变，避免将 action 后预测或未来物理状态泄漏到 actor observation。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_cmv2_adapter.py src/task/CmResidual/tests/test_cmv2_action_evaluator.py src/task/CmResidual/tests/test_reference_contract.py src/task/CmResidual/tests/test_cm_buffer.py -q -k 'cmv2 or v115 or cm_buffer'`：`10 passed, 25 deselected`；覆盖 16×40 encoding、evaluator、all-invalid token fallback、726→214 actor/68 critic、Hydra config 与 buffer schema。
+- GPU5 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_grab_reference_transition_ppo.py --cmv2-actor --smoke --gpu 5 --window-length 64 --modification-version V1.15 --activity-id ACT-20260918-110000-CMRESIDUAL-V115-ACTOR --run-id cmresidual_v115_cmv2_actor_smoke_20260918_1100`：完成；checkpoint/optimizer/action finite、reload diff=`0.0`、sigma=`0.1`、saturation=`0.0`；CmBuffer 有 8 个 finite shard，字段无 `point`/`normal`/`flow`。
+- `py_compile` 与 `git diff --check` 通过。smoke 在 episode 完成前到达 1 epoch，reward 为 `-inf` 是该短预算预期现象，不能用于训练效果判断。
+
+**保护与回滚**
+
+回滚只撤销本条的 V1.15 adapter/evaluator/Task/network/config/registry/runner/test/docs 差异；保留 V1.14 代码、reference、Cmv2 checkpoint、已有 outputs 与用户未提交路径。生成的 V1.15 output/CmBuffer 是审计证据，不纳入 Git。GPU0/1/2 分布式训练仍未启动：GPU2 被其他用户占用，且 V1.15 plan 要求先单列容量/rank-output/人工停止方案后才能启动。

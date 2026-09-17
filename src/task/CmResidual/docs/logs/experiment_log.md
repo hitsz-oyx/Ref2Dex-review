@@ -821,3 +821,15 @@ object position error mean/p95/max=`0.047775/0.164753/0.221184 m`，rotation err
 固定 GRAB reference、random-uniform start `[0,302]`、64-step window、GPU5/64 env/seed42/horizon64。reward 固定为 object pose/transition tracking 的 `0.02 m/0.05 rad` 归一化负加权和与 action penalty；Cmv2 未接入。2 epochs/8192 env-steps 完成，epoch-2 checkpoint finite 且可重载，但 saturation 在 epoch 1/2 为 `5.3819%/4.8611%`；按 `>5%` 停止条件不续跑 epoch 3–10，也不进入 128/366。证据：[manifest](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/metrics.jsonl)、[log](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/train.log)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v1142_reftrack_w64_20260917_2147/smoke/CmResidualGrabReferenceTransition_smoke/nn/last_CmResidualGrabReferenceTransitionPPO_ep_2_rew__-1168.13_.pth)。
 
 tracking 曲线（epoch 1/2）position=`0.066881/0.181973 m`、rotation=`0.535478/0.701575 rad`、transition translation=`0.003643/0.006629 m`、transition rotation=`0.017725/0.041125 rad`。这不足以证明新 reward 改善或反驳该研究假设：本轮按工程饱和门终止，且只有单 seed/两 epochs。下一步若要改阈值、action scale、reward 权重、控制器、PPO 超参数或继续预算，必须新计划和用户批准，不能在 V1.14 中追调。
+
+## 2026-09-18 — V1.15 Cmv2 actor wiring smoke
+
+- modification_version: `V1.15`
+- operation_category: `experiment`、`operation`
+- activity_id: `ACT-20260918-110000-CMRESIDUAL-V115-ACTOR`
+- run_id: `cmresidual_v115_cmv2_actor_smoke_20260918_1100`
+- run_status: `COMPLETED`
+- last_step/last_epoch: `8` / `1`；checkpoint reload action diff=`0.0`。
+- conclusion: implementation/wiring `SUPPORTED`；attention utility、effect accuracy、PPO tracking、Cmv2 微调资格与抓取效果 `INCONCLUSIVE`。
+
+冻结 Cmv2 只从 action 前的 current state 和 zero residual nominal controller/FK sweep 产生 16×40 token、predicted/reference/error local effects；PPO actor transport 为 726-D、attention 后为 214-D，critic 始终只读 68-D base prefix。GPU5/1 env/seed42、horizon/minibatch=8、1 epoch 实际完成；checkpoint、optimizer 和动作有限，sigma=`0.1`、residual saturation=`0`。由于仅 8 steps 且无 episode 终结，reward 为 `-inf`，不能用它比较策略质量。CmBuffer 生成 8 个 finite shard，且不含 point/normals/flow。证据：[运行目录](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/metrics.jsonl)、[log](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/checkpoint_validation.json)、[CmBuffer manifest](../../../../../outputs/CmResidual/cmresidual_v115_cmv2_actor_smoke_20260918_1100/cm_buffer/rank_000/manifest.json)。

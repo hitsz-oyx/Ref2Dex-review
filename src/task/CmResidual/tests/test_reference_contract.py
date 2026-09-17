@@ -461,6 +461,54 @@ def test_v18_safe_policy_starts_at_zero_with_fixed_small_sigma():
     torch.testing.assert_close(result["mus"], torch.zeros(3, 18), rtol=0.0, atol=0.0)
 
 
+def test_v115_cmv2_actor_transport_pools_tokens_only_for_actor():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmEffectBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidualGrabReferenceTransitionCmv2Actor",
+            "train=CmResidualGrabReferenceTransitionCmv2ActorPPO",
+            "task.cmBuffer.outputDir=/tmp/cmv2_actor_contract",
+        ])
+    assert cfg.task.env.numObservations == 726
+    assert cfg.task.basePolicy.useCmv2ActorContext is True
+    assert cfg.task.basePolicy.useCmv2ActionEvaluator is True
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    assert params["network"]["name"] == "cm_effect_actor_critic"
+    assert params["network"]["actor_input_dim"] == 726
+    assert params["network"]["critic_input_dim"] == 68
+    assert params["config"]["normalize_input"] is False
+    builder = CmEffectBuilder()
+    builder.load(params["network"])
+    model = ModelCmContinuous(builder).build({
+        "input_shape": (726,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
+        "normalize_input": False, "normalize_value": False,
+    })
+    network = model.a2c_network
+    raw = torch.zeros(2, 726)
+    # Row 0 is the all-invalid-token fallback; row 1 has a valid canonical token.
+    raw[1, 68 + 39] = 1.0
+    raw[:, -18:] = torch.linspace(-1.0, 1.0, 18)
+    representation = network._cm_input(raw)
+    assert representation.shape == (2, 214)
+    torch.testing.assert_close(representation[0, 68:196], torch.zeros(128), rtol=0.0, atol=0.0)
+    torch.testing.assert_close(representation[:, :68], raw[:, :68], rtol=0.0, atol=0.0)
+    torch.testing.assert_close(representation[:, -18:], raw[:, -18:], rtol=0.0, atol=0.0)
+    with torch.no_grad():
+        result = model({"obs": raw, "is_train": False})
+        critic = network.eval_critic(raw)
+    assert result["mus"].shape == (2, 18)
+    assert critic.shape == (2, 1)
+    assert torch.isfinite(result["mus"]).all() and torch.isfinite(critic).all()
+
+
 def _build_v19_model(train_config, seed=42):
     vendor = str(Path("third_party/IsaacGymEnvs").resolve())
     if vendor not in sys.path:
