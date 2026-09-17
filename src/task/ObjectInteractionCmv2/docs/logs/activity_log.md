@@ -1907,3 +1907,42 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 终止此 `run_id` 即可；其此前已经完成的完整段仍可被后续 resume 校验复用。不得删除、覆盖或移动基线及本次生成的 cache。
+
+## 2026-09-17 14:59:50 +0000 — V1.4.4 双域 MANO 续训与 cache 队列实现
+
+- timestamp: `2026-09-17 14:59:50 +0000`
+- activity_id: `ACT-20260917-145950-CMV2-V144-TWO-DOMAIN-TRAIN-CACHE-QUEUE-IMPLEMENTATION`
+- modification_version: `V1.4.4`
+- type: `code, data, experiment, operation, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确确认以 4-epoch `latest.pt` 作模型权重初始化、自行 trajectory 划分 ARCTIC、约 8 小时预算、保存 `best.pt`，并授权 GPU0。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0a4d6ba1922ab63d8215017d8d74a5609c2104ce`
+- worktree_dirty: `true`（仅本条列出的 V1.4.4 实现尚未提交）
+- scope: 新增 GRAB+ARCTIC MANO 双域权重初始化训练、ARCTIC trajectory split、best/latest checkpoint 规则和通用顺序 cache queue；不修改旧 4-epoch checkpoint、原始 MANO cache、旧 Task 或正在 GPU2 上运行的 OakInk2 Inspire 回填。
+- conclusion: `INCONCLUSIVE`（实现已完成、尚未启动正式训练；不是跨域效果结论）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — Cmv2 指针与已定稿 V1.4.4 范围。
+- [config.py](../../config.py)、[configs/active/two_domain_mano_v1_4_4_8h.yaml](../../configs/active/two_domain_mano_v1_4_4_8h.yaml)、[train_two_domain_mano.py](../../train_two_domain_mano.py) — GPU0、MANO-4096 双域 `1/2:1/2` 训练，旧权重仅初始化，8 小时/16 epoch 上限，GRAB 与 ARCTIC 验证等权选择 `best.pt`，同时保留 `latest.pt`。
+- [tools/data/build_two_domain_mano_split_v1_4.py](../../tools/data/build_two_domain_mano_split_v1_4.py) — 不改原 cache 的 ARCTIC trajectory 级 90/10 split 和独立 index/cache/run manifest。
+- [tools/data/run_cache_queue_v1_4_4.py](../../tools/data/run_cache_queue_v1_4_4.py) — 顺序、可恢复且以 producer 成功 manifest 为完成条件的后台 cache queue，不把旧 3076/KNN8 Inspire cache 误判为合格。
+- [tests/test_v1_4_4_two_domain_split.py](../../tests/test_v1_4_4_two_domain_split.py) — trajectory 稳定性与 GRAB split 保留测试。
+
+**原因**
+
+旧 `train_grab_ddp.py` 的 optimizer/RNG resume 合同严格绑定 GRAB-only index、两卡 world size 和 epoch 数，不能在双域数据合同下直接恢复。新入口仅导入经批准的模型权重；ARCTIC 验证以完整 trajectory 划分，令 `best.pt` 有可审计且不泄漏的选择指标。cache queue 只编排明确的 producer command/成功 manifest，避免失败 cache 被静默继续使用。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/config.py src/task/ObjectInteractionCmv2/train_two_domain_mano.py src/task/ObjectInteractionCmv2/tools/data/build_two_domain_mano_split_v1_4.py src/task/ObjectInteractionCmv2/tools/data/run_cache_queue_v1_4_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`5 passed`。
+- `git diff --check` 通过。GPU2 OakInk2 Inspire run 仍为 `RUNNING`、`backfilled_segments=96`、`failures=[]`；本实现未接触其进程或输出。
+
+**回滚**
+
+恢复本条所列受版本控制文件并把 Cmv2 指针回退到 `V1.4.3`；不删除任何 cache 或旧 checkpoint。尚未产生的新 split/run 输出可通过停止其独立 run 保留审计后不再使用。

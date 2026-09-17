@@ -156,3 +156,56 @@ def load_three_domain_config(path: str | Path) -> dict:
     cfg["output_root"] = str(Path(output_root).resolve())
     cfg["config_path"] = str(path)
     return cfg
+
+
+def load_two_domain_mano_config(path: str | Path) -> dict:
+    """Load the approved V1.4.4 GRAB+ARCTIC MANO continuation contract."""
+    path = Path(path).resolve()
+    cfg = yaml.safe_load(path.read_text())
+    if not isinstance(cfg, dict) or cfg.get("schema_name") != "object_interaction_cmv2_two_domain_mano_v1_4":
+        raise ValueError("Expected ObjectInteractionCmv2 V1.4.4 two-domain MANO configuration")
+    if cfg.get("modification_version") != "V1.4.4":
+        raise ValueError("Unsupported V1.4.4 two-domain MANO run version")
+    model = cfg.get("model", {})
+    expected_model = {
+        "architecture_version": "v1_3_rigid_only", "hidden_width": 128, "num_tokens": 16,
+        "use_residual": False, "knn_k": 32, "interaction_radius_m": 0.02,
+        "interaction_mode": "swept", "feature_scale_m": 0.02, "frame_dt_s": 1 / 30,
+    }
+    if any(model.get(key) != expected for key, expected in expected_model.items()):
+        raise ValueError("V1.4.4 model contract mismatch")
+    sources = cfg.get("sources")
+    if not isinstance(sources, list) or [item.get("name") for item in sources] != ["grab", "arctic"]:
+        raise ValueError("V1.4.4 requires GRAB then ARCTIC sources")
+    for item in sources:
+        if item.get("hand_variant") != "mano":
+            raise ValueError("V1.4.4 two-domain training permits MANO only")
+        for key in ("index", "manifest"):
+            value = os.path.expandvars(str(item.get(key, "")))
+            if not value or "$" in value:
+                raise ValueError(f"unresolved V1.4.4 source {key}")
+            item[key] = str(Path(value).resolve())
+            if not Path(item[key]).is_file():
+                raise FileNotFoundError(item[key])
+    data = cfg.get("data", {})
+    if data.get("num_obj_points") != 1024 or data.get("active_only") is not True or data.get("eval_stride") != 2:
+        raise ValueError("V1.4.4 data contract mismatch")
+    probabilities = {str(key): float(value) for key, value in data.get("train_source_probabilities", {}).items()}
+    if probabilities != {"grab": 0.5, "arctic": 0.5}:
+        raise ValueError("V1.4.4 requires equal GRAB/ARCTIC source probabilities")
+    strides = data.get("train_stride_values", {})
+    if set(strides) != {"grab", "arctic"} or any(tuple(values) != tuple(range(1, 11)) for values in strides.values()):
+        raise ValueError("V1.4.4 requires train stride 1..10 for both domains")
+    training = cfg.get("training", {})
+    if (training.get("device") != "cuda:0" or training.get("batch_size") != 160
+            or training.get("validation_batch_size") != 160 or training.get("max_epochs") != 16
+            or training.get("max_duration_s") != 28800 or training.get("checkpoint_interval") != 200
+            or training.get("learning_rate") != 0.001 or training.get("seed") != 42
+            or training.get("minimum_free_memory_gib") != 35):
+        raise ValueError("V1.4.4 training budget mismatch")
+    output_root = os.path.expandvars(str(cfg.get("output_root", "")))
+    if not output_root or "$" in output_root:
+        raise ValueError("unresolved V1.4.4 output_root")
+    cfg["output_root"] = str(Path(output_root).resolve())
+    cfg["config_path"] = str(path)
+    return cfg
