@@ -1490,3 +1490,41 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 本次提交作为独立 Git commit，可按提交范围反向应用；正在运行的独立训练目录、输入 cache 与旧 checkpoint 不变。
+
+## 2026-09-17 12:41:44 +0000 — Cmv2 与三域 OICm 训练入口范围核对
+
+- timestamp: `2026-09-17 12:41:44 +0000`
+- activity_id: `ACT-20260917-124144-CMV2-OICM-SCOPE-CHECK`
+- modification_version: `V1.3.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问“目前 OICmv2 可以开始全量训练了吗、接口是否好了”，并要求继续补全 OakInk2 失败帧。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `7afcb4605988e04f44326bb0395a886a78c9be80`
+- worktree_dirty: `false`
+- scope: 只读区分 `ObjectInteractionCmv2` 与新三域 `ObjectInteractionCm` 的训练接口和运行状态；未启动训练、未修改代码、cache 或 checkpoint。
+- conclusion: `INCONCLUSIVE`（任务名存在范围歧义；三域正式训练仍需先完成 OakInk2 回填）。
+
+**原因**
+
+`ObjectInteractionCmv2` 当前 V1.3 接口在配置层固定为 GRAB/MANO、stride=1；新三域等概率接口属于独立的 `ObjectInteractionCm` Task。两者不能按同一个全量训练入口解释。
+
+**验证**
+
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) 强制 `source.name=grab`、`hand_source=mano`、`stride=1`，没有 ARCTIC/OakInk2 三域 sampler。
+- `run_id=cmv2_v134_grab_ddp4_20260917T070638Z` 的 manifest 为 `COMPLETED`、`last_step=4088`、`last_epoch=4`；这是 GRAB-only DDP 训练，未运行完整 val/test，效果结论仍为 `INCONCLUSIVE`。[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/run_manifest.json)
+- 新三域 `ObjectInteractionCm` 的 loader/等概率接口和 2-step smoke 已通过，但 OakInk2 全量 cache 仍因 `193` 条 partial frame coverage 失败；补全前不能开始三域正式训练。
+
+**待确认边界**
+
+用户所说的“ OICmv2 ”需要在以下两者中确认其一：
+
+1. `ObjectInteractionCmv2`：继续 GRAB-only V1.3；其四轮全量 GRAB DDP 已完成。
+2. `ObjectInteractionCm`：继续 GRAB/ARCTIC/OakInk2 三域；下一步读取 OakInk2 原始 annotation/object cache，补齐失败 segment 后再启动正式训练。
+
+**保护与回滚**
+
+本次仅新增诊断记录；删除本条 activity 即可回滚。训练、cache、checkpoint 和现有接口均未改变。
