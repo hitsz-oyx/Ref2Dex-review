@@ -3953,7 +3953,9 @@ V1.15 每个 actor observation 经 legacy evaluator 触发 GPU→CPU→NumPy FK�
 - worktree_dirty: true（保留进入本次工作前的根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
 - scope: DDP runner 改由 active Python 的 `-m torch.distributed.run` 执行真实 Python bootstrap，不再把 Python executable 误传为 training script；Task 的 atexit cleanup 调用 CmTransitionBuffer.close() flush 未满 staging shard。保持 V1.16 的 actor 726→214、critic base68、frozen Cmv2、nominal GPU sweep、reward、buffer 固定 16 字段和 3×128 单 epoch预算不变。
 - run_id: cmresidual_v1161_ddp_3x128_capacity_20260918_005118
-- run_status: STARTED；预期输出目录为 `outputs/CmResidual/cmresidual_v1161_ddp_3x128_capacity_20260918_005118/`，其中 manifest/train log/metrics 将在 launcher 创建后登记为可导航链接。
+- run_status: STOPPED；GPU capacity preflight 在创建 run manifest 或启动 torchrun 前拒绝执行，故没有运行目录、metrics、train log 或 checkpoint。
+- last_step: N/A；last_epoch: N/A；best_metric: N/A；checkpoint: N/A。
+- exit_reason: GPU2 使用 `17457 MiB`，超过 `--max-used-mib=4096` 的安全门限；GPU0/1/2 分别为 `2553/776/17457 MiB`。未启动任何 worker 或仿真进程。
 - conclusion: INCONCLUSIVE（启动前代码验证通过；capacity 运行尚未形成证据）。
 
 **文件**
@@ -3972,6 +3974,7 @@ V1.16 的 launcher 将 Python executable 放在 torchrun 的 training-script 位
 - `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_cm_buffer.py src/task/CmResidual/tests/test_reference_contract.py -q -k 'cm_buffer or v116'`：`7 passed, 26 deselected`；覆盖 partial staging close 和真实 bootstrap script 合同。
 - `/home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --help`：通过。此环境没有 PATH 中的 `torchrun` executable，故显式使用等价且可审计的 module 入口。
 - capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,2 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-005118-CMRESIDUAL-V1161-DDP --modification-version V1.16.1 --run-id cmresidual_v1161_ddp_3x128_capacity_20260918_005118`。仅在每张 GPU 使用显存不超过 4096 MiB 时启动；要求三份 rank buffer manifest、finite checkpoint/action/optimizer，结论仅为工程 capacity。
+- `nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits`：GPU0/1/2 为 `2553/776/17457 MiB`，GPU2 不满足 gate；未执行上述 capacity 命令，避免占用或干扰现有 GPU2 任务。
 
 **保护与回滚**
 
