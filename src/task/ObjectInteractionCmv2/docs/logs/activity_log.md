@@ -1786,3 +1786,42 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 停止新的限量恢复 run 即可；基线 manifest、102 个已验证高分辨率段与旧 3076 审计 root 均保留。撤销代码只需恢复本条所列三个受版本控制文件，绝不删除 NAS cache。
+
+## 2026-09-17 14:17:56 +0000 — GPU2 KNN batch=8 恢复 smoke 已启动
+
+- timestamp: `2026-09-17 14:17:56 +0000`
+- activity_id: `ACT-20260917-141756-CMV2-HIGHRES-RESUME-BATCH8-SMOKE-STARTED`
+- modification_version: `V1.4.3`
+- type: `operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确回复“可以，你继续吧”，批准批量恢复 smoke；运行参数遵循已定稿 [docs/plan/V1.4.md](../plan/V1.4.md)。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `c1b501ef6e7b4ffd72d5308d8a47e7df5ed1e338`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_highres_resume_batch8_smoke_20260917T142000Z`
+- run_status: `RUNNING`
+- scope: selection offset `102` 的两个连续未完成 OakInk2 段；同一高分辨率输出根，GPU2 单 writer，`knn_frame_batch=8`、`knn_object_chunk=512`、`mano_batch_size=128`。不生成局部正式 index/cache manifest。
+- conclusion: `INCONCLUSIVE`（工程 smoke 运行中；不是模型效果结论）。
+
+**原因**
+
+先测量 frame batch 对实际高分辨率 KNN 阶段的影响，再决定是否值得引入独立 CPU 预取队列；这样不会同时改变并发模型与 GPU batch，且不会让多个进程争用 GPU2 或同一 sequence 写入。
+
+**命令与产物**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py ... --device cuda:2 --mano-batch-size 128 --knn-frame-batch 8 --knn-object-chunk 512 --offset 102 --limit 2 --run-id cmv2_highres_resume_batch8_smoke_20260917T142000Z`。
+- [恢复 smoke manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_smoke_20260917T142000Z.json) — 当前 `STARTED`，独立于已暂停基线 manifest。
+- [恢复 smoke 日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T142000Z.log) — `RUNNING`。
+- [首次启动失败日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T141800Z.log) — `ModuleNotFoundError: src`，在创建 manifest/cache 前退出；已保留并用显式 `PYTHONPATH` 的新 run id 重试。
+
+**验证**
+
+- 启动 4 秒后 PID `433153` 存活；GPU2 为 `417 MiB / 48092 MiB free`。manifest 已记录两个待处理段、batch/chunk/MANO 参数且 `failures=[]`。
+- 若任一段出现 schema、finite、KNN index、OOM 或写入错误，停止该 smoke，保留已完成基线并将终态写回本活动记录；不自动启动全量恢复。
+
+**回滚**
+
+仅终止此 run；不删除其已有输出，也不修改基线 `run_manifest.json` 或任何已验证段。
