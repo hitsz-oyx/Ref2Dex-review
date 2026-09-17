@@ -2060,3 +2060,40 @@ ARCTIC 原始 cache 的 geometry manifest 正确标记其来源处理 split 为 
 **回滚**
 
 撤销该显式 override 和新 run 即可；源 geometry manifest、ARCTIC split cache、旧 checkpoint 与失败运行目录均保留审计。
+
+## 2026-09-17 15:06:03 +0000 — 修正后 GRAB+ARCTIC MANO 权重初始化训练已启动
+
+- timestamp: `2026-09-17 15:06:03 +0000`
+- activity_id: `ACT-20260917-150603-CMV2-V144-TWO-DOMAIN-MANO-TRAIN-RESTARTED`
+- modification_version: `V1.4.4`
+- type: `experiment, operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 GPU0、旧 `latest.pt` 模型权重初始化、ARCTIC trajectory val、8 小时预算与 `best.pt` 的明确批准；此前失败为已修正的实现错误。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `808b777cf1d1b5d9770172c86b195ffa7410f6b2`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`
+- scope: GPU0 上的 GRAB/ARCTIC MANO-4096 等概率双域训练；旧 4-epoch checkpoint 仅初始化模型，重建 optimizer/sampler，最多 16 epoch 或 28800 秒。ARCTIC 派生 val 只通过 V1.4.4 显式 loader override 读取；GPU2 OakInk2 Inspire cache 回填继续独立运行。
+- conclusion: `INCONCLUSIVE`（训练运行中；不是跨域效果结论）。
+
+**原因**
+
+首次运行在尚未训练前被严格 source geometry split 检查拒绝；修正后仍不改变 source cache，而由已审计的派生 index 定义 ARCTIC 模型验证归属。
+
+**命令与产物**
+
+- [训练运行目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z) — [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 与 [launcher log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z.launcher.log)；`metrics.jsonl`、`train.log`、`latest.pt`、`best.pt` 在生成前为 `PENDING`。
+- 初始权重：[cmv2_v134_grab_ddp4 latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/latest.pt)；split：[run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/run_manifest_cmv2_two_domain_mano_split_20260917T150200Z.json)。
+
+**验证**
+
+- 启动约 9 秒后 PID `516837` 存活、GPU0 `9145 MiB` 已用/约 `39364 MiB` 空闲，满足 35 GiB 启动门槛；新 manifest 已记录输入 checkpoint。
+- 首次完成 dataset 构建/epoch 后检查 train/val 两域 transition、finite loss、`latest.pt` 与按等权 val metric 写出的 `best.pt`；出现 OOM、非有限 loss 或资源异常则停止此独立 run，绝不停止 GPU2 cache 回填。
+
+**回滚**
+
+终止此 run 即可；不覆盖旧 checkpoint、失败 run、split、缓存或 GPU0 既有进程。
