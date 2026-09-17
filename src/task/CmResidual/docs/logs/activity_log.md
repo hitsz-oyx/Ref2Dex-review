@@ -4096,3 +4096,41 @@ V1.16.3 的训练 worker 返回 0，但 Popen.wait() 的 int 被误当作带 `.r
 **保护与回滚**
 
 回滚仅恢复 runner 的 Popen return-code 判断并移除 V1.16.4 文档/测试差异；V1.16.2/V1.16.3 outputs、算法、数据、buffer schema 和用户未提交路径保留。
+
+## 2026-09-18 01:14:37 +0800 — V1.16.5 GPU0/1/3 3×128 正式 PPO 长训启动
+
+- timestamp: 2026-09-18 01:14:37 +0800
+- activity_id: ACT-20260918-011437-CMRESIDUAL-V1165-FORMAL
+- modification_version: V1.16.5
+- operation_category: experiment、operation、documentation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户在 V1.16.4 3×128 capacity probe 后明确指示“用这个配置开启长训”；此前已明确不加入 epoch 停止条件。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 23ebec1c62e39442ec42d6e92288c0452d13ef03
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；不覆盖或纳入它们）。
+- scope: physical GPU0/1/3，经 CUDA_VISIBLE_DEVICES 映射为 3 rank local cuda:0/1/2；每 rank 128 env、总 384 env，seed42、pinned GRAB reference/source/Cmv2、V1.16 GPU nominal actor、transition-only v2 CmBuffer、base68-only RMS、reference-transition reward 和所有 action/critic 合同不变。无 `--capacity-probe`、无显式 `--max-epochs` override；保留配置 `max_epochs=100000000`，由用户人工停止。
+- run_id: cmresidual_v1165_ddp_3x128_formal_20260918_011437
+- run_status: STARTED；launcher 将创建 manifest、config、metrics、train log、checkpoint 与三个 rank buffer manifest 后登记。
+- conclusion: INCONCLUSIVE（正式训练刚启动；容量 probe 只支持工程可运行，不构成科研效果结论）。
+
+**文件**
+
+- [V1.16 最终计划](../plan/V1.16.md)、[DDP runner](../../tools/run_cmv2_actor_distributed.py)、[V1.16 task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransitionCmv2ActorV116.yaml)、[V1.16 PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceTransitionCmv2ActorV116PPO.yaml) — 已批准的正式运行合同与入口。
+- [V1.16.4 capacity probe](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/run_manifest.json)、[README](../README.md)、[experiment log](experiment_log.md)、[current versions](../../../../../docs/current_versions.yaml) — 3×128 容量证据、状态与结论入口。
+
+**原因**
+
+V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、checkpoint finite/reload 和峰值显存验证；用户已在该容量前提下批准进入无固定 epoch budget 的正式训练。
+
+**验证**
+
+- 启动前 `nvidia-smi`：physical GPU0/1/3 memory used=`2553/776/1997 MiB`，均低于 runner 的 `4096 MiB` gate。
+- 正式命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --activity-id ACT-20260918-011437-CMRESIDUAL-V1165-FORMAL --modification-version V1.16.5 --run-id cmresidual_v1165_ddp_3x128_formal_20260918_011437`。
+- 监控边界：每 0.5 秒记录 physical peak memory；活动记录在用户停止或训练终态时补充 last_step/epoch、metrics/train log、checkpoint、rank buffer、退出原因与科研结论。容量/smoke 不能代替效果结论。
+
+**保护与回滚**
+
+训练输出仅写入新的 `outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/`，不覆盖基线或已有 probe。用户要求停止时向 torchrun 发送中断，并由 Task close/atexit flush 未满 CmBuffer shard；数据、checkpoint、代码、research variable 和用户未提交路径不改写。
