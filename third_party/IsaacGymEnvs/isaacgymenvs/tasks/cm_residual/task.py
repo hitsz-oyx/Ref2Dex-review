@@ -19,11 +19,15 @@ from .cm_geometry import SurfaceGeometry
 from src.task.CmDecoderv2.kinematics import InspireKinematics
 from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM as CMV2_CONTEXT_DIM,
                                                 MODEL_CONFIG as CMV2_MODEL_CONFIG,
-                                                SCHEMA as CMV2_SCHEMA, FrozenCmv2Adapter)
+                                                SCHEMA as CMV2_SCHEMA, FrozenCmv2Adapter,
+                                                encode_tokens)
 from src.task.CmResidual.cm_v2_action_evaluator import (
     Cmv2ActionEvaluator, build_nominal_hand_sweep, compose_nominal_targets,
     effect_metrics, object_pose_delta_to_xi)
-from src.task.CmResidual.cm_buffer import CmTransitionBuffer, SCHEMA as CM_BUFFER_SCHEMA
+from src.task.CmResidual.cm_buffer import (
+    CmTransitionBuffer, SCHEMA as CM_BUFFER_SCHEMA,
+    TRANSITION_ONLY_FIELDS as CM_BUFFER_TRANSITION_ONLY_FIELDS,
+    TRANSITION_ONLY_SCHEMA as CM_BUFFER_TRANSITION_ONLY_SCHEMA)
 
 
 DEXPLORE_KEY_BODIES = (
@@ -87,9 +91,17 @@ class CmResidual(VecTask):
             raise ValueError("Select only one Cm context version")
         if self.use_cmv2_context and (self.use_cmv2_actor_context or self.use_cmv2_action_evaluator):
             raise ValueError("Select either Cmv2 observation context or action evaluator")
-        if self.use_cmv2_actor_context and (not self.retargeted_base or
-                                             not self.use_cmv2_action_evaluator):
-            raise ValueError("Cmv2 actor context requires retargeted reference and action evaluator")
+        if self.use_cmv2_actor_context and not self.retargeted_base:
+            raise ValueError("Cmv2 actor context requires retargeted reference")
+        self.reference_query_indices = None
+        if self.use_cmv2_actor_context:
+            try:
+                reference_query_indices = tuple(self.reference.link_order.index(name)
+                                                for name in QUERY_LINKS)
+            except ValueError as error:
+                raise ValueError("Reference link_order is missing a Cmv2 query link") from error
+            self.reference_query_indices = torch.as_tensor(
+                reference_query_indices, device=sim_device, dtype=torch.long)
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
         self.cm_context_dim = (
@@ -205,14 +217,25 @@ class CmResidual(VecTask):
         self.cmv2_action_evaluator = None
         cm_buffer_cfg = cfg.get("cmBuffer", {})
         self.cm_buffer_enabled = bool(cm_buffer_cfg.get("enabled", False))
+        self.cm_buffer_mode = str(cm_buffer_cfg.get("mode", "executed_action_v1"))
+        self.cm_buffer_schema = str(cm_buffer_cfg.get("schema", CM_BUFFER_SCHEMA))
         self.cm_buffer = None
         self.cm_buffer_pending = None
         self.cm_buffer_prediction_translation_error_m = torch.zeros(self.num_envs, device=self.device)
         self.cm_buffer_prediction_rotation_error_rad = torch.zeros(self.num_envs, device=self.device)
         self.cmv2_base_effect_translation_error_m = torch.zeros(self.num_envs, device=self.device)
         self.cmv2_base_effect_rotation_error_rad = torch.zeros(self.num_envs, device=self.device)
-        if self.cm_buffer_enabled and (not self.retargeted_base or not self.use_cmv2_action_evaluator):
-            raise ValueError("CmBuffer requires retargeted_reference with Cmv2 action evaluator")
+        if self.cm_buffer_enabled and not self.retargeted_base:
+            raise ValueError("CmBuffer requires retargeted_reference")
+        if self.cm_buffer_mode not in ("executed_action_v1", "transition_only"):
+            raise ValueError("Unsupported CmBuffer mode")
+        if self.cm_buffer_mode == "executed_action_v1" and self.cm_buffer_enabled and not self.use_cmv2_action_evaluator:
+            raise ValueError("Legacy CmBuffer requires Cmv2 action evaluator")
+        if self.cm_buffer_mode == "transition_only":
+            if not self.cm_buffer_enabled or not self.use_cmv2_actor_context:
+                raise ValueError("transition_only CmBuffer requires the Cmv2 actor context")
+            if self.cm_buffer_schema != CM_BUFFER_TRANSITION_ONLY_SCHEMA:
+                raise ValueError("transition_only CmBuffer requires the V1.16 schema")
         if (self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_actor_context or
                 self.use_cmv2_action_evaluator):
             self.cm_geometry = SurfaceGeometry(
@@ -230,10 +253,10 @@ class CmResidual(VecTask):
                     cfg["basePolicy"]["cmv2Checkpoint"],
                     cfg["basePolicy"]["cmv2CheckpointSha256"], self.device)
             else:
-                if self.use_cmv2_action_evaluator:
+                if self.use_cmv2_actor_context or self.use_cmv2_action_evaluator:
                     # The action evaluator loads Cmv2 lazily after the physical task
-                    # has been constructed, so a static config can be resolved without
-                    # a user checkpoint.  It never appends Cmv2 features to obs.
+                    # has been constructed.  The V1.16 actor path uses the same
+                    # lazy frozen adapter directly, without legacy action evaluation.
                     pass
                 else:
                     oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
@@ -248,11 +271,15 @@ class CmResidual(VecTask):
             output_dir = str(cm_buffer_cfg.get("outputDir", "")).strip()
             if not output_dir:
                 raise ValueError("CmBuffer enabled requires outputDir")
+            expected_fields = (CM_BUFFER_TRANSITION_ONLY_FIELDS
+                               if self.cm_buffer_mode == "transition_only" else None)
             self.cm_buffer = CmTransitionBuffer(
                 output_dir, rank=int(cm_buffer_cfg.get("rank", 0)),
                 flush_every=int(cm_buffer_cfg.get("flushEvery", 2048)),
+                schema=self.cm_buffer_schema, expected_fields=expected_fields,
                 metadata={
-                    "buffer_schema": CM_BUFFER_SCHEMA,
+                    "buffer_schema": self.cm_buffer_schema,
+                    "buffer_mode": self.cm_buffer_mode,
                     "cmv2_evaluator_schema": "cmv2_action_effect_v1",
                     "cmv2_checkpoint": str(cfg["basePolicy"]["cmv2Checkpoint"]),
                     "cmv2_checkpoint_sha256": str(cfg["basePolicy"]["cmv2CheckpointSha256"]),
@@ -277,19 +304,51 @@ class CmResidual(VecTask):
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.compute_observations()
 
-    def build_cmv2_action_evaluator(self):
-        """Lazily construct the frozen Cmv2 action evaluator after task setup."""
-        if not self.use_cmv2_action_evaluator:
-            raise RuntimeError("Cmv2 action evaluator is not enabled in this task config")
-        if self.cmv2_action_evaluator is None:
+    def build_cmv2_adapter(self):
+        """Lazily construct the one frozen Cmv2 instance local to this rank."""
+        if self.cmv2 is None:
             base = self.cfg["basePolicy"]
             if (base.get("cmv2Schema") != CMV2_SCHEMA or
                     dict(base.get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
                 raise ValueError("Cmv2 schema/model configuration mismatch")
             self.cmv2 = FrozenCmv2Adapter(
                 base["cmv2Checkpoint"], base["cmv2CheckpointSha256"], self.device)
-            self.cmv2_action_evaluator = Cmv2ActionEvaluator(self.cmv2)
+        return self.cmv2
+
+    def build_cmv2_action_evaluator(self):
+        """Lazily construct the legacy executed-action Cmv2 evaluator."""
+        if not self.use_cmv2_action_evaluator:
+            raise RuntimeError("Cmv2 action evaluator is not enabled in this task config")
+        if self.cmv2_action_evaluator is None:
+            self.cmv2_action_evaluator = Cmv2ActionEvaluator(self.build_cmv2_adapter())
         return self.cmv2_action_evaluator
+
+    @torch.inference_mode()
+    def evaluate_cmv2_nominal_base(self, links, object_pose, next_index):
+        """GPU-only Cmv2 nominal base sweep: actual hand to next reference hand."""
+        if not self.use_cmv2_actor_context or self.reference_query_indices is None:
+            raise RuntimeError("Cmv2 nominal-base actor context is not enabled")
+        if links.shape != (self.num_envs, len(QUERY_LINKS), 4, 4):
+            raise ValueError("Actual Cmv2 link poses do not match QUERY_LINKS")
+        reference_links = self.reference.link_pose.index_select(0, next_index).index_select(
+            1, self.reference_query_indices)
+        if reference_links.shape != links.shape or not torch.isfinite(reference_links).all():
+            raise ValueError("Reference Cmv2 link poses are invalid")
+        object_points, object_normals = self.cm_geometry.object(object_pose)
+        hand_points, hand_normals = self.cm_geometry.hand(links)
+        next_hand_points, _ = self.cm_geometry.hand(reference_links)
+        adapter = self.build_cmv2_adapter()
+        output = adapter.predict(
+            object_points, object_normals, hand_points, hand_normals,
+            next_hand_points - hand_points,
+            float(self.cfg["sim"]["dt"]) * int(self.cfg["env"]["controlFrequencyInv"]),
+            torch.ones(hand_points.shape[:2], dtype=torch.bool, device=self.device),
+            include_context=False)
+        return {
+            "encoded_tokens": encode_tokens(output, object_points),
+            "predicted_delta_xi": output["delta_xi_root"],
+            "predicted_obj_flow": output["obj_flow_pred"],
+        }
 
     def evaluate_cmv2_actions(self, residual_actions, *, desired_delta_xi=None,
                               desired_obj_flow=None, candidate_valid_mask=None):
@@ -559,8 +618,6 @@ class CmResidual(VecTask):
             reference_delta = object_pose_delta_to_xi(
                 pose_matrix(self.reference.object_state.index_select(0, self.reference_index)[:, :7]),
                 pose_matrix(self.reference.object_state.index_select(0, reference_next)[:, :7]))
-            prediction = self.evaluate_cmv2_actions(
-                actions[:, None, :], desired_delta_xi=reference_delta)
             self.cm_buffer_pending = {
                 "q_pre": current.clone(),
                 "dq_pre": sim_to_native(self.dof_vel, self.sim_indices).clone(),
@@ -574,10 +631,15 @@ class CmResidual(VecTask):
                 "reference_start_index": self.reference_start_index.clone(),
                 "window_progress": self.progress_buf.clone(),
                 "reference_delta_xi": reference_delta.clone(),
-                "predicted_delta_xi": prediction["predicted_delta_xi"][:, 0].clone(),
-                "predicted_effect_score": prediction["effect_score"][:, 0].clone(),
-                "candidate_valid": prediction["candidate_valid_mask"][:, 0].clone(),
             }
+            if self.cm_buffer_mode == "executed_action_v1":
+                prediction = self.evaluate_cmv2_actions(
+                    actions[:, None, :], desired_delta_xi=reference_delta)
+                self.cm_buffer_pending.update({
+                    "predicted_delta_xi": prediction["predicted_delta_xi"][:, 0].clone(),
+                    "predicted_effect_score": prediction["effect_score"][:, 0].clone(),
+                    "candidate_valid": prediction["candidate_valid_mask"][:, 0].clone(),
+                })
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self.sim_targets))
 
     def _append_cm_buffer_transition(self) -> None:
@@ -588,10 +650,11 @@ class CmResidual(VecTask):
         object_pose_post = self.actor_root_state[self.object_indices.long(), :7].clone()
         actual_delta = object_pose_delta_to_xi(
             pose_matrix(pending["object_pose_pre"]), pose_matrix(object_pose_post))
-        predicted = pending["predicted_delta_xi"]
-        metrics = effect_metrics(predicted, actual_delta)
-        self.cm_buffer_prediction_translation_error_m.copy_(metrics["translation_error_m"])
-        self.cm_buffer_prediction_rotation_error_rad.copy_(metrics["rotation_error_rad"])
+        if self.cm_buffer_mode == "executed_action_v1":
+            predicted = pending["predicted_delta_xi"]
+            metrics = effect_metrics(predicted, actual_delta)
+            self.cm_buffer_prediction_translation_error_m.copy_(metrics["translation_error_m"])
+            self.cm_buffer_prediction_rotation_error_rad.copy_(metrics["rotation_error_rad"])
         record = {
             **pending,
             "q_post": sim_to_native(self.dof_pos, self.sim_indices).clone(),
@@ -682,11 +745,9 @@ class CmResidual(VecTask):
             # that PPO will subsequently execute.
             reference_delta = object_pose_delta_to_xi(
                 pose_matrix(ref_object[:, :7]), pose_matrix(next_object[:, :7]))
-            zero_residual = torch.zeros((self.num_envs, 1, ACTION_DIM), device=self.device)
-            prediction = self.evaluate_cmv2_actions(
-                zero_residual, desired_delta_xi=reference_delta)
-            tokens = prediction["encoded_tokens"][:, 0]
-            predicted_effect = prediction["predicted_delta_xi"][:, 0]
+            prediction = self.evaluate_cmv2_nominal_base(links, obj, next_idx)
+            tokens = prediction["encoded_tokens"]
+            predicted_effect = prediction["predicted_delta_xi"]
             effect_scales = torch.tensor(
                 [self.cmv2_effect_translation_scale_m] * 3 +
                 [self.cmv2_effect_rotation_scale_rad] * 3,

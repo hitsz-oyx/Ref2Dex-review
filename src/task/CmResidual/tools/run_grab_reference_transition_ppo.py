@@ -33,6 +33,8 @@ def parse_args():
                         help="Record frozen Cmv2 executed-transition diagnostics without PPO updates to Cmv2")
     parser.add_argument("--cmv2-actor", action="store_true",
                         help="Use frozen zero-residual Cmv2 tokens/effects in actor only; also records CmBuffer")
+    parser.add_argument("--v116", action="store_true",
+                        help="Use the V1.16 GPU nominal-base path and transition-only buffer")
     parser.add_argument("--smoke", action="store_true",
                         help="Run a 1-env, 1-epoch implementation smoke instead of the locked curriculum")
     return parser.parse_args()
@@ -42,6 +44,8 @@ def main():
     args = parse_args()
     if args.gpu != 5:
         raise ValueError("V1.14 curriculum is approved only on GPU5")
+    if args.v116 and not args.cmv2_actor:
+        raise ValueError("--v116 requires --cmv2-actor")
     output = REPOSITORY_ROOT / "outputs/CmResidual" / args.run_id
     output.mkdir(parents=True, exist_ok=False)
     config, manifest_path = output / "config.json", output / "run_manifest.json"
@@ -53,7 +57,10 @@ def main():
     if not json.loads(metadata.read_text())["training_eligible"]:
         raise ValueError("GRAB reference is not training eligible")
     horizon = 8 if args.smoke else 64 if args.window_length == 64 else 128
-    if args.cmv2_actor:
+    if args.v116:
+        task_name = "CmResidualGrabReferenceTransitionCmv2ActorV116"
+        train_name = "CmResidualGrabReferenceTransitionCmv2ActorV116PPO"
+    elif args.cmv2_actor:
         task_name = "CmResidualGrabReferenceTransitionCmv2Actor"
         train_name = "CmResidualGrabReferenceTransitionCmv2ActorPPO"
     else:
@@ -80,7 +87,8 @@ def main():
             task["referenceStart"]["windowLength"] != args.window_length or
             task["referenceTrackingReward"]["mode"] != "reference_transition" or
             task["env"]["terminateOnSuccess"] or
-            bool(task["basePolicy"].get("useCmv2ActionEvaluator", False)) != (args.cm_buffer or args.cmv2_actor)):
+            bool(task["basePolicy"].get("useCmv2ActionEvaluator", False)) !=
+            (args.cm_buffer if not args.v116 else False)):
         raise RuntimeError("V1.14 curriculum task contract drift")
     observation_dim = 726 if args.cmv2_actor else 68
     contract = _safe_contract(resolved["train"]["params"], observation_dim)
@@ -91,7 +99,9 @@ def main():
     _write_json(config, {"run_id": args.run_id, "resolved": resolved, "runtime_overrides": common,
                          "model_contract": contract})
     manifest = {"manifest_schema": "ref2dex.run.v1", "created_at": _now(), "task": "CmResidual",
-                "mode": "v115_cmv2_actor_reference_transition_ppo" if args.cmv2_actor else "v114_reference_transition_ppo", "run_id": args.run_id, "activity_id": args.activity_id,
+                "mode": ("v116_cmv2_actor_transition_only_ppo" if args.v116 else
+                         "v115_cmv2_actor_reference_transition_ppo" if args.cmv2_actor else
+                         "v114_reference_transition_ppo"), "run_id": args.run_id, "activity_id": args.activity_id,
                 "run_status": "STARTED", "modification_version": args.modification_version, "operation_category": ["experiment", "operation"],
                 "output_dir": str(output), "seed": 42, "base_commit": _git("rev-parse", "HEAD"),
                 "worktree_dirty": bool(_git("status", "--porcelain")), "config_snapshot": str(config),

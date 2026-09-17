@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import importlib.util
 import json
 import math
@@ -507,6 +508,63 @@ def test_v115_cmv2_actor_transport_pools_tokens_only_for_actor():
     assert result["mus"].shape == (2, 18)
     assert critic.shape == (2, 1)
     assert torch.isfinite(result["mus"]).all() and torch.isfinite(critic).all()
+
+
+def test_v116_normalizes_only_the_base68_prefix():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmEffectContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmEffectBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidualGrabReferenceTransitionCmv2ActorV116",
+            "train=CmResidualGrabReferenceTransitionCmv2ActorV116PPO",
+            "task.cmBuffer.outputDir=/tmp/cmv2_actor_v116_contract",
+        ])
+    assert cfg.task.cmBuffer.mode == "transition_only"
+    assert cfg.task.cmBuffer.schema == "cmresidual.cm_buffer.transition_only.v2"
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    assert params["model"]["name"] == "cm_effect_continuous"
+    assert params["config"]["normalize_input"] is True
+    builder = CmEffectBuilder()
+    builder.load(params["network"])
+    model = ModelCmEffectContinuous(builder).build({
+        "input_shape": (726,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
+        "normalize_input": True, "normalize_value": False,
+    })
+    raw = torch.randn(3, 726)
+    raw[:, 68 + 39] = 1.0
+    normalized = model.norm_obs(raw)
+    assert tuple(model.running_mean_std.running_mean.shape) == (68,)
+    torch.testing.assert_close(normalized[:, 68:], raw[:, 68:], rtol=0.0, atol=0.0)
+
+
+def test_v116_nominal_actor_path_does_not_call_legacy_cpu_fk_evaluator():
+    task_source = Path(
+        "third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py").read_text()
+    start = task_source.index("    def evaluate_cmv2_nominal_base")
+    end = task_source.index("    def evaluate_cmv2_actions", start)
+    nominal = task_source[start:end]
+    assert "evaluate_cmv2_actions" not in nominal
+    assert "InspireKinematics" not in nominal
+    assert ".cpu(" not in nominal and ".numpy(" not in nominal
+    assert "reference.link_pose" in nominal
+
+
+def test_v116_ddp_launcher_requires_explicit_gpu012():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module(
+        "cm_residual_v116_ddp_runner_test", tools / "run_cmv2_actor_distributed.py")
+    assert module._parse_gpus("0,1,2") == (0, 1, 2)
+    with pytest.raises(argparse.ArgumentTypeError, match="exactly"):
+        module._parse_gpus("0,1,3")
 
 
 def _build_v19_model(train_config, seed=42):

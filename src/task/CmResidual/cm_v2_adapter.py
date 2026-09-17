@@ -125,7 +125,8 @@ class FrozenCmv2Adapter:
     def predict(self, object_points: torch.Tensor, object_normals: torch.Tensor,
                 hand_points: torch.Tensor, hand_normals: torch.Tensor,
                 hand_flow: torch.Tensor, delta_time_s: float,
-                hand_valid_mask: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
+                hand_valid_mask: torch.Tensor | None = None,
+                include_context: bool = True) -> dict[str, torch.Tensor]:
         """Return frozen structured Cmv2 outputs for one-step effect evaluation."""
         hand_valid_mask = self._validate_inputs(
             object_points, object_normals, hand_points, hand_normals, hand_flow,
@@ -138,7 +139,8 @@ class FrozenCmv2Adapter:
                              "delta_time_s": torch.full((batch,), delta_time_s, device=self.device,
                                                         dtype=object_points.dtype)})
         output = dict(output)
-        output["cm_context"] = encode_context(output, object_points)
+        if include_context:
+            output["cm_context"] = encode_context(output, object_points)
         if not torch.isfinite(output["delta_xi_root"]).all() or not torch.isfinite(output["obj_flow_pred"]).all():
             raise FloatingPointError("Non-finite frozen Cmv2 effect output")
         return output

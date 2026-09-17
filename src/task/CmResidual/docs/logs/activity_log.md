@@ -3893,3 +3893,46 @@ V1.14.5 已证明 executed-action Cmv2 buffer 能无点云记录，但未让 Cmv
 **保护与回滚**
 
 回滚只撤销本条的 V1.15 adapter/evaluator/Task/network/config/registry/runner/test/docs 差异；保留 V1.14 代码、reference、Cmv2 checkpoint、已有 outputs 与用户未提交路径。生成的 V1.15 output/CmBuffer 是审计证据，不纳入 Git。GPU0/1/2 分布式训练仍未启动：GPU2 被其他用户占用，且 V1.15 plan 要求先单列容量/rank-output/人工停止方案后才能启动。
+
+## 2026-09-18 00:39:00 +0800 — V1.16 GPU nominal Cmv2、transition-only buffer 与 DDP runner
+
+- timestamp: 2026-09-18 00:39:00 +0800
+- activity_id: ACT-20260918-003000-CMRESIDUAL-V116-GPU
+- modification_version: V1.16
+- operation_category: architecture、code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L2（nominal sweep 实现、buffer schema、base-only RMS）；GPU5 smoke 与三卡 capacity/formal operation 为 L3。
+- approval: user-approved
+- approval_basis: 用户提供 [V1.16 指导](../指导/V1.16.md)，审阅 [V1.16 最终计划](../plan/V1.16.md) 后明确回复“确定”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: a1b5073ea3e17965d7b7f9ab365ad0c3c08fc77c
+- worktree_dirty: true（只暂存本次 V1.16 明列路径；根 activity、ObjectInteractionCm activity、V1.12–16 用户指导、V1.13 plan 与诊断工具保持不触碰）。
+- scope: V1.15 actor raw/effective 726→214-D 和 68-D critic 不变。actor nominal Cmv2 改为 actual GPU QUERY_LINKS 到 next GPU reference link pose 的 sweep，禁止该热路径 CPU/NumPy FK 或 legacy action evaluator。新 buffer schema 是 transition-only v2 的固定 16 字段；不预测 executed residual Cmv2，GPU staging 到 shard 时才批量 CPU copy。V1.16 model 仅为 base68 启用 RunningMeanStd；token/effect 不做全局 RMS。
+- run_id: cmresidual_v116_gpu_nominal_smoke_20260918_0030
+- run_status: COMPLETED；GPU5、seed42、1 env、8 step、1 PPO epoch，last_step=8、last_epoch=1。
+- best_metric: checkpoint_reload_action_max_abs_diff=0.0；checkpoint 为 last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_1_rew_-inf.pth。
+- conclusion: GPU nominal sweep、base68-only RMS、transition-only staging buffer 与 single-rank PPO wiring 工程合同 SUPPORTED；DDP capacity、attention utility、effect accuracy、PPO tracking、Cmv2 微调资格与抓取效果 INCONCLUSIVE。
+
+**文件**
+
+- [V1.16 最终计划](../plan/V1.16.md)、[V1.16 用户指导](../指导/V1.16.md)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml)、[experiment log](experiment_log.md) — 版本、边界、运行与结论入口。
+- [Cmv2 adapter](../../cm_v2_adapter.py)、[transition buffer](../../cm_buffer.py)、[Task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — actor 跳过 legacy flattened context、GPU nominal sweep、v2 field whitelist/staging 与 actual transition label。
+- [Cmv2 model wrapper](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_models.py)、[train registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/train.py)、[task registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) — 仅 base68 的 RMS 与 V1.16 model/task 注册。
+- [V1.16 task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceTransitionCmv2ActorV116.yaml)、[V1.16 PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceTransitionCmv2ActorV116PPO.yaml)、[GPU5 smoke runner](../../tools/run_grab_reference_transition_ppo.py)、[DDP runner](../../tools/run_cmv2_actor_distributed.py)、[model contract helper](../../tools/run_ppo_stability.py) — V1.16 opt-in 路径、manual-stop formal mode 与受控 capacity launcher。
+- [buffer tests](../../tests/test_cm_buffer.py)、[adapter tests](../../tests/test_cmv2_adapter.py)、[reference/model/runner tests](../../tests/test_reference_contract.py) — v2 whitelist/staging、no-context adapter、base-only RMS、GPU-sweep static contract 和 GPU0/1/2 launcher 参数。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/run_manifest.json)、[resolved config](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/checkpoint_validation.json)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/smoke/CmResidualGrabReferenceTransition_smoke/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_1_rew_-inf.pth)、[v2 buffer manifest](../../../../../outputs/CmResidual/cmresidual_v116_gpu_nominal_smoke_20260918_0030/cm_buffer/rank_000/manifest.json) — GPU5 工程证据。
+
+**原因**
+
+V1.15 每个 actor observation 经 legacy evaluator 触发 GPU→CPU→NumPy FK；同时 buffer 为实际 action 再执行一次 Cmv2。V1.16 用 pinned reference GPU link poses 消除 actor hot path 的 FK/host transfer，并将 Cmv2 调用限制为 actor nominal-base 一次；buffer 只保存不可替代 transition，后续可从 pin 的 asset/reference/state 离线重建 executed-action Cmv2 诊断。
+
+**验证**
+
+- graspenv pytest 命令运行 CmBuffer、Cmv2 adapter/evaluator、reference contract：14 passed, 25 deselected；py_compile、DDP runner --help 与 git diff --check 通过。
+- GPU5 smoke 命令使用 --cmv2-actor --v116 --smoke：完成；checkpoint/optimizer/action finite、reload diff=0.0、sigma=0.1、saturation=0.0。v2 manifest 有 8 个 finite sample、16 个白名单字段、无 point/normal/flow；日志没有 legacy build_nominal_link_poses 的 CPU FK warning。
+- GPU0/1/2 仅完成只读 preflight：当前 memory used 约为 2553/776/23215 MiB，GPU2 超出 DDP launcher 4096 MiB gate，故未启动 3×128 capacity probe 或正式训练。
+
+**保护与回滚**
+
+回滚只撤销 V1.16 adapter/buffer/Task/model/config/registry/runner/test/docs 差异；V1.14/V1.15 config、legacy evaluator、buffer schema、checkpoint、reference、outputs 和用户未提交路径保留。DDP runner 在 GPU2 空闲前拒绝启动；capacity probe 只允许 3×128 的单 epoch 工程测量，3×256 或 manual-stop formal run 需以 probe 的显存/throughput/三 rank manifest 为依据另行启动。

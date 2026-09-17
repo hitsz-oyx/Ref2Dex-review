@@ -60,6 +60,11 @@ def test_checkpoint_requires_sha_architecture_and_strict_state(tmp_path: Path):
     assert output["obj_flow_pred"].shape == (1, 1024, 3)
     assert output["cm_context"].shape == (1, CONTEXT_DIM)
     assert torch.isfinite(output["obj_flow_pred"]).all()
+    actor_output = adapter.predict(object_points, object_normals, hand_points, hand_normals,
+                                   torch.zeros_like(hand_points), 1 / 30,
+                                   include_context=False)
+    assert "cm_context" not in actor_output
+    assert actor_output["cm_tokens"].shape == (1, 16, 32)
     with pytest.raises(ValueError, match="SHA256"):
         FrozenCmv2Adapter(checkpoint, "0" * 64, "cpu")
     sha = write({"architecture_version": "v1_2", "model": model.state_dict()})
