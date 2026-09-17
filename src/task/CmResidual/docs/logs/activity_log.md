@@ -3249,3 +3249,82 @@ E10 两侧均完成；需要使 Task 入口与实验记录反映真实终态，�
 
 - 未触碰 `src/task/ObjectInteractionCm/docs/logs/activity_log.md`、指导/plan、代码、配置、数据、cache、旧运行或 checkpoint；没有启动 T20、多 seed 或 DexYCB 新实验。
 - 回滚入口：仅还原本次三份 CmResidual 文档差异；保留两次 ignored E10 运行目录作为可复核证据。
+
+## 2026-09-17 16:17:43 +0800 — Cmv2 actor / DexYCB 单轨迹训练接口诊断
+
+- activity_id: `ACT-20260917-161743-CMRESIDUAL-CMV2-DEXYCB-INTERFACE-DIAG`
+- timestamp: `2026-09-17 16:17:43 +0800`
+- modification_version: `V1.11.2`（只读诊断沿用当前 Task 指针；新研究实施版本待指导与计划确认）
+- operation_category: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-approved`（用户要求先对齐远端 Cmv2 与残差 actor 接口）
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `683b5d236dc8d8349620e34952c64afd9c892da3`
+- worktree_dirty: `true`（已存在 ObjectInteractionCm 用户日志改动及根级 fetch 诊断记录）
+- scope: 只读比较 `origin/oyx` 的 `ObjectInteractionCmv2V13Model` 与本地 CmResidual/DexYCB 合同；不修改实现、配置、数据或训练状态。
+- conclusion: `SUPPORTED`（接口差异已定位）；actor-Cm 效果与 DexYCB 训练结果 `INCONCLUSIVE`
+
+**原因**
+
+用户要求冻结 base、只训练 residual、先使用一条 DexYCB 轨迹，并表示稍后提供 Cmv2 checkpoint。实现前需要确认输入、输出、数据资格和 checkpoint 语义。
+
+**验证**
+
+- 远端 `origin/oyx:src/task/ObjectInteractionCmv2/model.py` 的 V1.3 类输出 `cm_tokens [B,16,32]`、`token_anchors`、`token_normals`、`token_mass`、`token_mask`；checkpoint 标识为 `v1_3_rigid_only`，输入必需 object/hand points、normals、hand flow，可选 `delta_time_s`。
+- [src/task/CmResidual/tools/run_ppo_stability.py](../../tools/run_ppo_stability.py) 只支持旧 V1.8/V1.9/V1.10 变体；[当前网络](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/cm_network_builder.py) 可设 actor/critic 输入宽度，但现有旧 Cm 上下文是 563-D。
+- [当前任务实现](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) 读取旧 `ObjectInteractionCmModel`，拼接 563-D token/anchor/effect；[DexYCB base 配置](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBBase.yaml) 关闭 Cm、仅 1442-D observation。
+- [当前 DexYCB reference manifest](../../../../../data/processed_data/cm_residual/dexycb_base_v1/subject-10/20201022_110806/manifest.json) 为 72 帧、`split=evaluation`、`training_eligible=false`；[V1.11 指导](../指导/V1.11.md) 明确禁止 residual PPO，故不得直接在当前产物上启动正式训练。
+
+**保护与回滚**
+
+- 未 merge 远端、未加载尚未提供的 checkpoint、未覆盖现有 DexYCB 评估产物；仅本条 Task activity 可按 Git diff 回退。
+
+## 2026-09-17 17:21:55 +0800 — V1.12.1 action-conditioned Cmv2 接口迁回 oyx
+
+- activity_id: `ACT-20260917-172155-CMRESIDUAL-V121-ACTION-EFFECT`
+- timestamp: `2026-09-17 17:21:55 +0800`
+- modification_version: `V1.12.1`
+- operation_category: `architecture`、`code`、`diagnostic`、`documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户新增 V1.12 action-conditioned 指导后明确回复“继续”，随后确认将实现迁回 `oyx`；真实 checkpoint、物理候选排序和 PPO 仍受 V1.12 最终计划门禁约束。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e444b1d0cce192dc9a310f0dcfd7bb67eea8f67c`（`origin/oyx` 快进后）
+- worktree_dirty: `true`（保留根级和 ObjectInteractionCm 活动日志的既有/合并后本地改动；本条只登记 CmResidual 实现）
+- scope: 将已验证的 action→controller/FK→nominal hand sweep→冻结 Cmv2 effect evaluator 接口迁回远端 `oyx` 基线；旧 OI-Cm、base-only、zero-residual 和 residual PPO 路径保持兼容。
+- run_id: `none`
+- run_status: `NOT_STARTED`
+- conclusion: `SUPPORTED`（接口工程与静态合同）；科研效果 `INCONCLUSIVE`
+
+**文件**
+
+- [V1.12 用户指导](../指导/V1.12.md) — 用户提供的研究方向，保留为未提交工作树文件。
+- [V1.12 最终计划](../plan/V1.12.md) — 本次实现范围、接口、门禁和回滚边界。
+- [cm_v2_adapter.py](../../cm_v2_adapter.py) — 冻结 Cmv2 V1.3 structured effect adapter、严格 schema/config/SHA 校验与 640-D context 合同。
+- [cm_v2_action_evaluator.py](../../cm_v2_action_evaluator.py) — nominal controller/FK hand-sweep、候选效应预测、finite/valid-mask 与排序指标。
+- [test_cmv2_action_evaluator.py](../../tests/test_cmv2_action_evaluator.py)、[test_cmv2_adapter.py](../../tests/test_cmv2_adapter.py) — Task-local 合同测试。
+- [eval_dexycb_cmv2_action_effect.py](../../tools/eval_dexycb_cmv2_action_effect.py) — synthetic/真实 checkpoint 诊断入口；本轮未加载真实 checkpoint。
+- [CmResidualDexYCBCmv2ActionEval.yaml](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualDexYCBCmv2ActionEval.yaml) — 1442-D diagnostic opt-in 配置，未提供 PPO 训练入口。
+- [task.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[tasks/__init__.py](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) — vendor task 的显式 evaluator 接入与 Hydra alias。
+- [README.md](../README.md)、[current_versions.yaml](../../../../../docs/current_versions.yaml) — V1.12.1 入口和版本指针。
+
+**原因**
+
+原实现基于 `origin/oyx=e444b1d` 的独立工作树完成，用户明确要求不要交付独立分支，因此在保护本地日志和指导文档后，将同一组显式接口迁回 `oyx`；action evaluator 保持 Cmv2 在候选评估侧，不把 latent/context 拼接到 PPO observation。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_cmv2_action_evaluator.py src/task/CmResidual/tests/test_cmv2_adapter.py src/task/CmResidual/tests/test_reference_contract.py -q -k 'cmv2 or zero_residual_preserves_dexplore_physical_targets'`：`9 passed, 21 deselected, 1 warning`。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile ...`：adapter、evaluator、CLI 和 vendor task 均通过。
+- CLI `--help` 通过；`--synthetic --candidates 2` 输出 `finite=true`，candidate count `2`，effect score 有限。
+- 远端合并：`oyx` 从 `683b5d2` 快进到 `e444b1d`；stash 恢复时两个活动日志仅为双方新增内容，已保留两边记录并去除冲突标记，未覆盖用户日志。
+- 交接前运行 `audit_diff.py --log src/task/CmResidual/docs/logs/activity_log.md --worktree --scope-prefix src/task/CmResidual --check-links`：通过，本地链接 `12` 个可导航；本条不产生训练 run、metrics、train.log 或 checkpoint。
+
+**保护与回滚**
+
+- 未加载用户尚未提供的 Cmv2 checkpoint，未运行 GPU 物理候选排序、DexYCB PPO 或样本内评估；未改变 reference split、坐标系、单位、GT、reward 或 base policy。
+- 旧 OI-Cm 和 base-only 配置保持原路径；回滚入口为本条实现文件、配置、测试、Task README/版本指针及本活动记录的显式 Git diff，远端 `e444b1d` 基线和独立工作树仍保留。

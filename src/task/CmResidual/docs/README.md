@@ -6,7 +6,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.11.2`
+- `modification_version`: `V1.12.1`
+- V1.12.1：用户确认的 [指导](指导/V1.12.md) 与 [最终计划](plan/V1.12.md) 已在当前 `oyx` 工作树落地 action-conditioned 第一阶段接口。新增冻结 Cmv2 V1.3 structured effect adapter、nominal controller/FK hand-sweep evaluator、候选排序指标和显式 diagnostic opt-in；Cmv2 不拼接到 PPO observation。synthetic checkpoint/候选合同测试通过；真实 checkpoint、物理候选排序、PPO 与样本内评估尚未运行，科研效果为 `INCONCLUSIVE`。
 - 阶段：V1.11.2 已将 DexYCB actor 创建 DOF state 与 reference reset 对齐，并经用户批准在空闲 GPU5 完成
   4 env × 72 steps 修复后复跑；工程 Gate C（reset、finite、zero residual、正常退出）全部通过
 - 行为结果：固定 `subject-10/20201022_110806/right` 单轨迹没有观察到成功抓取；最小平均 tip distance=
@@ -77,6 +78,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.10 最终执行计划](plan/V1.10.md)
 - [V1.11 用户指导](指导/V1.11.md)
 - [V1.11 最终执行计划](plan/V1.11.md)
+- [V1.12 用户指导](指导/V1.12.md)
+- [V1.12 最终执行计划](plan/V1.12.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

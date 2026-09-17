@@ -16,6 +16,12 @@ from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .dexplore_observation import build_dexplore_observation
 from .reference_provider import ReferenceProvider, validate_reference_usage
 from .cm_geometry import SurfaceGeometry
+from src.task.CmDecoderv2.kinematics import InspireKinematics
+from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM as CMV2_CONTEXT_DIM,
+                                                MODEL_CONFIG as CMV2_MODEL_CONFIG,
+                                                SCHEMA as CMV2_SCHEMA, FrozenCmv2Adapter)
+from src.task.CmResidual.cm_v2_action_evaluator import (
+    Cmv2ActionEvaluator, build_nominal_hand_sweep, compose_nominal_targets)
 
 
 DEXPLORE_KEY_BODIES = (
@@ -62,11 +68,18 @@ class CmResidual(VecTask):
             reference_cfg.get("allowIneligibleFor", ""))
         self.base_observation_dim = OBSERVATION_DIM
         self.use_oi_cm_context = bool(cfg["basePolicy"].get("useOiCmContext", True))
+        self.use_cmv2_context = bool(cfg["basePolicy"].get("useCmv2Context", False))
+        self.use_cmv2_action_evaluator = bool(
+            cfg["basePolicy"].get("useCmv2ActionEvaluator", False))
+        if self.use_oi_cm_context and (self.use_cmv2_context or self.use_cmv2_action_evaluator):
+            raise ValueError("Select only one Cm context version")
+        if self.use_cmv2_context and self.use_cmv2_action_evaluator:
+            raise ValueError("Select either Cmv2 observation context or action evaluator")
         self.cm_dim = int(cfg["basePolicy"].get("cmFeatureDim", 32))
         self.cm_slots = int(cfg["basePolicy"].get("cmNumSlots", 16))
         self.cm_context_dim = (
             self.cm_slots * self.cm_dim + self.cm_slots * 3 + 3
-            if self.use_oi_cm_context else 0)
+            if self.use_oi_cm_context else CMV2_CONTEXT_DIM if self.use_cmv2_context else 0)
         residual_cfg = cfg["residual"]
         self.residual_translation_scale = float(residual_cfg["translationScaleM"])
         self.residual_rotation_scale = float(residual_cfg["rotationScaleRad"])
@@ -128,19 +141,38 @@ class CmResidual(VecTask):
         self.oi_cm = None
         self.oi_cm_checkpoint = None
         self.oi_cm_checkpoint_sha256 = None
-        if self.use_oi_cm_context:
+        self.cmv2 = None
+        self.cmv2_action_evaluator = None
+        if self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_action_evaluator:
             self.cm_geometry = SurfaceGeometry(
                 hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
                 object_count=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
                 hand_count=int(cfg["basePolicy"].get("cmHandPoints", 1538)), device=self.device)
-            oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
-            self.oi_cm_checkpoint = str(oi_cm_path)
-            self.oi_cm_checkpoint_sha256 = sha256(oi_cm_path) if oi_cm_path.is_file() else ""
-            self.oi_cm = self._load_oi_cm(
-                oi_cm_path, cfg["basePolicy"].get("oiCmCheckpointSha256"),
-                feature_dim=self.cm_dim, num_slots=self.cm_slots,
-                object_points=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
-                hand_points=int(cfg["basePolicy"].get("cmHandPoints", 1538)))
+            if self.use_cmv2_context:
+                if (cfg["basePolicy"].get("cmv2Schema") != CMV2_SCHEMA or
+                        dict(cfg["basePolicy"].get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
+                    raise ValueError("Cmv2 schema/model configuration mismatch")
+                if (int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+                        int(cfg["basePolicy"].get("cmHandPoints", 1538))) != (1024, 1538):
+                    raise ValueError("Cmv2 requires 1024 object and 1538 hand points")
+                self.cmv2 = FrozenCmv2Adapter(
+                    cfg["basePolicy"]["cmv2Checkpoint"],
+                    cfg["basePolicy"]["cmv2CheckpointSha256"], self.device)
+            else:
+                if self.use_cmv2_action_evaluator:
+                    # The action evaluator loads Cmv2 lazily after the physical task
+                    # has been constructed, so a static config can be resolved without
+                    # a user checkpoint.  It never appends Cmv2 features to obs.
+                    pass
+                else:
+                    oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
+                    self.oi_cm_checkpoint = str(oi_cm_path)
+                    self.oi_cm_checkpoint_sha256 = sha256(oi_cm_path) if oi_cm_path.is_file() else ""
+                    self.oi_cm = self._load_oi_cm(
+                        oi_cm_path, cfg["basePolicy"].get("oiCmCheckpointSha256"),
+                        feature_dim=self.cm_dim, num_slots=self.cm_slots,
+                        object_points=int(cfg["basePolicy"].get("cmObjectPoints", 1024)),
+                        hand_points=int(cfg["basePolicy"].get("cmHandPoints", 1538)))
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -148,6 +180,44 @@ class CmResidual(VecTask):
         self._refresh_state()
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.compute_observations()
+
+    def build_cmv2_action_evaluator(self):
+        """Lazily construct the frozen Cmv2 action evaluator after task setup."""
+        if not self.use_cmv2_action_evaluator:
+            raise RuntimeError("Cmv2 action evaluator is not enabled in this task config")
+        if self.cmv2_action_evaluator is None:
+            base = self.cfg["basePolicy"]
+            if (base.get("cmv2Schema") != CMV2_SCHEMA or
+                    dict(base.get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
+                raise ValueError("Cmv2 schema/model configuration mismatch")
+            self.cmv2 = FrozenCmv2Adapter(
+                base["cmv2Checkpoint"], base["cmv2CheckpointSha256"], self.device)
+            self.cmv2_action_evaluator = Cmv2ActionEvaluator(self.cmv2)
+        return self.cmv2_action_evaluator
+
+    def evaluate_cmv2_actions(self, residual_actions, *, desired_delta_xi=None,
+                              desired_obj_flow=None, candidate_valid_mask=None):
+        """Evaluate nominal one-step candidate residuals without using future state."""
+        evaluator = self.build_cmv2_action_evaluator()
+        residual_actions = residual_actions.to(self.device)
+        self._refresh_state()
+        native = sim_to_native(self.dof_pos, self.sim_indices)
+        targets, _ = compose_nominal_targets(
+            self.base_action, residual_actions, native, self.native_lower, self.native_upper,
+            translation_scale_m=self.residual_translation_scale,
+            rotation_scale_rad=self.residual_rotation_scale,
+            finger_scale_rad=self.residual_finger_scale)
+        kinematics = InspireKinematics(self.cfg["env"]["asset"]["assetRoot"] + "/" +
+                                       self.cfg["env"]["asset"]["assetFileName"])
+        sweep = build_nominal_hand_sweep(self.cm_geometry, kinematics, native, targets)
+        object_state = self.actor_root_state[self.object_indices.long()]
+        object_pose = pose_matrix(object_state[:, :7])
+        object_points, object_normals = self.cm_geometry.object(object_pose)
+        return evaluator.evaluate(
+            object_points, object_normals, sweep, candidate_actions=residual_actions,
+            candidate_valid_mask=candidate_valid_mask,
+            desired_delta_xi=desired_delta_xi,
+            desired_obj_flow=desired_obj_flow)
 
     @staticmethod
     def _load_oi_cm(checkpoint, expected_sha256, *, feature_dim, num_slots,
@@ -404,20 +474,25 @@ class CmResidual(VecTask):
         table_state = self.actor_root_state[self.table_indices.long()]
         self.reset_table_position_error_m = (
             table_state[:, :3] - self.initial_table[:3]).norm(dim=-1)
-        if self.use_oi_cm_context:
+        if self.use_oi_cm_context or self.use_cmv2_context:
             obj_points, obj_normals = self.cm_geometry.object(obj)
             hand_points, hand_normals = self.cm_geometry.hand(links)
             hand_flow = self.cm_geometry.flow(hand_points, self.fresh_reset)
-            with torch.no_grad():
-                cm_out = self.oi_cm({"obj_points": obj_points.cpu(), "obj_normals": obj_normals.cpu(),
-                                     "obj_valid_mask": torch.ones(obj_points.shape[:2], dtype=torch.bool),
-                                     "hand_points": hand_points.cpu(), "hand_normals": hand_normals.cpu(),
-                                     "hand_flow": hand_flow.cpu(),
-                                     "hand_valid_mask": torch.ones(hand_points.shape[:2], dtype=torch.bool)})
-            tokens = cm_out["cm_tokens"].to(self.device)
-            anchors = cm_out["cm_anchor_pos"].to(self.device)
-            effect = cm_out["pred_obj_flow"].mean(dim=1).to(self.device)
-            self.cm_context.copy_(torch.cat((tokens.flatten(1), anchors.flatten(1), effect), dim=-1))
+            if self.use_cmv2_context:
+                delta_time_s = float(self.cfg["sim"]["dt"]) * int(self.cfg["env"]["controlFrequencyInv"])
+                self.cm_context.copy_(self.cmv2(obj_points, obj_normals, hand_points,
+                                                 hand_normals, hand_flow, delta_time_s))
+            else:
+                with torch.no_grad():
+                    cm_out = self.oi_cm({"obj_points": obj_points.cpu(), "obj_normals": obj_normals.cpu(),
+                                         "obj_valid_mask": torch.ones(obj_points.shape[:2], dtype=torch.bool),
+                                         "hand_points": hand_points.cpu(), "hand_normals": hand_normals.cpu(),
+                                         "hand_flow": hand_flow.cpu(),
+                                         "hand_valid_mask": torch.ones(hand_points.shape[:2], dtype=torch.bool)})
+                tokens = cm_out["cm_tokens"].to(self.device)
+                anchors = cm_out["cm_anchor_pos"].to(self.device)
+                effect = cm_out["pred_obj_flow"].mean(dim=1).to(self.device)
+                self.cm_context.copy_(torch.cat((tokens.flatten(1), anchors.flatten(1), effect), dim=-1))
             obs = torch.cat((base_obs, self.cm_context), dim=-1)
         else:
             obs = base_obs
