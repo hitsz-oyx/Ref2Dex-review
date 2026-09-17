@@ -567,6 +567,19 @@ def test_v116_ddp_launcher_requires_explicit_gpu012():
         module._parse_gpus("0,1,3")
 
 
+def test_v116_ddp_launcher_uses_python_script_bootstrap():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module(
+        "cm_residual_v116_ddp_runner_bootstrap_test", tools / "run_cmv2_actor_distributed.py")
+    command = module._torchrun_command(["task=CmResidualGrabReferenceTransitionCmv2ActorV116"])
+    assert command[:6] == [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                           "--nproc_per_node=3", str(module.BOOTSTRAP)]
+    assert module.BOOTSTRAP.suffix == ".py" and module.BOOTSTRAP.is_file()
+    assert "-c" not in command
+
+
 def _build_v19_model(train_config, seed=42):
     vendor = str(Path("third_party/IsaacGymEnvs").resolve())
     if vendor not in sys.path:

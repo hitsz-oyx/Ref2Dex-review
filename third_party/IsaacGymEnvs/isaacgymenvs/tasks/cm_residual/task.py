@@ -1,6 +1,7 @@
 """Inspire residual task with a frozen DExplore teacher and Cm residual."""
 from __future__ import annotations
 
+import atexit
 from pathlib import Path
 import hashlib
 
@@ -296,6 +297,10 @@ class CmResidual(VecTask):
                                        "finger_rad": self.residual_finger_scale},
                     "sample_semantics": "executed_action_only_pre_to_post_physics_transition",
                 })
+            # Episode-end flushes cover the usual case.  This covers a normal
+            # runner exit or Ctrl-C between episode boundaries without changing
+            # the transition schema or rollout semantics.
+            atexit.register(self.close)
         self.episode_return = torch.zeros(self.num_envs, device=self.device)
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
@@ -867,6 +872,11 @@ class CmResidual(VecTask):
         self.reference_index = (self.reference_index + 1).clamp_max(self.reference.length - 1)
         self.compute_observations()
         self.compute_reward()
+
+    def close(self):
+        """Flush a partial CmBuffer shard at a normal task lifecycle boundary."""
+        if self.cm_buffer is not None:
+            self.cm_buffer.close()
 
     def step(self, actions):
         obs, reward, done, infos = super().step(actions)

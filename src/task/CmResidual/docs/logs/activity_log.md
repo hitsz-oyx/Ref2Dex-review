@@ -3936,3 +3936,43 @@ V1.15 每个 actor observation 经 legacy evaluator 触发 GPU→CPU→NumPy FK�
 **保护与回滚**
 
 回滚只撤销 V1.16 adapter/buffer/Task/model/config/registry/runner/test/docs 差异；V1.14/V1.15 config、legacy evaluator、buffer schema、checkpoint、reference、outputs 和用户未提交路径保留。DDP runner 在 GPU2 空闲前拒绝启动；capacity probe 只允许 3×128 的单 epoch 工程测量，3×256 或 manual-stop formal run 需以 probe 的显存/throughput/三 rank manifest 为依据另行启动。
+
+## 2026-09-18 00:51:18 +0800 — V1.16.1 DDP bootstrap 修复与 3×128 capacity probe 启动
+
+- timestamp: 2026-09-18 00:51:18 +0800
+- activity_id: ACT-20260918-005118-CMRESIDUAL-V1161-DDP
+- modification_version: V1.16.1
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L1（Task-local launcher/lifecycle 修复）；3×128 capacity probe 为 L3。
+- approval: user-approved
+- approval_basis: 用户明确要求只修正 torchrun bootstrap 与 CmBuffer graceful shutdown，再实际运行 3×128 一轮 capacity probe；并明确禁止继续改变 actor/Cm/reward/critic 结构。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: eb16ce8c8a3b48caee5dadb31d9c9489243a3e40
+- worktree_dirty: true（保留进入本次工作前的根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
+- scope: DDP runner 改由 active Python 的 `-m torch.distributed.run` 执行真实 Python bootstrap，不再把 Python executable 误传为 training script；Task 的 atexit cleanup 调用 CmTransitionBuffer.close() flush 未满 staging shard。保持 V1.16 的 actor 726→214、critic base68、frozen Cmv2、nominal GPU sweep、reward、buffer 固定 16 字段和 3×128 单 epoch预算不变。
+- run_id: cmresidual_v1161_ddp_3x128_capacity_20260918_005118
+- run_status: STARTED；预期输出目录为 `outputs/CmResidual/cmresidual_v1161_ddp_3x128_capacity_20260918_005118/`，其中 manifest/train log/metrics 将在 launcher 创建后登记为可导航链接。
+- conclusion: INCONCLUSIVE（启动前代码验证通过；capacity 运行尚未形成证据）。
+
+**文件**
+
+- [V1.16 最终计划](../plan/V1.16.md)、[DDP runner](../../tools/run_cmv2_actor_distributed.py)、[DDP bootstrap](../../tools/run_cmv2_actor_bootstrap.py) — 使用真实 `.py` training script 与当前 conda Python 的分布式 launcher。
+- [Task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[CmBuffer](../../cm_buffer.py) — 正常解释器退出或 Ctrl-C 时 flush 已追加、尚未满 shard 的 transition-only staging 数据。
+- [buffer tests](../../tests/test_cm_buffer.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — tail flush、bootstrap command 与状态入口。
+
+**原因**
+
+V1.16 的 launcher 将 Python executable 放在 torchrun 的 training-script 位置，而且此环境没有 PATH 中的 `torchrun` executable；两者都会阻止真实 DDP 启动。CmBuffer 的 episode-end flush 不覆盖在 episode 中间发生的正常退出。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_cmv2_actor_distributed.py src/task/CmResidual/tools/run_cmv2_actor_bootstrap.py src/task/CmResidual/cm_buffer.py third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py`：通过。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_cm_buffer.py src/task/CmResidual/tests/test_reference_contract.py -q -k 'cm_buffer or v116'`：`7 passed, 26 deselected`；覆盖 partial staging close 和真实 bootstrap script 合同。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m torch.distributed.run --help`：通过。此环境没有 PATH 中的 `torchrun` executable，故显式使用等价且可审计的 module 入口。
+- capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,2 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-005118-CMRESIDUAL-V1161-DDP --modification-version V1.16.1 --run-id cmresidual_v1161_ddp_3x128_capacity_20260918_005118`。仅在每张 GPU 使用显存不超过 4096 MiB 时启动；要求三份 rank buffer manifest、finite checkpoint/action/optimizer，结论仅为工程 capacity。
+
+**保护与回滚**
+
+回滚仅移除 bootstrap、runner command 变化、Task close hook、定向测试和本条记录；V1.16 算法、schema、训练变量、Cmv2 checkpoint、输入 reference 与已有 outputs 不变。正常 Python/KeyboardInterrupt cleanup 可落盘 partial shard；SIGKILL、进程崩溃或断电不承诺 tail recovery。

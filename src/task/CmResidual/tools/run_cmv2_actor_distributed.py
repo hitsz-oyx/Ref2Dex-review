@@ -21,6 +21,7 @@ REFERENCE = REPOSITORY_ROOT / "data/processed_data/cm_residual/reference_trackin
 SOURCE = REPOSITORY_ROOT / "data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/s1_airplane_lift/interaction_hand_inspire.pt"
 REFERENCE_SHA = "a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1"
 SOURCE_SHA = "19b110dc81c4928b4f3e6197d8549b011fd48a8157e75fd06668bd306dc396cf"
+BOOTSTRAP = Path(__file__).with_name("run_cmv2_actor_bootstrap.py")
 
 
 def _parse_gpus(value: str) -> tuple[int, ...]:
@@ -45,6 +46,14 @@ def _gpu_memory(gpus: tuple[int, ...]) -> dict[int, int]:
     if missing:
         raise RuntimeError(f"nvidia-smi did not report GPUs {sorted(missing)}")
     return {gpu: values[gpu] for gpu in gpus}
+
+
+def _torchrun_command(overrides: list[str]) -> list[str]:
+    """Use the active Python's torchrun module and a real training script."""
+    if not BOOTSTRAP.is_file():
+        raise FileNotFoundError(f"Missing DDP bootstrap script: {BOOTSTRAP}")
+    return [sys.executable, "-m", "torch.distributed.run", "--standalone",
+            "--nproc_per_node=3", str(BOOTSTRAP), *overrides]
 
 
 def parse_args() -> argparse.Namespace:
@@ -146,8 +155,7 @@ def main() -> None:
     env["PYTHONPATH"] = os.pathsep.join([
         "/home2/wyy/isaac-gym/isaacgym/python", str(REPOSITORY_ROOT), str(VENDOR_ROOT),
         env.get("PYTHONPATH", "")])
-    bootstrap = "import runpy, numpy as np; np.float=float; runpy.run_path(%r, run_name='__main__')" % str(VENDOR_ROOT / "isaacgymenvs/train.py")
-    command = ["torchrun", "--standalone", "--nproc_per_node=3", sys.executable, "-c", bootstrap, *overrides]
+    command = _torchrun_command(overrides)
     manifest.update(run_status="RUNNING", command=" ".join(shlex.quote(item) for item in command))
     _write_json(manifest_path, manifest)
     try:
