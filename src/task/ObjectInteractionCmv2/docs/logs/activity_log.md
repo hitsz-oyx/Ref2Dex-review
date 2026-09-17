@@ -210,3 +210,1283 @@
 - 未提交 `ObjectInteractionCm`、`Cm`、旧输出、OakInk2 原始数据或被忽略的 checkpoint/metrics；未执行 reset、revert、删除或 force push。
 - Git 分支、提交与远端可达性属于工程操作 `SUPPORTED`；OakInk2 pilot 的科研效果仍为 `INCONCLUSIVE`。
 - 回滚入口为父提交 `85e70edffa85d8d1698a3e8adb22e111033cb892`；若需删除远端分支或回退提交，必须另行确认，不能影响当前保留的用户改动。
+
+## 2026-09-15 09:19:29 +0000 — GRAB 与配对 DExplore 训练前只读核对
+
+- activity_id: `ACT-20260915-091929-CMV2-GRAB-DEXPLORE-PREFLIGHT`
+- timestamp: `2026-09-15 09:19:29 +0000`
+- modification_version: `V1.0.2`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问先用 GRAB 与配对 DExplore 数据训练、保持之前配置并比较性能是否存在歧义；本条只读核对现有数据、配置、历史指标和运行能力。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（存在本 Task 之外的 ObjectInteractionCm/Cm 用户改动和进行中的 OakInk2 index 运行）
+- scope: 只读识别可比 baseline、数据入口、训练预算、指标和当前 Cmv2 runner 缺口；不修改 plan、代码、配置、split、cache、checkpoint 或实验结论，不启动训练。
+
+**文件与证据**
+
+- [`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml`](../../../ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml) — 历史可比配置：GRAB/MANO 与 DExplore RL-Inspire 源概率 `0.5/0.5`、seed 42、batch 32、KNN=32、2 cm、train stride 1..10、eval stride 2、202300 steps、以 `val/obj/flow_epe_mm` 选 best。
+- [`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`](../../../ObjectInteractionCm/docs/logs/experiment_log.md) — V1.3 历史 best equal-source object EPE `6.516671 mm`（epoch 180 / step 132480），GRAB `7.290740 mm`、DExplore RL-Inspire `5.742603 mm`。
+- [`src/task/ObjectInteractionCm/tools/data/build_dexplore_rl_v1_3_cache.py`](../../../ObjectInteractionCm/tools/data/build_dexplore_rl_v1_3_cache.py) — V1.3 cache 依赖旧 V1.2.5 index/cache，并仍包含旧机器 `/home2/wyy/...` URDF 默认入口。
+- [`src/task/CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py`](../../../CmDecoderv2/tools/data/prepare_mano_actual_finetune_view.py) — 历史“paired view”实际是 MANO source 与 DExplore actual-Inspire target 的 decoder 微调数据合同，不等同于 V1.3 OI-Cm 的 source-balanced mixed index。
+- [`src/task/ObjectInteractionCmv2/train.py`](../../train.py) 与 [`src/task/ObjectInteractionCmv2/eval.py`](../../eval.py) — 当前仅支持 batch=2 的 synthetic/OakInk2 小型入口；尚无 YAML config、source-balanced split/stride、validation/best checkpoint、object EPE mm、DDP 或 offline-KNN cache adapter。
+- [`src/task/ObjectInteractionCmv2/docs/plan/V1.0.md`](../plan/V1.0.md) — final plan 允许后续 V1.0.k 真实 rigid cache 与同预算对照，但改变数据/运行语义和启动正式训练仍需明确本次范围。
+
+**发现与待确认项**
+
+- 历史路径 `data/processed_data/object_interaction_cm_dexplore_rl_v1_3/`、其 V1.2.5 source cache、paired decoder view 以及 V1.3 训练输出/checkpoint 当前均不存在；NAS 未找到迁移副本。当前本机 DExplore checkout 只有代码与 Inspire 资产，没有实际 RL trajectory 数据，旧 `/home2` 入口也不存在。
+- V1.3 mixed index 不是同一 object state/effect 的逐样本配对实验；真正的 paired decoder view 历史计数为 train 254、val 30、test 0，且当前数据目录同样缺失。需要用户明确“配对好的 DExplore”具体指哪一份现存数据路径。
+- “配置一致”可保持共同数据/优化合同，但 Cmv2 没有旧模型的 hand decoder/loss；公平主比较应限定为同 split、seed、source probability、stride、batch/step 预算和 `val/obj/flow_epe_mm`，不能直接比较两种模型的 total loss。
+- 若采用旧全预算，历史三卡运行量级约 202300 steps、数小时；建议先完成 adapter 与 2-step/小验证集 smoke，再从随机初始化执行完整同预算训练。当前另有 `oakink2_active_tool_segments_v1_1_20260915_090003` CPU 数据任务运行中，不应停止或覆盖。
+
+**原因**
+
+避免把 source-balanced mixed 数据误称为逐样本配对，或在 cache/checkpoint 已缺失、Cmv2 runner 尚不具备公平评估合同的情况下直接启动不可复现训练。
+
+**验证**
+
+- 只读核对 V1.0 final plan、Cmv2 train/eval 实现、V1.3 config/plan/activity/experiment、paired-view producer 和当前文件系统路径。
+- 检查 NAS `processed_data`、当前 DExplore checkout、旧 `/home2` 路径、GPU/进程状态；未找到历史 DExplore cache 或 paired view，未产生运行产物。
+- 结论：训练前歧义与缺失输入证据为 `SUPPORTED`；新模型相对旧 V1.3 的性能仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除本条 activity 增量即可；本轮没有代码、配置、数据或运行产物需要恢复。
+
+## 2026-09-15 09:35:58 +0000 — DExplore RL checkpoint 重导出前只读核对
+
+- activity_id: `ACT-20260915-093558-CMV2-DEXPLORE-RL-EXPORT-PREFLIGHT`
+- timestamp: `2026-09-15 09:35:58 +0000`
+- modification_version: `V1.0.2`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户提出使用 DExplore 的 RL checkpoint 重新导出并询问是否有歧义；本条仅核对 checkpoint、原始输入、运行环境和旧数据口径。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 ObjectInteractionCm/Cm 用户改动和进行中的 OakInk2 index 运行）
+- scope: 只读识别 canonical RL checkpoint、重导出依赖、配对样本口径、设备与可复现性边界；不修改 DExplore/Ref2Dex 代码、plan、配置、资产或数据，不启动 pilot 或全量导出。
+
+**文件与证据**
+
+- DExplore 仓库 `/home/wbcd/workspace/oyx_ws/dexplore` 的官方 GRAB Inspire 导出说明与 `data_processing/export_rl_batches.py` 均以 teacher checkpoint `checkpoint/inspire.pth` 启动 RL rollout；该文件 SHA256 为 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`，不同于 `inspire_distill.pth`。
+- RL player 的 export 路径使用 deterministic action，将实际模拟 Inspire DOF 写入列 `373:391`、实际 object state 写入列 `198:205`，其余 reference/contact/graph 字段沿用输入 canonical tensor。
+- [`src/task/ObjectInteractionCmv2/docs/plan/V1.0.md`](../plan/V1.0.md) 允许后续真实 rigid cache 对照；本次数据语义与长任务仍需另行确认。
+- [`src/task/ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml`](../../../ObjectInteractionCm/configs/active/dexplore_rl_v1_3.yaml) 与 [`src/task/ObjectInteractionCm/docs/logs/experiment_log.md`](../../../ObjectInteractionCm/docs/logs/experiment_log.md) 是旧 V1.3 配置和结果口径入口。
+
+**发现与待确认项**
+
+- checkpoint 选择可明确为 teacher `inspire.pth`；DExplore `dexplore-4090` 环境在补充其 conda `lib` 到 `LD_LIBRARY_PATH` 后可导入 Isaac Gym、PyTorch CUDA 和 `rl_games`，GPU 1–3 可用于后续运行，GPU 0 上存在外部进程，不应占用。
+- 原始 GRAB 1335 个序列与 subject/object 工具资产存在，但 canonical full-body tensor 尚未生成；DExplore 所需 object mesh 资产目录也缺失，可以从 GRAB 重建。
+- 当前机器和 NAS 均未找到 licensed SMPL-X model 文件；canonical 转换必须获得用户提供的 `SMPLX_NEUTRAL.npz` 所在模型目录，这是启动导出的实际阻塞项。
+- 旧 DExplore-compatible 口径会排除任何左手接触和 doorknob，得到 660 对；若导出全部 1335 条，则不再与旧 V1.3 数据口径等价。旧 cache/index 已缺失，无法保证逐条复原原 split，只能在确认后以 parent/sequence、seed 42 重建无 pair leakage 的确定性 split。
+- DExplore export 入口没有显式传递 seed，若执行应由 Task-local wrapper 固定 `--seed 42`，并在新目录写 checkpoint hash、输入清单、过滤规则和 manifest；不得覆盖旧路径或修改 DExplore 仓库。
+
+**原因**
+
+重导出会重建 canonical/asset 数据并启动 GPU 长任务，且过滤范围、split 和 checkpoint 解释会直接影响科研可比性；在缺少 SMPL-X 模型目录和用户确认前不能安全启动。
+
+**验证**
+
+- 只读检查 DExplore checkpoint payload/hash、GRAB export/conversion/filter 实现、原始数据与资产目录、conda 环境、GPU/进程状态和旧 Ref2Dex V1.3 配置。
+- 没有创建 run_id、运行目录、cache、asset 或 manifest；没有启动导出。
+- 结论：teacher checkpoint 与导出链路识别为 `SUPPORTED`；性能差异仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除本条 activity 增量即可；本轮没有代码、配置、数据或运行产物需要恢复。
+
+## 2026-09-15 09:40:34 +0000 — 本机 SMPL-X 模型定位与加载验证
+
+- activity_id: `ACT-20260915-094034-CMV2-SMPLX-LOCATE`
+- timestamp: `2026-09-15 09:40:34 +0000`
+- modification_version: `V1.0.2`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求先自行寻找本机已有 SMPL-X；本条只读搜索并验证模型可加载。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 ObjectInteractionCm/Cm 用户改动和既有诊断日志增量）
+- scope: 只读定位 SMPL-X 模型、解析已有软链接并在 CPU 上加载 male/female/neutral；不复制、移动、解压或修改模型，不启动数据转换和导出。
+
+**文件**
+
+- 模型父目录：`/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models`；DExplore `convert_grab.py --smplx_model_dir` 应传该父目录，由 `smplx.create(..., model_type="smplx")` 追加 `smplx/`。
+- 模型目录：`/mnt/ugreen_nas/storage/Ref2Dex_storage/shared_assets/body_models/smplx`，包含 male/female/neutral 的 `.npz` 与 `.pkl`，版本文件声明 SMPL-X `Version 1.0`。
+- 已有入口：`/home/wbcd/workspace/dex/retarget/InterAct/models/smplx` 是指向上述模型目录的可解析软链接；当前 `/home/wbcd/workspace/oyx_ws/InterAct` 尚未创建对应链接。
+- [`src/task/ObjectInteractionCmv2/docs/plan/V1.0.md`](../plan/V1.0.md) — 后续真实数据对照的现有 final plan 边界。
+
+**原因**
+
+确认此前报告的“缺少 SMPL-X”是搜索范围不足，而不是模型资产实际缺失；避免重复下载 licensed asset 或要求用户再次提供。
+
+**验证**
+
+- 精确文件搜索确认 `SMPLX_{MALE,FEMALE,NEUTRAL}.{npz,pkl}` 六个文件存在；三份 `.pkl` 大小约 `544 MB`，三份 `.npz` 大小约 `109 MB`。
+- 使用 `/home/wbcd/miniconda3/envs/dexplore-data/bin/python` 从模型父目录分别执行 `smplx.create`，male/female/neutral 均成功加载为 `SMPLX`，`v_template=(10475, 3)`、`NUM_JOINTS=54`、`num_betas=10`、`num_expression_coeffs=10`。
+- 未创建 run_id 或任何运行/数据产物；SMPL-X 依赖可用性结论为 `SUPPORTED`，重导出和性能结论仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除本条 activity 增量即可；本轮没有模型、代码、配置或数据变更需要恢复。
+
+## 2026-09-15 12:34:26 +0000 — GRAB→DExplore teacher RL 配对数据 pilot 启动
+
+- activity_id: `ACT-20260915-123426-CMV2-GRAB-DEXPLORE-PILOT-START`
+- timestamp: `2026-09-15 12:34:26 +0000`
+- modification_version: `V1.0.3`
+- type: `code / data / operation`
+- task_mode: `change`，pilot 运行开始后切换为 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 用户确认使用 DExplore teacher `inspire.pth`、seed 42、先 10 条 pilot 再全量导出、写入新目录，并在上一会话末要求继续；本会话按该已批准口径恢复执行。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 `ObjectInteractionCm` / `Cm` 用户改动；本 Task 尚有此前诊断记录增量）
+- run_id: `grab-dexplore-rl-pilot10-20260915T122717Z`
+- run_status: `STARTED`
+- scope: 新增 Task-local GRAB canonical 构建与配对验证工具；只读使用原始 GRAB、共享 SMPL-X、DExplore `c31f57f` 和 teacher checkpoint；先处理固定 10 条 pilot，验证后才启动全量。不得修改外部 DExplore/InterAct、旧 `ObjectInteractionCm`、`src/base`、原始数据或已有运行。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py`](../../tools/data/build_grab_dexplore_export.py) — 确定性 selection、GRAB canonical 构建、资产生成和 geometric/RL 配对验证。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 将本 Task 指针推进为 `V1.0.3`；同文件中旧 Task 的既有改动不属于本次范围。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/selection.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/selection.json) — 固定输入清单；当前规则实际得到 656 条，而历史 README 记录为 660 条，差异已显式保留。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/) — pilot 运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/run_manifest.json) — `STARTED` 运行合同。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/canonical/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/geometric/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/rl/` — PENDING。
+
+**原因**
+
+历史 660 计数无法由当前固定代码和原始数据复现；按 DExplore 实际左手 segment/LBS 映射重新扫描 1335 条后得到 656 条、排除 662 条左手接触与 17 条 doorknob。固定真实 selection 后再运行 pilot，可避免为匹配旧文档数字而改变数据语义。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/dexplore-data/bin/python -m py_compile src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py`：通过。
+- selection 完整扫描 `1335/1335`；`656 + 662 + 17 = 1335`，s1 男性 SMPL-X 与当前 DExplore 映射得到 778 个左手顶点。
+- checkpoint SHA256：`8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- 工程状态：运行中；科研性能结论：`INCONCLUSIVE`。
+
+**回滚**
+
+停止尚在运行的本 run_id 后，删除本次新增 Task-local 工具与独立 `V1.0.3` 数据目录，并将 `ObjectInteractionCmv2` 指针恢复为 `V1.0.2`；不触碰外部仓库、原始数据、旧 Task 或其他运行。
+
+## 2026-09-15 12:41:01 +0000 — 首次 GRAB→DExplore pilot 因坐标检查失败而终止
+
+- activity_id: `ACT-20260915-124101-CMV2-GRAB-DEXPLORE-PILOT-FAIL`
+- timestamp: `2026-09-15 12:41:01 +0000`
+- modification_version: `V1.0.3`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续 `ACT-20260915-123426-CMV2-GRAB-DEXPLORE-PILOT-START` 的已批准 pilot；按 final plan 的坐标异常停止条件终止，未进入 RL rollout。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `grab-dexplore-rl-pilot10-20260915T122717Z`
+- run_status: `FAILED`
+- scope: 终止当前独立 pilot，保留失败产物用于审计；不启动 teacher RL、全量 canonical 或全量 geometric 导出。
+
+**文件与产物**
+
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/) — 失败运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/run_manifest.json) — `FAILED` 终态与失败原因。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/commands.log`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T122717Z/commands.log) — canonical、geometric 与检查命令输出。
+- [`src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py`](../../tools/data/build_grab_dexplore_export.py) — 已移除错误的一次 forward 快捷假设，改为按 InterAct 语义重新执行变换后 SMPL-X forward。
+
+**原因**
+
+首次实现把 SMPL-X global orientation 当作绕世界原点的刚体旋转，导致 canonical body translation 错误；离线检查在接触帧得到 `min_tip_dist=0.491 m`。对照旧单序列链路后确认 object pose 一致而 human translation 最大差 `0.388889 m`，定位为实现错误。
+
+**验证**
+
+- canonical 10/10 与 geometric 10/10 均生成，但 `visualize_inspire_trajectory.py --check-only` 触发坐标警告。
+- 未生成 `rl/`，未启动 checkpoint rollout；工程结论：`INVALID_IMPLEMENTATION`，科研性能结论：`INCONCLUSIVE`。
+- 修正后必须在新的 run_id 中重新构建，不覆盖本失败目录。
+
+**回滚**
+
+失败目录保留为审计入口；如用户后续要求清理，可删除该独立目录，不影响原始 GRAB、外部仓库或其他运行。
+
+## 2026-09-15 12:41:37 +0000 — 修正后 GRAB→DExplore pilot 重启
+
+- activity_id: `ACT-20260915-124137-CMV2-GRAB-DEXPLORE-PILOT-RESTART`
+- timestamp: `2026-09-15 12:41:37 +0000`
+- modification_version: `V1.0.3`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 在原批准范围内修复首次 pilot 的实现错误后，以新目录重新执行同一固定 10 条序列；不改变 checkpoint、seed、selection 或数据合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `grab-dexplore-rl-pilot10-20260915T124102Z`
+- run_status: `STARTED`
+- scope: 重建修正后的 canonical 和 geometric 数据，坐标检查通过后才运行 teacher RL；仍只使用 GPU 3，不占用 GPU 1、2 的外部训练。
+
+**文件与产物**
+
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/) — 新 pilot 运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/run_manifest.json) — `STARTED` 运行合同。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/canonical/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/geometric/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/rl/` — PENDING。
+
+**原因**
+
+用新 run_id 保留失败证据，同时验证修正后的 SMPL-X 根变换是否恢复 hand/object 对齐。
+
+**验证**
+
+- 修正脚本再次通过 `py_compile`。
+- 运行状态：`STARTED`；工程与科研结论均待 pilot 终态。
+
+**回滚**
+
+可停止该 run_id 并删除独立新目录；失败 pilot、原始输入、外部仓库和其他运行不受影响。
+
+## 2026-09-15 12:50:39 +0000 — 修正后 GRAB→DExplore pilot 验证完成
+
+- activity_id: `ACT-20260915-125039-CMV2-GRAB-DEXPLORE-PILOT-COMPLETE`
+- timestamp: `2026-09-15 12:50:39 +0000`
+- modification_version: `V1.0.3`
+- type: `code / data / operation`
+- task_mode: `change` 与 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 延续 `ACT-20260915-124137-CMV2-GRAB-DEXPLORE-PILOT-RESTART` 的已批准范围；pilot 验证通过后按约定进入全量导出。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 `ObjectInteractionCm` / `Cm` 用户改动）
+- run_id: `grab-dexplore-rl-pilot10-20260915T124102Z`
+- run_status: `COMPLETED`
+- scope: 完成固定 10 条序列的 canonical、geometric 与 teacher RL 配对导出；补充终态中的 URDF FK 手物对齐检查，不改变 checkpoint、seed、selection、外部 DExplore 或原始数据。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py`](../../tools/data/build_grab_dexplore_export.py) — 修复 SMPL-X 根变换并加入终态配对与手物对齐验证。
+- [`src/task/ObjectInteractionCmv2/tools/data/run_grab_dexplore_rl.py`](../../tools/data/run_grab_dexplore_rl.py) — 使用 run-local 资产覆盖层、显式 seed 和可恢复 batch 执行 teacher rollout。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/) — 259 MiB pilot 运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/run_manifest.json) — `COMPLETED` 终态与依赖快照。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/manifest.json) — 逐序列配对统计和 schema 合同。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/validation.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/validation.json) — 10 条、3335 帧终态验证结果。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/commands.log`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/pilot10_20260915T124102Z/commands.log) — 全部执行命令及输出。
+
+**原因**
+
+pilot 需要先证明修正后的 canonical 坐标、确定性 geometric retarget 与 teacher rollout 能形成同序列、同帧且受保护字段不变的配对样本，才能安全扩大到全量。
+
+**验证**
+
+- `python -m py_compile ...build_grab_dexplore_export.py ...run_grab_dexplore_rl.py`：通过。
+- canonical、geometric、RL 均为 `10/10`；总计 3335 帧，shape 均为 `[T, 598]`，数值有限。
+- 10/10 序列的 object pose 与 Inspire DOF 均被 teacher rollout 更新；受保护列最大绝对差为 `0.0`。
+- `s1_airplane_fly_1` 接触帧 153 的最小指尖到物体中心距离为 `0.009514 m`，低于 `0.15 m` 阈值。
+- 工程数据合同结论：`SUPPORTED`；该 smoke 只证明导出实现有效，不构成模型效果结论，科研性能结论仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除独立 pilot 目录和本次新增 Task-local 工具，并将 `ObjectInteractionCmv2` 指针恢复为 `V1.0.2`；不触碰失败审计目录、原始 GRAB、外部 DExplore、旧 Task 或其他运行。
+
+## 2026-09-15 12:51:48 +0000 — 全量 GRAB→DExplore 配对导出开始
+
+- activity_id: `ACT-20260915-125148-CMV2-GRAB-DEXPLORE-FULL-START`
+- timestamp: `2026-09-15 12:51:48 +0000`
+- modification_version: `V1.0.3`
+- type: `data / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准先执行 10 条 pilot、通过后执行全量；`ACT-20260915-125039-CMV2-GRAB-DEXPLORE-PILOT-COMPLETE` 已记录 pilot 为 `SUPPORTED`。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 `ObjectInteractionCm` / `Cm` 用户改动）
+- run_id: `grab-dexplore-rl-full-20260915T125105Z`
+- run_status: `STARTED`
+- scope: 按已固定 selection 导出全部 656 条 canonical、geometric 和 teacher RL 配对轨迹；seed 42、teacher checkpoint 与 pilot 相同。GPU 1、2 被外部训练占用，本次仅使用空闲 GPU 3，不停止或抢占其他进程。
+
+**文件与产物**
+
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/selection.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/selection.json) — 固定 656 条输入清单。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/) — 全量运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json) — `STARTED` 运行合同。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/canonical/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/geometric/` — PENDING。
+- `data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/rl/` — PENDING。
+
+**原因**
+
+pilot 已验证坐标、shape、配对列保护与 teacher 导出合同，因此在不改变数据语义的前提下扩大到固定的完整兼容集合。
+
+**验证**
+
+- 初始化 manifest 声明 `num_selected=656`、`seed=42`、`devices=3`，checkpoint SHA256 为 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- 运行状态：`STARTED`；工程与科研结论待全量终态。
+
+**回滚**
+
+停止该 run_id 并删除独立全量运行目录；pilot、selection、原始输入、外部仓库和其他运行不受影响。
+
+## 2026-09-15 15:11:47 +0000 — 全量 GRAB→DExplore 配对导出完成
+
+- activity_id: `ACT-20260915-151147-CMV2-GRAB-DEXPLORE-FULL-COMPLETE`
+- timestamp: `2026-09-15 15:11:47 +0000`
+- modification_version: `V1.0.3`
+- type: `code / data / operation`
+- task_mode: `change` 与 `run-only/operation`
+- change_level: `L2 / L3`
+- approval: `user-approved`
+- approval_basis: 延续 `ACT-20260915-125148-CMV2-GRAB-DEXPLORE-FULL-START` 的已批准全量导出；实现层修复未改变 selection、数据语义、checkpoint、seed 或输出 schema。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`（保留本 Task 之外的 `ObjectInteractionCm` / `Cm` 用户改动；运行期间其他工作将 `ObjectInteractionCm` 指针推进至 `V1.4.5`，不属于本次范围）
+- run_id: `grab-dexplore-rl-full-20260915T125105Z`
+- run_status: `COMPLETED`
+- last_step: `N/A`（数据导出）
+- last_epoch: `N/A`（数据导出）
+- best_metric: `N/A`（数据导出）
+- checkpoint: DExplore teacher `/home/wbcd/workspace/oyx_ws/dexplore/checkpoint/inspire.pth`，SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`
+- scope: 完成固定 656 条 GRAB 序列的 canonical、geometric 与 teacher RL 配对导出和终态验证；只修改 Task-local 工具、当前版本指针和 Task activity，外部 DExplore、原始 GRAB、共享 `src/base`、旧 `ObjectInteractionCm` 与其他运行保持不变。
+
+**文件与产物**
+
+- [`src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py`](../../tools/data/build_grab_dexplore_export.py) — canonical 构建、selection、资产生成、配对验证和终态 manifest。
+- [`src/task/ObjectInteractionCmv2/tools/data/run_grab_dexplore_rl.py`](../../tools/data/run_grab_dexplore_rl.py) — run-local 资产覆盖层、显式环境路径、seed 42、单 GPU batch 与断点恢复。
+- [`src/task/ObjectInteractionCmv2/tools/__init__.py`](../../tools/__init__.py) 与 [`src/task/ObjectInteractionCmv2/tools/data/__init__.py`](../../tools/data/__init__.py) — Task-local 数据工具包入口。
+- [`docs/current_versions.yaml`](../../../../../docs/current_versions.yaml) — 本 Task 指针为 `V1.0.3`；同文件其他 Task 的既有增量不属于本次修改。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/) — 7.4 GiB 全量运行目录。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/run_manifest.json) — `COMPLETED` 终态、依赖版本和输出入口。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/manifest.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/manifest.json) — 656 条逐序列统计和配对 schema。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/validation.json`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/validation.json) — 165423 帧终态验证。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/commands.log`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/commands.log) — canonical、geometric、RL 和验证命令及退出状态。
+- [`data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/rl/_logs/`](../../../../../data/processed_data/object_interaction_cmv2/grab_dexplore_rl_v1_0_3/full_20260915T125105Z/rl/_logs/) — 21 个 teacher rollout batch 日志。
+
+**原因**
+
+ObjectInteractionCmv2 的真实 rigid 训练需要同一 GRAB 参考轨迹下的 geometric retarget 与 teacher-policy 实际轨迹配对；全量导出把已通过 pilot 的合同扩展到当前代码可复现的完整 DExplore 兼容集合。
+
+**验证**
+
+- canonical `656/656`、geometric `656/656`、teacher RL `656/656`，阶段均为 0 个数据失败；共 165423 帧。
+- 21/21 RL batch 日志均记录 seed 42 和指定 checkpoint，未发现 traceback、OOM 或 segmentation fault。
+- 每条 geometric/RL tensor shape 均为 `[T, 598]` 且数值有限；两侧序列集合与 canonical 精确一致。
+- 656/656 序列的 object pose `[198:205]` 和 Inspire DOF `[373:391]` 均发生 teacher 更新；其余受保护列最大绝对差为 `0.0`。
+- `s1_airplane_fly_1` 接触帧 153 的最小指尖到物体中心距离为 `0.017122 m`，低于 `0.15 m` 阈值。
+- 首次全量 RL 启动因子进程缺少 `LD_LIBRARY_PATH` 而在生成轨迹前停止；Task-local launcher 补齐 conda `lib/` 后从 0 条恢复，最终 21 个 batch 全部成功。
+- 首次全量验证因 selection 与扁平目录的字典序不同而误报集合不等；统一排序后对同一 656 元素集合完成逐条验证。
+- 工程数据合同结论：`SUPPORTED`；本结果证明数据导出实现和配对合同成立，不是 ObjectInteractionCmv2 模型效果证据，科研性能结论仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+删除独立 `full_20260915T125105Z` 运行目录和本次新增 Task-local 工具，并将 `ObjectInteractionCmv2` 指针恢复为 `V1.0.2`；不触碰 selection 之外的原始数据、外部 DExplore、旧 `ObjectInteractionCm`、共享 `src/base`、其他 Task 或其他运行。
+
+## 2026-09-16 15:59:45 +0000 — V1.2 定稿前 GRAB/MANO 输入只读核对
+
+- activity_id: `ACT-20260916-155945-CMV2-GRAB-INPUT-DIAGNOSTIC`
+- timestamp: `2026-09-16 15:59:45 +0000`
+- modification_version: `V1.0.3`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求读取前序会话后继续；读取已批准 cache 产物与前序指令，无代码实现或新实验。V1.2 仍为草稿，不推进 Task 指针。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- scope: 读取 1335 条 GRAB 的逐序列 manifest、frame_time、source_frame_id 和 split；每个 split 各抽一条序列核对刚体坐标一致性。仅追加本 activity；不修改代码、配置、GT、split、数据、架构或指导。
+- conclusion: `SUPPORTED`（检查覆盖内的数据兼容性）；训练效果 `INCONCLUSIVE`。
+
+**原因**
+
+前会话已将首轮范围明确为 GRAB-only、MANO-only、无铰接，实施前需要确认现有 cache 中可选出对应数据且不改变既有 split。此记录只保存新诊断证据，不记录协商中的 plan 草稿修改。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次诊断。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) — 待定稿执行边界。
+- [src/task/ObjectInteractionCm/docs/logs/activity_log.md](../../../ObjectInteractionCm/docs/logs/activity_log.md) — 独立 cache 运行的状态入口。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — 输入逐序列 cache。
+- [data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/index.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/index.json) — 仅用于核对继承的 GRAB split，不读取 Inspire 几何。
+
+**验证**
+
+解释器为 `/home/wbcd/miniconda3/envs/graspenv/bin/python`；通过只读内联 Python 遍历 `sequences/**/geometry/manifest.json`，仅筛选 `dataset=grab`，逐条读取 `frame_time.npy` 与 `source_frame_id.npy`，校验 `np.diff(source_frame_id)==4`、`np.isclose(np.diff(frame_time.astype(float64)), 1/30, atol=1e-5, rtol=0)`，并将 sequence→split 映射与原 index 精确比较。结果：
+
+| split | 序列 | 帧 | 连续 stride=1 训练对候选 |
+| --- | ---: | ---: | ---: |
+| train | 1068 | 327790 | 326722 |
+| val | 134 | 40896 | 40762 |
+| test | 133 | 37578 | 37445 |
+| 合计 | 1335 | 406264 | 404929 |
+
+- 时间差范围 `0.03333282470703125..0.033336639404296875 s`；404929 个原始帧号增量全部为 4，无缺失配对。
+- split missing/extra 均为 0；逐序列 `source=mano`、`object_representation=rigid_se3`、左右手顺序和每侧 2048 点均符合声明，失败 0。固定 surface correspondence 的左右 SHA256 组合只有 1 种，`cross_frame_fixed=true`。
+- 每个 split 的首条序列在首/中/末帧计算 `(obj_points_world - pose[:3,3]) @ pose[:3,:3]`；test/train/val 的 canonical 一致性最大误差分别为 `1.2066312e-7 / 1.0141586e-7 / 1.2148050e-7 m`。这只是 3 条坐标抽检，不是全量刚体几何证明。
+- 独立 cache finalize 负责全量 shape、finite、KNN 范围及覆盖；其结果单独记录在生产 Task。
+- 不运行训练，不生成 checkpoint、metrics.jsonl 或 train.log，不把数据兼容性当作模型效果证据。
+
+**回滚**
+
+仅撤销本次诊断 activity；源 cache、split、指导和架构无需恢复。
+
+## 2026-09-17 02:18:36 +0000 — V1.2 GRAB/MANO 有界训练 smoke 启动
+
+- activity_id: `ACT-20260917-021836-CMV2-GRAB-V12-SMOKE-START`
+- timestamp: `2026-09-17 02:18:36 +0000`
+- modification_version: `V1.2.1`
+- type: `experiment / operation`
+- task_mode: `run-only/operation`（V1.2 已按用户确认从 change 切换到有界验证）
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确将 [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) 定为最终版；该计划第 5 节授权至多 3 条 train 序列、8 optimizer steps、batch size 2 的真实训练 smoke。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `grab-mano-v1-2-smoke-20260917T021836Z`
+- run_status: `STARTED`
+- scope: 只读使用已完成的 GRAB/MANO cache 前 3 条 train 序列，GPU 1、seed 42、最多 8 steps；输出写 NAS 独立目录，不改变 cache、split、GT 或其他运行。
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml](../../configs/active/grab_mano_v1_2_smoke.yaml) — 固定 smoke 边界。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 输入 cache 终态。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次运行状态入口。
+- `outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/`：PENDING（NAS 路径；run_status=STARTED）。
+
+**原因**
+
+按最终计划验证真实数据到 swept 模型、优化器和运行 manifest 的接线；不把 smoke 当科研效果结论。
+
+**命令与验证**
+
+- `REF2DEX_GRAB_MANO_CACHE=data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4 REF2DEX_CMV2_OUTPUT_ROOT=/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2 /home/wbcd/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCmv2.train --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml --run-id grab-mano-v1-2-smoke-20260917T021836Z`。
+- 定向 pytest 7/7 已通过；真实运行尚待终态，工程结论 `INCONCLUSIVE`。
+
+**回滚**
+
+停止本 run 的进程并保留独立 NAS 输出和日志；不触碰输入 cache 或旧 checkpoint。
+
+## 2026-09-17 02:22:24 +0000 — V1.2 GRAB-only swept 交互实现
+
+- activity_id: `ACT-20260917-022224-CMV2-V12-IMPLEMENT`
+- timestamp: `2026-09-17 02:22:24 +0000`
+- modification_version: `V1.2.1`
+- type: `code / architecture / documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户于 2026-09-17 明确确认 [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) 为最终版；仅在该计划的 GRAB-only/MANO-only、刚体和有界验证边界实施。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- scope: Task-local V1.2 swept KNN32、GRAB/MANO stride=1 adapter、配置化训练/评估和定向测试；未修改旧 ObjectInteractionCm、公共 src/base、输入 cache、GT、split、指导、架构快照或正式训练配置。
+- conclusion: `SUPPORTED`（实现与有界工程验证）；科研效果 `INCONCLUSIVE`。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) — 用户确认后由 draft 标为 final。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py) — 完整有效手点流的分块 swept top-32、硬 2 cm mask、时间/距离边特征；旧静态模式保留供旧入口读取 checkpoint。
+- [src/task/ObjectInteractionCmv2/grab.py](../../grab.py) — GRAB/MANO 刚体 manifest/index 校验、原 split、固定 `(t,t+1)` 和当前物体坐标系监督。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) 与 [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml](../../configs/active/grab_mano_v1_2_smoke.yaml) — 配置化路径及 V1.2 硬约束、有界 smoke 参数。
+- [src/task/ObjectInteractionCmv2/train.py](../../train.py)、[src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py)、[src/task/ObjectInteractionCmv2/eval.py](../../eval.py)、[src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — 新配置入口、旧入口兼容、运行快照、checkpoint/resume 与固定 stride 评估。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_2_swept.py](../../tests/test_v1_2_swept.py) — 中途掠过、零流、tie、分块精确性、严格阈值、全 padding 和未来 GT 不进入模型输入。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 计划导航、实施记录和本 Task 指针 `V1.2.1`。
+
+**原因**
+
+首轮需要用候选 MANO 手点流线段相对当前物体的最短距离构造因果局部交互，同时保证对象全局 1024 点和 GRAB 既有刚体监督、split 不变。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：8 passed。
+- `git diff --check -- src/task/ObjectInteractionCmv2 docs/current_versions.yaml`：通过。
+- 真实 cache 每个 split 各 1 条读取检查：train/val/test 均为 `[1024,3]` 物体、`[4096,3]` MANO 手，`delta_time_s≈0.033333335`，检查范围内无缺失配对或非有限值；前 3 条 train 序列共有 1002 个有效配对、排除 0。
+- 后续 8-step smoke 及 resume 仅证明接线、梯度和重现性；评估结果不得作为性能成立证据。
+
+**回滚**
+
+仅撤销上述 V1.2 Task-local 新文件及局部修改，并把 ObjectInteractionCmv2 的版本指针恢复为 `V1.0.3`；保留既有用户改动、旧代码历史、输入 cache 和独立运行目录。
+
+## 2026-09-17 02:22:25 +0000 — V1.2 有界训练、恢复与评估终态
+
+- activity_id: `ACT-20260917-022225-CMV2-V12-SMOKE-COMPLETE`
+- timestamp: `2026-09-17 02:22:25 +0000`
+- modification_version: `V1.2.1`
+- type: `experiment / operation / diagnostic`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: V1.2 最终计划第 5 节只批准至多 3 条 train 序列、8 steps、batch size 2 的有界工程验证；未启动正式训练。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `grab-mano-v1-2-smoke-timed-20260917T022100Z`（主 smoke）；`grab-mano-v1-2-resume-fixed-20260917T022100Z`（恢复）；`grab-mano-v1-2-eval-smoke-20260917T022200Z`（验证评估）。
+- run_status: `COMPLETED`（以上三项）；`grab-mano-v1-2-resume-20260917T022100Z` 为 `FAILED`，原因是初版恢复把 CPU RNG 状态随 `map_location` 映射到 GPU，已修复并保留失败证据。初次 `grab-mano-v1-2-smoke-20260917T021836Z` 为 `COMPLETED`，后由同步计时的同参数运行复核。
+- conclusion: `SUPPORTED`（有界工程接线、终态与断点恢复）；GRAB 模型效果 `INCONCLUSIVE`。
+- scope: 只使用 GRAB/MANO cache 前 3 条 train 序列及 val 的 1 条、8 个配对；GPU 1，seed 42，所有输出写 NAS 独立目录，不覆盖旧运行。
+
+**命令与产物**
+
+- 训练：`REF2DEX_GRAB_MANO_CACHE=data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4 REF2DEX_CMV2_OUTPUT_ROOT=/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2 /home/wbcd/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCmv2.train --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml --run-id grab-mano-v1-2-smoke-timed-20260917T022100Z`。
+- 恢复命令在上述命令基础上增加 `--resume outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/step_4.pt`，改用独立 `run_id=grab-mano-v1-2-resume-fixed-20260917T022100Z`；失败的首次恢复同样独立留档。
+- 评估：`python -m src.task.ObjectInteractionCmv2.eval --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml --checkpoint outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/latest.pt --split val --max-sequences 1 --max-pairs 8 --run-id grab-mano-v1-2-eval-smoke-20260917T022200Z`，沿用上述环境变量及 graspenv 解释器。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/) — 主 smoke NAS 输出；[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/latest.pt) 与 [step_4.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-timed-20260917T022100Z/step_4.pt)。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-fixed-20260917T022100Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-fixed-20260917T022100Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-fixed-20260917T022100Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-fixed-20260917T022100Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-fixed-20260917T022100Z/latest.pt) — 恢复运行终态。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-20260917T022100Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-20260917T022100Z/run_manifest.json) 与 [train.log](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-resume-20260917T022100Z/train.log) — 初次恢复失败证据。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-eval-smoke-20260917T022200Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-eval-smoke-20260917T022200Z/run_manifest.json) 与 [metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-eval-smoke-20260917T022200Z/metrics.jsonl) — val 有界评估。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/run_manifest.json) 与 [metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-smoke-20260917T021836Z/latest.pt) — 第一次 8-step smoke 终态。
+
+**原因**
+
+按最终计划的有界工程验证范围检查真实 GRAB 数据接线、运行产物、固定 stride 评估和断点恢复；首次恢复错误需要保留失败证据并修复。
+
+**验证**
+
+- 主 smoke `last_step=8`、`last_epoch=0`、`best_metric=N/A`；1002 个候选配对、0 个排除，8 条训练指标均有限；同步计时首步 0.184 s、后续约 0.026 s/step，PyTorch GPU 峰值已分配显存约 270 MB。没有正式验证选择最佳 checkpoint；仅有 `latest.pt` 和第 4 步恢复点。
+- 从第 4 步 checkpoint 继续到第 8 步，连续运行与恢复运行的最终模型参数逐项 `torch.equal`，最大差 0.0；恢复运行 `last_step=8`，`best_metric=N/A`。
+- val 工程评估只读 1 条序列的 8 个配对：EPE 25.287 mm、RMSE 25.646 mm、zero-flow EPE 0.0261 mm；模型明显差于该基线，但训练仅 8 步，科研效果结论为 `INCONCLUSIVE`，不据此选择 checkpoint 或修改计划。
+- 初次恢复 `FAILED` 的 `last_step=0`（尚未训练）、无 metrics/checkpoint；错误为 `TypeError: RNG state must be a torch.ByteTensor`，修复 CPU RNG 恢复后重试成功。数据/GT/既有 checkpoint 未受影响。
+
+**回滚**
+
+停止相应 run（均已终止），按 `run_id` 独立保留或移除 NAS smoke/评估目录；不删除输入 cache、旧运行或用户已有修改。正式训练预算仍待单独确认。
+
+## 2026-09-17 02:24:04 +0000 — 显式 swept 配置的 V1.2 主 smoke 完成
+
+- activity_id: `ACT-20260917-022404-CMV2-V12-FINAL-SMOKE`
+- timestamp: `2026-09-17 02:24:04 +0000`
+- modification_version: `V1.2.1`
+- type: `experiment / operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认的 V1.2 最终计划第 5 节授权相同上限的工程 smoke；本次使用显式 `interaction_mode: swept` 的配置快照。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- run_id: `grab-mano-v1-2-final-smoke-20260917T022400Z`
+- run_status: `COMPLETED`
+- last_step: `8`
+- last_epoch: `0`
+- best_metric: `N/A`（无正式验证选择）
+- latest_checkpoint: [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/latest.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/latest.pt)
+- conclusion: `SUPPORTED`（8-step 工程接线）；科研效果 `INCONCLUSIVE`。
+- scope: 同一已完成 GRAB/MANO 输入、前 3 条 train 序列、GPU 1、seed 42、8 steps、batch size 2；NAS 独立新目录，未改变源 cache、GT、split 或旧运行。
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_2_smoke.yaml](../../configs/active/grab_mano_v1_2_smoke.yaml) — 显式 swept 配置。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/) — NAS 输出目录。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/run_manifest.json) — 终态和输入 hash。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/config.json](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/config.json) — 解析后配置快照。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/metrics.jsonl) 与 [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/train.log](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/train.log) — 8 步指标和日志。
+- [outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/step_4.pt](../../../../../outputs/ObjectInteractionCmv2/grab-mano-v1-2-final-smoke-20260917T022400Z/step_4.pt) — 恢复点；最新 checkpoint 见上。
+
+**原因**
+
+此前主 smoke 的快照依靠当时模型默认模式推断 swept；显式配置后复跑，使运行快照独立表达交互模式。
+
+**验证**
+
+- 配置快照包含 `interaction_mode=swept`；`run_manifest.json` 为 `COMPLETED`，8 条指标均有限，`valid_pairs=1002`、`dropped_pairs=0`。
+- 新 checkpoint 与前一次同步计时的 8-step smoke 在全部模型参数上逐项 `torch.equal`；后者从第 4 步恢复的最终参数也完全相同。
+- 仅是工程 smoke；不把 val 上差于 zero-flow 的前序 8-pair 评估视为模型效果已成立。
+
+**回滚**
+
+按本 `run_id` 保留或移除独立 NAS smoke 目录；不修改输入 cache、其他运行或历史 checkpoint。
+
+## 2026-09-17 02:25:43 +0000 — GRAB 时间与来源隔离合同补验
+
+- activity_id: `ACT-20260917-022543-CMV2-V12-GRAB-CONTRACT-TEST`
+- timestamp: `2026-09-17 02:25:43 +0000`
+- modification_version: `V1.2.1`
+- type: `code / diagnostic`
+- task_mode: `change`
+- change_level: `L0`（仅增加 Task-local 数据合同测试及模型说明文字）
+- approval: `auto`
+- approval_basis: V1.2 最终计划已批准本 Task 的定向测试；测试不改变训练行为或科研变量。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- scope: 为 V1.2 GRAB adapter 加合成 cache 合同测试，检查缺帧排除、GRAB/MANO 来源隔离、左右手顺序拒绝和当前物体坐标系监督；源 cache、模型参数和运行目录不变。
+- conclusion: `SUPPORTED`（定向工程合同）；科研性能仍 `INCONCLUSIVE`。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/tests/test_v1_2_grab_contract.py](../../tests/test_v1_2_grab_contract.py) — 合成四帧 cache 的缺帧、来源和坐标测试。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py) — 文档字符串注明静态和 swept 两种模式。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本条验证记录。
+
+**原因**
+
+正式训练前需要把数据来源隔离和缺帧配对限制变成可重复检查，而不只依赖真实 cache 的人工抽检。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：9 passed。
+- `git diff --check -- src/task/ObjectInteractionCmv2 docs/current_versions.yaml`：通过。
+- 合成测试没有写入正式 GRAB cache；真实 3 条 train 和 val/test 各 1 条读取检查仍见 `ACT-20260917-022224-CMV2-V12-IMPLEMENT`。
+
+**回滚**
+
+仅移除本次 Task-local 测试和模型说明文字；正式 cache、checkpoint、split、GT 和其他运行无需恢复。
+
+## 2026-09-17 02:26:33 +0000 — 有界 smoke 的零值参数保护
+
+- activity_id: `ACT-20260917-022633-CMV2-V12-SMOKE-BOUNDS`
+- timestamp: `2026-09-17 02:26:33 +0000`
+- modification_version: `V1.2.1`
+- type: `code / diagnostic`
+- task_mode: `change`
+- change_level: `L1`
+- approval: `auto`
+- approval_basis: V1.2 final plan 已授权 Task-local 有界工程验证；本次仅收紧 smoke 参数校验，不改变科学变量、数据合同或训练上限。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- scope: smoke 模式下 train/eval 的序列、步数、batch 和配对数必须为正且不超过批准上限；避免零值被解释为全量读取。
+- conclusion: `SUPPORTED`（参数边界检查）；科研效果 `INCONCLUSIVE`。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py) — smoke 训练预算正数与上限校验。
+- [src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — smoke 评估序列和配对数正数与上限校验。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次记录。
+
+**原因**
+
+评估循环原先把 `max_pairs=0` 当作无上限，需要显式拒绝该输入以维护有界验证授权。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：9 passed。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/{config,grab,model,train_grab,eval_grab,train,eval}.py`：通过。
+- `git diff --check -- src/task/ObjectInteractionCmv2 docs/current_versions.yaml`：通过。
+- 已完成 smoke 参数均为正且在上限内；不需要重跑已成功的 run。
+
+**回滚**
+
+仅撤销本次两处 Task-local 参数校验；不修改已完成的运行目录、cache 或 checkpoint。
+
+## 2026-09-17 02:28:16 +0000 — 正式训练提案与 GRAB 全 split 只读扫描
+
+- activity_id: `ACT-20260917-022816-CMV2-V12-FORMAL-PROPOSAL`
+- timestamp: `2026-09-17 02:28:16 +0000`
+- modification_version: `V1.2.1`
+- type: `code / documentation / diagnostic`
+- task_mode: `change`（提案配置与 checkpoint 间隔）；全量索引检查为 `read-only/diagnostic`
+- change_level: `L2`（正式训练预算仅提出，不执行）
+- approval: `user-approved`（V1.2 实施范围）；正式训练 `pending`
+- approval_basis: 用户确认 V1.2 最终计划及有界验证；该计划第 5 节要求正式训练另行确认，故提案配置位于 `configs/proposed/`，没有启动该配置。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `3d59e14a292e2ac846e031e44c017ecd1d6096ad`
+- worktree_dirty: `true`
+- scope: 提出 GRAB 全 train、最多 10000 steps、batch 2、GPU 1、seed 42、每 1000 steps 保存最新 checkpoint、训练后完整 val 固定 stride=1 评估的首轮探索性预算；只读扫描完整 train/val/test index，不启动正式训练或评估。
+- conclusion: `SUPPORTED`（当前 adapter 的全 split 输入合同）；正式训练效果 `INCONCLUSIVE`。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/configs/proposed/grab_mano_v1_2.yaml](../../configs/proposed/grab_mano_v1_2.yaml) — 待用户确认的可执行提案；尚非 active 配置。
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py) — 允许按配置间隔更新 latest checkpoint，smoke 默认每步保存。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) — 正式训练单独确认边界。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json) 与 [run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 只读输入。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次记录。
+
+**原因**
+
+有界 smoke 已证明工程接线；用户需要在批准长时训练前看到明确变量、资源、停止上限及完整输入覆盖，而不应由 Agent 默认为全量训练。
+
+**验证**
+
+- `load_grab_config` 对 proposed YAML 解析成功：只接受 GRAB/MANO、stride=1、swept KNN32、硬 2 cm；提案为 10000 steps、batch 2、GPU 1、seed 42、每 1000 steps checkpoint。
+- 只读构造 `GrabManoTransitions` 全量：train 1068 条、326722 对、排除 0；val 134 条、40762 对、排除 0；test 133 条、37445 对、排除 0。全量索引扫描约 5.58/0.87/0.56 s；没有加载训练张量或修改数据。
+- 10000 steps × batch 2 只覆盖约 6.1% 的 train 配对，故该预算仅是首轮探索性训练提案，不能作为完整一轮训练或最终模型结论。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：9 passed；`py_compile`、`git diff --check` 通过。
+
+**回滚**
+
+删除 proposed YAML 并撤销可配置 checkpoint 间隔即可；输入 cache、已完成 smoke、checkpoint、正式训练状态均无需恢复。
+
+## 2026-09-17 02:38:56 +0000 — V1.2 GRAB swept 实现代码单独提交
+
+- activity_id: `ACT-20260917-023856-CMV2-V12-CODE-COMMIT`
+- timestamp: `2026-09-17 02:38:56 +0000`
+- modification_version: `V1.2.1`
+- type: `operation / documentation`
+- task_mode: `change`
+- change_level: `L0`（仅按用户要求提交已验证代码）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“先把代码提交一下”；仅提交本 Task 本轮 V1.2 的 10 个代码、配置和测试文件，不带入已有未提交计划、指导、记录、其他 Task 或产物。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`（本次提交后 HEAD）
+- worktree_dirty: `true`（既有文档、版本指针和其他 Task 改动仍未提交）
+- commit: `a186aff` — `实现 ObjectInteractionCmv2 GRAB 手流 swept 训练入口`
+- scope: 提交 `config.py`、`configs/active/grab_mano_v1_2_smoke.yaml`、`eval.py`、`eval_grab.py`、`grab.py`、`model.py`、`tests/test_v1_2_grab_contract.py`、`tests/test_v1_2_swept.py`、`train.py`、`train_grab.py`；不推送远端。
+- conclusion: `SUPPORTED`（代码提交与工程测试）；科研效果 `INCONCLUSIVE`。
+
+**文件与入口**
+
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py)、[src/task/ObjectInteractionCmv2/grab.py](../../grab.py)、[src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py)、[src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — 本次提交主要实现。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.2.md](../plan/V1.2.md) 与 [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 工作区内已批准计划和时间线；此次代码提交没有暂存这些既有未提交文件。
+
+**原因**
+
+用户要求先将实现代码单独固定为可引用提交，同时保护工作区中大量并行任务改动。
+
+**验证**
+
+- 提交前 `git diff --cached --name-only` 仅列上述 10 个显式路径；`git diff --cached --check` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：9 passed。
+- `git show --stat --oneline --summary HEAD`：确认提交 `a186aff` 只有 10 个 V1.2 实现路径；分支相对 origin ahead 1，未推送。
+
+**回滚**
+
+如需回退本次代码提交，以 `a186aff` 的父提交为代码回滚入口；操作时仍须保留工作区现有未提交文件和其他 Task 改动，不执行全工作区 reset。
+
+## 2026-09-17 03:47:18 +0000 — V1.3 指导与 GRAB 位姿 GT 只读核对
+
+- activity_id: `ACT-20260917-034718-CMV2-V13-PREFLIGHT`
+- timestamp: `2026-09-17 03:47:18 +0000`
+- modification_version: `V1.2.1`（V1.3 计划仍为草案，Task 指针未推进）
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`（仅另写协商中的 plan 草稿）
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求按 V1.3 指导继续并明确 DexYCB 暂不参与；只读核对现有合同并起草同版本计划，不修改代码、配置、数据或研究结论。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: 核对 V1.3 指导、V1.2 模型和 GRAB cache pose/point correspondence；只读抽查各 split 两条、每条首/中/末相邻帧，并确认当前没有 ObjectInteractionCmv2 可直接消费的 DexYCB 双手 MANO2048 cache。V1.3 草稿变化不作为实施记录。
+- conclusion: `SUPPORTED`（所抽帧的直接 SE(3) GT 可重建点流）；全量 GT、噪声阈值和模型收益 `INCONCLUSIVE`。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/docs/指导/V1.3.md](../指导/V1.3.md) — 用户指定的新研究方向，未修改。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 协商中的 draft，尚无代码实施授权。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py) 与 [src/task/ObjectInteractionCmv2/grab.py](../../grab.py) — 现有 V1.2 模型、坐标变换和监督来源。
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/) — 只读 GRAB/MANO cache；[run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) 为已完成输入。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次诊断记录。
+
+**原因**
+
+V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存里的 `obj_pose_world` 与逐点流真实一致，并分清 DexYCB 其他 Task 的 Stage4 cache 与本 Task 输入合同。
+
+**验证**
+
+- 只读 NumPy 检查 `R_t^T R_(t+1)`、`R_t^T(p_(t+1)-p_t)` 重建下一帧当前物体坐标系物体点；train/val/test 各前两条，每条首/中/末相邻帧，最大误差分别小于 `1.23e-7 / 1.33e-7 / 1.22e-7 m`。此为 18 帧对抽检，不是全量证明。
+- `data/processed_data` 顶层没有本 Task 可直接使用的 DexYCB MANO2048 cache；根级 repo memory 所述 Stage4 DexYCB 属于另一数据合同，本轮用户已排除 DexYCB。
+- `git diff --check` 对本 Task 草稿与活动记录通过；未启动训练或正式评估。
+
+**回滚**
+
+如需撤销本次工作，仅删除 V1.3 plan 草稿和本活动条目；指导、cache、V1.2 代码/提交与既有运行无需恢复。
+
+## 2026-09-17 03:55:43 +0000 — GRAB train 刚体位移噪声筛查与 V1.3 阈值提案
+
+- activity_id: `ACT-20260917-035543-CMV2-V13-EFFECT-THRESHOLD-DIAGNOSTIC`
+- timestamp: `2026-09-17 03:55:43 +0000`
+- modification_version: `V1.2.1`（V1.3 plan 仍为待定稿草案）
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`（只更新协商中的 V1.3 plan 草稿）
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户明确要求从刚体位移筛查 `p_effect` 阈值；只读扫描现有 GRAB train pose/点，不修改 cache、代码、配置或训练结果。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: 对已完成 GRAB/MANO cache 的 1068 条 train 序列、326722 个相邻帧对计算 pose 推导的物体表面 RMS 位移；用固定 seed 的 train-only 对数分布拟合提出 effect 标签阈值。val/test 未参与拟合，未启动优化器。
+- conclusion: `SUPPORTED`（计算可行、阈值估计对分半抽样稳定）；“低运动群等于真实静止”仍 `INCONCLUSIVE`。
+
+**文件与证据入口**
+
+- [data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/index.json) 与 [run_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/run_manifest.json) — 只读输入。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 只在草稿中提出 `0.28 mm` 固定标签阈值和 train-only 估计方法，尚无实施授权。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次证据与回滚入口。
+
+**原因**
+
+指导要求避免把 `1e-6 m` 的数值非零当作真实效果；用户建议直接扫描刚体位移，因此需从训练集的 pose 运动分布提出可重复、训练前冻结的候选阈值。
+
+**验证**
+
+- 只读脚本对每条序列首帧固定 1024 物体点求均值/协方差，再由相邻 `T_t^-1 T_(t+1)` 精确计算这些点在刚体运动下的 RMS 位移；train 全量 `326722` 对，耗时约 `2.23 s`。中位数 `1.096624 mm`、25% 分位 `0.066373 mm`。
+- seed 42 抽 50000 对 `log10(d_rigid)` 拟合：2 分量 BIC `130346.88`，3 分量 BIC `127822.8`；3 分量最低运动群与下一群的后验交点 `0.27561 mm`。按序列随机分半重算交点 `0.2726/0.2811 mm`；草案拟冻结 `0.28 mm`，约 `41.0%` train 配对被标为 no-effect。
+- 第一次 sklearn 拟合因本机 OpenBLAS 默认线程数超限而退出（exit 139），没有写入仓库或 cache；以 `OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1` 对同一只读计算重试成功。
+- 此阈值来源于无人工静止标签的混合分布，是工程标签定义的提案；不宣称低运动群均为真实静止，也不据此判断模型效果。
+
+**回滚**
+
+仅撤销本条诊断记录与 V1.3 plan 草稿中的阈值提案；源 cache、已提交 V1.2 代码、旧运行及版本指针不变。
+
+## 2026-09-17 04:07:47 +0000 — V1.3 空间融合与直接刚体监督有界验证
+
+- timestamp: `2026-09-17 04:07:47 +0000`
+- activity_id: `ACT-20260917-040747-CMV2-V13-IMPLEMENTATION`
+- modification_version: `V1.3.1`
+- type: `code, data, experiment, diagnostic, documentation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户先以“可以”确认 V1.3 实施，随后明确“先不要加阈值”；最终计划已按后者修订。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: 仅 ObjectInteractionCmv2 的 GRAB/MANO V1.3 代码、配置、测试、文档及独立 NAS smoke；DexYCB 和既有 cache、旧运行不变。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 标记最终版，并删除新增 effect 阈值的标签与闸门。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py) — V1.3 attention pooling、竞争 token、空间 cross-attention、稳定旋转与直接 SE(3) loss；保留 V1.2 模型路径。
+- [src/task/ObjectInteractionCmv2/grab.py](../../grab.py) — V1.3 可选 pose GT 与重建 fail-fast，旧 reader 默认保持原合同。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py)、[src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py)、[src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — 新架构校验、checkpoint 隔离和运行接线。
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_smoke.yaml](../../configs/active/grab_mano_v1_3_smoke.yaml) — 3 序列、8 步、batch 2 的独立配置，无新增 effect 阈值。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_3_spatial.py](../../tests/test_v1_3_spatial.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_3_grab_pose.py](../../tests/test_v1_3_grab_pose.py) — token、空接触、梯度与 pose GT 回归。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 导航、版本指针与证据。
+
+**原因**
+
+按 V1.3 指导保留 swept hard 2 cm/32 邻居和 GRAB 30 Hz/stride 1，同时让接触位置经 token anchor、normal、mass 参与刚体预测；直接监督当前物体坐标系中的平移与旋转。用户取消新增 `p_effect` 阈值，因此沿用原 `1e-6 m` 数值非零标签；先前 0.28 mm 扫描仅是诊断，不进入训练。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：13 passed；`git diff --check` 通过。
+- 全量 cache 只读 pose/point 重建：train 1068 序列/326722 对、val 134/40762、test 133/37445；失配 0；最大误差分别为 `2.566e-7`、`1.756e-7`、`2.852e-7 m`。全量 pose 正交与行列式检查：三个 split 共 406264 帧，失败 0。
+- 训练终态：`run_id=cmv2_v13_smoke_final_20260917T040800Z`，`run_status=COMPLETED`，`last_step=8`，`last_epoch=0`，`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_smoke_final_20260917T040800Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_smoke_final_20260917T040800Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_smoke_final_20260917T040800Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_smoke_final_20260917T040800Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_smoke_final_20260917T040800Z/latest.pt)。第 8 步 flow EPE `18.04 mm`，token anchor 平均两两距离 `0.258 mm`；空间分离仍需正式训练验证。
+- val 终态：`run_id=cmv2_v13_val_final_20260917T040800Z`，`run_status=COMPLETED`，8 对、`last_step=null`、`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_val_final_20260917T040800Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_val_final_20260917T040800Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_val_final_20260917T040800Z/metrics.jsonl)，EPE `10.50 mm`。
+- test 终态：`run_id=cmv2_v13_test_final_20260917T040800Z`，`run_status=COMPLETED`，8 对、`last_step=null`、`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_test_final_20260917T040800Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_test_final_20260917T040800Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_test_final_20260917T040800Z/metrics.jsonl)，EPE `10.82 mm`。
+- 开发中早期 smoke `cmv2_v13_smoke_20260917T040258Z`、`cmv2_v13_smoke_20260917T040600Z`、`cmv2_v13_smoke_final_20260917T041000Z` 及各自 val/test 运行均为 `COMPLETED`、`INCONCLUSIVE`，已被最终运行取代；产物保留在独立目录。
+- 结论：`INCONCLUSIVE`。上述 8 步训练和 8 对评估仅是工程 smoke，不能支持模型优于基线或 token 已避免 collapse 的科研结论。
+
+**回滚**
+
+以当前 `base_commit` 的 V1.2 代码和 [V1.2 配置](../../configs/active/grab_mano_v1_2_smoke.yaml) 为入口；撤销 V1.3 Task-local 增量与本 Task 版本指针即可。旧 cache、checkpoint 和运行目录没有覆盖。
+
+## 2026-09-17 04:30:48 +0000 — V1.3.2 移除 p_effect 预测分支
+
+- timestamp: `2026-09-17 04:30:48 +0000`
+- activity_id: `ACT-20260917-043048-CMV2-V132-NO-EFFECT`
+- modification_version: `V1.3.2`
+- type: `code, experiment, documentation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确提出“不要预测这个 p_effect 了，网络架构先不加这个”；同一 V1.3 最终计划已按该指示修订。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: 仅 V1.3 GRAB/MANO 模型与训练合同；旧 V1.2 模型和历史运行保留。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 最终计划删除 `p_effect` 输出、参数和 BCE 项，明确新旧 V1.3 checkpoint 隔离。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py) — V1.3 融合层更名为 `fusion_head`，移除 `effect_logit`、概率输出和 effect loss；V1.2 路径不变。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py)、[src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_smoke.yaml](../../configs/active/grab_mano_v1_3_smoke.yaml) — 冻结 `v1_3_rigid_only` 架构标识，拒绝 effect 分支配置。
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py)、[src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — V1.3.2 运行版本、checkpoint 校验和三项损失日志。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_3_spatial.py](../../tests/test_v1_3_spatial.py) — 断言无 effect 参数、输出或 loss 项。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 导航、Task 指针与本条记录。
+
+**原因**
+
+当前研究阶段只学习结构化刚体位移；用户明确决定暂不建模交互发生概率。先前 `0.28 mm` 只读统计仍仅是历史诊断，不进入 V1.3.2 配置或损失。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：13 passed；`git diff --check` 通过。
+- 对照旧 V1.3.1 checkpoint 的 `architecture_version=v1_3`，新 checkpoint 为 `v1_3_rigid_only` 且 state dict 中 effect 参数数为 0；新训练日志无 `effect_loss`。旧 checkpoint 不能按新架构标识恢复。
+- 训练：`run_id=cmv2_v13_no_effect_smoke_20260917T043014Z`，`run_status=COMPLETED`，`last_step=8`，`last_epoch=0`，`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/latest.pt)。第 8 步 flow EPE `18.04 mm`。
+- val：`run_id=cmv2_v13_no_effect_val_20260917T043014Z`，`run_status=COMPLETED`，8 对，`last_step=null`，`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_val_20260917T043014Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_val_20260917T043014Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_val_20260917T043014Z/metrics.jsonl)，EPE `10.50 mm`。
+- test：`run_id=cmv2_v13_no_effect_test_20260917T043014Z`，`run_status=COMPLETED`，8 对，`last_step=null`，`best_metric=null`；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_test_20260917T043014Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_test_20260917T043014Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_test_20260917T043014Z/metrics.jsonl)，EPE `10.82 mm`。
+- 结论：`INCONCLUSIVE`；8 步工程 smoke 仅证明新合同可运行，不构成效果结论。
+
+**回滚**
+
+已提交的 V1.2 基线为 `a186aff3968ff9dcfe09182182f20a958d1b59f4`；撤销本 Task 的 V1.3 增量与版本指针可返回该基线。V1.3.1 运行及 checkpoint 留在独立目录，没有被覆盖。
+
+## 2026-09-17 04:36:08 +0000 — GRAB 正式训练只读预检
+
+- timestamp: `2026-09-17 04:36:08 +0000`
+- activity_id: `ACT-20260917-043608-CMV2-GRAB-TRAIN-PREFLIGHT`
+- modification_version: `V1.3.2`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问是否可以开始 GRAB 训练；本条仅只读核查，不启动正式训练。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: ObjectInteractionCmv2 V1.3.2 GRAB 正式训练准备状态。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 当前最终计划仅批准三序列、八步 smoke；正式训练需单独批准范围、设备、停止条件与评估。
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_smoke.yaml](../../configs/active/grab_mano_v1_3_smoke.yaml) — 当前唯一 V1.3 活跃配置是有界 smoke。
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py) 与 [src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — 全量训练可通过新配置调用；当前训练仅写 latest checkpoint，未在线验证或选择 best。
+- [outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_no_effect_smoke_20260917T043014Z/run_manifest.json) — V1.3.2 有界运行完成；不等于全数据训练授权。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本条诊断与交接入口。
+
+**原因**
+
+正式 GRAB 训练为 L3 长任务。需要先冻结全量 train 范围、batch/step、checkpoint、验证范围、设备和停止条件，并使运行 manifest 的 base_commit 可指向已提交的 V1.3.2 代码。
+
+**验证**
+
+- 输入 cache 已有 train 1068 序列/326722 有效相邻对、val 134/40762、test 133/37445；若 batch=16，单次覆盖 train 需 `ceil(326722/16)=20421` optimizer steps。
+- GPU1 当前显存占用 0 MiB，NAS `outputs/ObjectInteractionCmv2` 所在卷可用约 52 TiB；资源状态会在实际启动前复核。
+- V1.3.2 八步 smoke `run_status=COMPLETED`；当前 Task 代码仍未提交，HEAD 仅为 V1.2 基线 `a186aff`。没有启动正式训练，也没有正式训练 `run_id`。
+- 结论：`INCONCLUSIVE`（仅具备初步运行条件，尚未验证 batch=16 吞吐、全量训练效果或选择最佳 checkpoint）。
+
+**回滚**
+
+本次只读查询仅新增本条活动记录；无需撤销数据或运行产物。
+
+## 2026-09-17 04:40:52 +0000 — V1.3.3 GRAB 正式训练配置与终止机制
+
+- timestamp: `2026-09-17 04:40:52 +0000`
+- activity_id: `ACT-20260917-044052-CMV2-V133-FORMAL-PREP`
+- modification_version: `V1.3.3`
+- type: `code, experiment, documentation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户对单次全量 GRAB train、batch 16、GPU1、四小时上限、终态完整 val 及启动前定向提交的具体方案回复“可以”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a186aff3968ff9dcfe09182182f20a958d1b59f4`
+- worktree_dirty: `true`
+- scope: 仅 ObjectInteractionCmv2 的 V1.3 模型/读取器/训练评估入口、校准与正式配置及测试；不含其他 Task、用户指导文件和运行产物。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 增补已批准的 §7 训练预算、停止和评估范围。
+- [src/task/ObjectInteractionCmv2/model.py](../../model.py)、[src/task/ObjectInteractionCmv2/grab.py](../../grab.py)、[src/task/ObjectInteractionCmv2/config.py](../../config.py) — V1.3.2 刚体模型和 GT 读取实现及 V1.3.3 配置闸门。
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py)、[src/task/ObjectInteractionCmv2/eval_grab.py](../../eval_grab.py) — 从配置记录版本、检查全量 split、四小时优雅停止并保存终态 checkpoint。
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_smoke.yaml](../../configs/active/grab_mano_v1_3_smoke.yaml)、[src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_calibration.yaml](../../configs/active/grab_mano_v1_3_calibration.yaml)、[src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_formal.yaml](../../configs/active/grab_mano_v1_3_formal.yaml) — 分离既有 smoke、batch16 校准和全量正式配置。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_3_spatial.py](../../tests/test_v1_3_spatial.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_3_grab_pose.py](../../tests/test_v1_3_grab_pose.py) — V1.3 合同回归。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 导航、版本指针与记录；这些含先前未提交内容的文件本次不整体暂存。
+
+**原因**
+
+当前训练入口只有八步 smoke 配置。单轮全量训练需冻结 326722 对/20421 步合同，并在四小时预算耗尽时写出可恢复的 checkpoint 与 `STOPPED` 终态。用户已有其他未提交改动，故提交仅选当前 Task 的代码、配置、测试和本计划。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：13 passed。
+- 新配置解析：calibration `V1.3.3/3 序列/8 步`，formal `V1.3.3/全序列/20421 步`；`py_compile`、`git diff --check` 通过。
+- 尚未启动校准或正式训练；运行状态将另记 activity。结论为 `INCONCLUSIVE`。
+
+**回滚**
+
+本次改动提交后以该提交为 GRAB 训练代码锚点；返回既有 V1.2 基线可从 `a186aff3968ff9dcfe09182182f20a958d1b59f4` 重新检出。其他 Task 工作区与历史输出不动。
+
+## 2026-09-17 04:42:36 +0000 — batch16 校准完成并启动全量 GRAB 训练
+
+- timestamp: `2026-09-17 04:42:36 +0000`
+- activity_id: `ACT-20260917-044236-CMV2-V133-GRAB-RUNNING`
+- modification_version: `V1.3.3`
+- type: `experiment, operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准 [V1.3 最终计划 §7](../plan/V1.3.md) 的校准、全量训练与 val 范围。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a927ab19035194aac8165e39b3a55ccb27612812`
+- worktree_dirty: `true`（其他 Task、导航和活动记录仍有未提交改动；运行代码已定向提交）
+- scope: GRAB MANO V1.3.3 资源校准与全量 train；本阶段不读取 test。
+
+**命令与状态**
+
+- 校准命令：`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .../graspenv/bin/python -m src.task.ObjectInteractionCmv2.train_grab --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_calibration.yaml --run-id cmv2_v13_grab_b16_cal_20260917T044133Z`。
+- 校准：`run_id=cmv2_v13_grab_b16_cal_20260917T044133Z`，`run_status=COMPLETED`，`last_step=8`，`last_epoch=0`，`best_metric=null`，latest checkpoint 存在；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_b16_cal_20260917T044133Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_b16_cal_20260917T044133Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_b16_cal_20260917T044133Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_b16_cal_20260917T044133Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_b16_cal_20260917T044133Z/latest.pt)。8 步均 finite，计算单步 `0.045–0.197 s`，GPU 峰值 `1.89 GiB`。
+- 正式命令：`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .../graspenv/bin/python -m src.task.ObjectInteractionCmv2.train_grab --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_formal.yaml --run-id cmv2_v13_grab_full_20260917T044156Z`。
+- 正式训练：`run_id=cmv2_v13_grab_full_20260917T044156Z`，`run_status=RUNNING`；已核对 `valid_pairs=326722`、`dropped_pairs=0`，随机初始化且 `initial_checkpoint=null`。[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/train.log)。首个 checkpoint 在 step 1000，当前 `latest.pt` PENDING。
+
+**原因**
+
+用户已批准在完成资源校准后从随机初始化运行一轮全量 GRAB train；先提交代码，保证运行 manifest 的 `base_commit` 可追溯。
+
+**验证**
+
+- 提交 `a927ab19035194aac8165e39b3a55ccb27612812` 仅包含本 Task 的 11 个代码/配置/测试/计划文件，暂存差异与链接审计通过；其他 Task 工作区未带入提交。
+- 正式运行截至记录时已写出 step 183，loss finite；当前仅为进度证据，科研结论 `INCONCLUSIVE`。
+
+**回滚**
+
+运行代码锚点为 `a927ab19035194aac8165e39b3a55ccb27612812`。正式运行使用独立 NAS 目录；不会覆盖校准、V1.3.2 smoke 或输入 cache。
+
+## 2026-09-17 05:20:08 +0000 — 按用户要求停止 GRAB 训练并诊断曲线
+
+- timestamp: `2026-09-17 05:20:08 +0000`
+- activity_id: `ACT-20260917-052008-CMV2-V133-STOP-AND-DIAGNOSE`
+- modification_version: `V1.3.3`
+- type: `operation, diagnostic`
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户明确指示“先到此为止”，并询问 loss 与指标；已终止正在运行的进程，不启动 val。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a927ab19035194aac8165e39b3a55ccb27612812`
+- worktree_dirty: `true`
+- scope: GRAB 正式训练终止与已有训练日志的只读统计；未改训练代码、输入 cache、val/test。
+
+**命令与状态**
+
+- 原训练命令：`OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .../graspenv/bin/python -m src.task.ObjectInteractionCmv2.train_grab --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_formal.yaml --run-id cmv2_v13_grab_full_20260917T044156Z`。
+- `run_id=cmv2_v13_grab_full_20260917T044156Z`；`run_status=STOPPED`；`stop_reason=user_requested_stop`；`last_step=16644`，`last_epoch=0`，`best_metric=null`，最近可恢复 checkpoint 为 step 16000。进程已退出；step 16001–16644 只见于日志，未保存为 checkpoint。
+- [运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/train.log)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/latest.pt)。
+
+**原因**
+
+用户要求此刻停止并检查 loss 是否仍下降。现有训练入口没有信号处理器；发送 SIGINT 后进程退出，再根据实际 metrics 尾行和 checkpoint 内 step，将运行 manifest 原子更新为 `STOPPED`，保留停止原因与可恢复步数。
+
+**验证**
+
+- 已核对训练进程退出，metrics 共 16644 行、step 连续到 16644，全部检查的 loss/EPE 为 finite；checkpoint 内 `step=16000`、`position=256000`，架构标识为 `v1_3_rigid_only`。
+- 前 1000 步平均 total loss `0.118314`、训练 flow EPE `4.9671 mm`；最后 1000 个已记录 step 分别为 `0.089886`、`2.8460 mm`。但 step 10001–13000 与 13001–16000 的平均 loss 为 `0.090496` 与 `0.090440`，训练 EPE 为 `3.0594` 与 `3.0422 mm`，显示后段近乎平台，不能称为持续稳定下降。
+- 最后 1000 步平均旋转项 `0.076076`，约占 total loss 的大部分；平移项 `0.005593`，点流项 `0.008217`。这些均为训练数据上的归一化损失，EPE 单位为 mm。
+- 本轮未运行完整 val 或 test，`conclusion=INCONCLUSIVE`；训练曲线不能证明泛化或模型已优于零流基线。
+
+**回滚**
+
+没有改动已提交代码；保留独立运行目录和最近 checkpoint 以供后续明确授权的恢复或评估。无需删除历史产物。
+
+## 2026-09-17 05:28:51 +0000 — 双卡大规模 GRAB 训练只读预检
+
+- timestamp: `2026-09-17 05:28:51 +0000`
+- activity_id: `ACT-20260917-052851-CMV2-DUAL-GPU-PREFLIGHT`
+- modification_version: `V1.3.3`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户提出 GPU2/3、增大 batch 至半显存并询问歧义；本条仅核查现状，未启动新运行或修改训练语义。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a927ab19035194aac8165e39b3a55ccb27612812`
+- worktree_dirty: `true`
+- scope: ObjectInteractionCmv2 V1.3 GRAB 双卡训练可行性。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/train_grab.py](../../train_grab.py) — 当前单进程/单设备训练，没有 DDP 或双卡 sampler。
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_formal.yaml](../../configs/active/grab_mano_v1_3_formal.yaml) 与 [V1.3 最终计划](../plan/V1.3.md) — 已批准范围为 GPU1、batch16、单轮训练；新双卡预算尚未定稿。
+- [outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json) 和 [latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/latest.pt) — 已停止运行，最近可恢复 checkpoint 为 step 16000。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本条预检入口。
+
+**原因**
+
+双卡和目标半显存会改变训练实现与全局 batch；是否从 step 16000 续训、总训练轮数会改变数据曝光与 checkpoint 解释，必须先冻结在最终计划中。
+
+**验证**
+
+- GPU2、GPU3 各约 49140 MiB，总使用量当前 0 MiB；目标一半约 24570 MiB/卡，只能以短校准测量实际显存后选择 batch。
+- 现有 batch16 单卡校准峰值约 1.89 GiB，但不能据此外推双卡大 batch 的真实峰值。
+- 当前代码无双卡 DDP 路径；本次没有启动训练、评估或显存校准。结论 `INCONCLUSIVE`。
+
+**回滚**
+
+仅新增只读预检记录，无模型、配置、数据或运行产物变更。
+
+## 2026-09-17 05:33:19 +0000 — step 16000 的数据轮次与耗时核算
+
+- timestamp: `2026-09-17 05:33:19 +0000`
+- activity_id: `ACT-20260917-053319-CMV2-STEP16000-AUDIT`
+- modification_version: `V1.3.3`
+- type: `diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问现有 checkpoint 到底训练了多少轮、耗时多久；只读核算。
+- skills_used: `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a927ab19035194aac8165e39b3a55ccb27612812`
+- worktree_dirty: `true`
+- scope: GRAB V1.3.3 已停止运行的 checkpoint 轮次和墙钟耗时。
+
+**文件与证据入口**
+
+- [outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/metrics.jsonl)、[latest.pt](../../../../../outputs/ObjectInteractionCmv2/cmv2_v13_grab_full_20260917T044156Z/latest.pt) — 原始状态、逐步记录和 checkpoint。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本条诊断。
+
+**原因**
+
+区分 optimizer step 与完整数据轮次，并以运行创建时间及 checkpoint 文件实际保存时间计算墙钟耗时。
+
+**验证**
+
+- batch 16，train 有 326722 对；step 16000 对应 `16000×16=256000` 对，约 `0.78354` 个 epoch，完整一轮需 `ceil(326722/16)=20421` step。因此该 checkpoint 仍在第 1 轮，完整轮数为 0。
+- 运行 manifest 创建于 `2026-09-17T04:42:03+00:00`；step 16000 checkpoint 修改时间约 `05:17:58+00:00`，墙钟历时 `2155.7 s≈35 分 56 秒`。逐步计时字段只覆盖计算段，不能代替墙钟耗时。
+- 结论：`SUPPORTED`（轮次与耗时核算）；不涉及模型效果结论。
+
+**回滚**
+
+仅新增只读诊断记录，无训练进程或数据修改。
+
+## 2026-09-17 05:42:24 +0000 — V1.3.4 双卡 GRAB 训练入口与显存校准配置
+
+- timestamp: `2026-09-17 05:42:24 +0000`
+- activity_id: `ACT-20260917-054224-CMV2-V134-DDP-IMPLEMENTATION`
+- modification_version: `V1.3.4`
+- type: `code, experiment, documentation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户指定 GPU2/3、约半显存 batch，并明确四轮从新初始化训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `a927ab19035194aac8165e39b3a55ccb27612812`
+- worktree_dirty: `true`
+- scope: ObjectInteractionCmv2 V1.3 Task-local DDP 训练、显存校准与合同测试；DexYCB、旧运行和其他 Task 不变。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 已批准 §8，冻结双卡、四轮、从头训练与显存校准规则。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) — V1.3.4 DDP 配置闸门。
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_ddp_calibration.yaml](../../configs/active/grab_mano_v1_3_ddp_calibration.yaml) — GPU2/3、batch 候选与 24 GiB 峰值上限。
+- [src/task/ObjectInteractionCmv2/train_grab_ddp.py](../../train_grab_ddp.py) — 两卡 NCCL 训练、无重复分片、显存校准、checkpoint 和运行 manifest。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_3_ddp_contract.py](../../tests/test_v1_3_ddp_contract.py) — 分片不重复与物理 GPU 配置回归。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 导航、版本指针和活动记录；含已有未提交内容，暂不整体暂存。
+
+**原因**
+
+旧入口只支持单 GPU、batch16，不能直接满足两卡或显存目标。新入口按轮次拆分每个 GRAB train 配对，不补齐采样；先测真实峰值再冻结 per-GPU batch。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/`：15 passed。
+- `py_compile`、`git diff --check` 通过；GPU2/3 各约 48 GiB，校准/正式运行尚未启动。
+- 结论 `INCONCLUSIVE`；下一步以真实两卡校准验证 NCCL、峰值显存和配置选择。
+
+**回滚**
+
+本次新入口与旧单卡入口分离；撤销 V1.3.4 Task-local 增量可回到已提交的 `a927ab19035194aac8165e39b3a55ccb27612812`。其他 Task 工作区、旧 checkpoint 和输入 cache 不动。
+
+## 2026-09-17 07:05:42 +0000 — 双卡显存校准终态与正式 batch 冻结
+
+- timestamp: `2026-09-17 07:05:42 +0000`
+- activity_id: `ACT-20260917-070542-CMV2-V134-BATCH-CALIBRATED`
+- modification_version: `V1.3.4`
+- type: `experiment, code, documentation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准 GPU2/3、约半显存 batch、随机初始化四轮；batch 根据已批准计划 §8 的峰值 reserved 上限选择。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `42341bdc1fa371c800e75b62a9c293ec7c32ab3a`
+- worktree_dirty: `true`
+- scope: GRAB 双卡显存校准与 V1.3.4 正式配置；校准权重未用于正式训练。
+
+**文件与证据入口**
+
+- [src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_ddp_formal.yaml](../../configs/active/grab_mano_v1_3_ddp_formal.yaml) — 冻结每卡 batch160、全局 batch320、四轮与 GPU2/3。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md)、[src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_ddp_calibration.yaml](../../configs/active/grab_mano_v1_3_ddp_calibration.yaml) — 规则和校准输入。
+- 校准 `run_id=cmv2_v134_ddp_cal_20260917T054306Z`，`run_status=COMPLETED`，`last_step=6` 个候选、`last_epoch=null`、`best_metric=null`，无 checkpoint；[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_ddp_cal_20260917T054306Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_ddp_cal_20260917T054306Z/run_manifest.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_ddp_cal_20260917T054306Z/metrics.jsonl)。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml)、[src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 导航、指针与活动；含先前未提交内容，本次不整体暂存。
+
+**原因**
+
+用户要求按两卡约半显存设置较大 batch；显存需在真实张量的两卡 optimizer step 上测量，不能单凭 batch16 线性推算。仅提交当前 Task 的正式配置，使运行的代码和 batch 可追溯。
+
+**验证**
+
+- GPU2/3 batch160 的峰值 allocated 均 `18.60 GiB`、reserved 均 `21.72 GiB`；下一候选 batch192 的 reserved 均 `26.06 GiB`，超过 24 GiB 上限。因此按既定规则选 `160`；距离 22 GiB 目标下沿约 `0.28 GiB`。
+- 解析正式配置为 `V1.3.4`、两卡、每卡 batch160、四轮；每轮 `ceil(163361/160)=1022` optimizer steps，四轮共 `4088` 步。
+- 结论 `SUPPORTED`（显存选择），模型效果仍 `INCONCLUSIVE`。
+
+**回滚**
+
+校准输出和新正式配置独立，旧 checkpoint 与输入 cache 未覆盖；代码锚点为 `42341bdc1fa371c800e75b62a9c293ec7c32ab3a`。
+
+## 2026-09-17 07:07:32 +0000 — GPU2/3 四轮 GRAB 训练启动
+
+- timestamp: `2026-09-17 07:07:32 +0000`
+- activity_id: `ACT-20260917-070732-CMV2-V134-DDP-START`
+- modification_version: `V1.3.4`
+- type: `experiment, operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户指定 GPU2/3、半显存目标、四轮、随机初始化；校准按最终计划 §8 冻结 batch160。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `0cd030831307ea1d97223a00e69f37129acdae44`
+- worktree_dirty: `true`（其他 Task 与导航记录仍有未提交内容，运行代码/配置已定向提交）
+- scope: GRAB MANO train 全量、DDP GPU2/3、从新初始化四轮；本阶段不读 val/test。
+
+**命令与状态**
+
+- `CUDA_VISIBLE_DEVICES=2,3 OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 .../graspenv/bin/torchrun --standalone --nproc_per_node=2 -m src.task.ObjectInteractionCmv2.train_grab_ddp --config src/task/ObjectInteractionCmv2/configs/active/grab_mano_v1_3_ddp_formal.yaml --run-id cmv2_v134_grab_ddp4_20260917T070638Z`，输入 cache/output root 环境变量见解析配置快照。
+- `run_id=cmv2_v134_grab_ddp4_20260917T070638Z`，`run_status=RUNNING`，`initial_checkpoint=null`，计划 `4×1022=4088` 步；已核对 `valid_pairs=326722`、`dropped_pairs=0`。[运行目录](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z)、[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/run_manifest.json)、[config.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/config.json)、[metrics.jsonl](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/metrics.jsonl)、[train.log](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/train.log)。首个 `latest.pt` 在 step 200，当前 PENDING。
+
+**原因**
+
+按用户确认的 V1.3.4 计划从随机初始化运行四轮，使用两张指定 GPU 和已校准的每卡 batch160。
+
+**验证**
+
+- 启动后 manifest 显示 base commit `0cd0308`、两卡、全局 batch320；step17 的显存峰值 reserved 约 `21.71 GiB/卡`，与校准一致；loss finite。训练结果尚未完成，`conclusion=INCONCLUSIVE`。
+
+**回滚**
+
+独立 NAS 运行目录；不覆盖旧单卡 run、旧 checkpoint 或源 cache。代码与配置入口是 `0cd030831307ea1d97223a00e69f37129acdae44`。
+
+## 2026-09-17 07:32:51 +0000 — 归档提交 Cmv2 历史导出工具与研究文档
+
+- timestamp: `2026-09-17 07:32:51 +0000`
+- activity_id: `ACT-20260917-073251-CMV2-ARCHIVE-COMMIT`
+- modification_version: `V1.3.4`
+- type: `operation, documentation`
+- change_level: `L0`（仅整理和提交既有工作区内容；原实现影响等级见各历史活动）
+- approval: `user-approved`
+- approval_basis: 用户明确要求将其他代码分门别类提交。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `337b054`
+- worktree_dirty: `true`
+- scope: 归档本 Task 既有 GRAB→DExplore 数据导出工具、指导、计划草稿/最终计划、拟议配置和文档导航；不执行草稿计划或改变正在运行的四轮训练。
+
+**文件**
+
+- `src/task/ObjectInteractionCmv2/` — 本次提交的 Task 内数据工具和文档；逐项路径以提交 diff 为准。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.3.md](../plan/V1.3.md) — 当前最终计划；V1.1 草稿仍保留草稿状态。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 历史操作与训练状态入口。
+- [outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/run_manifest.json) — 正在运行的训练清单；未纳入 Git。
+
+**原因**
+
+按用户要求将先前已实现但尚未入库的 Task-local 工具与计划文档独立归档；训练继续使用启动时的 `0cd0308` 代码锚点。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/tools/data/build_grab_dexplore_export.py src/task/ObjectInteractionCmv2/tools/data/run_grab_dexplore_rl.py`：通过。
+- Task 测试与暂存差异链接审计在提交前核对；本次提交不产生新的模型效果结论，仍为 `INCONCLUSIVE`。
+
+**回滚**
+
+本次提交作为独立 Git commit，可按提交范围反向应用；正在运行的独立训练目录、输入 cache 与旧 checkpoint 不变。
