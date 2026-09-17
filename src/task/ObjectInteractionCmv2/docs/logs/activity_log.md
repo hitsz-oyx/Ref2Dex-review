@@ -1606,3 +1606,43 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 停止该独立 PID/运行即可；新运行根与旧 full/partial/pilot 根隔离，不覆盖原始 annotation、Stage3、旧 cache、训练输出或 checkpoint。终态将以本 activity 为唯一状态入口补充。
+
+## 2026-09-17 13:54:26 +0000 — 部分 OakInk2 高分辨率三域 smoke 终态
+
+- timestamp: `2026-09-17 13:54:26 +0000`
+- activity_id: `ACT-20260917-135426-CMV2-V142-PARTIAL-THREE-DOMAIN-SMOKE`
+- modification_version: `V1.4.2`
+- type: `experiment, operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“拿一部分来试试看”；范围限定为三域各一条 sequence、固定 seed、2 optimizer steps。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `196ade2d32e1047c6ecab32b4debaa31b129cac7`
+- worktree_dirty: `false`
+- run_id: `cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z`
+- run_status: `COMPLETED`
+- scope: 只读使用 GRAB/ARCTIC MANO 4096 cache 和全量回填中已完成的一条 OakInk2 Inspire 20270 cache，验证三域 loader、变长 collate、V1.3 刚体模型前反向与 loss；不修改正式 cache、split、模型、V1.3 或旧 Task。
+- conclusion: `SUPPORTED`（工程 smoke）；科研效果结论 `INCONCLUSIVE`。
+
+**命令与状态**
+
+- 以 [V1.4 smoke 配置](../../configs/active/three_domain_v1_4_smoke.yaml) 解析同一 2-step 合同，因四张 GPU 均有外部任务或 OakInk2 回填占用，运行设备改为 CPU；这不验证 GPU 性能。
+- [临时运行目录](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z)、[run_manifest.json](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/run_manifest.json)、[metrics.jsonl](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/metrics.jsonl)、[train.log](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/train.log) 与 [latest.pt](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/latest.pt)。
+- runner 终态：`last_step=2`、`last_epoch=1`、`best_metric=null`、`source_counts={grab: 4}`；replacement sampler 的两个随机 batch 恰好均抽到 GRAB，因此这些 step loss 不能作为三域效果样本。
+
+**原因**
+
+正式 OakInk2 20270 cache 尚在运行，用户要求先用已完成的部分验证接口。为了不抢占 GPU2 或干扰其他 GPU 任务，采用 CPU 运行。NAS canonical `outputs/ObjectInteractionCmv2` 对当前用户没有写权限，两个启动尝试均在创建运行目录前退出，故使用本机临时目录保存本次小型 smoke；没有写入或覆盖 NAS 正式 output/cache。
+
+**验证**
+
+- dataset 已读取 `grab=219`、`arctic=593`、`oakink2=1236` 个有效 transition，合计 2048；variant 行数为 `mano=812`、`inspire_f1=1236`。
+- 两个 runner step 的 loss 均 finite：`1.8631`、`1.4577`；checkpoint 记录 `v1_3_rigid_only`、`step=2`。
+- 另行构造一个必含 `grab/arctic/oakink2` 的真实 batch 并执行前向、loss、反向：hand batch shape `[3,20270,3]`，valid hand counts `[4096,4096,20270]`，loss `4.4040` finite。这直接覆盖了 MANO/Inspire 混合 padding 的模型路径。
+- 该结果只证明数据/模型接线；不验证泛化、跨域效果或 GPU 吞吐。全量 OakInk2 回填仍 `STARTED`，当时 `30/1849` 段、`16567` 帧、`failures=[]`。
+
+**回滚**
+
+本次为独立本机临时 smoke；移除其临时目录即可回收小型 checkpoint/日志，不影响 NAS cache。正式训练仍须等待高分辨率 OakInk2 cache 完成并另行确定 GPU、预算、验证指标。
