@@ -142,6 +142,30 @@ def test_physical_residual_is_bounded_and_keeps_mimic_contract():
     torch.testing.assert_close(targets[0, [16, 17]], targets[0, 15] * torch.tensor([0.6, 0.8]))
 
 
+def test_grab_reference_residual_uses_manifest_mimic_and_absolute_target():
+    module = _action_mapping_module()
+    root = Path("data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift")
+    with np.load(root / "reference.npz", allow_pickle=False) as data:
+        base = torch.from_numpy(data["q_native_ref"][1:2].copy())
+    base[:, :6] = torch.tensor([-.14, -.93, 1.06, 1.59, .07, -1.21])
+    mapping = json.loads((root / "manifest.json").read_text())["mimic_mapping"]
+    scales = tuple(mapping[str(index)] for index in (7, 9, 11, 13, 16, 17))
+    lower = torch.tensor([-3.] * 6 + [0.] * 12)
+    upper = torch.tensor([3.] * 18)
+    zero, details = module.compose_reference_residual(
+        base, torch.zeros_like(base), lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(zero, base, atol=1e-6, rtol=0)
+    assert details["saturation"].sum() == 0
+    action = torch.zeros_like(base)
+    action[:, 12] = 1
+    changed, _ = module.compose_reference_residual(
+        base, action, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(changed[0, 13], changed[0, 12] * 1.18)
+    assert changed[0, 13] > base[0, 13]
+
+
 def test_contact_selection_uses_net_force_tensor():
     module = _observation_module()
     net_force = torch.zeros(2, 20, 3)

@@ -118,6 +118,7 @@ isaacgym_task_map = {
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
     "CmResidual": CmResidual,
+    "CmResidualGrabRetargeted": CmResidual,
     "CmResidualDexYCBBase": CmResidual,
     "CmResidualDexYCBCmv2ActionEval": CmResidual,
     "CmResidualDecoderBank": CmResidual,

@@ -87,3 +87,36 @@ def compose_physical_residual(
         "applied_delta": applied,
         "saturation": saturation,
     }
+
+
+def compose_reference_residual(base_targets: torch.Tensor, residual_action: torch.Tensor,
+                               lower: torch.Tensor, upper: torch.Tensor, *,
+                               translation_scale_m: float, rotation_scale_rad: float,
+                               finger_scale_rad: float,
+                               mimic_scales: tuple[float, ...]) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Add a bounded residual to an absolute retargeted native PD target."""
+    for name, value in (("base_targets", base_targets), ("residual_action", residual_action),
+                        ("lower", lower), ("upper", upper)):
+        _validate(name, value)
+    if ((base_targets < lower - 1e-5) | (base_targets > upper + 1e-5)).any():
+        raise ValueError("Retargeted base target exceeds native joint limits")
+    if len(mimic_scales) != len(MIMIC_NATIVE):
+        raise ValueError("Retargeted mimic scale count mismatch")
+    def couple(value):
+        result = value.clone()
+        independent = result[..., list(INDEPENDENT_NATIVE)]
+        for mimic, source, scale in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+            result[..., mimic] = independent[..., source] * float(scale)
+        return result
+    if not torch.allclose(couple(base_targets), base_targets, atol=1e-5, rtol=0):
+        raise ValueError("Retargeted base target violates mimic coupling")
+    residual = residual_action.clamp(-1.0, 1.0)
+    requested = torch.zeros_like(base_targets)
+    requested[..., :3] = residual[..., :3] * float(translation_scale_m)
+    requested[..., 3:6] = residual[..., 3:6] * float(rotation_scale_rad)
+    requested[..., list(INDEPENDENT_NATIVE)] = residual[..., list(INDEPENDENT_NATIVE)] * float(finger_scale_rad)
+    unclamped = couple(base_targets + requested)
+    targets = unclamped.clamp(lower, upper)
+    saturation = (targets != unclamped).to(targets.dtype)
+    return targets, {"base_targets": base_targets, "requested_delta": requested,
+                     "applied_delta": targets - base_targets, "saturation": saturation}

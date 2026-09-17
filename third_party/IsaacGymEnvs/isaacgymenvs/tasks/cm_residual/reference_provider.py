@@ -18,6 +18,7 @@ from .dexplore_observation import (
     quat_rotate,
     quat_to_exp_map,
 )
+from .contract import matrix_pose
 
 
 REFERENCE_DIM = 428
@@ -216,10 +217,13 @@ class ReferenceProvider:
         if missing:
             raise ValueError(f"FK does not contain Isaac Gym bodies: {sorted(missing)}")
 
-        frame_ids = (self.frame_start - 1, self.frame_start, self.frame_start + 1)
+        frame_ids = ((0, 0, 1) if getattr(self, "retargeted", False)
+                     else (self.frame_start - 1, self.frame_start, self.frame_start + 1))
         transforms = []
         for frame_id in frame_ids:
-            links = kinematics.link_transforms_native(self._source[frame_id, 373:391].numpy())
+            native = (self.robot_q[min(max(frame_id, 0), self.length - 1)].cpu().numpy()
+                      if getattr(self, "retargeted", False) else self._source[frame_id, 373:391].numpy())
+            links = kinematics.link_transforms_native(native)
             transforms.append(np.stack([links[name] for name in names]))
         previous, current, following = transforms
         position = current[:, :3, 3]
@@ -234,3 +238,61 @@ class ReferenceProvider:
         if not all(torch.isfinite(value).all() for value in values):
             raise RuntimeError("Non-finite reset FK state")
         return values
+
+
+class RetargetedReferenceProvider(ReferenceProvider):
+    """Use the validated retargeted GRAB wrist and finger trajectory as PD targets."""
+
+    def __init__(self, *args, urdf_path: str | Path, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.training_eligible or self.metadata.get("split") != "train":
+            raise ValueError("Retargeted base requires a training-eligible train reference")
+        if (self.metadata.get("schema_name") != "ref2dex_cmresidual_reference_v1"
+                or float(self.metadata.get("effective_fps", 0)) != FPS):
+            raise ValueError("Retargeted reference schema/FPS mismatch")
+        with np.load(self.path, allow_pickle=False) as data:
+            fingers = np.asarray(data["q_native_ref"], dtype=np.float64)
+            wrists = np.asarray(data["wrist_pose_world_ref"], dtype=np.float64)
+            objects = np.asarray(data["object_pose_world_ref"], dtype=np.float64)
+            object_twists = np.asarray(data["object_twist_world_ref"], dtype=np.float64)
+            link_poses = np.asarray(data["link_pose_world_ref"], dtype=np.float64)
+        count = len(fingers)
+        if (fingers.shape != (count, 18) or wrists.shape != (count, 4, 4)
+                or objects.shape != (count, 4, 4) or object_twists.shape != (count, 6)
+                or link_poses.shape[:2] != (count, 25)
+                or count < 2 or count != int(self.metadata.get("frame_count", -1))):
+            raise ValueError("Retargeted reference shape/frame count mismatch")
+        if not all(np.isfinite(x).all() for x in (fingers, wrists, objects, object_twists, link_poses)):
+            raise ValueError("Non-finite retargeted reference")
+        from scipy.spatial.transform import Rotation
+        from src.task.CmDecoderv2.kinematics import InspireKinematics
+        kinematics = InspireKinematics(urdf_path)
+        roots = wrists @ np.linalg.inv(kinematics.wrist_pose_from_native(np.zeros(18)))
+        native = fingers.copy()
+        native[:, :3] = roots[:, :3, 3]
+        native[:, 3:6] = Rotation.from_matrix(roots[:, :3, :3]).as_euler("XYZ")
+        error = max(np.abs(kinematics.wrist_pose_from_native(row) - pose).max()
+                    for row, pose in zip(native, wrists))
+        if error > 1e-5:
+            raise ValueError(f"Retargeted wrist FK mismatch: {error:.3e}")
+        device = self.device
+        self.robot_q = torch.as_tensor(native, dtype=torch.float32, device=device)
+        self.robot_dq = torch.zeros_like(self.robot_q)
+        self.robot_dq[1:] = (self.robot_q[1:] - self.robot_q[:-1]) * FPS
+        self.object_state = torch.cat((matrix_pose(torch.as_tensor(objects, dtype=torch.float32,
+                                                                 device=device)),
+                                       torch.as_tensor(object_twists, dtype=torch.float32,
+                                                       device=device)), dim=-1)
+        self.wrist_pose = torch.as_tensor(wrists, dtype=torch.float32, device=device)
+        self.link_pose = torch.as_tensor(link_poses, dtype=torch.float32, device=device)
+        self.link_order = tuple(self.metadata["link_order"])
+        if len(self.link_order) != link_poses.shape[1]:
+            raise ValueError("Retargeted link order mismatch")
+        self.length = count
+        self.retargeted = True
+
+    def reset_state(self, count: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if count <= 0:
+            raise ValueError("reset_state count must be positive")
+        return (self.robot_q[0].expand(count, -1), self.robot_dq[0].expand(count, -1),
+                self.object_state[0].expand(count, -1))

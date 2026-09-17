@@ -9,12 +9,12 @@ import torch
 from isaacgym import gymapi, gymtorch
 
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from .contract import (QUERY_LINKS, coupled_finger_bounds, native_sim_indices,
+from .contract import (QUERY_LINKS, MIMIC_NATIVE, coupled_finger_bounds, native_sim_indices,
                        native_to_sim, pose_matrix, sim_to_native)
-from .action_mapping import compose_physical_residual
+from .action_mapping import compose_physical_residual, compose_reference_residual
 from .base_policy import ACTION_DIM, OBSERVATION_DIM, InspireDExplorePolicy
 from .dexplore_observation import build_dexplore_observation
-from .reference_provider import ReferenceProvider, validate_reference_usage
+from .reference_provider import ReferenceProvider, RetargetedReferenceProvider, validate_reference_usage
 from .cm_geometry import SurfaceGeometry
 from src.task.CmDecoderv2.kinematics import InspireKinematics
 from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM as CMV2_CONTEXT_DIM,
@@ -48,25 +48,32 @@ class CmResidual(VecTask):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless,
                  virtual_screen_capture=False, force_render=False):
         self.cfg = cfg
-        if cfg["basePolicy"]["mode"] != "dexplore":
-            raise ValueError("CmResidual now requires the frozen DExplore teacher (mode=dexplore).")
-        self.teacher = InspireDExplorePolicy(cfg["basePolicy"]["checkpoint"], sim_device,
-                                             cfg["basePolicy"].get("checkpointSha256"))
+        self.retargeted_base = cfg["basePolicy"]["mode"] == "retargeted_reference"
+        if cfg["basePolicy"]["mode"] not in ("dexplore", "retargeted_reference"):
+            raise ValueError("Unsupported CmResidual base policy mode")
+        self.teacher = None if self.retargeted_base else InspireDExplorePolicy(
+            cfg["basePolicy"]["checkpoint"], sim_device,
+            cfg["basePolicy"].get("checkpointSha256"))
         asset = cfg["env"]["asset"]
         reference_cfg = cfg["reference"]
         object_name = asset.get("objectAssetFileName", "airplane.urdf")
         object_mesh = Path(asset["objectAssetRoot"]) / "objects" / Path(object_name).stem / f"{Path(object_name).stem}.obj"
-        self.reference = ReferenceProvider(
+        provider = RetargetedReferenceProvider if self.retargeted_base else ReferenceProvider
+        self.reference = provider(
             reference_cfg["path"], sim_device, reference_cfg.get("sha256"),
             source_tensor=reference_cfg["sourceTensor"],
             source_sha256=reference_cfg["sourceTensorSha256"],
             frame_start=int(reference_cfg["frameStart"]),
             frame_end=int(reference_cfg["frameEnd"]),
-            object_mesh=object_mesh)
+            object_mesh=object_mesh,
+            **({"urdf_path": Path(asset["assetRoot"]) / asset["assetFileName"]}
+               if self.retargeted_base else {}))
         self.reference_usage = validate_reference_usage(
             self.reference.training_eligible,
             reference_cfg.get("allowIneligibleFor", ""))
-        self.base_observation_dim = OBSERVATION_DIM
+        self.retargeted_mimic_scales = (tuple(float(self.reference.metadata["mimic_mapping"][str(i)])
+                                              for i in MIMIC_NATIVE) if self.retargeted_base else ())
+        self.base_observation_dim = 68 if self.retargeted_base else OBSERVATION_DIM
         self.use_oi_cm_context = bool(cfg["basePolicy"].get("useOiCmContext", True))
         self.use_cmv2_context = bool(cfg["basePolicy"].get("useCmv2Context", False))
         self.use_cmv2_action_evaluator = bool(
@@ -85,7 +92,9 @@ class CmResidual(VecTask):
         self.residual_rotation_scale = float(residual_cfg["rotationScaleRad"])
         self.residual_finger_scale = float(residual_cfg["fingerScaleRad"])
         self.max_episode_length = int(cfg["env"].get("episodeLength", 2000))
-        cfg["env"].update(numObservations=OBSERVATION_DIM + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
+        if self.retargeted_base and self.max_episode_length != self.reference.length - 1:
+            raise ValueError("Retargeted episode length must equal reference transitions")
+        cfg["env"].update(numObservations=self.base_observation_dim + self.cm_context_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
         self.initial_native = self.reference.robot_q[0].clone()
         self.initial_native_velocity = self.reference.robot_dq[0].clone()
@@ -202,11 +211,23 @@ class CmResidual(VecTask):
         residual_actions = residual_actions.to(self.device)
         self._refresh_state()
         native = sim_to_native(self.dof_pos, self.sim_indices)
-        targets, _ = compose_nominal_targets(
-            self.base_action, residual_actions, native, self.native_lower, self.native_upper,
-            translation_scale_m=self.residual_translation_scale,
-            rotation_scale_rad=self.residual_rotation_scale,
-            finger_scale_rad=self.residual_finger_scale)
+        if self.retargeted_base:
+            targets, target_details = compose_reference_residual(
+                self.base_action[:, None, :].expand_as(residual_actions), residual_actions,
+                self.native_lower, self.native_upper,
+                translation_scale_m=self.residual_translation_scale,
+                rotation_scale_rad=self.residual_rotation_scale,
+                finger_scale_rad=self.residual_finger_scale,
+                mimic_scales=self.retargeted_mimic_scales)
+            feasible = ~target_details["saturation"].bool().any(dim=-1)
+            candidate_valid_mask = (feasible if candidate_valid_mask is None else
+                                    candidate_valid_mask.to(self.device).bool() & feasible)
+        else:
+            targets, _ = compose_nominal_targets(
+                self.base_action, residual_actions, native, self.native_lower, self.native_upper,
+                translation_scale_m=self.residual_translation_scale,
+                rotation_scale_rad=self.residual_rotation_scale,
+                finger_scale_rad=self.residual_finger_scale)
         kinematics = InspireKinematics(self.cfg["env"]["asset"]["assetRoot"] + "/" +
                                        self.cfg["env"]["asset"]["assetFileName"])
         sweep = build_nominal_hand_sweep(self.cm_geometry, kinematics, native, targets)
@@ -314,8 +335,15 @@ class CmResidual(VecTask):
                 f"asset returned {self.tracking_root_body_index}/{self.root_body_index}")
         props = self.gym.get_asset_dof_properties(hand)
         props["driveMode"][:] = gymapi.DOF_MODE_POS
-        props["stiffness"][self.sim_indices] = [200.0] * 6 + [100.0] * 12
-        props["damping"][self.sim_indices] = [20.0] * 6 + [10.0] * 12
+        wrist_stiffness = (float(self.cfg["env"].get("wristStiffness", 200.0))
+                           if self.retargeted_base else 200.0)
+        wrist_damping = (float(self.cfg["env"].get("wristDamping", 20.0))
+                         if self.retargeted_base else 20.0)
+        if not (np.isfinite(wrist_stiffness) and np.isfinite(wrist_damping)
+                and wrist_stiffness > 0 and wrist_damping > 0):
+            raise ValueError("Invalid wrist PD gains")
+        props["stiffness"][self.sim_indices] = [wrist_stiffness] * 6 + [100.0] * 12
+        props["damping"][self.sim_indices] = [wrist_damping] * 6 + [10.0] * 12
         props["velocity"][:] = 7.0
         self.sim_lower, self.sim_upper = props["lower"].copy(), props["upper"].copy()
         initialize_dofs_at_creation = bool(asset.get("initializeDofsAtCreation", False))
@@ -412,11 +440,15 @@ class CmResidual(VecTask):
         actions = actions.to(self.device).clamp(-1, 1)
         self.prev_actions.copy_(actions)
         current = sim_to_native(self.dof_pos, self.sim_indices)
-        targets, details = compose_physical_residual(
-            self.base_action, actions, current, self.native_lower, self.native_upper,
-            translation_scale_m=self.residual_translation_scale,
-            rotation_scale_rad=self.residual_rotation_scale,
-            finger_scale_rad=self.residual_finger_scale)
+        composer = compose_reference_residual if self.retargeted_base else compose_physical_residual
+        args = (self.base_action, actions, self.native_lower, self.native_upper) if self.retargeted_base else (
+            self.base_action, actions, current, self.native_lower, self.native_upper)
+        options = dict(translation_scale_m=self.residual_translation_scale,
+                       rotation_scale_rad=self.residual_rotation_scale,
+                       finger_scale_rad=self.residual_finger_scale)
+        if self.retargeted_base:
+            options["mimic_scales"] = self.retargeted_mimic_scales
+        targets, details = composer(*args, **options)
         self.residual_requested_delta.copy_(details["requested_delta"])
         self.residual_applied_delta.copy_(details["applied_delta"])
         self.residual_saturation.copy_(details["saturation"])
@@ -443,27 +475,45 @@ class CmResidual(VecTask):
         self.current_contact_forces.copy_(contact)
 
         idx = self.reference_index
-        ref_now = self.reference.frame(idx)
-        obs_1 = build_dexplore_observation(
-            body_pos, body_rot, body_vel, body_ang_vel, body_contact,
-            object_state, self.reference.frame(idx, 1), self.reference.object_points,
-            self.key_body_indices, self.contact_body_indices,
-            root_body_id=self.root_body_index,
-            tracking_root_body_id=self.tracking_root_body_index)
-        obs_16 = build_dexplore_observation(
-            body_pos, body_rot, body_vel, body_ang_vel, body_contact,
-            object_state, self.reference.frame(idx, 16), self.reference.object_points,
-            self.key_body_indices, self.contact_body_indices,
-            root_body_id=self.root_body_index,
-            tracking_root_body_id=self.tracking_root_body_index)
-        base_obs = torch.cat((obs_1, obs_16), dim=-1)
-        self.reference_root_position_error_m = (
-            body_pos[:, self.tracking_root_body_index] - ref_now[:, 4:7]).norm(dim=-1)
-        self.reference_object_position_error_m = (
-            object_state[:, :3] - ref_now[:, 106:109]).norm(dim=-1)
-        ref_contact = ref_now[:, 168:184][:, [3, 6, 9, 12, 15]]
-        self.reference_contact_occupancy = ref_contact.mean(dim=-1)
-        reference_tips = ref_now[:, 119:167].view(self.num_envs, 16, 3)[:, [3, 6, 9, 12, 15]]
+        if self.retargeted_base:
+            next_idx = (idx + 1).clamp_max(self.reference.length - 1)
+            target = self.reference.robot_q.index_select(0, next_idx)
+            ref_object = self.reference.object_state.index_select(0, idx)
+            next_object = self.reference.object_state.index_select(0, next_idx)
+            base_obs = torch.cat((native, sim_to_native(self.dof_vel, self.sim_indices),
+                                  target - native, object_state[:, :7], next_object[:, :7]), dim=-1)
+            self.base_action.copy_(target)
+            self.reference_root_position_error_m = (
+                body_pos[:, self.root_body_index] - self.reference.wrist_pose[idx, :3, 3]).norm(dim=-1)
+            self.reference_object_position_error_m = (
+                object_state[:, :3] - ref_object[:, :3]).norm(dim=-1)
+            ref_contact = self.reference.frame(idx)[:, 168:184][:, [3, 6, 9, 12, 15]]
+            self.reference_contact_occupancy = ref_contact.mean(dim=-1)
+            tip_names = self.cfg["env"]["tipLinks"]
+            tip_ref_idx = [self.reference.link_order.index(name) for name in tip_names]
+            reference_tips = self.reference.link_pose[idx][:, tip_ref_idx, :3, 3]
+        else:
+            ref_now = self.reference.frame(idx)
+            obs_1 = build_dexplore_observation(
+                body_pos, body_rot, body_vel, body_ang_vel, body_contact,
+                object_state, self.reference.frame(idx, 1), self.reference.object_points,
+                self.key_body_indices, self.contact_body_indices,
+                root_body_id=self.root_body_index,
+                tracking_root_body_id=self.tracking_root_body_index)
+            obs_16 = build_dexplore_observation(
+                body_pos, body_rot, body_vel, body_ang_vel, body_contact,
+                object_state, self.reference.frame(idx, 16), self.reference.object_points,
+                self.key_body_indices, self.contact_body_indices,
+                root_body_id=self.root_body_index,
+                tracking_root_body_id=self.tracking_root_body_index)
+            base_obs = torch.cat((obs_1, obs_16), dim=-1)
+            self.reference_root_position_error_m = (
+                body_pos[:, self.tracking_root_body_index] - ref_now[:, 4:7]).norm(dim=-1)
+            self.reference_object_position_error_m = (
+                object_state[:, :3] - ref_now[:, 106:109]).norm(dim=-1)
+            ref_contact = ref_now[:, 168:184][:, [3, 6, 9, 12, 15]]
+            self.reference_contact_occupancy = ref_contact.mean(dim=-1)
+            reference_tips = ref_now[:, 119:167].view(self.num_envs, 16, 3)[:, [3, 6, 9, 12, 15]]
         actual_tips = body_pos.index_select(1, self.tip_indices)
         self.reference_tip_position_error_m = (actual_tips - reference_tips).norm(dim=-1).mean(dim=-1)
         self.reset_native_error_max = (native - self.initial_native).abs().amax(dim=-1)
@@ -499,7 +549,8 @@ class CmResidual(VecTask):
         if not torch.isfinite(obs).all():
             raise FloatingPointError("Non-finite actual-state observation")
         self.obs_buf.copy_(obs.clamp(-self.clip_obs, self.clip_obs))
-        self.base_action.copy_(self.teacher.act(base_obs))
+        if not self.retargeted_base:
+            self.base_action.copy_(self.teacher.act(base_obs))
         return self.obs_buf
 
     def compute_reward(self):
