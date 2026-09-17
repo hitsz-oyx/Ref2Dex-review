@@ -8780,6 +8780,42 @@ OakInk2 导出已处理完全部 `472` 个 selection sequence，但 `193` 条记
 
 - 本条目与 pipeline manifest 状态修正均可回滚；回滚入口为恢复 pipeline manifest 的原 JSON，并删除本 activity 条目。已完成的 `1656` 个目录和 `193` 个 `.partial` 目录不作任何破坏性处理。
 
+## 2026-09-17 12:52:21 +0000 — 回退旧 Task 的三域接口实现
+
+- timestamp: `2026-09-17 12:52:21 +0000`
+- activity_id: `ACT-20260917-125221-OICM-REVERT-THREE-DOMAIN`
+- modification_version: `V1.4.23`
+- type: `code, operation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-requested`
+- approval_basis: 用户要求将三域训练改到 `ObjectInteractionCmv2`，并回退本轮在旧 `ObjectInteractionCm` 中新增的接口。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `10a1e37c88bc6b50d91b6cb83eff161d9b0d2a61`
+- worktree_dirty: `true`（仅本条回退记录待提交）
+- scope: 回退 `ObjectInteractionCm` 的三域等概率 loader、index builder、smoke config、合同测试和版本指针；保留 smoke 输出、NAS cache、失败目录、pipeline manifest 和历史 activity 记录，不触碰旧 Task 的原始数据与 checkpoint。
+
+**原因**
+
+三域训练目标改由 `ObjectInteractionCmv2` 承担，旧 Task 不再作为实现入口；保留审计产物便于追溯，不把旧 smoke 结果当成当前 v2 训练结果。
+
+**修改**
+
+- 通过 `git revert --no-edit ca90da9` 和 `git revert --no-edit 5956ebc` 完成可逆回退。
+- 当前 `docs/current_versions.yaml` 的 `ObjectInteractionCm` 指针恢复为 `V1.4.23`；`ObjectInteractionCmv2` 保持 `V1.3.4`。
+
+**验证**
+
+- `git status` 在回退提交后干净；旧 `ObjectInteractionCm` 三域实现文件已恢复到回退前版本。
+- 回退提交：`d7deafc`、`10a1e37`；未删除 `/mnt/ugreen_nas` 下已有 smoke、OakInk2 partial/final 目录和运行 manifest。
+- [ObjectInteractionCm activity_log.md](activity_log.md) — 本次回退记录与历史 smoke/导出证据入口。
+- 工程结论：`SUPPORTED`（回退范围与保护边界完成）；科研结论：`INCONCLUSIVE`（v2 三域接口尚未实现）。
+
+**保护与回滚**
+
+- 反向应用 `d7deafc`、`10a1e37` 可恢复旧 Task 的三域实现；本条 activity 记录和历史提交均保留。
+
 ## 2026-09-17 12:25:52 +0000 — OakInk2 Stage3 覆盖缺口诊断
 
 - timestamp: `2026-09-17 12:25:52 +0000`
