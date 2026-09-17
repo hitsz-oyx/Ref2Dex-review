@@ -6,7 +6,20 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from pytorch3d.ops import knn_points
+try:
+    from pytorch3d.ops import knn_points
+except ModuleNotFoundError:  # graspenv does not ship PyTorch3D
+    def knn_points(p1, p2, K=1, return_nn=False, return_sorted=True, **kwargs):
+        del return_sorted, kwargs
+        distances = torch.cdist(p1, p2)
+        values, indices = torch.topk(distances, k=int(K), dim=-1, largest=False)
+        class _KNN:
+            pass
+        out = _KNN(); out.dists = values.square(); out.idx = indices
+        if return_nn:
+            gather = indices[..., None].expand(*indices.shape, p2.shape[-1])
+            out.knn = torch.gather(p2[:, None].expand(-1, p1.shape[1], -1, -1), 2, gather)
+        return out
 from torch import nn
 
 from .decoder import (

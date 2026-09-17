@@ -1,0 +1,17 @@
+name: oakink2_inspire_pilot
+task: ObjectInteractionCm
+modification_version: V1.4.1
+importance: exploratory
+pinned: false
+tags: [oakink2, mano, inspire, geometric, bilateral]
+entrypoint: src.task.ObjectInteractionCm.research.oakink2_inspire_pilot.run
+default_output_root: src/task/ObjectInteractionCm/research/oakink2_inspire_pilot/output
+plan: src/task/ObjectInteractionCm/docs/plan/V1.4.md
+hypothesis: OakInk2 官方 MANO 双手标注可生成左右 Inspire 几何 qpos，并保持原始物体位姿和帧对应。
+constraints:
+  training_cache: false
+  preserve_native_world: true
+  mano_flat_hand_mean: true
+  mano_center_idx: 0
+  retargeting_type: position
+  sources: [mano, inspire_geometric]

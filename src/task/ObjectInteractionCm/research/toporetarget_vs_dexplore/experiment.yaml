@@ -1,0 +1,16 @@
+name: toporetarget_vs_dexplore
+Task: ObjectInteractionCm
+modification_version: V1.4.2
+importance: exploratory
+pinned: false
+tags: [inspire, geometric, toporetarget, bilateral, pilot]
+entrypoints: [prepare.py, run.py]
+guidance: ../../docs/指导/V1.4.md
+plan: ../../docs/plan/V1.4.md
+outputs: output/<run_id>
+hypothesis: TopoRetarget 通用接口能够接入 Inspire，接触约束与位置误差存在需实测的权衡。
+constraints:
+  - 原始输入、外部仓库、正式 cache、split 和训练配置不变
+  - 每侧两算法共享同一份 URDF、关节自由度、源帧和对象几何
+  - 仅几何重定向，不含 RL 或仿真物体引导
+  - 小样本不代表全量优劣；无穿透不代表接触成功

@@ -6,6 +6,37 @@
 - current_plan: [`src/task/Cm/docs/plan/V1.2.md`](../plan/V1.2.md)（final）
 - related: [架构记录](architecture_log.md)、[接手记忆](repo_memory.md)、[实验记录](experiment_log.md)、[训练结果对比](../../results/object_v2_training_comparison.md)
 
+## 2026-09-13 08:57:35 UTC — Cm 扩大训练数据可行性只读诊断
+
+- activity_id: ACT-20260913-085735-CM-DIAG
+- timestamp: 2026-09-13 08:57:35 UTC
+- modification_version: V1.2.11
+- type: diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户请求浏览最近仓库更改并评估 Cm 数据扩容必要性；本次仅阅读与只读查询
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 85e70edffa85d8d1698a3e8adb22e111033cb892
+- worktree_dirty: false
+- scope: 最近 Git 提交、Cm 活动/实验记录、训练配置与数据入口；不修改代码、配置、数据、GT、split、cache、checkpoint 或运行状态
+
+**文件**
+- [`../../../../../docs/logs/activity_log.md`](../../../../../docs/logs/activity_log.md) — 读取根级近期合并与运行状态记录。
+- [`activity_log.md`](activity_log.md) — 读取 Cm 近期训练、cache 和停止状态。
+- [`experiment_log.md`](experiment_log.md) — 读取 EXP-008、EXP-021、EXP-023/024/025 等数据规模、平台期和域差异证据。
+- [`../configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml`](../../configs/active/grab_inspire_f1_hand_flow_cm64_additive.yaml) — 读取当前 mixed 数据入口、source probability 与 stride 配置。
+
+**原因**
+判断扩大 Cm 训练数据是否具备现成入口，以及现有证据更支持增加独立交互覆盖、延长预算还是先处理域/语义问题。
+
+**验证**
+- `git log --graph --oneline --decorate --all -n 25`：确认本地 HEAD 已包含 2026-09-12/13 的 Cm 相关诊断与接口提交，`origin/oyx` 另有未合入的在线 Cm 残差 RL 提交。
+- `git status --short --branch`：工作区干净；当前 `oyx` 相对 `origin/oyx` 为 ahead 4、behind 1。
+- 只读扫描 Cm 活动/实验记录与配置：确认历史 mixed full-data 统计、source 平衡、训练平台期和 5cm 过滤后的 virtual rows。
+- 本机 `data/processed_data` 为外部 NAS 软链接且当前未挂载；不据此否定仓库记录中的已审计数据规模。
+- 结论性质：`SUPPORTED`（仓库证据与可行性诊断），不构成新增训练效果结论。
+
 ## 2026-09-01 21:12:26 +0800 — V1.2.15 活动记录切换
 
 - activity_id: ACT-20260901-211226-CM

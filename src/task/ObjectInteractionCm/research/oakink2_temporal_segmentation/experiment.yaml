@@ -1,0 +1,18 @@
+name: oakink2_temporal_segmentation
+task: ObjectInteractionCm
+modification_version: V1.4.22
+importance: exploratory
+pinned: false
+tags: [oakink2, temporal, segmentation, motion-first, contact]
+entrypoint: src.task.ObjectInteractionCm.research.oakink2_temporal_segmentation.run
+default_output_root: data/processed_data/object_interaction_cm/oakink2_temporal_segmentation_v1_4_22
+plan: src/task/ObjectInteractionCm/docs/plan/V1.4.md
+hypothesis: 时序窗口、多零件运动共识和运动后双侧接触搜索可排除单零件抖动，并保留运动前后的完整接触区间。
+constraints:
+  source_mocap_fps: 120
+  target_fps: 30
+  sampling: official_annotation_frame_id_list
+  source_indices_read_only: true
+  stage3_distance_cached: true
+  overwrite_training_index: false
+  training_cache: false

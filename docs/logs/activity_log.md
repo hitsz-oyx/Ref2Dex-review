@@ -842,3 +842,113 @@
 
 - 非 vendor 暂存差异 `git diff --cached --check -- . ':!third_party/IsaacGymEnvs'` 通过。
 - `git ls-files -u` 为 0；correspondence V2 文件存在且无冲突标记。
+
+## 2026-09-15 13:59:01 +0000 — 本地磁盘占用诊断
+
+- activity_id: ACT-20260915-135901-ROOT-DISK-DIAGNOSTIC
+- timestamp: 2026-09-15 13:59:01 +0000
+- modification_version: V1.2.15
+- type: diagnostic
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求只读盘点仓库及本机磁盘占用；本次未执行删除、移动或覆盖
+- skills_used: research-change-control（read-only/diagnostic 闸门）
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 根仓库、同一根分区的临时目录/缓存和挂载点容量；不改变当前用户改动、运行和研究产物
+
+**文件**
+
+- `docs/logs/activity_log.md` — 记录本次只读空间诊断的范围、证据和未执行的清理候选；未修改代码、配置、数据、cache、checkpoint 或 output。
+
+**原因**
+
+用户反馈磁盘空间已满，需要确认仓库内外的大型目录、重复运行产物、缓存和临时文件，并在不改变科研产物的前提下给出可复核的清理候选。
+
+**证据摘要**
+
+- 根分区 `/` 为 btrfs，约 3.7 TB，使用率 100%，剩余约 11 GB；NAS `/mnt/ugreen_nas` 使用率约 28%。
+- 本仓库本地约 69 GB：`outputs/` 约 50 GB、`dataset/HRDexDB/` 约 14 GB、历史 `output/` 约 3.4 GB；源代码/`.git` 等约 1.6 GB。
+- 仓库外同一分区还存在 `/tmp` 约 45 GB、`/home/wbcd/.cache` 约 42 GB（其中 Hugging Face 约 24 GB、pip 约 15 GB）、`miniconda3` 约 141 GB及其他工作区；本次未修改。
+- 4 条 correspondence run 的 checkpoint 目录各含重复的中间 `step_*.pt`；仅保留 `best.pt`/`latest.pt` 的保守策略理论上可释放约 17.5 GB，但未执行。
+- `/tmp/ref2dex_objtest` 约 4.9 GB、`/tmp/std50_full` 与同名 tar 约 10 GB、`/tmp/sbr_success` 与同名 tar 约 13.8 GB，以及若干 2026-09-01 的临时 NPZ 目录均无当前进程工作目录指向；未执行删除，仍需用户确认其可恢复性/用途。
+- 历史 `output/HRDexDB_correspondence_minimal_allhands_20260825.tar.gz` 约 3.1 GB；`dataset/HRDexDB/` 为当前规范数据入口，二者均未删除。
+- `/tmp/worktrees/old_repro_1797b28` 是 Git 注册 worktree（约 112 MB），不可按普通临时目录处理。
+
+**验证**
+
+- `df -hT`, `df -ih`, `du -xhd1/2`, `find ... -printf`, `git status --short --branch`, `ps`, `lsof +L1`。
+- 结果仅属于工程空间诊断，不构成数据/模型删除建议的最终批准，也不构成科研结论。
+- 活动入口：[本次诊断记录](activity_log.md)。
+
+## 2026-09-15 16:16:30 +0000 — 生成产物空间清理
+
+- activity_id: ACT-20260915-161630-ROOT-CLEANUP
+- timestamp: 2026-09-15 16:16:30 +0000
+- modification_version: V1.2.15
+- type: operation
+- run_id: RUN-20260915-REF2DEX-CLEANUP
+- run_status: COMPLETED
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户先授权清理，随后明确“只删除 `/home/wbcd/workspace/oyx_ws/Ref2Dex` 里面的内容”；据此仅移出仓库内中间 checkpoint，保留可恢复 NAS 归档
+- skills_used: research-change-control（operation / destructive-state gate）
+- branch: feature/objectinteractioncmv2-v1.0.2
+- base_commit: 3d59e14a292e2ac846e031e44c017ecd1d6096ad
+- worktree_dirty: true
+- scope: 仓库运行产物 checkpoint；代码、配置、数据集、当前研究目录、best/latest checkpoint、历史 tar 和用户未提交改动未修改
+
+**文件**
+
+- [`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_seven_domain_mano_robot_10mm_5cm_20260826_061027/checkpoints/`](../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_mixed_seven_domain_mano_robot_10mm_5cm_20260826_061027/checkpoints/) — 移出 4 个中间 `step_*.pt`，保留 `best.pt`、`latest.pt` 和其对应最新 step hardlink。
+- [`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_inspire_f1_object_centered_root_pose_20260829_135110/checkpoints/`](../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_inspire_f1_object_centered_root_pose_20260829_135110/checkpoints/) — 移出 4 个中间 `step_*.pt`，保留 `best.pt`、`latest.pt` 和最新 step hardlink。
+- [`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136/checkpoints/`](../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_hrdexdb_object_centered_5cm_20260903_161136/checkpoints/) — 移出 4 个中间 `step_*.pt`，保留 `best.pt`、`latest.pt` 和最新 step hardlink；该 run 历史 summary 为 `FAILED`，保留终点 checkpoint 供复核/恢复。
+- [`outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_arctic_hrdexdb_oakink2_object_centered_20260902_065152/checkpoints/`](../../outputs/correspondence_ptv3_v2/correspondence_ptv3_v2_grab_arctic_hrdexdb_oakink2_object_centered_20260902_065152/checkpoints/) — 移出 4 个中间 `step_*.pt`，保留 `latest.pt` 和最新 step hardlink。
+- NAS 可恢复归档：`Ref2Dex_cleanup_20260915/checkpoint_intermediates_20260915/`，约 17 GB；未在仓库内保留副本。
+
+**原因**
+
+这些中间 checkpoint 已无当前训练进程使用；每条 run 的 `best.pt`/`latest.pt` 仍可用于评估和恢复，移出中间快照可立即释放本地空间。
+
+**验证**
+
+- 清理前后 `df -hT`：根分区可用空间约从 11 GB 增至 42 GB；仓库约从 69 GB 降至 53 GB，`outputs/` 约从 50 GB 降至 34 GB。
+- 四条 run 的 checkpoint 目录均只保留约定的 best/latest 及 hardlink 最新 step；16 个中间文件已在 NAS 归档中存在。
+- `/tmp/ref2dex_objtest`、4 个 NPZ 临时目录、`std50_full` 和 `sbr_success` 均已恢复到原 `/tmp` 路径；未删除仓库外临时目录。
+- 在用户明确缩小范围前曾清理可重建的 `~/.cache/pip`（约 15 GB）和 `~/.cache/uv`（约 2.3 GB）；Hugging Face cache 未动。该范围外操作已在最终汇报中单独说明。
+- 结果属于工程空间清理，不构成科研结论。
+
+## 2026-09-17 07:33:31 +0000 — 归档提交版本指针与历史活动记录
+
+- timestamp: `2026-09-17 07:33:31 +0000`
+- activity_id: `ACT-20260917-073331-ROOT-RECORD-COMMIT`
+- modification_version: `V1.2.15`
+- type: `operation, documentation`
+- change_level: `L0`（仅提交既有记录与当前版本指针）
+- approval: `user-approved`
+- approval_basis: 用户明确要求将其他代码和记录分门别类提交。
+- skills_used: `research-change-control`
+- branch: `feature/objectinteractioncmv2-v1.0.2`
+- base_commit: `96436a7b8f612334d87175cffee801d2c354f45f`
+- worktree_dirty: `true`
+- scope: 归档根级现有活动、Cm 历史诊断活动和两项 Task 版本指针；不更改代码、实验数据或运行状态。
+
+**文件**
+
+- [docs/current_versions.yaml](../current_versions.yaml) — ObjectInteractionCm `V1.4.22` 与 ObjectInteractionCmv2 `V1.3.4` 指针。
+- [docs/logs/activity_log.md](activity_log.md) — 根级已有诊断与清理活动及本次提交记录。
+- [src/task/Cm/docs/logs/activity_log.md](../../src/task/Cm/docs/logs/activity_log.md) — Cm 历史只读诊断记录。
+
+**原因**
+
+使当前版本指针和先前完成的根级/Cm 活动进入 Git 历史，并与两个 Task 的实现提交分开。
+
+**验证**
+
+- 检查 `git status`、根级与 Cm 记录 diff、暂存 diff、`git diff --cached --check`，并运行最新活动条目的本地链接审计。
+- 这是文档归档，无新工程 smoke 或科研效果结论；原活动结论按各自证据保持。
+
+**回滚**
+
+本次文档提交可独立反向应用；已有运行、checkpoint、cache 和其他 Task 文件不受影响。
