@@ -31,7 +31,7 @@ def load_grab_config(path: str | Path) -> dict:
                for key in section):
             raise ValueError("V1.3.2 does not configure an effect branch")
         version = cfg.get("modification_version", "V1.3.2")
-        if version not in ("V1.3.2", "V1.3.3"):
+        if version not in ("V1.3.2", "V1.3.3", "V1.3.4"):
             raise ValueError("Unsupported V1.3 run version")
         training = cfg.get("training", {})
         if training.get("mode") == "calibration":
@@ -49,6 +49,24 @@ def load_grab_config(path: str | Path) -> dict:
                 or training.get("device") != "cuda:1"
                 or training.get("learning_rate") != 0.001):
                 raise ValueError("V1.3.3 formal GRAB contract mismatch")
+        elif training.get("mode") in ("ddp_calibration", "ddp_formal"):
+            if (version != "V1.3.4" or training.get("device_ids") != [2, 3]
+                or training.get("world_size") != 2 or training.get("seed") != 42
+                or training.get("learning_rate") != 0.001
+                or training.get("expected_train_sequences") != 1068
+                or training.get("expected_train_pairs") != 326722):
+                raise ValueError("V1.3.4 dual-GPU GRAB contract mismatch")
+            if training["mode"] == "ddp_calibration":
+                if training.get("batch_candidates") != [32, 64, 96, 128, 160, 192, 224, 256]:
+                    raise ValueError("Unapproved DDP calibration candidates")
+                if training.get("target_memory_gib") != 24:
+                    raise ValueError("Unapproved DDP memory target")
+            elif (not isinstance(training.get("batch_size_per_gpu"), int)
+                  or training["batch_size_per_gpu"] not in (32, 64, 96, 128, 160, 192, 224, 256)
+                  or training.get("epochs") != 4
+                  or training.get("max_duration_s") != 28800
+                  or training.get("checkpoint_interval") != 200):
+                raise ValueError("V1.3.4 formal DDP budget mismatch")
     for name in ("index", "manifest"):
         value = os.path.expandvars(source[name])
         if "$" in value:
