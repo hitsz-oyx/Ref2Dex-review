@@ -37,4 +37,4 @@ train:
     enable: false
 
 performance:
-  mode: off
+  mode: "off"
