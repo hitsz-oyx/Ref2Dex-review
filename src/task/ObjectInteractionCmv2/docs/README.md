@@ -7,6 +7,8 @@
 - [V1.2 最终计划](plan/V1.2.md)：GRAB-only、MANO-only、固定 stride=1 的实施和有界验证范围。
 - [V1.3 指导](指导/V1.3.md)：空间交互融合与直接刚体监督的研究方向。
 - [V1.3 最终计划](plan/V1.3.md)：仅 GRAB/MANO；V1.3.2 不包含 `p_effect` 预测分支。
+- [V1.4 指导](指导/V1.4.md)：用户确认的 GRAB、ARCTIC、OakInk2 三域刚体训练范围。
+- [V1.4 最终计划](plan/V1.4.md)：三域 cache 合同、OakInk2 原始帧回填、等概率 sampler 与 smoke 闸门。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。

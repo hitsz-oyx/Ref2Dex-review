@@ -1528,3 +1528,43 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **保护与回滚**
 
 本次仅新增诊断记录；删除本条 activity 即可回滚。训练、cache、checkpoint 和现有接口均未改变。
+
+## 2026-09-17 13:40:05 +0000 — V1.4 三域高分辨率接口与回填器实现
+
+- timestamp: `2026-09-17 13:40:05 +0000`
+- activity_id: `ACT-20260917-134005-CMV2-V142-THREE-DOMAIN-IMPLEMENTATION`
+- modification_version: `V1.4.2`
+- type: `code, data, documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户于 2026-09-17 明确确认 Cmv2 V1.4 三域范围，并明确 MANO 每侧 2048、Inspire 每侧 10135 的训练手点合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `a7449d716b0185514e77a1fa698cccd9fc09de2c`
+- worktree_dirty: `true`
+- scope: 在 Cmv2 新增三域高分辨率 loader、等概率 sampler、变长 batch、2-step smoke 入口与 OakInk2 原始 annotation 回填器；不改 V1.3 GRAB 入口、`src/base`、旧 ObjectInteractionCm、已有 cache/输出/checkpoint。
+
+**文件**
+
+- [V1.4 最终计划](../plan/V1.4.md) — 已批准的范围、点数、2 cm、KNN32、split 与 smoke 闸门。
+- [V1.4 指导](../指导/V1.4.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md) 与 [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 用户确认的范围、Task 导航和 `V1.4.2` 版本指针。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) — V1.4 三域配置和不变量验证。
+- [src/task/ObjectInteractionCmv2/multi_domain.py](../../multi_domain.py) — MANO 4096 / Inspire 20270 高分辨率流、直接 SE(3) GT、stride、padding 与 sampler。
+- [src/task/ObjectInteractionCmv2/train_multi_domain.py](../../train_multi_domain.py) 与 [src/task/ObjectInteractionCmv2/configs/active/three_domain_v1_4_smoke.yaml](../../configs/active/three_domain_v1_4_smoke.yaml) — 独立 smoke 入口。
+- [src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py](../../tools/data/backfill_oakink2_inspire_v1_4.py) — 从原始 annotation pose 和既有 Stage3 静态几何重建独立 OakInk2 高分辨率 cache。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py](../../tests/test_v1_4_three_domain.py) — variant、padding、stride、GT 与严格域均衡回归。
+
+**原因**
+
+此前 OakInk2 3076 点 export 和 1656 个旧 complete 目录都不符合 V1.4 高分辨率训练合同，不能复用为训练输入。新 loader 强制将 3076 限为 decoder 兼容流；高分辨率 KNN 流分别严格为双手 MANO 4096 或 Inspire 20270，旧 cache 仅保留审计用途。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/config.py src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/train_multi_domain.py src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py`：`4 passed`。
+- 只读实证核对：GRAB/ARCTIC 真实 `knn_hand_points_world.npy` 为双手 4096；旧 OakInk2 pilot 为 3076，故被 loader 拒绝作为 `inspire_f1` 训练流。高分辨率 OakInk2 raw-frame smoke 尚未启动，结论为 `INCONCLUSIVE`。
+
+**回滚**
+
+本次仅为 Task-local V1.4 增量；回滚入口是本次实现提交的父提交与 [V1.4 最终计划](../plan/V1.4.md) §6。不会删除或覆盖旧 OakInk2 full、partial 或 pilot 目录。
