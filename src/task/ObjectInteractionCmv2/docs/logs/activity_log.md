@@ -2097,3 +2097,35 @@ ARCTIC 原始 cache 的 geometry manifest 正确标记其来源处理 split 为 
 **回滚**
 
 终止此 run 即可；不覆盖旧 checkpoint、失败 run、split、缓存或 GPU0 既有进程。
+
+## 2026-09-17 15:21:18 +0000 — V1.4.4 cache queue producer 审计
+
+- timestamp: `2026-09-17 15:21:18 +0000`
+- activity_id: `ACT-20260917-152118-CMV2-V144-CACHE-QUEUE-PRODUCER-AUDIT`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求先审计，确认无问题后才让后台 queue 持续导出其他 cache；本条只读检查 producer、schema、当前运行和 GPU 归属。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `175d3ec60f0505e8c73dc22bd3d2de908de4f8af`
+- worktree_dirty: `false`
+- scope: 审计 GRAB/ARCTIC Inspire-20270、OakInk2 MANO-4096 是否已有可由 V1.4.4 queue 安全调用的 producer；不启动/停止 queue 或 cache run。
+- conclusion: `REFUTED`（当前不能安全启动完整 queue）；与模型效果无关。
+
+**原因**
+
+queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将长期后台任务交给它前，必须确认每个 job 的输出已经满足 V1.4 的 4096/20270、KNN32 和 manifest 合同，不能用名称相似的历史 cache 代替。
+
+**验证**
+
+- 当前 OakInk2 Inspire producer [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 正在 GPU2 运行，`backfilled_segments=156`、`completed_frames=81201`、`failures=[]`；这是唯一可直接延续的高分辨率 queue job。
+- GRAB/ARCTIC MANO-4096 已有完整 producer/cache；但旧 Inspire [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json) 明确为 bilateral `3076` 点、`KNN=8`，且没有完整 geometry manifest，不能升级为 20270/KNN32 或加入训练。
+- 当前仓库没有 GRAB/ARCTIC Inspire-20270/KNN32 producer，也没有 OakInk2 MANO-4096 producer；`run_cache_queue_v1_4_4.py` 是安全编排器，但尚无三个可审计的 job command/success manifest 可入队。
+- GPU2 由 OakInk2 cache 使用；GPU0 的 V1.4.4 双域 MANO 训练仍在运行，其他 GPU 也有既有进程。queue 不应擅自占用或和现有 producer 并发写入。
+
+**回滚**
+
+纯诊断，无需回滚；保持当前 OakInk2 Inspire run 与双域训练不变。后续需先实现并小规模验证三个缺失高分辨率 producer，才生成 queue JSON 并启动后台连续任务。
