@@ -3979,3 +3979,40 @@ V1.16 的 launcher 将 Python executable 放在 torchrun 的 training-script 位
 **保护与回滚**
 
 回滚仅移除 bootstrap、runner command 变化、Task close hook、定向测试和本条记录；V1.16 算法、schema、训练变量、Cmv2 checkpoint、输入 reference 与已有 outputs 不变。正常 Python/KeyboardInterrupt cleanup 可落盘 partial shard；SIGKILL、进程崩溃或断电不承诺 tail recovery。
+
+## 2026-09-18 01:03:56 +0800 — V1.16.2 GPU0/1/3 3×128 capacity probe 启动
+
+- timestamp: 2026-09-18 01:03:56 +0800
+- activity_id: ACT-20260918-010356-CMRESIDUAL-V1162-DDP
+- modification_version: V1.16.2
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L1（Task-local physical GPU allowlist）；3×128 capacity probe 为 L3。
+- approval: user-approved
+- approval_basis: 用户明确指定后续全量训练使用 GPU 0、1、3，确认 256 env/rank 尚未经验证后，要求先实际测量显存。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 9fc85052007e03b546da61826985cb889d9ba92e
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
+- scope: 只将 V1.16 DDP physical GPU allowlist 从 0/1/2 改为用户指定的 0/1/3；CUDA_VISIBLE_DEVICES 会将其重映射为各 rank 的 local cuda:0/1/2。运行 3 rank × 128 env、1 epoch capacity probe，记录每 rank buffer、checkpoint、finite 与实际显存；不启动 256 env/rank 或无 epoch 上限的正式训练。
+- run_id: cmresidual_v1162_ddp_3x128_capacity_20260918_010356
+- run_status: STARTED；run manifest、train log、metrics、checkpoint 与 rank buffer manifest 在 launcher 创建后登记。
+- conclusion: INCONCLUSIVE（尚无 capacity 运行结果）。
+
+**文件**
+
+- [V1.16 最终计划](../plan/V1.16.md)、[DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py) — 用户指定的 GPU allowlist 与 rank-local 映射。
+- [README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — V1.16.2 状态入口。
+
+**原因**
+
+GPU2 正在被其他工作占用；GPU0/1/3 的预检显存均低于 4096 MiB。256 env/rank 没有实测证据，按最终计划先以 128 env/rank 收集容量数据，避免 OOM 或影响其他任务。
+
+**验证**
+
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'` 与 `py_compile`：PENDING。
+- capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010356-CMRESIDUAL-V1162-DDP --modification-version V1.16.2 --run-id cmresidual_v1162_ddp_3x128_capacity_20260918_010356`。仅作为工程容量测试；三 rank buffer、finite checkpoint/action/optimizer 和显存证据通过才允许讨论 3×256。
+
+**保护与回滚**
+
+回滚只恢复 0/1/2 allowlist 和本次 V1.16.2 文档/测试差异；不改 actor/Cmv2/reward/critic、数据、checkpoint、buffer schema、已有 output 或用户未提交文件。

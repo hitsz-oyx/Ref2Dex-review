@@ -562,9 +562,9 @@ def test_v116_ddp_launcher_requires_explicit_gpu012():
         sys.path.insert(0, str(tools))
     module = _load_module(
         "cm_residual_v116_ddp_runner_test", tools / "run_cmv2_actor_distributed.py")
-    assert module._parse_gpus("0,1,2") == (0, 1, 2)
+    assert module._parse_gpus("0,1,3") == (0, 1, 3)
     with pytest.raises(argparse.ArgumentTypeError, match="exactly"):
-        module._parse_gpus("0,1,3")
+        module._parse_gpus("0,1,2")
 
 
 def test_v116_ddp_launcher_uses_python_script_bootstrap():

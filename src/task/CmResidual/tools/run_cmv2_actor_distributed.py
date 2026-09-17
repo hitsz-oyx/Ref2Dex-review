@@ -16,7 +16,7 @@ from run_ppo_formal import _event_metrics
 from run_ppo_stability import _load_checkpoint, _resolved_config, _safe_contract
 
 
-GPU_IDS = (0, 1, 2)
+GPU_IDS = (0, 1, 3)
 REFERENCE = REPOSITORY_ROOT / "data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/reference.npz"
 SOURCE = REPOSITORY_ROOT / "data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/s1_airplane_lift/interaction_hand_inspire.pt"
 REFERENCE_SHA = "a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1"
@@ -30,7 +30,7 @@ def _parse_gpus(value: str) -> tuple[int, ...]:
     except ValueError as error:
         raise argparse.ArgumentTypeError("--gpus must be comma-separated integers") from error
     if result != GPU_IDS:
-        raise argparse.ArgumentTypeError("V1.16 requires physical GPUs exactly 0,1,2")
+        raise argparse.ArgumentTypeError("V1.16.2 requires physical GPUs exactly 0,1,3")
     return result
 
 
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"cmresidual_v116_ddp_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", default="V1.16")
+    parser.add_argument("--modification-version", default="V1.16.2")
     parser.add_argument("--gpus", type=_parse_gpus, required=True)
     parser.add_argument("--envs-per-rank", type=int, choices=(128, 256), required=True)
     parser.add_argument("--capacity-probe", action="store_true",
