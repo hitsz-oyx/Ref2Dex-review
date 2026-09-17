@@ -11,8 +11,8 @@ tasks:
   CmDecoderv2:
     modification_version: V1.1.14
   ObjectInteractionCm:
-    modification_version: V1.3.2
+    modification_version: V1.4.22
   ObjectInteractionCmv2:
-    modification_version: V1.0.2
+    modification_version: V1.3.4
   correspondence_ptv3_v2:
     modification_version: V1.2.16
