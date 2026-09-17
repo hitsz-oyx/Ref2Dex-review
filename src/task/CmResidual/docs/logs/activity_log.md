@@ -4075,12 +4075,13 @@ GPU2 正在被其他工作占用；GPU0/1/3 的预检显存均低于 4096 MiB。
 - worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；只暂存本条明列路径）。
 - scope: 将 Popen return-code 判断修正为整数比较，保留 0.5 秒 physical GPU peak telemetry；复跑相同 physical GPU0/1/3、3 rank×128 env、1 epoch capacity budget，以完成 rank-buffer、metrics、checkpoint finite/reload 与 peak-memory 的整体验证。不尝试 256 env/rank 或正式训练。
 - run_id: cmresidual_v1164_ddp_3x128_mempeak_20260918_010932
-- run_status: STARTED；运行产物由 launcher 创建后登记。
-- conclusion: INCONCLUSIVE（修复后的 capacity 运行尚未完成）。
+- run_status: COMPLETED；last_step=12288、last_epoch=1；best_metric=`checkpoint_reload_action_max_abs_diff=0.0`。
+- conclusion: 3×128 DDP capacity/wiring/buffer/checkpoint 工程合同 SUPPORTED；3×256 capacity、正式训练收敛与任何科研效果 INCONCLUSIVE。
 
 **文件**
 
-- [DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[current versions](../../../../../docs/current_versions.yaml) — return-code 修复、peak telemetry 与 V1.16.4 状态。
+- [DDP runner](../../tools/run_cmv2_actor_distributed.py)、[runner contract tests](../../tests/test_reference_contract.py)、[README](../README.md)、[experiment log](experiment_log.md)、[current versions](../../../../../docs/current_versions.yaml) — return-code 修复、peak telemetry 与 V1.16.4 状态。
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/train.log)、[checkpoint validation](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/checkpoint_validation.json)、[checkpoint](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_1_rew_-inf.pth)、[rank 0 buffer](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/cm_buffer/rank_000/manifest.json)、[rank 1 buffer](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/cm_buffer/rank_001/manifest.json)、[rank 2 buffer](../../../../../outputs/CmResidual/cmresidual_v1164_ddp_3x128_mempeak_20260918_010932/cm_buffer/rank_002/manifest.json) — 完整的 3×128 capacity 证据。
 
 **原因**
 
@@ -4088,8 +4089,9 @@ V1.16.3 的训练 worker 返回 0，但 Popen.wait() 的 int 被误当作带 `.r
 
 **验证**
 
-- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`、`py_compile` 与 activity link audit：PENDING。
+- `/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest src/task/CmResidual/tests/test_reference_contract.py -q -k 'v116'`：`4 passed, 26 deselected`；`py_compile`、diff 与 activity link audit 通过。
 - capacity 命令：`/home2/wyy/miniconda3/envs/graspenv/bin/python src/task/CmResidual/tools/run_cmv2_actor_distributed.py --gpus 0,1,3 --envs-per-rank 128 --capacity-probe --activity-id ACT-20260918-010932-CMRESIDUAL-V1164-MEMPEAK --modification-version V1.16.4 --run-id cmresidual_v1164_ddp_3x128_mempeak_20260918_010932`。
+- 完成时间 2026-09-18 01:11:09 +0800；peak physical memory 为 GPU0/1/3=`16440/14137/15358 MiB`，采样错误为 null。`metrics.jsonl` 有 epoch 1，三个 v2 buffer manifest 各有 4096 sample；checkpoint/optimizer/action finite，reload diff=0，sigma=`0.1`。总 throughput 约 `1069 FPS`；epoch 1 前无 episode 终结导致 reward `-inf`，不用于策略质量判断。
 
 **保护与回滚**
 
