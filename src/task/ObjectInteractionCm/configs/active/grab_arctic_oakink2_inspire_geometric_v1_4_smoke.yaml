@@ -1,0 +1,40 @@
+_base_: grab_arctic_inspire_geometric_v1_4.yaml
+
+name: object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke
+modification_version: V1.4.24
+operation_category: [code, data, experiment, operation]
+
+data:
+  # The command overrides this with an independent NAS smoke index generated
+  # by build_v1_4_full_index.py --smoke.
+  index_path: data/processed_data/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4/smoke_index.json
+  source_domains: [grab, arctic, oakink2]
+  source_probability_policy: equal
+  source_probabilities:
+    grab: 0.3333333333333333
+    arctic: 0.3333333333333333
+    oakink2: 0.3333333333333333
+  grab_stride_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  arctic_stride_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  oakink2_stride_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  eval_stride: 2
+  batch_size: 2
+  val_batch_size: 2
+  test_batch_size: 2
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+
+train:
+  epochs: 1
+  max_steps: 2
+  skip_eval: true
+  eval_every_epochs: null
+  save_every_epochs: null
+  save_every_steps: null
+  log_every_steps: 1
+  distributed:
+    enable: false
+
+performance:
+  mode: off

@@ -56,7 +56,12 @@ class Config(TaskConfig):
         max_stride = 20
         eval_stride = 2
         grab_stride_values = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        arctic_stride_values = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
+        oakink2_stride_values = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
         inspire_stride_values = (2, 4, 6, 8, 10, 12, 14, 16, 18, 20)
+        source_stride_values = {}
+        source_domains = ()
+        source_probability_policy = "legacy"
         source_probabilities = {"grab": 0.5, "inspire_f1": 0.5}
         val_strides = (2,)
         test_strides = (2,)
