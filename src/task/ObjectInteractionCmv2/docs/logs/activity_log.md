@@ -2021,3 +2021,42 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 终止此独立 run 即可；旧 4-epoch checkpoint、split、GPU2 cache 回填和其他用户 GPU0 进程不被覆盖。
+
+## 2026-09-17 15:04:57 +0000 — 修正 ARCTIC 派生验证 split 的严格标签冲突
+
+- timestamp: `2026-09-17 15:04:57 +0000`
+- activity_id: `ACT-20260917-150457-CMV2-V144-ARCTIC-DERIVED-SPLIT-OVERRIDE`
+- modification_version: `V1.4.4`
+- type: `code, experiment, data, operation, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确授权 Agent 自行按 trajectory 划分 ARCTIC 验证集；本修正仅使该已批准的派生 split 可被 V1.4.4 双域 runner 读取。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0f11a4c9d3036128056fb890ef71e6ddde8740ba`
+- worktree_dirty: `true`（仅本条列出的修正、V1.4.4 plan 补充和记录尚未提交）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z`
+- run_status: `FAILED`
+- scope: 记录并修正首次双域启动对 ARCTIC source geometry 原始 `split=train` 与派生 index `split=val` 的严格冲突；未训练、未执行 optimizer step、未生成 checkpoint，也未修改源 cache。
+- conclusion: `INVALID_IMPLEMENTATION`（首次 loader split 标签错误）；修正后的 runner 尚待新 run 验证。
+
+**文件与产物**
+
+- [multi_domain.py](../../multi_domain.py) — 默认仍严格验证 manifest split；增加显式 `allow_manifest_split_override`，只由 V1.4.4 双域 runner 传入。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py)、[tests/test_v1_4_4_two_domain_split.py](../../tests/test_v1_4_4_two_domain_split.py) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — 将该覆盖限制为用户批准的 ARCTIC trajectory 派生 split，并验证默认严格/显式覆盖两条路径。
+- [训练失败 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z/run_manifest.json) — `FAILED` 于 dataset validation，`last_step=null`；[launcher log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z.launcher.log)。
+
+**原因**
+
+ARCTIC 原始 cache 的 geometry manifest 正确标记其来源处理 split 为 `train`，而新的、独立的 trajectory-level index 把其中 35 条用于模型验证。原 loader 将两者一律当作错误；此处不能重写 source geometry manifest，故在新 runner 中以显式开关声明 index 为训练 split 的权威来源。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/train_two_domain_mano.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`6 passed`；新增用例确认默认仍拒绝 mismatch，只有显式 override 才允许。
+- `git diff --check` 通过；GPU0 训练进程已退出，GPU2 OakInk2 Inspire cache 回填未被停止。
+
+**回滚**
+
+撤销该显式 override 和新 run 即可；源 geometry manifest、ARCTIC split cache、旧 checkpoint 与失败运行目录均保留审计。

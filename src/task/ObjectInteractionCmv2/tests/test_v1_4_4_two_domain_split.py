@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+from src.task.ObjectInteractionCmv2.multi_domain import InspireSequenceView
 from src.task.ObjectInteractionCmv2.tools.data.build_two_domain_mano_split_v1_4 import build
+from src.task.ObjectInteractionCmv2.tests.test_v1_4_three_domain import _make_domain
 
 
 def test_arctic_split_is_trajectory_stable_and_preserves_grab_splits(tmp_path):
@@ -27,3 +31,11 @@ def test_arctic_split_is_trajectory_stable_and_preserves_grab_splits(tmp_path):
     assert first["test"]["grab"] == 1
     assert first["train"]["arctic"] and first["val"]["arctic"]
     assert first_index["sequences"] == second_index["sequences"]
+
+
+def test_derived_trajectory_split_requires_explicit_manifest_override(tmp_path):
+    sequence, _, _ = _make_domain(tmp_path, "arctic", "mano")
+    with pytest.raises(ValueError, match="split mismatch"):
+        InspireSequenceView(sequence, "arctic", "val", "mano")
+    view = InspireSequenceView(sequence, "arctic", "val", "mano", allow_manifest_split_override=True)
+    assert view.split == "val"

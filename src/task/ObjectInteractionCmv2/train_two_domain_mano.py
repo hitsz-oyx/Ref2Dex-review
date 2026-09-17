@@ -35,6 +35,7 @@ def _dataset(cfg: Mapping[str, Any], split: str) -> ThreeDomainTransitions:
         cfg["sources"], split, num_obj_points=int(data["num_obj_points"]),
         train_stride_values=data["train_stride_values"], fixed_stride=(int(data["eval_stride"]) if split == "val" else None),
         active_only=bool(data["active_only"]), base_seed=int(cfg["training"]["seed"]),
+        allow_manifest_split_override=True,
     )
 
 

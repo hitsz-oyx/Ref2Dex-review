@@ -113,7 +113,8 @@ class InspireSequenceView:
     the view accepts both MANO and Inspire entries.
     """
 
-    def __init__(self, path: str | Path, domain: str, split: str, hand_variant: str | None = None) -> None:
+    def __init__(self, path: str | Path, domain: str, split: str, hand_variant: str | None = None,
+                 *, allow_manifest_split_override: bool = False) -> None:
         self.path = Path(path).resolve()
         self.domain = str(domain)
         self.split = str(split)
@@ -136,7 +137,7 @@ class InspireSequenceView:
                 f"{self.path}: index domain {self.domain!r} does not match "
                 f"manifest source_dataset={manifest_domain!r}"
             )
-        if self.manifest.get("split") != self.split:
+        if self.manifest.get("split") != self.split and not allow_manifest_split_override:
             raise ValueError(f"{self.path}: split mismatch")
         self.hand_variant = _manifest_variant(self.manifest)
         if hand_variant is not None and self.hand_variant != normalize_hand_variant(hand_variant):
@@ -296,6 +297,7 @@ class ThreeDomainTransitions(Dataset):
         active_only: bool = True,
         base_seed: int = 42,
         max_sequences_per_domain: int | None = None,
+        allow_manifest_split_override: bool = False,
     ) -> None:
         if split not in ("train", "val", "test"):
             raise ValueError("split must be train, val, or test")
@@ -333,7 +335,9 @@ class ThreeDomainTransitions(Dataset):
             path = Path(entry["path"])
             if not path.is_dir():
                 raise FileNotFoundError(path)
-            sequence = InspireSequenceView(path, entry["domain"], split, entry["hand_variant"])
+            sequence = InspireSequenceView(
+                path, entry["domain"], split, entry["hand_variant"],
+                allow_manifest_split_override=allow_manifest_split_override)
             if entry.get("frame_count") and entry["frame_count"] != sequence.frame_count:
                 raise ValueError(f"{path}: index frame_count mismatch")
             self.sequences.append(sequence)
