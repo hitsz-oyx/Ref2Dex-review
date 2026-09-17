@@ -8595,7 +8595,7 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 - `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/` — `PENDING`；选择输出尚未终态，目录在选择完成后写入，运行中不把它当作终态证据。
 - `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/` — `PENDING`；cache 输出尚未开始。
 
-**验证与状态**
+**验证**
 
 - smoke selection：`1` 段、`1246` 帧、`0` 失败；smoke cache：双手 `3076` 点、物体 `4096` 点、KNN `K=32`、所有数组 finite，工程结论 `SUPPORTED`。
 - full 运行阶段结论仍为 `INCONCLUSIVE`；最终以 selection/export 两个 run manifest、index、cache_manifest 和全量校验为准，不把 smoke 结果外推到全量或科研效果。
