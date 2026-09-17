@@ -8588,8 +8588,8 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 
 - [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json) — `STARTED/RESTARTED` wrapper manifest；首次普通 `nohup` 子进程组被执行器回收，未产生选择产物，随后用 `setsid` 重启，未修改输入。
 - [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log) — 实时日志；当前已处理 `10/517` 个序列，`19` 个候选，`0` 个失败。
-- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/` — 选择输出尚未终态，当前目录在选择完成后写入；运行中不把 `PENDING` 路径当作终态证据。
-- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/` — cache 输出尚未开始，保持 `PENDING`。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/` — `PENDING`；选择输出尚未终态，目录在选择完成后写入，运行中不把它当作终态证据。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/` — `PENDING`；cache 输出尚未开始。
 
 **验证与状态**
 
