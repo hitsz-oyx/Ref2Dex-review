@@ -49,6 +49,29 @@ def test_v117_formal_contract_is_fixed_to_2048_envs_and_five_million_step_checkp
     assert value("--cfg_train") == "/tmp/dexplore-v117-formal/train_config.yaml"
 
 
+def test_v117_horovod_command_uses_two_synchronized_ranks_and_rank_local_env_counts():
+    settings = LAUNCHER._run_settings("formal", num_envs=2048, world_size=LAUNCHER.HOROVOD_WORLD_SIZE)
+    command = LAUNCHER._horovod_command(
+        Path("/tmp/dexplore-v117-horovod"), num_envs=2048,
+        max_iterations=settings["max_iterations"],
+    )
+
+    assert command[:5] == [
+        str(Path(LAUNCHER.sys.executable).with_name("horovodrun")),
+        "-np", "2", "-H", "localhost:2",
+    ]
+    assert command[5:7] == [LAUNCHER.sys.executable, str(LAUNCHER.HOROVOD_BOOTSTRAP)]
+    assert command.count("--horovod") == 1
+    assert command[command.index("--num_envs") + 1] == "2048"
+    assert settings["target_env_steps"] == 40_108_032
+    assert LAUNCHER.HOROVOD_PHYSICAL_GPUS == (0, 3)
+
+
+def test_v117_horovod_smoke_budget_counts_all_rank_local_environments():
+    settings = LAUNCHER._run_settings("smoke", num_envs=2048, world_size=LAUNCHER.HOROVOD_WORLD_SIZE)
+    assert settings == {"max_iterations": 1, "save_frequency": None, "target_env_steps": 262_144}
+
+
 def test_v117_formal_train_config_only_changes_checkpoint_cadence(tmp_path):
     import yaml
 

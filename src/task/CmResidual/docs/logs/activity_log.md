@@ -4726,7 +4726,7 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 - worktree_dirty: true（仅本条运行状态记录未提交；根级/ObjectInteractionCm activity 和用户已有未跟踪文档/工具保持不变。）
 - scope: physical GPU5，single-rank 2048 env，`s1_airplane_lift`，horizon64，minibatch256，seed42，从零初始化；`max_iterations=152`，实际目标 153 epoch/20,054,016 env-steps；每 38 epoch checkpoint；不使用 Horovod、capacity-smoke checkpoint 或外部源码修改。
 - run_id: dexplore_grab_teacher_v1171_formal_env2048_20260918_131215
-- run_status: RUNNING
+- run_status: FAILED
 - output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/)、[config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/config.json)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/run_manifest.json)、[train config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train_config.yaml)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train.log)。
 - conclusion: INCONCLUSIVE
 
@@ -4737,3 +4737,281 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **验证**
 
 子进程仍存活；GPU5 显存约 `22.6 GiB` 且持续有计算利用率，manifest 已写入完整 source SHA、外部 commit、运行时、命令与生成的 train config。外部 stdout 是文件块缓冲，首个 epoch 指标尚未刷入日志；当前未见 traceback、OOM 或 non-finite 证据。
+
+## 2026-09-18 14:21:40 +0800 — V1.17.2 DexPlore 单卡正式训练按用户指令停止
+
+- timestamp: 2026-09-18 14:21:40 +0800
+- activity_id: ACT-20260918-142140-CMRESIDUAL-V1172-DEXPLORE-STOP
+- modification_version: V1.17.2
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求“先把目前的 dexplore 训练停了”，并要求改在 physical GPU 0/1/3 进行同步多卡 DexPlore 训练。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: ebfb44fe15eb226c651a47767a389ee2e52a3a07
+- worktree_dirty: true（根级/ObjectInteractionCm activity、用户已有未跟踪指导/工具和 V1.19 plan 草案保持不变；本条只更新既有 V1.17 运行的终态。）
+- scope: 仅向 `dexplore_grab_teacher_v1171_formal_env2048_20260918_131215` 的 process group 发送 `SIGINT`；不删除 output、checkpoint、TensorBoard event、外部 checkout 或输入数据，也不停止其他 GPU 任务。
+- run_id: dexplore_grab_teacher_v1171_formal_env2048_20260918_131215
+- run_status: STOPPED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train.log)、[best checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)、[latest checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000114.pth)。
+- last_epoch: 123；last_step: 16,121,856；best_metric: 日志中未单独导出；best_checkpoint: `GRAB.pth`；latest_checkpoint: `GRAB_00000114.pth`。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+原定 153 epochs 的 single-rank GPU5 formal teacher 已完成至少 123 个 epoch；用户要求停止该运行并迁移到 GPU0/1/3 的同步多卡版本。该人工停止不代表 OOM、non-finite 或科研假设失败。
+
+**验证**
+
+`kill -INT -- -389105` 后 launcher 和其 DExplore child 均已退出；日志最后一段为 `KeyboardInterrupt`，来自用户指定的 SIGINT。checkpoint 保留 epoch 38/76/114，TensorBoard event 存在。多卡新运行尚未启动：现有 DexPlore 代码仅以 Horovod 实现同步多卡，而现有 `graspenv` 三卡环境为 `torch.distributed` 且没有 Horovod；不会将三张卡启动为相互独立的三个 PPO 训练冒充 DDP。
+
+## 2026-09-18 15:20:11 +0800 — V1.17.2 三卡 Horovod launcher 与合同
+
+- timestamp: 2026-09-18 15:20:11 +0800
+- activity_id: ACT-20260918-152011-CMRESIDUAL-V1172-DEXPLORE-HOROVOD-LAUNCHER
+- modification_version: V1.17.2
+- operation_category: code、experiment、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户明确要求在 physical GPU 0/1/3 跑 DExplore，并在停止既有单卡训练后继续；[`V1.17`](../plan/V1.17.md) 的 V1.17.2 追加合同已据此定稿。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: ebfb44fe15eb226c651a47767a389ee2e52a3a07
+- scope: [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 新增 opt-in `--launcher horovod`，固定 physical GPU 0/1/3、`horovodrun -np 3 -H localhost:3`、每 rank 2048 env、rank-local CUDA 映射、isolated CUDA/NCCL runtime 与三卡 manifest；[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 覆盖启动命令和三卡 formal/smoke 预算。单卡默认模式、数据、观测、动作、奖励、物理、seed、外部 DExplore checkout 与既有输出均未修改。
+- runtime: 新建且不纳入 Git 的 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117_hvd`，Python 3.8、Torch `2.0.1+cu118`、`rl-games==1.1.4`、Horovod `0.28.1`、MPI/CUDA/NCCL；Torch `2.2.2+cu121` 无法编译 Horovod 0.28.1 的 PyTorch C++ 扩展，故按兼容性证据替换。
+- validation: `graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`（5 passed）；`CUDA_VISIBLE_DEVICES=0,1,3 horovodrun -np 3 -H localhost:3 ... hvd.allreduce_(..., op=hvd.Sum)` 三 rank 分别 `rank/local_rank/device=0/0/0, 1/1/1, 2/2/2` 且均得到 `sum=6.0`。
+- rollback: `git revert` 本次 launcher 提交即可恢复单卡-only launcher；隔离 runtime 与 output 不属于版本库且未影响共享环境。
+- conclusion: INCONCLUSIVE（工程通信和启动合同已通过；尚未运行 DExplore 三卡 capacity smoke，不能解释为 teacher 收敛或抓取效果。）
+
+**原因**
+
+外部 DExplore 的同步多卡实现是 Horovod；既有 Ref2Dex `torch.distributed` 环境无法成为该入口的替代。用户指定使用 GPU 0/1/3，且 2048 env 是每 rank 的既定容量，因而新增显式、可审计的 Horovod launcher，而不改变单卡路径或外部源码。
+
+**验证**
+
+静态编译与 5 个 launcher 合同测试通过；在 `CUDA_VISIBLE_DEVICES=0,1,3` 下的真实 NCCL `Sum` all-reduce 由三 rank 全部返回 6.0。该证据只证明通信与启动合同，正式 DExplore smoke 仍是下一道门。
+
+## 2026-09-18 15:22:00 +0800 — V1.17.2 三卡 DExplore capacity preflight 未启动
+
+- timestamp: 2026-09-18 15:22:00 +0800
+- activity_id: ACT-20260918-152145-CMRESIDUAL-V1172-DEXPLORE-HOROVOD-SMOKE
+- modification_version: V1.17.2
+- operation_category: diagnostic、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.17.2 最终合同的 capacity/synchronization smoke 前置门；用户要求在指定三卡继续运行 DExplore。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: a46a83024f0560f0ff6f17d3b59c76815a63a0c4
+- scope: 仅执行 [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 的 Horovod dry-run preflight，核验 [`V1.17`](../plan/V1.17.md) 的三卡容量门；未创建训练 output，也未修改外部 DExplore、数据、配置或其他任务。
+- run_id: dexplore_grab_teacher_v1172_hvd3x2048_smoke_20260918_152145
+- run_status: NOT_STARTED
+- command: `dexplore_v117_hvd/bin/python src/task/CmResidual/tools/run_dexplore_grab_teacher.py --launcher horovod --mode smoke --num-envs 2048 --dry-run`。
+- output: PENDING（dry-run 未创建 output/manifest/train.log；容量门未通过前不得创建正式 smoke 目录）。
+- evidence: Horovod 三 rank NCCL Sum all-reduce 已通过；随后 launcher preflight 读取 physical GPU 0/1/3 为 `2553/6901/1997 MiB`，GPU1 `80%` 利用率，超过保守 4096 MiB 共存门限；全机 GPU2/4/5/6/7 也分别有 `6543/6550/6131/6130/6394 MiB` 且 `70%/77%/91%/90%/81%` 利用率。
+- conclusion: INCONCLUSIVE（环境和同步实现已验证；资源容量不足导致 smoke 未启动，不是 DExplore、NCCL、数据或科研假设失败。）
+
+**原因**
+
+每 rank 2048 env 的 DExplore 容量已知会占用大部分 24GiB 卡，且现有任务正在高利用率运行；抢占或与其混跑会使结果不可靠，并可能使无关任务 OOM。用户尚未授权停止这些其他运行，也未授权改为少于三 rank 或改变每 rank 2048 env 合同。
+
+**验证**
+
+preflight 在创建输出前以非零状态退出，且 `nvidia-smi` 与 launcher 报告一致；没有启动 Isaac Gym、没有写 checkpoint/训练日志、没有发送信号给任何现有任务。
+
+## 2026-09-18 15:26:21 +0800 — V1.17.3 GPU0/3 双卡 Horovod 执行合同
+
+- timestamp: 2026-09-18 15:26:21 +0800
+- activity_id: ACT-20260918-152621-CMRESIDUAL-V1173-DEXPLORE-2GPU-LAUNCHER
+- modification_version: V1.17.3
+- operation_category: code、experiment、operation、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户明确要求“用0和3这两张卡跑，graspenv的其他进程停一下”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 86f66ed6dd6f76e4830a8420706df421dff2b663
+- scope: 向 GPU0 上的 `1419735/1433137/1790780` InteractionTransfer viewer 与 GPU3 上的 `2035553/2436140/2678096` CmDecoderv2 viewer/rollout 服务发送 SIGINT；它们均为 `graspenv` 进程且均退出。[`V1.17`](../plan/V1.17.md) 追加 V1.17.3，[`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 固定 Horovod physical GPU `(0,3)`、world size 2，[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 同步双卡预算。未停止 GPU1/2/4/5/6/7 进程，未触碰非 `graspenv` 进程、外部 DExplore、数据、观测、动作、奖励、物理或旧 output。
+- runtime_contract: `CUDA_VISIBLE_DEVICES=0,3`、`horovodrun -np 2 -H localhost:2`、每 rank 2048 env、总 4096 env；smoke `262,144` steps，formal 最多 `40,108,032` steps；从零初始化。
+- validation: `graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`（5 passed）；真实双 rank NCCL Sum all-reduce：rank/local_rank/device `0/0/0` 与 `1/1/1` 均得到 `sum=3.0`；SIGINT 后 GPU0、GPU3 均降为 2MiB。
+- rollback: `git revert` 本次 launcher 提交可恢复三卡 `(0,1,3)` 定义；被停止的 viewer/rollout 服务没有删除产物，可由其原始命令重新启动。
+- conclusion: INCONCLUSIVE（双卡通信与资源释放已验证；DExplore capacity smoke 尚未启动，不能作为训练效果结论。）
+
+**原因**
+
+三卡 preflight 因 GPU1 的高负载未启动；用户改为两卡并明确授权仅停止 GPU0、GPU3 的 `graspenv` 进程。world size 是同步训练的运行合同，故同时更新计划、启动器、测试和预算，避免将双卡运行误记为三卡。
+
+**验证**
+
+两个目标 GPU 已无残留的计算进程；双卡 collective 在指定的逻辑设备上通过。下一步是使用新的 run_id 运行完整 DExplore 1-iteration smoke，检查 Isaac Gym 初始化、PPO 迭代、checkpoint 与 TensorBoard 产物。
+
+## 2026-09-18 15:27:00 +0800 — V1.17.3 双卡 DExplore capacity smoke 已启动
+
+- timestamp: 2026-09-18 15:27:00 +0800
+- activity_id: ACT-20260918-152700-CMRESIDUAL-V1173-DEXPLORE-HOROVOD-SMOKE
+- modification_version: V1.17.3
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户授权 GPU0/3 双卡执行；[`V1.17`](../plan/V1.17.md) V1.17.3 双卡最终合同。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: fbca3ff6d1266108dc3bca49c5230099098a47f1
+- scope: `CUDA_VISIBLE_DEVICES=0,3`、Horovod 2 rank、每 rank 2048 env、horizon 64、minibatch 256、seed42、max_iterations 1、从零初始化；不恢复旧 checkpoint，不改外部源码/数据/任务合同。
+- run_id: dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152700
+- run_status: RUNNING
+- command: `dexplore_v117_hvd/bin/python src/task/CmResidual/tools/run_dexplore_grab_teacher.py --launcher horovod --mode smoke --num-envs 2048`。
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152700/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152700/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152700/train.log)。
+- exit_code: 1；last_epoch: N/A；last_step: N/A；checkpoint: N/A；tensorboard: N/A。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+双卡 preflight、NCCL collective 和输入合同均已通过；本运行是 formal 前唯一允许的 capacity/synchronization smoke。
+
+**验证**
+
+启动前 dry-run 返回通过，GPU0/3 各 2MiB；两个 Horovod rank 随后在 `dexplore/run.py` import 阶段报 `ModuleNotFoundError: No module named 'isaacgym'` 并以 exit code 1 退出，GPU 峰值均为 4MiB，故不是 OOM。隔离环境随后以 `pip install --no-deps -e /home2/wyy/isaac-gym/isaacgym/python` 补齐 Isaac Gym；该命令先被中止以阻止 resolver 将 Torch 升级到 2.4.1，最终确认 Torch 仍为 2.0.1+cu118，Isaac Gym import 成功。
+
+## 2026-09-18 15:29:00 +0800 — V1.17.3 双卡 DExplore capacity smoke 重试已启动
+
+- timestamp: 2026-09-18 15:29:00 +0800
+- activity_id: ACT-20260918-152900-CMRESIDUAL-V1173-DEXPLORE-HOROVOD-SMOKE-RETRY
+- modification_version: V1.17.3
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: 与同版本 V1.17.3 final contract 相同；前一 run 因隔离环境缺 Isaac Gym 而无效，修复该环境依赖后以新目录重试。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: fbca3ff6d1266108dc3bca49c5230099098a47f1
+- scope: 保持 GPU0/3、2 Horovod rank、每 rank 2048 env、horizon 64、minibatch 256、seed42、max_iterations 1 与从零初始化；唯一环境变化是隔离 runtime 内的本地 Isaac Gym editable 安装，不改外部源码、数据或研究合同。
+- run_id: dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152900
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152900/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152900/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_152900/train.log)。
+- exit_code: 1；last_epoch: N/A；last_step: N/A；checkpoint: N/A；tensorboard: N/A；gpu_peak_mib: GPU0/3 均 4MiB。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+前一 smoke 未执行训练，失效原因是可修复的隔离环境依赖缺失；新 run_id 防止覆盖该失败证据。
+
+**验证**
+
+Isaac Gym/gymtorch 成功加载后，两个 rank 在 DExplore `base_dexplore_task.py` import 阶段均报 `ModuleNotFoundError: No module named 'trimesh'` 并 exit 1；没有创建 checkpoint/TensorBoard，故不是 OOM。隔离环境随后仅以 `--no-deps` 安装 `trimesh==4.10.1`、`scipy==1.10.1`、`termcolor==2.4.0`，正常入口 `import run` 通过。
+
+## 2026-09-18 15:31:00 +0800 — V1.17.3 双卡 DExplore capacity smoke 第三次启动
+
+- timestamp: 2026-09-18 15:31:00 +0800
+- activity_id: ACT-20260918-153100-CMRESIDUAL-V1173-DEXPLORE-HOROVOD-SMOKE-RETRY2
+- modification_version: V1.17.3
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.17.3 final contract；此前两次无效运行均在训练前因隔离环境依赖缺失退出，重试不改变研究变量。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: fbca3ff6d1266108dc3bca49c5230099098a47f1
+- scope: 固定 GPU0/3、2 rank、每 rank 2048 env、horizon64、minibatch256、seed42、max_iterations1、从零初始化；环境仅补齐 Isaac Gym、trimesh/scipy/termcolor，Torch 2.0.1+cu118、Horovod0.28.1 与外部源码不变。
+- run_id: dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_153100
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_153100/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_153100/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1173_hvd2x2048_smoke_20260918_153100/train.log)。
+- exit_code: 1；last_epoch: N/A；last_step: N/A；checkpoint: N/A；tensorboard: N/A；gpu_peak_mib: GPU0 `16974`、GPU3 `16645`。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+常规 DExplore `run.py` 导入链已完整通过；该 run 是在完成运行时依赖闭包后的第一轮真实容量 smoke。
+
+**验证**
+
+`import run` 已成功加载 DExplore、Isaac Gym、gymtorch 与 rlgpu。两个 rank 均完成 PhysX 初始化并进入 motion load；rank1 的 `obj_rot` 在 `cuda:1`，而未传 device 的 Isaac Gym `to_torch(object_points)` 固定生成于 `cuda:0`，在 `quat_rotate` 报跨设备 RuntimeError。没有 checkpoint/TensorBoard，故为外部多卡实现缺陷而非 OOM。
+
+## 2026-09-18 15:33:00 +0800 — V1.17.4 rank-local Isaac Gym bootstrap
+
+- timestamp: 2026-09-18 15:33:00 +0800
+- activity_id: ACT-20260918-153300-CMRESIDUAL-V1174-DEXPLORE-RANK-BOOTSTRAP
+- modification_version: V1.17.4
+- operation_category: code、experiment、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户要求继续 GPU0/3 双卡 DExplore；[`V1.17`](../plan/V1.17.md) V1.17.4 最终追加合同将已实证的 rank1 默认设备错配限定为 Task-local bootstrap 修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: fbca3ff6d1266108dc3bca49c5230099098a47f1
+- scope: 新增 [`dexplore_horovod_rank_bootstrap.py`](../../tools/dexplore_horovod_rank_bootstrap.py)，在导入外部 DExplore 前将 Isaac Gym `to_torch` 的未传入 device 默认值映射至 `cuda:${HOROVOD_LOCAL_RANK}`；[`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 仅在 Horovod 命令中调用此 bootstrap；[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 验证该命令入口。显式 device、单卡命令、外部 DExplore/Isaac Gym 源码、数据和研究合同未修改。
+- validation: `graspenv/bin/python -m py_compile` 两个 launcher 文件通过；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`（5 passed）。第三次 smoke 的 rank1 失败堆栈精确指向 `to_torch(object_points)` 默认 `cuda:0` 与 rank1 PhysX `cuda:1` 的冲突；修复后需以新 run_id 重新运行真正 smoke。
+- rollback: `git revert` 本次 bootstrap 提交会恢复 Horovod 直接执行外部 `dexplore/run.py`；此前失败 output 均保留。
+- conclusion: INCONCLUSIVE（设备错配原因已支持并以最小 shim 修复；尚未证明 PPO smoke 可完成。）
+
+**原因**
+
+外部 DExplore 的 Horovod 分支将 PhysX/rl device 设为 rank-local，却保留 Isaac Gym helper 的全局 `cuda:0` 默认值；这在 rank0 不可见、只在 rank1 暴露。修改外部 checkout 会污染参考实现，因此采用本仓库 bootstrap。
+
+**验证**
+
+bootstrap 只改变省略 `device` 的调用；任何 `device=...` 参数继续原样传递。双卡 collective、数据合同、显存容量及完整 DExplore import 已分别通过；下一 run 将验证环境构造、PPO epoch、checkpoint 与 TensorBoard。
+
+## 2026-09-18 15:35:00 +0800 — V1.17.4 双卡 DExplore capacity smoke 已启动
+
+- timestamp: 2026-09-18 15:35:00 +0800
+- activity_id: ACT-20260918-153500-CMRESIDUAL-V1174-DEXPLORE-HOROVOD-SMOKE
+- modification_version: V1.17.4
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: [`V1.17`](../plan/V1.17.md) V1.17.4 final contract；用户授权继续 GPU0/3 双卡运行。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: 2e2756bde8d8d6f3a0ce0976a5bb2fa7d8cb8ea0
+- scope: [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 的 bootstrap 路径已解析为绝对路径；CUDA_VISIBLE_DEVICES=0,3，2 Horovod rank、每 rank 2048 env、horizon64、minibatch256、seed42、max_iterations1，从零初始化；仅 Horovod rank bootstrap 改写 Isaac Gym 未显式 device 默认值，外部源码/数据/任务合同不变。
+- run_id: dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153500
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153500/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153500/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153500/train.log)。
+- exit_code: 2；last_epoch: N/A；last_step: N/A；checkpoint: N/A；tensorboard: N/A；gpu_peak_mib: GPU0/3 均 4MiB。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+V1.17.4 rank-local bootstrap 已经通过静态、命令合同与相关设备错配诊断；本 run 是验证该最小修复的首个真实 capacity smoke。
+
+**验证**
+
+dry-run 通过并显示 Horovod 在两 rank 上执行 Task-local bootstrap；实际执行时因 bootstrap 是相对路径而外部 DExplore cwd 不同，两个 rank 均报找不到该文件并 exit 2，未初始化 GPU。路径已改为绝对路径。
+
+## 2026-09-18 15:37:00 +0800 — V1.17.4 双卡 DExplore capacity smoke 路径修复后重试
+
+- timestamp: 2026-09-18 15:37:00 +0800
+- activity_id: ACT-20260918-153700-CMRESIDUAL-V1174-DEXPLORE-HOROVOD-SMOKE-RETRY
+- modification_version: V1.17.4
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.17.4 final contract；仅修复前一 smoke 的 Task-local bootstrap 路径，无研究变量变化。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: 2e2756bde8d8d6f3a0ce0976a5bb2fa7d8cb8ea0
+- scope: GPU0/3、2 rank、每 rank2048 env、horizon64、minibatch256、seed42、max_iterations1；使用绝对 [`dexplore_horovod_rank_bootstrap.py`](../../tools/dexplore_horovod_rank_bootstrap.py) 路径，不改外部源码或数据。
+- run_id: dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153700
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153700/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153700/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153700/train.log)（PENDING）。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+上一 run 仅路径解析失败；绝对路径使 Horovod 子进程无论 cwd 为何都能执行 Ref2Dex bootstrap。
+
+**验证**
+
+launcher 静态检查与 5 个合同测试通过；运行终态待本次 launcher 退出后更新。

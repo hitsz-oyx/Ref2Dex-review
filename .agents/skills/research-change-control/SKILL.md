@@ -1,108 +1,87 @@
 ---
 name: research-change-control
-description: 在科研或软件仓库中进行代码、配置、数据处理和文档修改时，使用透明的影响等级、最小差异、审批闸门和文档与差异一致性检查。
+description: 控制 Ref2Dex 的代码、配置、测试、文档和治理修改，保持最小差异、明确审批和可审计交接。
 metadata:
-  short-description: 让科研修改保持简洁且可审计
+  short-description: 让仓库修改保持简洁且可回滚
 ---
 
 # 科研修改控制
 
-当你要修改仓库代码、配置、数据处理逻辑、实验流程或项目文档时使用本 Skill。
+本 Skill 用于 change 和 governance 模式。它只负责“怎么修改”，不负责研究结论或长时运行状态；运行请使用
+research-experiment-workflow。
 
-## 核心行为
+## 1. 最小上下文
 
-- 先确认目标，保留用户已有的未提交改动。
-- 优先采用最小语义差异：不要顺手重构无关代码、整文件格式化或引入无关抽象。
-- 在项目的 activity log 中声明影响等级。这是供用户复核的 AI 判断，不能假装脚本能够推断科研影响；历史仓库若仍只有 modification log，将其视为只读兼容记录。
-- 如果改动会影响科研语义、公共合同、共享基础设施、破坏性状态或长时外部任务，在实现前说明方案并请用户确认；修改 AGENTS、Skill 或公共治理合同统一按治理高风险处理。
-- 在同一次交接中同时给出实现、验证和文档；不能把 smoke test 或实现错误冒充科研结论。
+先声明 Task、工作模式、范围和保护边界，再读取：
 
-## 指导与执行计划
+    AGENTS.md
+    docs/current_versions.yaml
+    src/task/<Task>/docs/README.md
+    当前指导谱系（若任务涉及研究目标）
+    相关代码和相关测试
 
-当仓库提供成对的 `docs/指导/V<n>.md` 与 `docs/plan/V<n>.md` 时，遵循以下流程；路径中的
-`Task`、版本号和领域名称不属于本 Skill 的固定假设：
+同一数值基线的指导必须读取无后缀文件及按 `a`–`z` 排序的全部已确认补充文件，不能只读取最后一个字母文件。
+跨文件的明确冲突由较后字母覆盖冲突部分；同一文件内部冲突、无法同时满足或语义不充分时，停止相关实施并请用户确认。
+确认前起草或修订 plan，列出冲突原文、候选解释、拟定措辞、保护项、风险、验证和回滚；确认后才可修改指导和定稿计划。
+只有出现历史兼容、冲突或证据追溯时，才搜索 activity archive、experiment、decision 和 Git 历史；不要为了形式完整
+读取所有历史日志。开始前检查 git status、git diff 和 git diff --cached，保留用户已有改动。
 
-1. 用户提供或修订 `指导/V<n>.md`，说明研究目标、假设、边界和禁止事项。
-2. Agent 先阅读指导以及相关活动、架构、决策和历史修改记录，起草同数字后缀的 `plan/V<n>.md`。
-3. Agent 与用户讨论计划中的实现范围、文件、接口/schema、不变量、修改等级、验证和回滚方式；
-   协商期间可以反复修改 plan。
-4. 只有用户和 Agent 明确将 plan 标记为最终版本后，才开始代码、配置、数据处理或实验流程修改。
-   plan 未定稿时，Agent 只能分析、提问和修改 plan 本身。
-5. 若实现中需要偏离最终 plan，先暂停并重新协商；不得用代码修改替代计划确认。
+## 2. 等级和审批
 
-指导与 plan 的数字后缀用于文档配对，不作为运行 JSON 的额外版本字段。协商期间的草稿变化不追加到
-activity log；完成实现时，在 activity 中记录 `modification_version` 和实际 diff/验证，并链接定稿
-plan。plan 不替代 architecture、experiment、decision 或 activity 记录。
+按 [change-levels.md](references/change-levels.md) 判断 L0–L3：
 
-## 等级与审批
+- L0：文档、格式、测试、只读诊断和不改变运行变量的元数据；
+- L1：Task 内实现，observation/action/reward/GT/坐标/单位/split/metric/checkpoint 合同不变；
+- L2：研究语义或公共接口合同变化；
+- L3：AGENTS、Skill、治理、共享 src/base、依赖、迁移、破坏性操作或长任务。
 
-分级时阅读 [change-levels.md](references/change-levels.md)。默认规则如下：
+L0/L1 可执行并在交接中报告。L2/L3 编辑前必须说明改变什么、保持什么不变、风险、验证和回滚并获得用户确认。
+修改 AGENTS、Skill 和公共治理合同固定为 L3。记录真实的 approval 与 approval_basis，不把沉默视为批准。
 
-- **L0**：文档、格式、测试、纯诊断，以及不改变运行行为的配置元数据，可自动完成；改变训练变量的配置不是 L0。
-- **L1**：保持公共数据/指标/checkpoint 合同的任务内实现，可自动完成并做定向验证。
-- **L2**：修改数据字段、坐标系、GT、数据划分、缓存、指标、checkpoint 解释或公共接口合同；编辑前请用户确认。
-- **L3**：修改共享框架行为、仓库治理、依赖、迁移、破坏性操作或长时任务；编辑前请用户确认，并先给出范围、风险、回滚和验证计划。
+## 3. plan 和研究版本
 
-拿不准时选择更高等级。按真实对话记录 `approval: auto`、`pending` 或 `user-approved`，并记录 `approval_basis`；不要把用户沉默当作批准。
+只有新的 modification_version 边界或 L2/L3 方案需要最终 plan/V<n>.md。L0/L1 修复不创建新的 plan，也不创建新版本。
+指导由用户维护；只有用户确认同文件冲突的修订措辞后，Agent 才可修改相应指导。治理任务可以把用户明确的治理指导作为范围依据，不把 plan 草稿冒充实现事实。
 
-## Activity 记录
+如果实现中发现需要改变最终范围、研究变量、公共合同或保护边界，立即暂停并重新确认；不得用代码或配置差异代替计划确认。
 
-使用离改动最近的 activity log。项目没有既定格式时，使用以下简洁条目：
+## 4. 分支和实施
 
-```markdown
-## YYYY-MM-DD HH:MM:SS +0800 — <摘要>
+oyx 是稳定集成分支。独立任务使用 ai/<task>/<description> 分支；实验参数变化不创建分支。按最小语义差异实施，
+只编辑当前任务的显式文件，不整文件格式化，不顺手重构无关代码。不得 reset、覆盖或带入用户已有修改；outputs、
+cache、checkpoint、原始数据和大型日志不纳入提交。
 
-- activity_id: ACT-YYYYMMDD-HHMMSS
-- modification_version: Vn.m.k
-- type: code_change / config_change / data_change / experiment_run / operation
-- change_level: L0 / L1 / L2 / L3
-- approval: auto / pending / user-approved
-- approval_basis:
-- skills_used: 本次实际采用的仓库 Skill 名称列表
-- branch:
-- base_commit: 活动发生时可见的最近一次已提交 HEAD 哈希
-- worktree_dirty: true / false
-- scope:
+## 5. 验证和记录
 
-**文件**
-- `path/to/file` — 做了什么
+按 docs/目录规范.md 选择最窄且有意义的测试：Task 内改动优先 Task 测试，公共接口才扩大到 shared/integration，
+治理修改做文档、YAML/JSON、脚本语法和链接检查。
 
-**原因**
-...
+第二阶段建立后，唯一机器门禁为：
 
-**验证**
-...
-```
+    python tools/verify.py --changed
 
-交接前运行项目审计，或运行随附脚本：
+第一阶段工具尚不存在时，必须记录实际执行的定向检查和 git diff --check，不得声称 VERIFY PASS。交接前可用：
 
-```bash
-python .agents/skills/research-change-control/scripts/audit_diff.py \
-  --log <project-activity-log> --staged --check-links
-```
+    python .agents/skills/research-change-control/scripts/audit_diff.py \
+      --log <activity_log> --staged --check-links
 
-脚本按 `timestamp` 选择最新 activity，检查其是否客观列出了所选 Git 差异中的文件、包含等级、审批、
-范围、原因和验证段，并在启用 `--check-links` 时检查本地 Markdown 链接目标。它不会评判等级是否
-正确。能力边界见 [audit-contract.md](references/audit-contract.md)。
+长期 Activity 存在当前作用域 `activities/`，索引为 `activities/README.md`；旧 `activity_log.md` 仅作历史审计。
+Activity 至少包含精确时间、activity_id 或细分版本、modification_version、base_commit、branch、scope、等级、
+审批、原因、文件、验证和回滚入口。重要事件才写 activity；普通逐步进度和一次性 smoke 不写科研时间线。
 
-`skills_used` 用于让用户复核 Agent 是否加载了与变更类型匹配的 Skill。它是透明记录，不是
-脚本能够证明的模型内部状态；缺少该字段时不得声称流程已完整执行。
+## 6. 交接
 
-## 验证与交接
+最终回复按以下字段交接：
 
-- 先按仓库提供的测试目录/验证范围规范选择最窄且有意义的测试；Task 内变更优先只运行对应 Task
-  的测试，触及共享代码或合同时再加共享/集成测试；不因一个 Task 的小改动默认运行其他无关 Task
-  的测试。
-- 在 activity 记录中写出确切的验证命令和结果。
-- 只要产生或更新 plan、activity、实验产物、运行目录或 manifest，activity 和最终回复都必须提供
-  可点击的 Markdown 路径；显示文本使用项目根目录相对路径，不得只给文件名或裸路径。仓库内
-  Markdown 的链接目标按该文档的位置解析；聊天回复的目标使用当前客户端支持的本地文件链接格式，
-  不把仓库文档中的 `../` target 原样复制到聊天中。
-- 最终回复中的本地路径或路径链接与前后中文、标点之间使用半角空格分隔，例如
-  在“活动记录：”与链接、链接与句号之间各留一个半角空格；路径位于独立列表项时不要求为行首、
-  行尾额外填充空格。
-- `STARTED` / `RUNNING` 事件若引用尚未生成的目标，必须在同一行标记 `PENDING`；其余本地链接在
-  交接时必须已经存在。不要为了满足导航要求链接每个批量产物，只链接运行目录、manifest、配置、
-  实际生成的 metrics、train log、关键 checkpoint 和支撑结论的图表/数据；标准 BaseRunner 运行不再要求 summary。
-- 提交前检查 `git status`、`git diff` 和 staged diff。显式 stage 目标路径，绝不带入无关的用户改动。
-- 除非用户明确要求，不提交生成数据、缓存、checkpoint 和输出。
+    Task / mode / impact level
+    branch / git_commit
+    research semantics: CHANGED 或 UNCHANGED
+    changed / protected
+    verification
+    scientific conclusion: SUPPORTED / REFUTED / INCONCLUSIVE / INVALID_IMPLEMENTATION / N/A
+    next
+
+工程 smoke 只能说明接线或可运行性，不能作为科研效果。产生或更新 plan、activity、实验产物、运行目录或 manifest
+时，回复必须给出可点击路径；路径显示使用仓库根相对路径，聊天目标使用客户端支持的本地绝对路径。
+
+完整能力边界见 [audit-contract.md](references/audit-contract.md)。历史记录只读兼容，不批量回填。

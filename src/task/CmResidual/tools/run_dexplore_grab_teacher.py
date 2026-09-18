@@ -31,17 +31,23 @@ SMOKE_ITERATIONS = 1
 SMOKE_SEED = 42
 FORMAL_ITERATIONS = 152
 FORMAL_SAVE_FREQUENCY = 38
+HOROVOD_PHYSICAL_GPUS = (0, 3)
+HOROVOD_WORLD_SIZE = len(HOROVOD_PHYSICAL_GPUS)
+HOROVOD_TORCH_VERSION = "2.0.1+cu118"
+HOROVOD_GPU_CAPACITY_MIB = 4096
+CUDA_LIBRARY_DIR = Path("/home2/wyy/CUDA/cuda-12.1/lib64")
+HOROVOD_BOOTSTRAP = Path(__file__).resolve().with_name("dexplore_horovod_rank_bootstrap.py")
 
 
-def _run_settings(mode: str) -> dict:
+def _run_settings(mode: str, *, num_envs: int = 2048, world_size: int = 1) -> dict:
     if mode == "smoke":
         return {"max_iterations": SMOKE_ITERATIONS, "save_frequency": None,
-                "target_env_steps": SMOKE_ITERATIONS * SMOKE_HORIZON}
+                "target_env_steps": SMOKE_ITERATIONS * world_size * num_envs * SMOKE_HORIZON}
     if mode == "formal":
         # DExplore terminates only after epoch_num > max_epochs, so 152 yields
         # 153 completed PPO epochs and 20,054,016 env-steps at 2048x64.
         return {"max_iterations": FORMAL_ITERATIONS, "save_frequency": FORMAL_SAVE_FREQUENCY,
-                "target_env_steps": (FORMAL_ITERATIONS + 1) * 2048 * SMOKE_HORIZON}
+                "target_env_steps": (FORMAL_ITERATIONS + 1) * world_size * num_envs * SMOKE_HORIZON}
     raise ValueError(f"Unknown V1.17 run mode: {mode}")
 
 
@@ -111,18 +117,46 @@ def _check_inputs() -> dict:
     }
 
 
-def _check_runtime() -> dict:
+def _check_runtime(*, launcher: str) -> dict:
     import torch
     rl_games_version = version("rl-games")
     if rl_games_version != "1.1.4":
         raise RuntimeError(
             "DExplore requires rl-games==1.1.4; run the launcher with its isolated runtime"
         )
-    return {
+    runtime = {
         "python_executable": sys.executable,
         "rl_games_version": rl_games_version,
         "torch_version": torch.__version__,
     }
+    if launcher == "horovod":
+        if torch.__version__ != HOROVOD_TORCH_VERSION:
+            raise RuntimeError(
+                f"Horovod launcher requires torch=={HOROVOD_TORCH_VERSION}, got {torch.__version__}"
+            )
+        import horovod.torch as hvd
+        required = {"mpi": hvd.mpi_built(), "cuda": hvd.cuda_built(), "nccl": hvd.nccl_built()}
+        if not all(required.values()):
+            raise RuntimeError(f"Horovod build lacks required backends: {required}")
+        nccl_lib = Path(sys.prefix) / "lib/python3.8/site-packages/nvidia/nccl/lib"
+        if not nccl_lib.is_dir():
+            raise RuntimeError(f"Missing isolated NCCL runtime directory: {nccl_lib}")
+        runtime.update({"horovod_version": version("horovod"), "horovod_backends": required,
+                        "nccl_library_dir": str(nccl_lib)})
+    return runtime
+
+
+def _configure_horovod_library_path() -> str:
+    """Expose the isolated NCCL and host CUDA runtime before importing Torch."""
+    nccl_lib = Path(sys.prefix) / "lib/python3.8/site-packages/nvidia/nccl/lib"
+    if not CUDA_LIBRARY_DIR.is_dir() or not nccl_lib.is_dir():
+        raise RuntimeError(
+            f"Missing Horovod runtime libraries: cuda={CUDA_LIBRARY_DIR}, nccl={nccl_lib}"
+        )
+    library_path = ":".join((str(CUDA_LIBRARY_DIR), str(nccl_lib),
+                             os.environ.get("LD_LIBRARY_PATH", "")))
+    os.environ["LD_LIBRARY_PATH"] = library_path
+    return library_path
 
 
 def _motion_input(output: Path) -> Path:
@@ -140,9 +174,9 @@ def _materialize_motion_input(output: Path) -> dict:
 
 
 def _command(output: Path, *, num_envs: int, max_iterations: int,
-             train_config: str = TRAIN_CONFIG) -> list[str]:
-    return [
-        sys.executable, "dexplore/run.py",
+             train_config: str = TRAIN_CONFIG, horovod: bool = False) -> list[str]:
+    command = [
+        sys.executable, str(HOROVOD_BOOTSTRAP) if horovod else "dexplore/run.py",
         "--task", "Dexplore_Inspire",
         "--cfg_env", ENV_CONFIG,
         "--cfg_train", train_config,
@@ -158,6 +192,19 @@ def _command(output: Path, *, num_envs: int, max_iterations: int,
         "--max_iterations", str(max_iterations),
         "--seed", str(SMOKE_SEED),
     ]
+    if horovod:
+        command.append("--horovod")
+    return command
+
+
+def _horovod_command(output: Path, *, num_envs: int, max_iterations: int,
+                     train_config: str = TRAIN_CONFIG) -> list[str]:
+    horovodrun = Path(sys.executable).with_name("horovodrun")
+    return [str(horovodrun), "-np", str(HOROVOD_WORLD_SIZE), "-H",
+            f"localhost:{HOROVOD_WORLD_SIZE}"] + _command(
+                output, num_envs=num_envs, max_iterations=max_iterations,
+                train_config=train_config, horovod=True,
+            )
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -183,9 +230,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", required=True, choices=("V1.17", "V1.17.1"))
+    parser.add_argument("--modification-version", required=True,
+                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3", "V1.17.4"))
     parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
+    parser.add_argument("--launcher", choices=("single", "horovod"), default="single")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -196,22 +245,32 @@ def main() -> int:
         raise ValueError("--num-envs must be positive")
     if args.mode == "formal" and args.num_envs != 2048:
         raise ValueError("The approved V1.17 formal run is fixed to 2048 environments")
+    if args.launcher == "horovod":
+        _configure_horovod_library_path()
     output = OUTPUT_ROOT / args.run_id
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {output}")
     inputs = _check_inputs()
-    runtime = _check_runtime()
-    runtime["cuda_visible_devices"] = str(SMOKE_GPU)
-    gpu_used_mib = _gpu_used_mib(SMOKE_GPU)
-    if gpu_used_mib > 512:
-        raise RuntimeError(f"GPU{SMOKE_GPU} capacity gate failed: {gpu_used_mib} MiB used > 512 MiB")
-    settings = _run_settings(args.mode)
+    runtime = _check_runtime(launcher=args.launcher)
+    physical_gpus = HOROVOD_PHYSICAL_GPUS if args.launcher == "horovod" else (SMOKE_GPU,)
+    runtime["cuda_visible_devices"] = ",".join(str(gpu) for gpu in physical_gpus)
+    gpu_used_mib = {gpu: _gpu_used_mib(gpu) for gpu in physical_gpus}
+    capacity_limit = HOROVOD_GPU_CAPACITY_MIB if args.launcher == "horovod" else 512
+    over_capacity = {gpu: used for gpu, used in gpu_used_mib.items() if used > capacity_limit}
+    if over_capacity:
+        raise RuntimeError(
+            f"GPU capacity gate failed (limit {capacity_limit} MiB): {over_capacity}"
+        )
+    world_size = HOROVOD_WORLD_SIZE if args.launcher == "horovod" else 1
+    settings = _run_settings(args.mode, num_envs=args.num_envs, world_size=world_size)
     train_config = TRAIN_CONFIG
     if not args.dry_run and args.mode == "formal":
         output.mkdir(parents=True)
         train_config = str(_write_formal_train_config(output, save_frequency=settings["save_frequency"]))
-    command = _command(output, num_envs=args.num_envs, max_iterations=settings["max_iterations"],
-                       train_config=train_config)
+    command = (_horovod_command if args.launcher == "horovod" else _command)(
+        output, num_envs=args.num_envs, max_iterations=settings["max_iterations"],
+        train_config=train_config,
+    )
     config = {
         "external_source": str(DEXPLORE_ROOT),
         "runtime_environment": runtime,
@@ -219,9 +278,12 @@ def main() -> int:
         "training_config": TRAIN_CONFIG,
         "runtime_command": command,
         "runtime_contract": {
-            "physical_gpu": SMOKE_GPU,
-            "logical_gpu": SMOKE_LOGICAL_GPU,
-            "num_envs": args.num_envs,
+            "launcher": args.launcher,
+            "physical_gpus": list(physical_gpus),
+            "logical_gpus": list(range(world_size)),
+            "world_size": world_size,
+            "num_envs_per_rank": args.num_envs,
+            "total_num_envs": world_size * args.num_envs,
             "horizon_length": SMOKE_HORIZON,
             "minibatch_size": SMOKE_MINIBATCH,
             "mode": args.mode,
@@ -247,7 +309,7 @@ def main() -> int:
         "manifest_schema": "ref2dex.run.v1",
         "created_at": _now(),
         "task": "Dexplore",
-        "mode": f"v117_{args.mode}",
+        "mode": f"v117_{args.launcher}_{args.mode}",
         "run_id": args.run_id,
         "activity_id": args.activity_id,
         "run_status": "STARTED",
@@ -261,8 +323,12 @@ def main() -> int:
         "motion_input": motion_input,
         "runtime_environment": runtime,
         "initial_checkpoint": None,
-        "physical_gpu": SMOKE_GPU,
-        "logical_gpu": SMOKE_LOGICAL_GPU,
+        "launcher": args.launcher,
+        "physical_gpus": list(physical_gpus),
+        "logical_gpus": list(range(world_size)),
+        "world_size": world_size,
+        "num_envs_per_rank": args.num_envs,
+        "total_num_envs": world_size * args.num_envs,
         "gpu_used_mib_preflight": gpu_used_mib,
         "gpu_peak_mib": None,
         "log": str(log_path.resolve()),
@@ -272,18 +338,23 @@ def main() -> int:
         "conclusion": "INCONCLUSIVE",
     }
     _write_json(manifest_path, manifest)
-    gpu_peak_mib = gpu_used_mib
+    gpu_peak_mib = dict(gpu_used_mib)
     try:
         with log_path.open("w", encoding="utf-8", buffering=1) as stream:
             environment = os.environ.copy()
-            environment["CUDA_VISIBLE_DEVICES"] = str(SMOKE_GPU)
+            environment["CUDA_VISIBLE_DEVICES"] = runtime["cuda_visible_devices"]
+            if args.launcher == "horovod":
+                nccl_lib = runtime["nccl_library_dir"]
+                environment["LD_LIBRARY_PATH"] = str(CUDA_LIBRARY_DIR) + ":" + nccl_lib + ":" + environment.get("LD_LIBRARY_PATH", "")
             process = subprocess.Popen(command, cwd=DEXPLORE_ROOT, stdout=stream,
                                        stderr=subprocess.STDOUT, text=True, env=environment)
             while process.poll() is None:
-                gpu_peak_mib = max(gpu_peak_mib, _gpu_used_mib(SMOKE_GPU))
+                for gpu in physical_gpus:
+                    gpu_peak_mib[gpu] = max(gpu_peak_mib[gpu], _gpu_used_mib(gpu))
                 time.sleep(0.25)
             exit_code = process.wait()
-        gpu_peak_mib = max(gpu_peak_mib, _gpu_used_mib(SMOKE_GPU))
+        for gpu in physical_gpus:
+            gpu_peak_mib[gpu] = max(gpu_peak_mib[gpu], _gpu_used_mib(gpu))
         checkpoints = sorted((output / "train").rglob("*.pth"))
         events = sorted((output / "train").rglob("events.out.tfevents*"))
         if exit_code != 0:
