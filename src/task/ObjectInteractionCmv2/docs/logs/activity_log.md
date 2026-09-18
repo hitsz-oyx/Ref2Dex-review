@@ -2353,3 +2353,42 @@ EPE 是以物理单位解释预测误差的指标，不能由训练 loss 或跨�
 **回滚**
 
 纯只读诊断；无运行、代码、配置或数据修改，无需回滚。
+
+## 2026-09-18 02:41:06 +0000 — V1.4.5 串行高分辨率 cache queue 状态核验
+
+- timestamp: `2026-09-18 02:41:06 +0000`
+- activity_id: `ACT-20260918-024106-CMV2-V145-CACHE-QUEUE-STATUS`
+- modification_version: `V1.4.5`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 GRAB/ARCTIC Inspire 与 OakInk2 cache 是否已完整导出；本条只检查 queue state、producer manifest、实际 geometry 写入、日志与 GPU/进程状态。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `29a847d0b8b0edf2a2c2ae34fcf2b27e34760cf7`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v145_highres_queue_20260918T022000Z`
+- run_status: `RUNNING`
+- scope: 核验既有 GPU2 串行 queue；不停止、重启、调整或并行化 producer，不更改 cache、训练 checkpoint、输入 index 或其他用户 GPU 进程。
+- conclusion: `INCONCLUSIVE`（queue 尚未全部完成；当前没有失败证据）。
+
+**原因**
+
+queue 的顺序合同要求只有当前 GRAB Inspire 完整成功才允许 ARCTIC Inspire，随后才允许 OakInk2 MANO；必须区分已经完成的 OakInk2 Inspire、正在导出的 GRAB 和尚未获解锁的下游 job，不能将同为“Inspire”或同为“OakInk2”的不同 variant 混为完整。
+
+**状态与证据**
+
+- 先前 OakInk2 Inspire-20270 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 已 `COMPLETED`：`1849/1849` segment、`379591` frame、`failures=[]`；正式 [index.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/index.json) 与 [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/cache_manifest.json) 已存在。
+- 当前 [queue state](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 显示 GRAB Inspire-20270/KNN32 job `RUNNING`；其 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 为 `STARTED`，已完成 `131/1335` sequence、`49397` frame、`failures=[]`。最近 geometry manifest 写入为 `2026-09-18 02:40:57 +0000`；有 `131` 个完整 geometry 和 `1` 个 `.partial`，符合原子写入中的单项状态。
+- ARCTIC Inspire-20270 与 OakInk2 MANO-4096 的 full root/manifest 尚未出现，因为 queue 尚未完成 GRAB 前序；这不是失败，亦不能称为已导出完成。
+- queue PID `897032` 等待当前 GRAB producer PID `897162`；producer 为 `Rl` 状态、持续 CPU 工作，GPU2 分配约 `651 MiB`。其 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 连续写入成功记录。
+
+**验证**
+
+- 对 queue state、所有 full run manifest/cache manifest、job log、完成 geometry 数和 `.partial` 数做只读核验；状态、输出计数、最近写入时间与存活进程相互一致。
+- 未将 `STARTED` GRAB output 当作可用完整 index，未运行任何训练或评估；也没有修改 queue/producer 状态。
+
+**回滚**
+
+纯只读状态核验；运行控制权保持原 queue。若用户明确要求停止，可终止 queue/当前 job；已完成 geometry 及其 manifest 保留，恢复时使用原 queue 的 `--resume` 合同。
