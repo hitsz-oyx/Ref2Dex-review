@@ -2276,3 +2276,42 @@ queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将�
 
 - 启动后 PID `897032`（queue）及其 GRAB producer 子进程均存活；GPU2 处于使用状态。queue 遇任一非零退出或 success manifest 不为 `COMPLETED` 会写 `FAILED` 并停止，不启动后续 job。
 - 回滚入口是终止 queue/当前 job；已完成的独立 full cache 及 smoke 保留审计，不删除、移动或覆盖；恢复时用相同 [queue 配置](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.json) 重新执行，producer 的 `--resume` 只验证并复用完整段。
+
+## 2026-09-18 02:23:11 +0000 — 双域 MANO 训练终态与 ARCTIC stride 核验
+
+- timestamp: `2026-09-18 02:23:11 +0000`
+- activity_id: `ACT-20260918-022311-CMV2-V144-TWO-DOMAIN-TRAIN-STRIDE-DIAGNOSTIC`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问既有 GRAB/ARCTIC 双域训练状态及 ARCTIC temporal stride；本条仅读取已完成 run 的 manifest、配置、metrics 和实现。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `241e6d3f372b53335ba7bea066d29d9d3014ec58`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`
+- scope: 核验 V1.4.4 GRAB/ARCTIC MANO 双域 run 的终态、最佳 selection metric 和实际训练/验证 stride；不启动、停止或修改任何训练、queue、配置、cache、checkpoint。
+- conclusion: `INCONCLUSIVE`（工程优化运行已完成；没有新的 held-out 跨域效果评估）。
+
+**原因**
+
+运行状态和 temporal stride 会改变对 checkpoint 与验证指标的解释，必须以该 run 的冻结 `config.json` 和 runner 实现为准，而非从数据的 30 Hz 输入或口头范围推断。
+
+**状态与证据**
+
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json)：`COMPLETED`，last epoch `16`、last step `36400`，`best_metric=0.18120233068706187`；最佳发生在 epoch `13`，GRAB val loss `0.28988706171464246`，ARCTIC val loss `0.07251759965948128`。
+- 冻结 [config.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/config.json) 声明 `train_stride_values.arctic=[1,2,3,4,5,6,7,8,9,10]`，与 GRAB 相同；并非只使用 `[5,6,7,8,9,10]`。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py) 在 train split 将上述 domain-specific stride values 交给 transition dataset；[multi_domain.py](../../multi_domain.py) 以稳定 seed 对每条 `(sequence, current frame)` 在允许集合中选一个 stride，故训练样本使用 `1..10`。验证通过 `fixed_stride=2`，即两域验证都是 stride `2`。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl)、[train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log)、[best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt) 与 [latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt) 均存在。
+
+**验证**
+
+- 读取 run manifest 的 `run_status/last_epoch/last_step/best_metric` 与 metrics 最后 16 条 epoch 记录一致；epoch 13 的 selection metric 为全程最低值。
+- 配置校验与源码均要求 V1.4.4 的 GRAB、ARCTIC `train_stride_values` 恰为 `1..10`、`eval_stride=2`；本次没有执行训练或评估。
+
+**回滚**
+
+纯只读诊断；不涉及运行状态、数据或代码变更，无需回滚。
