@@ -15,6 +15,10 @@ class V118PlannerAgent(CommonAgent):
 
     def _load_config_params(self, config):
         super()._load_config_params(config)
+        # This vendored CommonAgent predates rl-games renaming ``seq_len`` to
+        # ``seq_length``.  Preserve its AMP dataset call without changing the
+        # shared agent implementation.
+        self.seq_len = self.seq_length
         self.cm_distill_coef = float(config.get("cm_distill_coef", 0.0))
         if self.cm_distill_coef < 0:
             raise ValueError("cm_distill_coef must be non-negative")

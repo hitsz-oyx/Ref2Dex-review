@@ -4466,3 +4466,60 @@ V1.18 已要求 Cmv2 是 frozen planner，但初始化条件仅覆盖 V1.16 acto
 **保护与回滚**
 
 删除该条件中的 `or self.use_v118_planner` 即可回到提交 `a21cadf`；失败运行目录保留，不覆盖。
+
+## 2026-09-18 12:10:30 +0800 — V1.18 128-env 实现 smoke 重试在 PPO agent 初始化失败
+
+- timestamp: 2026-09-18 12:10:30 +0800
+- activity_id: ACT-20260918-121030-CMRESIDUAL-V118-SMOKE-RETRY
+- modification_version: V1.18
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.18 最终计划的首个工程 smoke；重试只包含已通过定向验证的 lazy-initialization 修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: dc1bf2db068c5256a7fb34cd41fa022837f137dd
+- worktree_dirty: true（仅本条 STARTED 记录未提交；用户现有改动继续保护。）
+- scope: physical GPU5，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.1`；未启动正式 Stage A/B/C 长训。
+- run_id: cmresidual_v118_smoke_retry_20260918_121030
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry_20260918_121030/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry_20260918_121030/run_manifest.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry_20260918_121030/train.log)。
+- last_step: 0
+- exit_reason: vendored `CommonAgent` 仍读取已废弃的 `seq_len`，而当前 rl-games 提供的是 `seq_length`；task 已构造但未 rollout。
+- conclusion: INVALID_IMPLEMENTATION
+
+## 2026-09-18 12:11:30 +0800 — V1.18 对齐 rl-games sequence length 名称
+
+- timestamp: 2026-09-18 12:11:30 +0800
+- activity_id: ACT-20260918-121130-CMRESIDUAL-V118-RLGAMES-COMPAT
+- modification_version: V1.18
+- operation_category: code、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已批准 V1.18 实施；这是 retry 运行揭示的确定性 rl-games API 兼容修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: dc1bf2db068c5256a7fb34cd41fa022837f137dd
+- worktree_dirty: true（只含本次修复和最新运行终态记录；用户改动未纳入。）
+- scope: 仅在 V1.18 专用 agent 中将当前 rl-games `seq_length` 映射到 vendored dataset 所需的 `seq_len`；共享 CommonAgent 不改。
+- run_id: cmresidual_v118_smoke_retry_20260918_121030
+- run_status: FAILED（上述 retry）；修复后将另建 output 重试。
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [V1.18 PPO agent](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py)、[失败 manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry_20260918_121030/run_manifest.json) — 在专用 agent 的配置加载阶段建立版本兼容 alias。
+
+**原因**
+
+当前 rl-games 将公共字段命名为 `seq_length`，而该仓库旧 CommonAgent/AMPDataset 仍读取 `seq_len`；这阻止 agent 完成初始化。
+
+**验证**
+
+`py_compile` 通过；`pytest -q src/task/CmResidual/tests/test_v118_planner.py` 为 `2 passed`。GPU5 仍为 6 MiB，新的 128-env smoke 待启动。
+
+**保护与回滚**
+
+删除该 alias 即可回到提交 `dc1bf2d`；两个失败 smoke 的输出均保留。
