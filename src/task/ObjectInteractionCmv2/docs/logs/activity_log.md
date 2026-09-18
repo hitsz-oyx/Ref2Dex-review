@@ -2392,3 +2392,40 @@ queue 的顺序合同要求只有当前 GRAB Inspire 完整成功才允许 ARCTI
 **回滚**
 
 纯只读状态核验；运行控制权保持原 queue。若用户明确要求停止，可终止 queue/当前 job；已完成 geometry 及其 manifest 保留，恢复时使用原 queue 的 `--resume` 合同。
+
+## 2026-09-18 02:43:14 +0000 — GRAB Inspire-20270 queue 完成时间估算
+
+- timestamp: `2026-09-18 02:43:14 +0000`
+- activity_id: `ACT-20260918-024314-CMV2-V145-GRAB-INSPIRE-ETA-DIAGNOSTIC`
+- modification_version: `V1.4.5`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前 GRAB Inspire-20270 全量导出预计还需多久；本条仅用 queue start timestamp 与当前 manifest 完成计数估算。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d315ede795440e4d401b444254d908af18e13791`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v145_grab_inspire_full_20260918T022000Z`
+- run_status: `RUNNING`
+- scope: 只读估算当前 GRAB producer 完成时间；不调整 GPU、并发度、batch/chunk 参数、queue 顺序或任何数据。
+- conclusion: `INCONCLUSIVE`（预测而非终态；实际耗时受每条序列帧数、NAS I/O 和 GPU 吞吐影响）。
+
+**原因**
+
+queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 job 的实测吞吐是后续可用时间的直接约束；不能以单条 smoke 或固定“每 epoch”时间替代全量序列的真实吞吐。
+
+**状态与证据**
+
+- [queue state](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 显示 GRAB job started at `2026-09-18T02:19:05+00:00`；其 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 于本次核验时为 `141/1335` sequence、`53860` frame、`failures=[]`。
+- 从已运行约 `24.0` 分钟估得平均吞吐约 `5.885` sequence/min；线性外推余下 `1194` 条约需 `202.9` 分钟，预计完成约 `2026-09-18 06:05:55 +0000`。
+- producer PID `897162` 仍为 `Rl`，最新 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 已记录第 `141` 条成功，当前无失败条目。
+
+**验证**
+
+- 以当前 UTC 时间减 queue 的 `started_at` 得实际 elapsed，再用 manifest 的 completed/expected sequence 计数计算 `sequence/min` 和线性剩余时间；没有执行运行控制或数据操作。
+
+**回滚**
+
+纯只读预测；不涉及需回滚的变更。
