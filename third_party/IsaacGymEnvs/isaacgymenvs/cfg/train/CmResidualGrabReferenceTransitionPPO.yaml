@@ -1,0 +1,11 @@
+defaults:
+  - CmResidualSafePPO
+  - _self_
+
+params:
+  config:
+    name: CmResidualGrabReferenceTransitionPPO
+    full_experiment_name: CmResidualGrabReferenceTransitionPPO
+    max_epochs: 10
+    save_best_after: 0
+    save_frequency: 1

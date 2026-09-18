@@ -1,0 +1,15 @@
+defaults:
+  - CmResidualGrabReferenceTransitionCmBufferPPO
+  - _self_
+
+params:
+  network:
+    name: cm_effect_actor_critic
+    separate: true
+    actor_input_dim: 726
+    critic_input_dim: 68
+  config:
+    name: CmResidualGrabReferenceTransitionCmv2ActorPPO
+    full_experiment_name: CmResidualGrabReferenceTransitionCmv2ActorPPO
+    # Cmv2 token and effect normalization is explicit in the task contract.
+    normalize_input: false

@@ -89,12 +89,21 @@ def _resolved_config(overrides: list[str]) -> dict:
 
 def _build_model(params: dict, observation_dim: int):
     import torch
-    from isaacgymenvs.learning.cm_models import ModelCmContinuous
-    from isaacgymenvs.learning.cm_network_builder import CmBuilder
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous, ModelCmEffectContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmBuilder, CmEffectBuilder
 
-    builder = CmBuilder()
+    builder_name = params["network"].get("name", "cm_actor_critic")
+    builders = {"cm_actor_critic": CmBuilder, "cm_effect_actor_critic": CmEffectBuilder}
+    if builder_name not in builders:
+        raise ValueError(f"Unsupported CmResidual network builder {builder_name}")
+    builder = builders[builder_name]()
     builder.load(params["network"])
-    model = ModelCmContinuous(builder).build({
+    model_name = params["model"].get("name", "cm_continuous")
+    models = {"cm_continuous": ModelCmContinuous,
+              "cm_effect_continuous": ModelCmEffectContinuous}
+    if model_name not in models:
+        raise ValueError(f"Unsupported CmResidual model {model_name}")
+    model = models[model_name](builder).build({
         "input_shape": (observation_dim,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
         "normalize_input": bool(params["config"]["normalize_input"]),
         "normalize_value": bool(params["config"]["normalize_value"]),

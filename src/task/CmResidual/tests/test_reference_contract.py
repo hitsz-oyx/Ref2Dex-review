@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 import importlib.util
 import json
 import math
@@ -140,6 +141,86 @@ def test_physical_residual_is_bounded_and_keeps_mimic_contract():
     torch.testing.assert_close(requested[0, [7, 9, 11, 13, 16, 17]], torch.zeros(6))
     torch.testing.assert_close(targets[0, [7, 9, 11, 13]], targets[0, [6, 8, 10, 12]] * 1.05)
     torch.testing.assert_close(targets[0, [16, 17]], targets[0, 15] * torch.tensor([0.6, 0.8]))
+
+
+def test_grab_reference_residual_uses_manifest_mimic_and_absolute_target():
+    module = _action_mapping_module()
+    root = Path("data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift")
+    with np.load(root / "reference.npz", allow_pickle=False) as data:
+        base = torch.from_numpy(data["q_native_ref"][1:2].copy())
+    base[:, :6] = torch.tensor([-.14, -.93, 1.06, 1.59, .07, -1.21])
+    mapping = json.loads((root / "manifest.json").read_text())["mimic_mapping"]
+    scales = tuple(mapping[str(index)] for index in (7, 9, 11, 13, 16, 17))
+    lower = torch.tensor([-3.] * 6 + [0.] * 12)
+    upper = torch.tensor([3.] * 18)
+    zero, details = module.compose_reference_residual(
+        base, torch.zeros_like(base), lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(zero, base, atol=1e-6, rtol=0)
+    assert details["saturation"].sum() == 0
+    action = torch.zeros_like(base)
+    action[:, 12] = 1
+    changed, _ = module.compose_reference_residual(
+        base, action, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(changed[0, 13], changed[0, 12] * 1.18)
+    assert changed[0, 13] > base[0, 13]
+
+
+def test_reference_residual_reduces_only_outward_authority_at_joint_boundary():
+    module = _action_mapping_module()
+    scales = (1.05, 1.05, 1.05, 1.18, .6, .8)
+    lower = torch.full((18,), -3.0)
+    upper = torch.full((18,), 3.0)
+    # Native DOF 8 is a source; its coupled DOF 9 remains feasible at 1.05.
+    base = torch.zeros(1, 18)
+    upper[8] = 1.0
+    base[0, 8] = upper[8]
+    base[0, 9] = upper[8] * scales[1]
+    outward = torch.zeros_like(base)
+    outward[0, 8] = 1.0
+    target, details = module.compose_reference_residual(
+        base, outward, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(target, base, atol=0, rtol=0)
+    assert details["configured_authority"][0, 8] == pytest.approx(.08)
+    assert details["effective_authority"][0, 8] == 0
+    assert details["authority_limited"][0, 8] == 1
+    assert details["authority_limited"][0, 9] == 1
+    assert details["saturation"].sum() == 0
+
+    zero, zero_details = module.compose_reference_residual(
+        base, torch.zeros_like(base), lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    torch.testing.assert_close(zero, base, atol=0, rtol=0)
+    assert zero_details["authority_limited"].sum() == 0
+
+    inward = torch.zeros_like(base)
+    inward[0, 8] = -1.0
+    target, details = module.compose_reference_residual(
+        base, inward, lower, upper, translation_scale_m=.015,
+        rotation_scale_rad=.20, finger_scale_rad=.08, mimic_scales=scales)
+    assert target[0, 8] == pytest.approx(.92)
+    assert target[0, 9] == pytest.approx(.92 * scales[1])
+    assert details["authority_limited"].sum() == 0
+    assert details["saturation"].sum() == 0
+
+
+def test_reference_provider_indexed_reset_preserves_per_env_reference_state():
+    module = _reference_provider_module()
+    provider = object.__new__(module.RetargetedReferenceProvider)
+    provider.device = torch.device("cpu")
+    provider.length = 4
+    provider.robot_q = torch.arange(72, dtype=torch.float32).view(4, 18)
+    provider.robot_dq = provider.robot_q + 100
+    provider.object_state = torch.arange(52, dtype=torch.float32).view(4, 13)
+    indices = torch.tensor([3, 1])
+    q, dq, obj = provider.reset_state(2, indices)
+    torch.testing.assert_close(q, provider.robot_q[[3, 1]])
+    torch.testing.assert_close(dq, provider.robot_dq[[3, 1]])
+    torch.testing.assert_close(obj, provider.object_state[[3, 1]])
+    with pytest.raises(ValueError, match="reference frame range"):
+        provider.reset_state(1, torch.tensor([4]))
 
 
 def test_contact_selection_uses_net_force_tensor():
@@ -379,6 +460,129 @@ def test_v18_safe_policy_starts_at_zero_with_fixed_small_sigma():
     with torch.no_grad():
         result = model({"obs": torch.randn(3, 1442), "is_train": False})
     torch.testing.assert_close(result["mus"], torch.zeros(3, 18), rtol=0.0, atol=0.0)
+
+
+def test_v115_cmv2_actor_transport_pools_tokens_only_for_actor():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmEffectBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidualGrabReferenceTransitionCmv2Actor",
+            "train=CmResidualGrabReferenceTransitionCmv2ActorPPO",
+            "task.cmBuffer.outputDir=/tmp/cmv2_actor_contract",
+        ])
+    assert cfg.task.env.numObservations == 726
+    assert cfg.task.basePolicy.useCmv2ActorContext is True
+    assert cfg.task.basePolicy.useCmv2ActionEvaluator is True
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    assert params["network"]["name"] == "cm_effect_actor_critic"
+    assert params["network"]["actor_input_dim"] == 726
+    assert params["network"]["critic_input_dim"] == 68
+    assert params["config"]["normalize_input"] is False
+    builder = CmEffectBuilder()
+    builder.load(params["network"])
+    model = ModelCmContinuous(builder).build({
+        "input_shape": (726,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
+        "normalize_input": False, "normalize_value": False,
+    })
+    network = model.a2c_network
+    raw = torch.zeros(2, 726)
+    # Row 0 is the all-invalid-token fallback; row 1 has a valid canonical token.
+    raw[1, 68 + 39] = 1.0
+    raw[:, -18:] = torch.linspace(-1.0, 1.0, 18)
+    representation = network._cm_input(raw)
+    assert representation.shape == (2, 214)
+    torch.testing.assert_close(representation[0, 68:196], torch.zeros(128), rtol=0.0, atol=0.0)
+    torch.testing.assert_close(representation[:, :68], raw[:, :68], rtol=0.0, atol=0.0)
+    torch.testing.assert_close(representation[:, -18:], raw[:, -18:], rtol=0.0, atol=0.0)
+    with torch.no_grad():
+        result = model({"obs": raw, "is_train": False})
+        critic = network.eval_critic(raw)
+    assert result["mus"].shape == (2, 18)
+    assert critic.shape == (2, 1)
+    assert torch.isfinite(result["mus"]).all() and torch.isfinite(critic).all()
+
+
+def test_v116_normalizes_only_the_base68_prefix():
+    vendor = str(Path("third_party/IsaacGymEnvs").resolve())
+    if vendor not in sys.path:
+        sys.path.insert(0, vendor)
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+    from isaacgymenvs.learning.cm_models import ModelCmEffectContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmEffectBuilder
+
+    config_root = Path("third_party/IsaacGymEnvs/isaacgymenvs/cfg").resolve()
+    with initialize_config_dir(version_base="1.1", config_dir=str(config_root)):
+        cfg = compose(config_name="config", overrides=[
+            "task=CmResidualGrabReferenceTransitionCmv2ActorV116",
+            "train=CmResidualGrabReferenceTransitionCmv2ActorV116PPO",
+            "task.cmBuffer.outputDir=/tmp/cmv2_actor_v116_contract",
+        ])
+    assert cfg.task.cmBuffer.mode == "transition_only"
+    assert cfg.task.cmBuffer.schema == "cmresidual.cm_buffer.transition_only.v2"
+    params = OmegaConf.to_container(cfg.train.params, resolve=True)
+    assert params["model"]["name"] == "cm_effect_continuous"
+    assert params["config"]["normalize_input"] is True
+    builder = CmEffectBuilder()
+    builder.load(params["network"])
+    model = ModelCmEffectContinuous(builder).build({
+        "input_shape": (726,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
+        "normalize_input": True, "normalize_value": False,
+    })
+    raw = torch.randn(3, 726)
+    raw[:, 68 + 39] = 1.0
+    normalized = model.norm_obs(raw)
+    assert tuple(model.running_mean_std.running_mean.shape) == (68,)
+    torch.testing.assert_close(normalized[:, 68:], raw[:, 68:], rtol=0.0, atol=0.0)
+
+
+def test_v116_nominal_actor_path_does_not_call_legacy_cpu_fk_evaluator():
+    task_source = Path(
+        "third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py").read_text()
+    start = task_source.index("    def evaluate_cmv2_nominal_base")
+    end = task_source.index("    def evaluate_cmv2_actions", start)
+    nominal = task_source[start:end]
+    assert "evaluate_cmv2_actions" not in nominal
+    assert "InspireKinematics" not in nominal
+    assert ".cpu(" not in nominal and ".numpy(" not in nominal
+    assert "reference.link_pose" in nominal
+
+
+def test_v116_ddp_launcher_requires_explicit_gpu012():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module(
+        "cm_residual_v116_ddp_runner_test", tools / "run_cmv2_actor_distributed.py")
+    assert module._parse_gpus("0,1,3") == (0, 1, 3)
+    with pytest.raises(argparse.ArgumentTypeError, match="exactly"):
+        module._parse_gpus("0,1,2")
+    assert module._merge_gpu_memory_peaks({0: 10, 1: 20, 3: 30},
+                                          {0: 12, 1: 18, 3: 31}) == {0: 12, 1: 20, 3: 31}
+
+
+def test_v116_ddp_launcher_uses_python_script_bootstrap():
+    tools = Path("src/task/CmResidual/tools").resolve()
+    if str(tools) not in sys.path:
+        sys.path.insert(0, str(tools))
+    module = _load_module(
+        "cm_residual_v116_ddp_runner_bootstrap_test", tools / "run_cmv2_actor_distributed.py")
+    command = module._torchrun_command(["task=CmResidualGrabReferenceTransitionCmv2ActorV116"])
+    assert command[:6] == [sys.executable, "-m", "torch.distributed.run", "--standalone",
+                           "--nproc_per_node=3", str(module.BOOTSTRAP)]
+    assert module.BOOTSTRAP.suffix == ".py" and module.BOOTSTRAP.is_file()
+    assert "-c" not in command
+    source = (tools / "run_cmv2_actor_distributed.py").read_text()
+    assert "gpu_used_mib_peak" in source
+    assert "if result.returncode" not in source
 
 
 def _build_v19_model(train_config, seed=42):

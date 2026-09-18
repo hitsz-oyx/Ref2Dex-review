@@ -1,0 +1,14 @@
+defaults:
+  - CmResidualGrabReferenceTransitionCmv2ActorPPO
+  - _self_
+
+params:
+  model:
+    name: cm_effect_continuous
+  config:
+    name: CmResidualGrabReferenceTransitionCmv2ActorV116PPO
+    full_experiment_name: CmResidualGrabReferenceTransitionCmv2ActorV116PPO
+    # ModelCmEffectContinuous updates RunningMeanStd only for the base 68-D prefix.
+    normalize_input: true
+    # Formal operation is manually stopped; capacity probes override this to one epoch.
+    max_epochs: 100000000
