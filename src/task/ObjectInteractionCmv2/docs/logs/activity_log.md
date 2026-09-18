@@ -2315,3 +2315,41 @@ queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将�
 **回滚**
 
 纯只读诊断；不涉及运行状态、数据或代码变更，无需回滚。
+
+## 2026-09-18 02:26:54 +0000 — V1.4.4 双域 MANO run 的 EPE 产物核验
+
+- timestamp: `2026-09-18 02:26:54 +0000`
+- activity_id: `ACT-20260918-022654-CMV2-V144-TWO-DOMAIN-EPE-DIAGNOSTIC`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求浏览既有 GRAB/ARCTIC 双域训练的 EPE；本条仅读取运行产物、训练入口和指标实现，不运行新的评估。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `25af8cbe37aeae7e1411101ca8e30d935ac9c29b`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`
+- scope: 确认该 run 是否计算/保存 object 或 flow EPE；不将 V1.4.4 selection loss、历史 V1.3 smoke EPE 或其他 Task 的 EPE 误归因给本次双域训练。
+- conclusion: `INCONCLUSIVE`（本 run 未产生 EPE，不能据现有产物报告 GRAB、ARCTIC 或均值 EPE）。
+
+**原因**
+
+EPE 是以物理单位解释预测误差的指标，不能由训练 loss 或跨版本/跨数据合同的历史 EPE 替代。必须先确认本次 run 的 metrics schema 和训练/评估入口是否实际实现该指标。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 仅将 selection metric 定义为 `mean(val_grab_loss,val_arctic_loss)`；没有 EPE output 或离线评估产物。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 的 16 条 epoch 记录只含 `val_grab_loss`、`val_arctic_loss`、`selection_metric`、`best_metric`、source counts 与 elapsed time；没有 `epe`/`flow_epe_mm`/`object_epe_mm` 字段。对应 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 相同。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py) 的验证仅聚合两域 loss 并选择 `best.pt`；源码和本 run 目录均未发现 EPE 计算或保存。历史 V1.3 smoke 的 EPE 属于不同 run/工程 smoke，不可用于本次 V1.4.4 结果。
+
+**验证**
+
+- 对本 run 输出目录、metrics、train log、V1.4.4 training/evaluation 入口进行只读 `rg` 检索；目标 run 的 EPE 匹配结果为空，metrics schema 与 manifest 的 selection metric 一致。
+- 未执行 checkpoint 载入、验证或测试，因此没有产生新的 EPE，也没有改变当前 cache queue 的资源占用。
+
+**回滚**
+
+纯只读诊断；无运行、代码、配置或数据修改，无需回滚。
