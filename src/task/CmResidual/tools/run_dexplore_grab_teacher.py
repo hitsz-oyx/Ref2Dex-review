@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import traceback
+from typing import Optional
 
 import yaml
 
@@ -31,6 +32,12 @@ SMOKE_ITERATIONS = 1
 SMOKE_SEED = 42
 FORMAL_ITERATIONS = 152
 FORMAL_SAVE_FREQUENCY = 38
+RESUME_EXTRA_EPOCHS = 1000
+RESUME_CHECKPOINT = (
+    REPOSITORY_ROOT
+    / "outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215"
+    / "train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000114.pth"
+)
 HOROVOD_PHYSICAL_GPUS = (0, 3)
 HOROVOD_WORLD_SIZE = len(HOROVOD_PHYSICAL_GPUS)
 HOROVOD_TORCH_VERSION = "2.0.1+cu118"
@@ -39,11 +46,28 @@ CUDA_LIBRARY_DIR = Path("/home2/wyy/CUDA/cuda-12.1/lib64")
 HOROVOD_BOOTSTRAP = Path(__file__).resolve().with_name("dexplore_horovod_rank_bootstrap.py")
 
 
-def _run_settings(mode: str, *, num_envs: int = 2048, world_size: int = 1) -> dict:
+def _run_settings(
+    mode: str,
+    *,
+    num_envs: int = 2048,
+    world_size: int = 1,
+    resume_epoch: Optional[int] = None,
+    extra_epochs: Optional[int] = None,
+) -> dict:
     if mode == "smoke":
         return {"max_iterations": SMOKE_ITERATIONS, "save_frequency": None,
                 "target_env_steps": SMOKE_ITERATIONS * world_size * num_envs * SMOKE_HORIZON}
     if mode == "formal":
+        if resume_epoch is not None:
+            if extra_epochs is None or extra_epochs < 1:
+                raise ValueError("resume formal runs require a positive extra epoch budget")
+            # DExplore stops after epoch_num > max_epochs, so subtract one from
+            # the desired final epoch.
+            max_iterations = resume_epoch + extra_epochs - 1
+            return {"max_iterations": max_iterations, "save_frequency": FORMAL_SAVE_FREQUENCY,
+                    "target_env_steps": extra_epochs * world_size * num_envs * SMOKE_HORIZON,
+                    "resume_epoch": resume_epoch, "extra_epochs": extra_epochs,
+                    "target_final_epoch": resume_epoch + extra_epochs}
         # DExplore terminates only after epoch_num > max_epochs, so 152 yields
         # 153 completed PPO epochs and 20,054,016 env-steps at 2048x64.
         return {"max_iterations": FORMAL_ITERATIONS, "save_frequency": FORMAL_SAVE_FREQUENCY,
@@ -114,6 +138,30 @@ def _check_inputs() -> dict:
                    "shape": list(tensor.shape), "dtype": str(tensor.dtype)},
         "external_commit": _run(["git", "rev-parse", "HEAD"], cwd=DEXPLORE_ROOT),
         "external_worktree_dirty": bool(_run(["git", "status", "--porcelain"], cwd=DEXPLORE_ROOT)),
+    }
+
+
+def _checkpoint_info(path: Path) -> dict:
+    import torch
+
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing resume checkpoint: {path}")
+    checkpoint = torch.load(path, map_location="cpu")
+    if not isinstance(checkpoint, dict):
+        raise ValueError(f"Unexpected checkpoint payload: {path}")
+    epoch = checkpoint.get("epoch")
+    if not isinstance(epoch, int):
+        raise ValueError(f"Resume checkpoint lacks integer epoch: {path}")
+    frame = checkpoint.get("frame")
+    last_mean_rewards = checkpoint.get("last_mean_rewards")
+    if hasattr(last_mean_rewards, "item"):
+        last_mean_rewards = float(last_mean_rewards.item())
+    return {
+        "path": str(path.resolve()),
+        "sha256": _sha256(path),
+        "epoch": epoch,
+        "frame": int(frame) if isinstance(frame, int) else frame,
+        "last_mean_rewards": last_mean_rewards,
     }
 
 
@@ -213,13 +261,16 @@ def _write_json(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
-def _write_formal_train_config(output: Path, *, save_frequency: int) -> Path:
+def _write_formal_train_config(output: Path, *, save_frequency: int,
+                               resume_from: Optional[Path] = None) -> Path:
     source = DEXPLORE_ROOT / TRAIN_CONFIG
     with source.open("r", encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
     params = config["params"]["config"]
     params["save_frequency"] = save_frequency
     params["save_best_after"] = save_frequency
+    if resume_from is not None:
+        params["resume_from"] = str(resume_from.resolve())
     path = output / "train_config.yaml"
     with path.open("w", encoding="utf-8") as stream:
         yaml.safe_dump(config, stream, allow_unicode=True, sort_keys=False)
@@ -231,10 +282,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--modification-version", required=True,
-                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3", "V1.17.4"))
+                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3", "V1.17.4", "V1.17.5"))
     parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
     parser.add_argument("--launcher", choices=("single", "horovod"), default="single")
+    parser.add_argument("--resume-checkpoint", type=Path)
+    parser.add_argument("--extra-epochs", type=int)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -245,6 +298,10 @@ def main() -> int:
         raise ValueError("--num-envs must be positive")
     if args.mode == "formal" and args.num_envs != 2048:
         raise ValueError("The approved V1.17 formal run is fixed to 2048 environments")
+    if args.resume_checkpoint is not None and args.mode != "formal":
+        raise ValueError("--resume-checkpoint is only valid for formal runs")
+    if args.extra_epochs is not None and args.resume_checkpoint is None:
+        raise ValueError("--extra-epochs requires --resume-checkpoint")
     if args.launcher == "horovod":
         _configure_horovod_library_path()
     output = OUTPUT_ROOT / args.run_id
@@ -262,11 +319,24 @@ def main() -> int:
             f"GPU capacity gate failed (limit {capacity_limit} MiB): {over_capacity}"
         )
     world_size = HOROVOD_WORLD_SIZE if args.launcher == "horovod" else 1
-    settings = _run_settings(args.mode, num_envs=args.num_envs, world_size=world_size)
+    initial_checkpoint = None
+    if args.resume_checkpoint is not None:
+        initial_checkpoint = _checkpoint_info(args.resume_checkpoint)
+    settings = _run_settings(
+        args.mode,
+        num_envs=args.num_envs,
+        world_size=world_size,
+        resume_epoch=initial_checkpoint["epoch"] if initial_checkpoint else None,
+        extra_epochs=(args.extra_epochs or RESUME_EXTRA_EPOCHS) if initial_checkpoint else None,
+    )
     train_config = TRAIN_CONFIG
     if not args.dry_run and args.mode == "formal":
         output.mkdir(parents=True)
-        train_config = str(_write_formal_train_config(output, save_frequency=settings["save_frequency"]))
+        train_config = str(_write_formal_train_config(
+            output,
+            save_frequency=settings["save_frequency"],
+            resume_from=args.resume_checkpoint,
+        ))
     command = (_horovod_command if args.launcher == "horovod" else _command)(
         output, num_envs=args.num_envs, max_iterations=settings["max_iterations"],
         train_config=train_config,
@@ -291,7 +361,7 @@ def main() -> int:
             "target_env_steps": settings["target_env_steps"],
             "save_frequency": settings["save_frequency"],
             "seed": SMOKE_SEED,
-            "initial_checkpoint": None,
+            "initial_checkpoint": initial_checkpoint,
         },
     }
     if args.dry_run:
@@ -322,7 +392,7 @@ def main() -> int:
         "input_references": inputs,
         "motion_input": motion_input,
         "runtime_environment": runtime,
-        "initial_checkpoint": None,
+        "initial_checkpoint": initial_checkpoint,
         "launcher": args.launcher,
         "physical_gpus": list(physical_gpus),
         "logical_gpus": list(range(world_size)),

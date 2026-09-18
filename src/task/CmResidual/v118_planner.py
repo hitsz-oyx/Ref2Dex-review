@@ -181,11 +181,12 @@ class PlannerConfig:
     gate_distance_m: float = 0.04
     effect_translation_gate_m: float = 0.002
     effect_rotation_gate_rad: float = 0.01
-    max_active_envs: int = 16
+    planner_env_microbatch: int = 16
+    interaction_object_chunk: int = 32
 
 
 class FrozenCmv2Planner:
-    """Creates a detached teacher by one `[B_active*K,...]` Cmv2 forward."""
+    """Creates a detached teacher by streaming active env and Cmv2 object chunks."""
 
     def __init__(self, adapter, geometry, kinematics: TorchInspireKinematics, config: PlannerConfig) -> None:
         if config.candidates != 8:
@@ -194,9 +195,10 @@ class FrozenCmv2Planner:
                config.rotation_scale_rad, config.gate_distance_m) <= 0:
             raise ValueError("V1.18 planner scales must be positive")
         self.adapter, self.geometry, self.kinematics, self.config = adapter, geometry, kinematics, config
-        if config.max_active_envs <= 0:
-            raise ValueError("max_active_envs must be positive")
-        self._active_cursor = 0
+        if config.planner_env_microbatch <= 0:
+            raise ValueError("planner_env_microbatch must be positive")
+        if config.interaction_object_chunk <= 0:
+            raise ValueError("interaction_object_chunk must be positive")
         self.key_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in KEY_LINKS], dtype=torch.long,
                                                  device=kinematics.device)
         self.tip_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in TIP_LINKS], dtype=torch.long,
@@ -240,86 +242,81 @@ class FrozenCmv2Planner:
             if not bool(active.any()):
                 return fallback
             active_ids = active.nonzero(as_tuple=False).flatten()
-            # Cmv2's local interaction graph is quadratic in the concatenated
-            # candidate batch.  Select a deterministic rotating subset, while
-            # retaining one unchunked [B_active*K,...] Cmv2 forward.
-            if len(active_ids) > self.config.max_active_envs:
-                start = self._active_cursor % len(active_ids)
-                order = torch.cat((active_ids[start:], active_ids[:start]))
-                ids = order[:self.config.max_active_envs]
-                self._active_cursor = (self._active_cursor + self.config.max_active_envs) % len(active_ids)
-            else:
-                ids = active_ids
-            actions = candidate_actions.index_select(0, ids)
-            count = len(ids)
-            expanded_base = base_target.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1).reshape(-1, ACTION_DIM)
-            expanded_actions = actions.reshape(-1, ACTION_DIM)
-            lower = native_lower[None].expand_as(expanded_base)
-            upper = native_upper[None].expand_as(expanded_base)
-            targets, details = compose_reference_residual(
-                expanded_base, expanded_actions, lower, upper,
-                translation_scale_m=0.015, rotation_scale_rad=0.20, finger_scale_rad=0.08,
-                mimic_scales=mimic_scales)
-            targets = targets.view(count, self.config.candidates, ACTION_DIM)
-            applied_delta = details["applied_delta"].view(count, self.config.candidates, ACTION_DIM)
-            feasible = torch.isfinite(targets).all(dim=-1) & torch.isfinite(applied_delta).all(dim=-1)
-            next_links = self.kinematics.forward(targets)
-            current_points, current_normals = self.geometry.hand(current_links.index_select(0, ids))
-            next_points, next_normals = self.geometry.hand(next_links.reshape(-1, len(QUERY_LINKS), 4, 4))
-            next_points = next_points.view(count, self.config.candidates, -1, 3)
-            next_normals = next_normals.view(count, self.config.candidates, -1, 3)
-            hand_count = next_points.shape[2]
-            obj_points = object_points.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_points.shape[1], 3)
-            obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_normals.shape[1], 3)
-            current_batch = current_points[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
-            current_normal_batch = current_normals[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
-            output = self.adapter.predict(obj_points, obj_normals, current_batch, current_normal_batch,
-                                          next_points.reshape(-1, hand_count, 3) - current_batch,
-                                          1.0 / 30.0, torch.ones((count * self.config.candidates, hand_count),
-                                                                    dtype=torch.bool, device=mu.device))
-            predicted = output["delta_xi_root"].view(count, self.config.candidates, 6)
-            token_mask = output["token_mask"].view(count, self.config.candidates, -1)
-            token_mass = output["token_mass"].view(count, self.config.candidates, -1)
-            valid = feasible & token_mask.any(dim=-1) & (token_mass.sum(dim=-1) > 0) & torch.isfinite(predicted).all(dim=-1)
-            desired = desired_delta_xi.index_select(0, ids)[:, None]
-            translation_cost = (predicted[..., :3] - desired[..., :3]).square().sum(dim=-1) / self.config.translation_scale_m ** 2
-            rotation_cost = (predicted[..., 3:] - desired[..., 3:]).square().sum(dim=-1) / self.config.rotation_scale_rad ** 2
-            next_object = _pose_from_delta(object_pose.index_select(0, ids), predicted)
-            next_object_state = torch.cat((next_object[..., :3, 3], torch.zeros_like(predicted[..., :4])), dim=-1)
-            # object_points_world only needs position/quaternion; use transformed sampled points directly for stable costs.
-            local_obj = torch.as_tensor(self.geometry.object_local, device=mu.device, dtype=mu.dtype)
-            predicted_points = torch.matmul(local_obj[None, None, :, None, :], next_object[:, :, None, :3, :3].transpose(-1, -2)).squeeze(-2) + next_object[:, :, None, :3, 3]
-            key_pos = next_links.index_select(2, self.key_query_indices)[:, :, list(IG_KEY_INDICES), :3, 3]
-            root_quat = torch.zeros((count, self.config.candidates, 4), dtype=mu.dtype, device=mu.device)
-            # Heading only needs a unit quaternion; derive it from the root transform via a stable trace conversion.
-            root_rot = next_links[:, :, 0, :3, :3]
-            trace = root_rot.diagonal(dim1=-2, dim2=-1).sum(-1)
-            root_quat[..., 3] = torch.sqrt((1.0 + trace).clamp_min(1e-8)) * 0.5
-            root_quat[..., 0] = (root_rot[..., 2, 1] - root_rot[..., 1, 2]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-            root_quat[..., 1] = (root_rot[..., 0, 2] - root_rot[..., 2, 0]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-            root_quat[..., 2] = (root_rot[..., 1, 0] - root_rot[..., 0, 1]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-            displacement = key_pos[:, :, :, None, :] - predicted_points[:, :, None, :, :]
-            nearest = displacement.norm(dim=-1).argmin(dim=-1)
-            gather = nearest[..., None, None].expand(-1, -1, -1, 1, 3)
-            candidate_ig = displacement.gather(3, gather).squeeze(3)
-            heading = calc_heading_quat_inv(root_quat.reshape(-1, 4)).view(count, self.config.candidates, 4)
-            candidate_ig = quat_rotate(heading[:, :, None].expand(-1, -1, 6, -1).reshape(-1, 4),
-                                       candidate_ig.reshape(-1, 3)).view(count, self.config.candidates, -1)
-            reference_ig = reference_transport.index_select(0, ids)[:, 184:232].view(count, 16, 3)[:, list(IG_KEY_INDICES)].reshape(count, 1, -1)
-            ig_cost = (candidate_ig - reference_ig).square().mean(dim=-1) / self.config.translation_scale_m ** 2
-            trust_cost = (actions - mu.index_select(0, ids)[:, None]).square().mean(dim=-1)
-            costs = self.config.effect_weight * (translation_cost + rotation_cost) + self.config.ig_weight * ig_cost + self.config.trust_weight * trust_cost
-            costs = costs.masked_fill(~valid, float("inf"))
-            has_valid = valid.any(dim=-1)
-            weights = torch.softmax((-costs / self.config.temperature).masked_fill(~valid, -float("inf")), dim=-1)
-            weights = torch.where(has_valid[:, None], weights, torch.zeros_like(weights))
-            teacher = (weights[..., None] * actions).sum(dim=1)
-            fallback["teacher_action"].index_copy_(0, ids, torch.where(has_valid[:, None], teacher, mu.index_select(0, ids)))
-            fallback["teacher_weight"].index_copy_(0, ids, has_valid.to(mu.dtype))
-            fallback["activation"].index_copy_(0, ids, torch.ones(count, device=mu.device))
-            fallback["valid_fraction"].index_copy_(0, ids, valid.to(mu.dtype).mean(dim=-1))
-            baseline = costs[:, 0]
-            selected = (weights * costs.masked_fill(~valid, 0.0)).sum(dim=-1)
-            improvement = torch.where(has_valid & torch.isfinite(baseline), baseline - selected, torch.zeros_like(selected))
-            fallback["predicted_cost_improvement"].index_copy_(0, ids, improvement)
+            # Process every active env exactly once; only the transient Cmv2
+            # candidate batch is bounded by planner_env_microbatch.
+            for ids in active_ids.split(self.config.planner_env_microbatch):
+                actions = candidate_actions.index_select(0, ids)
+                count = len(ids)
+                expanded_base = base_target.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1).reshape(-1, ACTION_DIM)
+                expanded_actions = actions.reshape(-1, ACTION_DIM)
+                lower = native_lower[None].expand_as(expanded_base)
+                upper = native_upper[None].expand_as(expanded_base)
+                targets, details = compose_reference_residual(
+                    expanded_base, expanded_actions, lower, upper,
+                    translation_scale_m=0.015, rotation_scale_rad=0.20, finger_scale_rad=0.08,
+                    mimic_scales=mimic_scales)
+                targets = targets.view(count, self.config.candidates, ACTION_DIM)
+                applied_delta = details["applied_delta"].view(count, self.config.candidates, ACTION_DIM)
+                feasible = torch.isfinite(targets).all(dim=-1) & torch.isfinite(applied_delta).all(dim=-1)
+                next_links = self.kinematics.forward(targets)
+                current_points, current_normals = self.geometry.hand(current_links.index_select(0, ids))
+                next_points, next_normals = self.geometry.hand(next_links.reshape(-1, len(QUERY_LINKS), 4, 4))
+                next_points = next_points.view(count, self.config.candidates, -1, 3)
+                next_normals = next_normals.view(count, self.config.candidates, -1, 3)
+                hand_count = next_points.shape[2]
+                obj_points = object_points.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_points.shape[1], 3)
+                obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_normals.shape[1], 3)
+                current_batch = current_points[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
+                current_normal_batch = current_normals[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
+                output = self.adapter.predict_effect_only(
+                    obj_points, obj_normals, current_batch, current_normal_batch,
+                    next_points.reshape(-1, hand_count, 3) - current_batch,
+                    1.0 / 30.0,
+                    torch.ones((count * self.config.candidates, hand_count),
+                               dtype=torch.bool, device=mu.device),
+                    interaction_object_chunk=self.config.interaction_object_chunk)
+                predicted = output["delta_xi_root"].view(count, self.config.candidates, 6)
+                token_mask = output["token_mask"].view(count, self.config.candidates, -1)
+                token_mass = output["token_mass"].view(count, self.config.candidates, -1)
+                valid = feasible & token_mask.any(dim=-1) & (token_mass.sum(dim=-1) > 0) & torch.isfinite(predicted).all(dim=-1)
+                desired = desired_delta_xi.index_select(0, ids)[:, None]
+                translation_cost = (predicted[..., :3] - desired[..., :3]).square().sum(dim=-1) / self.config.translation_scale_m ** 2
+                rotation_cost = (predicted[..., 3:] - desired[..., 3:]).square().sum(dim=-1) / self.config.rotation_scale_rad ** 2
+                next_object = _pose_from_delta(object_pose.index_select(0, ids), predicted)
+                # object_points_world only needs position/quaternion; use transformed sampled points directly for stable costs.
+                local_obj = torch.as_tensor(self.geometry.object_local, device=mu.device, dtype=mu.dtype)
+                predicted_points = torch.matmul(local_obj[None, None, :, None, :], next_object[:, :, None, :3, :3].transpose(-1, -2)).squeeze(-2) + next_object[:, :, None, :3, 3]
+                key_pos = next_links.index_select(2, self.key_query_indices)[:, :, list(IG_KEY_INDICES), :3, 3]
+                root_quat = torch.zeros((count, self.config.candidates, 4), dtype=mu.dtype, device=mu.device)
+                # Heading only needs a unit quaternion; derive it from the root transform via a stable trace conversion.
+                root_rot = next_links[:, :, 0, :3, :3]
+                trace = root_rot.diagonal(dim1=-2, dim2=-1).sum(-1)
+                root_quat[..., 3] = torch.sqrt((1.0 + trace).clamp_min(1e-8)) * 0.5
+                root_quat[..., 0] = (root_rot[..., 2, 1] - root_rot[..., 1, 2]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                root_quat[..., 1] = (root_rot[..., 0, 2] - root_rot[..., 2, 0]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                root_quat[..., 2] = (root_rot[..., 1, 0] - root_rot[..., 0, 1]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                displacement = key_pos[:, :, :, None, :] - predicted_points[:, :, None, :, :]
+                nearest = displacement.norm(dim=-1).argmin(dim=-1)
+                gather = nearest[..., None, None].expand(-1, -1, -1, 1, 3)
+                candidate_ig = displacement.gather(3, gather).squeeze(3)
+                heading = calc_heading_quat_inv(root_quat.reshape(-1, 4)).view(count, self.config.candidates, 4)
+                candidate_ig = quat_rotate(heading[:, :, None].expand(-1, -1, 6, -1).reshape(-1, 4),
+                                           candidate_ig.reshape(-1, 3)).view(count, self.config.candidates, -1)
+                reference_ig = reference_transport.index_select(0, ids)[:, 184:232].view(count, 16, 3)[:, list(IG_KEY_INDICES)].reshape(count, 1, -1)
+                ig_cost = (candidate_ig - reference_ig).square().mean(dim=-1) / self.config.translation_scale_m ** 2
+                trust_cost = (actions - mu.index_select(0, ids)[:, None]).square().mean(dim=-1)
+                costs = self.config.effect_weight * (translation_cost + rotation_cost) + self.config.ig_weight * ig_cost + self.config.trust_weight * trust_cost
+                costs = costs.masked_fill(~valid, float("inf"))
+                has_valid = valid.any(dim=-1)
+                weights = torch.softmax((-costs / self.config.temperature).masked_fill(~valid, -float("inf")), dim=-1)
+                weights = torch.where(has_valid[:, None], weights, torch.zeros_like(weights))
+                teacher = (weights[..., None] * actions).sum(dim=1)
+                fallback["teacher_action"].index_copy_(0, ids, torch.where(has_valid[:, None], teacher, mu.index_select(0, ids)))
+                fallback["teacher_weight"].index_copy_(0, ids, has_valid.to(mu.dtype))
+                fallback["activation"].index_copy_(0, ids, torch.ones(count, device=mu.device))
+                fallback["valid_fraction"].index_copy_(0, ids, valid.to(mu.dtype).mean(dim=-1))
+                baseline = costs[:, 0]
+                selected = (weights * costs.masked_fill(~valid, 0.0)).sum(dim=-1)
+                improvement = torch.where(has_valid & torch.isfinite(baseline), baseline - selected, torch.zeros_like(selected))
+                fallback["predicted_cost_improvement"].index_copy_(0, ids, improvement)
         return fallback

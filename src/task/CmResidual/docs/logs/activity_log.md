@@ -36,6 +36,10 @@
 
 V1.7 的大探索噪声训练退化无法区分 residual 初始化与 Cm 影响。V1.8 用 no-Cm、18D、zero-mean、固定小 sigma 的最小变量组合完成同协议短 gate，并将实现、运行证据与科研结论边界一起纳入版本控制。
 
+**原因**
+
+用户询问 reward 是否仍在增长；该判断需要用最新训练日志比较最近窗口、峰值和当前值，而不是只看单个 epoch。
+
 **验证**
 
 - `PYTHONPATH=third_party/IsaacGymEnvs /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests`：`17 passed, 2 warnings`；warnings 均为 Hydra 1.1 兼容提示。
@@ -4973,7 +4977,7 @@ bootstrap 只改变省略 `device` 的调用；任何 `device=...` 参数继续�
 - approval_basis: [`V1.17`](../plan/V1.17.md) V1.17.4 final contract；用户授权继续 GPU0/3 双卡运行。
 - skills_used: research-experiment-workflow
 - branch: oyx
-- base_commit: 2e2756bde8d8d6f3a0ce0976a5bb2fa7d8cb8ea0
+- base_commit: c42b481c97614c70e6b0d211ed38e845017934e5
 - scope: [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 的 bootstrap 路径已解析为绝对路径；CUDA_VISIBLE_DEVICES=0,3，2 Horovod rank、每 rank 2048 env、horizon64、minibatch256、seed42、max_iterations1，从零初始化；仅 Horovod rank bootstrap 改写 Isaac Gym 未显式 device 默认值，外部源码/数据/任务合同不变。
 - run_id: dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153500
 - run_status: FAILED
@@ -5001,7 +5005,7 @@ dry-run 通过并显示 Horovod 在两 rank 上执行 Task-local bootstrap；实
 - approval_basis: V1.17.4 final contract；仅修复前一 smoke 的 Task-local bootstrap 路径，无研究变量变化。
 - skills_used: research-experiment-workflow
 - branch: oyx
-- base_commit: 2e2756bde8d8d6f3a0ce0976a5bb2fa7d8cb8ea0
+- base_commit: c42b481c97614c70e6b0d211ed38e845017934e5
 - scope: GPU0/3、2 rank、每 rank2048 env、horizon64、minibatch256、seed42、max_iterations1；使用绝对 [`dexplore_horovod_rank_bootstrap.py`](../../tools/dexplore_horovod_rank_bootstrap.py) 路径，不改外部源码或数据。
 - run_id: dexplore_grab_teacher_v1174_hvd2x2048_smoke_20260918_153700
 - run_status: RUNNING
@@ -5015,3 +5019,214 @@ dry-run 通过并显示 Horovod 在两 rank 上执行 Task-local bootstrap；实
 **验证**
 
 launcher 静态检查与 5 个合同测试通过；运行终态待本次 launcher 退出后更新。
+
+## 2026-09-18 17:16:00 +0800 — V1.17.5 双卡 DExplore 同步退出修复与 smoke 启动
+
+- timestamp: 2026-09-18 17:16:00 +0800
+- activity_id: ACT-20260918-171600-CMRESIDUAL-V1175-DEXPLORE-HOROVOD-SMOKE
+- modification_version: V1.17.5
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后进入 run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认继续 GPU0/3 双卡、从 `GRAB_00000114.pth` checkpoint 续训、额外训练 1000 epoch，并授权修复后直接启动大规模训练；本条先执行 smoke 门禁。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: ebefee4e41916173658de57625fa412a963e7e74
+- worktree_dirty: true（保留既有根级/ObjectInteractionCm activity、未跟踪指导/plan/工具；本次相关差异限定在 V1.17 plan、DExplore launcher/bootstrap/test 与本 activity。）
+- scope: [`V1.17 最终计划`](../plan/V1.17.md) 追加 V1.17.5；[`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 增加 resume checkpoint provenance 与额外 epoch 预算；[`dexplore_horovod_rank_bootstrap.py`](../../tools/dexplore_horovod_rank_bootstrap.py) 在 Task-local bootstrap 中补 Horovod `should_exit` 同步退出；[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 增加续训预算与 bootstrap 合同测试。外部 DExplore checkout、Isaac Gym 安装、数据、观测、动作、reward、物理和旧 outputs 不修改。
+- run_id: dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600
+- run_status: COMPLETED
+- command: `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117_hvd/bin/python src/task/CmResidual/tools/run_dexplore_grab_teacher.py --run-id dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600 --activity-id ACT-20260918-171600-CMRESIDUAL-V1175-DEXPLORE-HOROVOD-SMOKE --modification-version V1.17.5 --launcher horovod --mode smoke --num-envs 2048`
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600/train.log)、[checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_smoke_20260918_171600/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789722983.server)。
+- completed_at: 2026-09-18 17:19:33 +0800
+- exit_code: 0；last_epoch: 2；checkpoint: `GRAB.pth`；tensorboard: `events.out.tfevents.1789722983.server`；gpu_peak_mib: GPU0/3 均 23011MiB。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+V1.17.4 最新 smoke 已完成 PPO epoch 和 checkpoint 写出，但 rank0 达到 `MAX EPOCHS NUM` 后独自退出，rank1 继续 backward/allreduce，导致 Horovod shutdown。rl_games 原版包含 `should_exit` broadcast，外部 DExplore 的 fork 丢失该同步退出逻辑。
+
+**验证**
+
+`dexplore_v117_hvd/bin/python -m py_compile` 通过；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py` 为 `7 passed`；`git diff --check` 通过；Horovod dry-run 显示 GPU0/3 预检各 2MiB，resume formal 预算为 `max_iterations=1113`、额外 `262,144,000` env-steps。真实 smoke 完成两 rank 初始化、epoch1/2 PPO、checkpoint 和 TensorBoard event 写出；日志没有 `Horovod has been shut down`、traceback、OOM 或 non-finite，manifest 为 `COMPLETED`。
+
+## 2026-09-18 17:20:00 +0800 — V1.17.5 双卡 DExplore checkpoint 续训正式启动
+
+- timestamp: 2026-09-18 17:20:00 +0800
+- activity_id: ACT-20260918-172000-CMRESIDUAL-V1175-DEXPLORE-HOROVOD-RESUME1000
+- modification_version: V1.17.5
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认继续 GPU0/3 双卡、从 checkpoint 续训并额外跑 1000 epoch；本 run 已由 `ACT-20260918-171600-CMRESIDUAL-V1175-DEXPLORE-HOROVOD-SMOKE` 的 `COMPLETED` smoke 解锁。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: ebefee4e41916173658de57625fa412a963e7e74
+- worktree_dirty: true（包含本次 V1.17.5 代码/计划/activity 差异与既有无关 dirty 文件；运行产物不纳入 Git。）
+- scope: GPU0/3、2 Horovod rank、每 rank2048 env、horizon64、minibatch256、seed42、`s1_airplane_lift`；从 [单卡 latest checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000114.pth) 的 epoch114 续训，额外 1000 epoch，目标 final epoch 1114，`max_iterations=1113`，目标 `262,144,000` environment steps。外部 DExplore checkout、Isaac Gym、输入数据、观测、动作、reward 和物理不修改。
+- run_id: dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000
+- run_status: RUNNING
+- command: `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117_hvd/bin/python src/task/CmResidual/tools/run_dexplore_grab_teacher.py --run-id dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000 --activity-id ACT-20260918-172000-CMRESIDUAL-V1175-DEXPLORE-HOROVOD-RESUME1000 --modification-version V1.17.5 --launcher horovod --mode formal --num-envs 2048 --resume-checkpoint outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000114.pth --extra-epochs 1000`
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/)（PENDING）、[config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/config.json)（PENDING）、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/run_manifest.json)（PENDING）、[train config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train_config.yaml)（PENDING）、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train.log)（PENDING）。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+正式续训只在双卡 smoke 通过后启动；该 run 是优化/teacher 训练，不产生抓取成功或泛化科学结论。
+
+**验证**
+
+启动前 GPU0/3 均为 2MiB、利用率 0%；输入 checkpoint 存在且 dry-run 已确认 resume formal 预算。
+
+## 2026-09-18 18:03:23 +0800 — V1.19 流式 exact planner 与 Stage-A bypass 实现
+
+- timestamp: 2026-09-18 18:03:23 +0800
+- activity_id: ACT-20260918-180323-CMRESIDUAL-V119-STREAMING-PLANNER
+- modification_version: V1.19
+- operation_category: code、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户明确更正为按 [`指导/V1.19.md`](../指导/V1.19.md) 修改；[`V1.19 最终计划`](../plan/V1.19.md) 已定稿。
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: ebefee4e41916173658de57625fa412a963e7e74
+- worktree_dirty: true（保留既有 V1.17.5 DExplore launcher/bootstrap/test/activity 差异、根级/ObjectInteractionCm activity、未跟踪指导/plan/工具；本次 V1.19 差异限定在下列 scope。）
+- scope: [`ObjectInteractionCmv2 model`](../../../ObjectInteractionCmv2/model.py) 增加可选 object-query edge chunk；[`FrozenCmv2Adapter`](../../cm_v2_adapter.py) 增加 planner 专用 `predict_effect_only`；[`V1.18/V1.19 planner`](../../v118_planner.py) 将 active-env 轮转截断替换为全 active env microbatch；[`V1.18 task bridge`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) 和 [`task config`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118.yaml) 传入 `plannerEnvMicrobatch=16`、`interactionObjectChunk=32`；[`V1.18 agent`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py) 在 `cm_distill_coef==0` 时跳过 planner；[`Cmv2 tests`](../../../ObjectInteractionCmv2/tests/test_v1_3_spatial.py)、[`adapter tests`](../../tests/test_cmv2_adapter.py)、[`planner tests`](../../tests/test_v118_planner.py) 补 V1.19 回归；[`current_versions`](../../../../../docs/current_versions.yaml) 指向 CmResidual `V1.19`。
+- run_id: N/A
+- run_status: N/A（未启动新的 GPU smoke 或训练；正在运行的 V1.17.5 DExplore 正式续训未被停止或改写。）
+- output: N/A
+- conclusion: SUPPORTED（工程实现与 CPU 定向验证支持 V1.19 调度合同；尚未形成 GPU smoke 或学习效果结论。）
+
+**原因**
+
+V1.18 retry4 的 OOM 来自一次性对 active env × K candidate 构造 Cmv2 local interaction edge tensor；继续降低 `maxActiveEnvs` 会改变 teacher 覆盖。V1.19 改为 exact 数学不变的执行调度：planner 覆盖所有 active env，但按 env microbatch 串行；Cmv2 内部按 object-query chunk 串行 edge MLP；Stage A 在 `lambda_cm=0` 时不再构造 teacher。
+
+**验证**
+
+`/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile` 覆盖 model、adapter、planner、agent、task bridge：通过；`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_3_spatial.py src/task/CmResidual/tests/test_cmv2_adapter.py src/task/CmResidual/tests/test_v118_planner.py`：`12 passed`；OmegaConf 单文件字段检查确认 observation=1442、K=8、`plannerEnvMicrobatch=16`、`interactionObjectChunk=32` 且无 `maxActiveEnvs`；`git diff --check`：通过。默认系统 `python` 因版本过旧无法解析项目类型标注，验证改用项目环境 `graspenv`。
+
+## 2026-09-18 18:23:42 +0800 — V1.19 GPU2 128-env streaming planner smoke 未通过
+
+- timestamp: 2026-09-18 18:23:42 +0800
+- activity_id: ACT-20260918-182342-CMRESIDUAL-V119-GPU-SMOKE
+- modification_version: V1.19
+- operation_category: code、experiment、operation、documentation
+- task_mode: run-only/operation，期间为修复 agent 兼容性短暂切换到 change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户要求“试一下 GPU”；[`V1.19 最终计划`](../plan/V1.19.md) 已授权 128 env、64 horizon、1 PPO update 的 GPU 工程 smoke。GPU0/3 正在运行 V1.17.5 DExplore，未触碰；GPU2 是当时最空闲卡，但第二次启动时已有另一用户进程约 3.5 GiB 占用。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: ebefee4e41916173658de57625fa412a963e7e74
+- worktree_dirty: true（包含既有 V1.17.5 差异、V1.19 代码/文档差异和本次 agent 兼容性修复；outputs 不纳入 Git。）
+- scope: physical GPU2，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.10`，`plannerEnvMicrobatch=16`，`interactionObjectChunk=32`，1 epoch；[`V1.18/V1.19 agent`](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py) 增加 `infos["terminate"]` 缺失时回退到 `dones` 的 bootstrap mask；[`planner tests`](../../tests/test_v118_planner.py) 补静态回归。Cmv2 checkpoint、planner teacher 数学、reward、reference、buffer schema、训练数据、DExplore 运行和旧 outputs 不修改。
+- run_id: cmresidual_v119_streaming_smoke_gpu2_20260918_182051
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/train.log)、[buffer manifest](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_20260918_182051/cm_buffer/rank_000/manifest.json)。
+- exit_reason: `KeyError: infos lacks terminate in V118PlannerAgent.play_steps after first rollout/env_step`；last_epoch: N/A；last_step: 0；checkpoint: N/A；metrics: empty。
+- conclusion: INVALID_IMPLEMENTATION
+
+- run_id: cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/config.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/train.log)、[buffer manifest](../../../../../outputs/CmResidual/cmresidual_v119_streaming_smoke_gpu2_retry_20260918_182239/cm_buffer/rank_000/manifest.json)。
+- exit_reason: PhysX 在 `env_step/post_physics_step` 报 CUDA illegal memory access；日志先出现 `PxgCudaDeviceMemoryAllocator fail to allocate memory 1681915904 bytes`，发生在共享 GPU2 条件下。last_epoch: N/A；last_step: 0；checkpoint: N/A；metrics: empty。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+第一次 GPU2 smoke 已经构造 task/agent/planner 并写出一个 transition-only buffer shard，未复现 V1.18 retry4 的 frozen-Cmv2 edge tensor OOM；但专用 agent 假定 `infos["terminate"]` 必然存在，当前 task wrapper 未提供该 key。修复后第二次运行越过该点，但 PhysX GPU simulation 在共享 GPU2 上因约 1.68 GiB allocator failure 进入 illegal memory access，未完成 PPO epoch。
+
+**验证**
+
+`/home2/wyy/miniconda3/envs/graspenv/bin/python -m py_compile third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py src/task/CmResidual/tests/test_v118_planner.py`：通过；`PYTHONPATH=. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_v118_planner.py`：`5 passed`；两次 GPU smoke 的 resolved config 均确认 observation=1442、action=18、K=8、microbatch=16、object chunk=32、transition-only buffer。该证据支持 V1.19 已不在首个 planner Cmv2 forward 处触发旧 2 GiB edge OOM，但完整 128-env GPU smoke 仍未通过，科研效果仍为 `INCONCLUSIVE`。
+
+## 2026-09-18 18:27:20 +0800 — V1.17.5 DExplore 双卡续训状态诊断
+
+- timestamp: 2026-09-18 18:27:20 +0800
+- activity_id: ACT-20260918-182720-CMRESIDUAL-V1175-DEXPLORE-STATUS
+- modification_version: V1.17.5
+- operation_category: diagnostic、operation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问当前 DExplore 训练状态以及物体是否被抓起。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: ebefee4e41916173658de57625fa412a963e7e74
+- scope: 只读检查 [`run_manifest.json`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/run_manifest.json)、[`train.log`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train.log)、[`TensorBoard event`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789723261.server) 和 checkpoint 目录；未停止、重启或修改训练进程、checkpoint、外部 DExplore 源码、输入数据或运行配置。
+- run_id: dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train.log)、[checkpoint dir](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/)。
+- last_epoch: 165；last_logged_mean_reward: 89.49；best_logged_mean_reward: 91.23 at epoch 138；last20_mean_reward: 84.417；latest_checkpoint: [`GRAB_00000152.pth`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000152.pth)；latest_checkpoint_epoch: 152。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+双卡 Horovod rank0/rank1 进程仍存活，GPU0/3 各约 23 GiB 占用并有计算利用率。训练从 epoch 115 续跑到至少 epoch 165，reward 从 24.68 快速升至 80–90 区间，高于启动 checkpoint 附近，但日志和 TensorBoard 只记录 `mean_rewards`、`episode_lengths`、loss/usage，没有 `success`、`lift`、object height 或视频指标。
+
+**验证**
+
+`ps` 确认 launcher、mpirun 和两个 rank 仍在运行；`nvidia-smi` 确认 GPU0/3 持续占用；日志解析得到 51 个 epoch 记录，最近 10 个为 86.87、81.74、81.80、85.15、85.39、84.63、87.00、86.24、88.43、89.49。TensorBoard 标量标签为 reward、episode length、loss 和 usage；DExplore reward 函数是 HOI imitation reward，包含 object tracking/contact/interaction graph，但当前运行没有直接输出“物体被抓起”的独立判据。因此当前只能说优化表现较好，不能宣称物体已经被抓起。
+
+## 2026-09-18 20:00:35 +0800 — V1.17.5 DExplore epoch228 策略 rollout 可视化诊断
+
+- timestamp: 2026-09-18 20:00:35 +0800
+- activity_id: ACT-20260918-200035-CMRESIDUAL-V1175-DEXPLORE-VISUAL-E228
+- modification_version: V1.17.5
+- operation_category: diagnostic、operation
+- task_mode: run-only/operation + read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户要求查看当前 DExplore 训练并可视化；本次只导出/分析 checkpoint，不停止、重启或修改正在运行的双卡训练。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4871eed0ad939311dd04dc9c4a27634304a28a9e
+- worktree_dirty: true（包含既有 V1.17.5/V1.19 代码、计划、activity 差异和本次输出 manifest；训练 checkpoint 与输出不纳入 Git。）
+- scope: 从正在运行的 [DExplore 双卡续训目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/) 取当前最新已保存 checkpoint [`GRAB_00000228.pth`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000228.pth)，在 GPU2 上做 1-env deterministic test/export；未修改训练进程、checkpoint、外部 DExplore 源码、输入数据、观测、动作或 reward。
+- run_id: dexplore_v1175_visual_epoch228_20260918_195618
+- parent_run_id: dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=2 /home2/wyy/oyx_ws/.runtime_envs/dexplore_v117_hvd/bin/python dexplore/run.py --task Dexplore_Inspire --cfg_env dexplore/data/cfg/inspire.yaml --cfg_train dexplore/data/cfg/train/rlg/inspire.yaml --motion_file /home2/wyy/oyx_ws/Ref2Dex/outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/motion_input --output_path /home2/wyy/oyx_ws/Ref2Dex/outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/play --test --checkpoint /home2/wyy/oyx_ws/Ref2Dex/outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000228.pth --headless --sim_device cuda:0 --rl_device cuda:0 --graphics_device_id 0 --num_envs 1 --episode_length 432 --export_rl --export_output_dir /home2/wyy/oyx_ws/Ref2Dex/outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/rl_export`
+- output: [可视化目录](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/)、[manifest](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/run_manifest.json)、[export log](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/export.log)、[rollout metrics](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/rollout_metrics.json)、[object z/lift plot](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/object_z_lift_compare.png)、[RL export tensor](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[reference preview video](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/preview/s1_airplane_lift_human_object.mp4)、[qpos compare plot](../../../../../outputs/Dexplore/dexplore_v1175_visual_epoch228_20260918_195618/preview/s1_airplane_lift_qpos_compare.png)。
+- training_status_at_check: parent run 仍为 RUNNING；日志最新 `epoch_num:238 mean_rewards:[86.72]`，当前已记录 124 个续训 epoch，最佳 logged mean reward 为 95.68 at epoch 223；最新已保存 checkpoint 仍为 epoch 228。
+- rollout_metrics: 432 frames；RL object z start=0.9182605743、max=0.9182605743、end=0.9168922901；RL max lift from start=0.0m；reference max lift from start=0.2814320326m；object xyz RMSE vs reference=0.067584008；lift >2cm/>5cm/>10cm/>15cm/>20cm 的帧数均为 0。
+- conclusion: REFUTED（仅针对“epoch228 确定性策略 rollout 已把物体抓/抬起来”这一命题；正在训练的后续未保存 checkpoint 仍需等新 checkpoint 再导出验证。）
+
+**原因**
+
+reward 曲线升高不能直接证明抓起，因为当前 DExplore 日志没有 success/lift/object-height 标量。本次导出的策略轨迹显示物体高度基本保持在初始高度附近，而参考轨迹有约 28.1cm 抬升；因此 epoch228 策略尚未学会把物体抬起。
+
+**验证**
+
+export 日志显示 checkpoint 成功加载并导出 1 条 RL rollout；`rollout_metrics.json` 与 `object_z_lift_compare.png` 均显示 RL 物体最大相对抬升为 0.0m，所有大于 2cm 的 lift 帧数为 0。GPU0/3 上原双卡训练进程仍存活，本次可视化使用 GPU2。
+
+## 2026-09-18 20:28:37 +0800 — V1.17.5 DExplore reward 趋势复核
+
+- timestamp: 2026-09-18 20:28:37 +0800
+- activity_id: ACT-20260918-202837-CMRESIDUAL-V1175-DEXPLORE-REWARD-TREND
+- modification_version: V1.17.5
+- operation_category: diagnostic、operation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问 reward 是否仍在增长；本次只读解析训练日志和进程状态。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4871eed0ad939311dd04dc9c4a27634304a28a9e
+- scope: 只读检查 [train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train.log) 和 checkpoint 目录；未停止、重启或修改训练进程、checkpoint、外部 DExplore 源码、输入数据或运行配置。
+- run_id: dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train.log)、[checkpoint dir](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/)。
+- last_epoch: 261；last_logged_mean_reward: 83.90；best_logged_mean_reward: 95.68 at epoch 223；last5_mean_reward: 85.438；last10_mean_reward: 87.032；last20_mean_reward: 87.270；last50_mean_reward: 89.154；last30_linear_slope: -0.184 reward/epoch；latest_checkpoint: [`GRAB_00000228.pth`](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1175_hvd2x2048_resume114_extra1000_20260918_172000/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000228.pth)。
+- conclusion: INCONCLUSIVE（reward 优化未持续创新高，近期表现为平台/轻微回落；reward 趋势本身仍不能证明抓取成功。）
+
+**原因**
+
+用户询问 reward 是否仍在增长；该判断需要用最新训练日志比较最近窗口、峰值和当前值，而不是只看单个 epoch。
+
+**验证**
+
+截至 20:28:31，训练进程仍存活；日志从 epoch115 记录到 epoch261。最近三个 10-epoch 窗口均值分别为 90.277（epoch232–241）、87.509（epoch242–251）、87.032（epoch252–261），最近 30 epoch 线性斜率为 -0.184 reward/epoch。

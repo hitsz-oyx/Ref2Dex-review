@@ -75,12 +75,35 @@ def test_v117_horovod_smoke_budget_counts_all_rank_local_environments():
 def test_v117_formal_train_config_only_changes_checkpoint_cadence(tmp_path):
     import yaml
 
-    path = LAUNCHER._write_formal_train_config(tmp_path, save_frequency=38)
+    resume = tmp_path / "resume.pth"
+    path = LAUNCHER._write_formal_train_config(tmp_path, save_frequency=38, resume_from=resume)
     with path.open("r", encoding="utf-8") as stream:
         config = yaml.safe_load(stream)
 
     params = config["params"]["config"]
     assert params["save_frequency"] == 38
     assert params["save_best_after"] == 38
+    assert params["resume_from"] == str(resume.resolve())
     assert params["horizon_length"] == 64
     assert params["minibatch_size"] == 16384
+
+
+def test_v117_resume_formal_budget_adds_epochs_after_checkpoint_epoch():
+    settings = LAUNCHER._run_settings(
+        "formal", num_envs=2048, world_size=LAUNCHER.HOROVOD_WORLD_SIZE,
+        resume_epoch=114, extra_epochs=1000,
+    )
+
+    assert settings["resume_epoch"] == 114
+    assert settings["extra_epochs"] == 1000
+    assert settings["target_final_epoch"] == 1114
+    assert settings["max_iterations"] == 1113
+    assert settings["target_env_steps"] == 262_144_000
+
+
+def test_v117_horovod_bootstrap_contains_synchronized_shutdown_patch():
+    source = LAUNCHER.HOROVOD_BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "_patch_common_agent_train" in source
+    assert "should_exit" in source
+    assert "broadcast_value(should_exit_t" in source

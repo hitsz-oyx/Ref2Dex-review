@@ -65,6 +65,13 @@ def test_checkpoint_requires_sha_architecture_and_strict_state(tmp_path: Path):
                                    include_context=False)
     assert "cm_context" not in actor_output
     assert actor_output["cm_tokens"].shape == (1, 16, 32)
+    effect = adapter.predict_effect_only(object_points, object_normals, hand_points, hand_normals,
+                                         torch.zeros_like(hand_points), 1 / 30,
+                                         interaction_object_chunk=32)
+    assert set(effect) == {"delta_xi_root", "token_mask", "token_mass"}
+    torch.testing.assert_close(effect["delta_xi_root"], actor_output["delta_xi_root"], atol=1e-6, rtol=1e-6)
+    assert torch.equal(effect["token_mask"], actor_output["token_mask"])
+    torch.testing.assert_close(effect["token_mass"], actor_output["token_mass"], atol=1e-6, rtol=1e-6)
     with pytest.raises(ValueError, match="SHA256"):
         FrozenCmv2Adapter(checkpoint, "0" * 64, "cpu")
     sha = write({"architecture_version": "v1_2", "model": model.state_dict()})

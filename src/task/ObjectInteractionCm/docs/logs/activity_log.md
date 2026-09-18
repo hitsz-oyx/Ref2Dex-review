@@ -1,7 +1,7 @@
 # ObjectInteractionCm 活动记录
 
 - scope: task:ObjectInteractionCm
-- last_updated: 2026-09-12
+- last_updated: 2026-09-16
 - current_pointer: [docs/current_versions.yaml](../../../../../docs/current_versions.yaml)
 - related: [任务入口](../README.md)、[执行计划](../plan/V1.1.md)、[架构快照](../architecture/V1.1.md)、[指导](../指导/V1.1.md)
 
@@ -127,6 +127,217 @@
 
 - 仅移除本 activity 条目即可回滚本次诊断记录；未产生代码、配置、数据或实验产物变更。
 - 本次未遇到格式、目录、版本或审批阻碍；正式 RL 训练、在线 decoder 接入或改变 ARCTIC 数据合同都需另行形成 final plan 并确认。
+## 2026-09-16 11:51:52 +0800 — 当前几何重定向可视化数据来源追溯
+
+- timestamp: 2026-09-16 11:51:52 +0800
+- activity_id: ACT-20260916-115152-OICM-GEOMETRIC-PROVENANCE-DIAGNOSTIC
+- modification_version: V1.3.2
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问当前可视化的几何重定向数据如何产生；仅追溯现有 manifest、producer、历史日志、文件哈希和时间戳，不重跑或修改数据。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db
+- worktree_dirty: true（保留进入本次诊断前的全部已有差异和两个正在运行的 viewer；本次仅新增当前 activity）
+- scope: `GRAB → InterAct canonical → DExplore adapter → dex-retargeting Inspire 18-DOF → 1335 条 inspire_geometric → DExplore 规则筛选 660 条 inspire_geometric_dexplore` 的本地 provenance。
+- conclusion: INCONCLUSIVE（pipeline、1335→660 筛选合同和样例逐字节复制均有直接证据；首次几何 retarget 缺少 run manifest，无法锁定精确命令、retarget 参数和当时 producer commit）。
+
+**文件**
+
+- [data/processed_data/inspire_geometric_dexplore/manifest.json](../../../../../data/processed_data/inspire_geometric_dexplore/manifest.json) — 1335→660 的筛选规则与数量。
+- [data/processed_data/inspire_geometric/](../../../../../data/processed_data/inspire_geometric/) — 完整 1335 条几何重定向结果根。
+- [data/processed_data/logs_geometric_canonical_full/](../../../../../data/processed_data/logs_geometric_canonical_full/) — 2026-09-05 按 subject 导出成功日志；日志中的临时输出根名为 `inspire_geometric_canonical_full`。
+- [DExplore canonical adapter](../../../../../../dexplore/data_processing/adapt_interact_canonical.py) — 将 InterAct canonical human/object 与原始 GRAB contact/metadata 适配成 converter 输入，并将 120 Hz contact 按 `::4` 对齐到 30 Hz。
+- [DExplore geometric converter](../../../../../../dexplore/data_processing/convert_grab.py) — SMPL-X/FK、坐标处理、右手关键点 position retarget、18-DOF 重排与 `(T,598)` 保存实现。
+- [DExplore filter script](../../../../../../dexplore/data_processing/filter_inspire_for_dexplore.py) — 排除任意左手 contact 和名称含 `doorknob` 的序列，并用 `copy2` 物化筛选目录。
+
+**原因**
+
+当前 viewer 直接读取 `inspire_geometric_dexplore`，需要区分几何重定向求解本身与后续 DExplore-compatible 筛选；同时不能把现有 producer 源码误当成已被历史 run manifest 锁定的精确生成版本。
+
+**验证**
+
+- manifest 记录源根为 `inspire_geometric`/`inspire_rl`：源序列 1335，排除含任意左手 contact 的 658 条，再从余下序列排除 17 条 `doorknob`，保留 660 条。
+- `filter_inspire_for_dexplore.py` 对保留项执行 `shutil.copy2`；样例 `s1_airplane_fly_1` 在完整根和筛选根 SHA256 同为 `7005896577e069f5ade0f84def44c563648d6c25fc5de3be8d748b0d623e2364`，mtime 也一致。
+- 几何日志覆盖 subject 导出并报告成功，例如 s1 为 `198/198`、s2 为 `93/93`、s10 为 `145/145`；完整根实际有 1335 个 `interaction_hand_inspire.pt`。
+- converter 将右手腕、15 个手关节和 5 个指尖顶点组成 retarget reference，以 `dex_retargeting` position optimizer 求解并按 `INSPIRE_RETARGET_REORDER` 写入 tensor `373:391`；这一步不是 RL rollout。
+- 当前完整根没有 converter `run_manifest.json`；日志只记录结果，不含启动命令。DExplore 当前 producer commit `c31f57f...` 提交于 2026-09-13，晚于 2026-09-05 数据生成，因此不能据此断言历史运行采用当前默认的 `retarget_iterations=1`、`retarget_stride=1` 或该 commit。
+
+**保护边界与回滚入口**
+
+未修改数据、manifest、producer、GT、split、坐标系、URDF、checkpoint 或 viewer；删除本 activity 条目即可回滚本次记录。
+
+## 2026-09-16 11:42:40 +0800 — DExplore 几何重定向轨迹查看器启动
+
+- timestamp: 2026-09-16 11:42:40 +0800
+- activity_id: ACT-20260916-114240-OICM-GEOMETRIC-VIEWER-START
+- modification_version: V1.3.2
+- task_mode: run-only/operation
+- type: diagnostic / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求可视化几何重定向数据；只读加载已经存在的 DExplore 筛选几何轨迹，不重建或改写数据，也不改变研究变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db
+- worktree_dirty: true（保留进入本次操作前的全部已有差异与正在运行的 RL viewer；本次仅新增当前 activity 和 ignored viewer 运行目录）
+- scope: 只读加载 `data/processed_data/inspire_geometric_dexplore` 的 660 条几何重定向轨迹，在 `0.0.0.0:8105` 启动完整 Inspire URDF visual mesh 查看器；不使用 RL 或 coupled-geometric q。
+- run_id: visualize_inspire_geometric_20260916_114240
+- run_status: RUNNING
+- conclusion: SUPPORTED（工程启动、660 条轨迹加载、初始序列坐标 sanity 与 HTTP 可达性均通过；不构成几何重定向质量或无穿透的科研结论）
+- command: `/home2/wyy/miniconda3/envs/graspenv/bin/python -u /home2/wyy/oyx_ws/dexplore/data_processing/visualize_inspire_trajectory.py --all --source geometric --geometric-root /home2/wyy/oyx_ws/Ref2Dex/data/processed_data/inspire_geometric_dexplore --urdf /home2/wyy/oyx_ws/Ref2Dex/src/task/CmDecoderv2/assets/inspire_hand_new/inspire_hand_right.urdf --interact-root /home2/wyy/oyx_ws/InterAct --port 8105 --fps 30`
+
+**文件与入口**
+
+- [data/processed_data/inspire_geometric_dexplore/manifest.json](../../../../../data/processed_data/inspire_geometric_dexplore/manifest.json) — 660 条筛选后的原始几何重定向轨迹清单。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/](../../research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/) — 本次 viewer 运行目录。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/run_manifest.json](../../research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/run_manifest.json) — 本次输入、命令和运行状态。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/viewer.log](../../research/hand_region_sampling/output/visualize_inspire_geometric_20260916_114240/viewer.log) — Viser 启动输出、初始序列坐标检查和实际加载数。
+
+**原因**
+
+用户需要直接查看本地原始几何重定向结果，并与仍在 `8100` 运行的 RL Inspire 版本对照；因此另开端口加载 geometric 根，避免切换或覆盖已有 viewer。
+
+**验证**
+
+- `--check-only` 扫描到 660 条可用轨迹；初始序列 `s1_airplane_fly_1` 为 279 帧，tensor shape `[279,598]`，关节列固定为 `373:391`。
+- 初始序列 contact frame 139 的最小指尖—物体距离为 `0.011 m`，坐标 sanity 通过。
+- 本次源明确为 `geometric`；不读取 `inspire_rl_object_dexplore` 或 `inspire_geometric_dexplore_coupled_v1_20260912`。
+- Viser 进程 PID `1436033`（exec session `56554`）监听 `0.0.0.0:8105`；`http://127.0.0.1:8105/` 返回 HTTP `200`。
+
+**保护边界与回滚入口**
+
+不修改原始数据、processed tensor、manifest、GT、split、坐标系、URDF、训练代码或 checkpoint。停止对应 viewer 进程，并删除本 activity 条目和 ignored 运行目录即可回滚；现有 `8100` RL viewer 不受影响。
+
+## 2026-09-16 11:29:42 +0800 — DExplore 几何重定向与 RL Inspire 本地数据辨析
+
+- timestamp: 2026-09-16 11:29:42 +0800
+- activity_id: ACT-20260916-112942-OICM-INSPIRE-SOURCE-DIAGNOSTIC
+- modification_version: V1.3.2
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户询问 DExplore 几何重定向 `.pt` 是否在本地以及它与刚才 viewer 输入的关系；仅盘点现有目录、manifest 和代表性 tensor，不修改数据。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db
+- worktree_dirty: true（保留进入本次诊断前的全部已有差异；本次仅新增当前 activity）
+- scope: `inspire_geometric_dexplore`、`inspire_geometric_dexplore_coupled_v1_20260912`、`inspire_rl_object_dexplore` 和 `inspire_rl` 的文件数量、manifest、同名序列 tensor shape/SHA/q 差异。
+- conclusion: SUPPORTED（本地存在独立的几何重定向和耦合几何数据；当前 viewer 使用的是 RL-object 数据，不是几何重定向数据）。
+
+**文件**
+
+- [data/processed_data/inspire_geometric_dexplore/manifest.json](../../../../../data/processed_data/inspire_geometric_dexplore/manifest.json) — 660 条过滤后的 DExplore 几何重定向 tensor。
+- [data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/manifest.json](../../../../../data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/manifest.json) — 660 条拟合到六维耦合控制流形的几何 reference。
+- [data/processed_data/inspire_rl_object_dexplore/manifest.json](../../../../../data/processed_data/inspire_rl_object_dexplore/manifest.json) — 当前 preview 使用的 RL 手/物体输出合同。
+- [src/task/CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py](../../../CmDecoderv2/tools/data/fit_coupled_geometric_retarget.py) — geometric → coupled geometric 的拟合入口。
+
+**原因**
+
+多个目录都保存同名 `interaction_hand_inspire.pt` 且 shape 同为 `[T,598]`，仅凭文件名无法区分 geometric、coupled geometric 和 RL；必须以根 manifest 与 q 列差异确认当前 viewer 的实际来源。
+
+**验证**
+
+- 三个本地根 `inspire_geometric_dexplore`、`inspire_geometric_dexplore_coupled_v1_20260912`、`inspire_rl_object_dexplore` 各有 660 个 `interaction_hand_inspire.pt`；`inspire_rl` 有 1335 个。
+- `s1_airplane_lift`、`s1_alarmclock_see_1`、`s1_apple_pass_1` 在 geometric/coupled/RL-object 根均存在且 shape 分别为 `[432,598]`、`[254,598]`、`[177,598]`。
+- geometric 与 RL-object 的 q slice `373:391` 平均绝对差分别为 `1.1597 / 0.7219 / 0.7833 rad`，SHA 也不同，证明不是同一 tensor 的别名。
+- 当前 preview manifest 的 `rl_q.tensor` 指向 `inspire_rl_object_dexplore`；viewer HTTP 仍返回 `200`，本次没有切换运行输入。
+
+**回滚入口**
+
+仅删除本 activity 条目；数据、viewer、cache、GT、split、坐标系和 checkpoint 均未修改。
+
+## 2026-09-16 11:11:41 +0800 — 高分辨率 GRAB 预览来源与穿透只读诊断
+
+- timestamp: 2026-09-16 11:11:41 +0800
+- activity_id: ACT-20260916-111141-OICM-GRAB-PENETRATION-AUDIT
+- modification_version: V1.3.2
+- task_mode: read-only/diagnostic
+- type: diagnostic / documentation
+- change_level: L0
+- approval: auto
+- approval_basis: 用户要求追溯 Inspire 生成路径并将当前高分辨率 GRAB 预览与原始 GRAB 对照；仅执行只读重建、坐标 parity 和 signed-distance 诊断，不修改科研变量或数据。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db
+- worktree_dirty: true（保留此前 CmResidual activity 差异和本 Task viewer 启动记录；本次仅新增当前活动记录及 ignored 诊断目录）
+- scope: 当前高分辨率 preview 的 3 条 MANO 序列、对应原始 GRAB `.npz`、父 cache 和 canonical contact mesh；同时追溯 Inspire-RL 10135 点的 q/URDF/FK/采样链。
+- run_id: grab_penetration_audit_20260916_111141
+- run_status: COMPLETED
+- conclusion: SUPPORTED（预览对原始 GRAB 几何的忠实性、原始几何已有穿透）；不构成去穿透方案或模型效果结论。
+- last_step: N/A；last_epoch: N/A；best_metric: N/A；checkpoint: N/A。
+
+**文件与入口**
+
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/](../../research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/) — 本次只读诊断目录。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/run_manifest.json](../../research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/run_manifest.json) — 输入、方法和状态。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/report.md](../../research/hand_region_sampling/output/grab_penetration_audit_20260916_111141/report.md) — 数据链、逐序列 parity、穿透指标和解释边界。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/build_trajectory_preview.py](../../research/hand_region_sampling/build_trajectory_preview.py) — MANO 2048 / Inspire-RL 10135 点预览生成入口。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json) — 当前 viewer 使用的 6 条序列 index。
+- [data/raw_data/GRAB/grab/s1/airplane_fly_1.npz](../../../../../data/raw_data/GRAB/grab/s1/airplane_fly_1.npz) — 代表性原始 GRAB 输入。
+
+**原因**
+
+用户观察到当前 GRAB 点云疑似穿模，需要区分原始 GRAB MANO 拟合问题、父 cache 重建错误、DExplore 物体 pose 替换错误和 2048 点预览重采样错误。仅凭 viewer 观感无法定位来源。
+
+**验证**
+
+- 直接从 3 份原始 GRAB `.npz` 以 `GRABRawAdapter(ds_rate=4, require_subject_vtemplate=True)` 重建：raw/cache frame ID 全一致；MANO mesh 最大差 `0.000137–0.000174 mm`，object pool 最大差 `0.000143–0.000147 mm`。
+- 原始与预览均转到物体局部系后，2048 face+barycentric 重采样最大差 `0.000382–0.000484 mm`；object pool 最大差 `<0.0001 mm`。不支持预览变换引入穿模。
+- 三个 canonical contact mesh 均为 watertight；signed distance 测得最大穿透：`airplane_fly_1 17.369 mm`、`airplane_pass_1 2.497 mm`、`alarmclock_lift 12.269 mm`。原始 778 顶点与预览 2048 表面点均检出同类穿透。
+- 外部 DExplore URDF 与仓库内 Inspire URDF 的 SHA256 均为 `7d0023168a22191de2126d71f8d2a810f82e8cba56b74c82be6db04812b80f58`；当前 viewer 仍返回 HTTP `200`，未因诊断中断。
+- 本次不运行训练/评估，不修改原始数据、cache、GT、split、坐标系、viewer、模型或 checkpoint。
+
+**回滚入口**
+
+删除本 activity 条目与 ignored 诊断目录即可；所有输入和正在运行的 viewer 无需恢复。
+
+## 2026-09-16 10:48:47 +0800 — 高分辨率 MANO/Inspire 轨迹查看器启动
+
+- timestamp: 2026-09-16 10:48:47 +0800
+- activity_id: ACT-20260916-104847-OICM-HIGHRES-VIEWER-START
+- modification_version: V1.3.2
+- task_mode: run-only/operation
+- type: diagnostic / operation / documentation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求再次启动可查看 KNN 着色和距离着色的 GRAB 高分辨率可视化；沿用已批准并完成的 V1.2.6 轨迹预览，不重建数据或改变科研变量。
+- skills_used: research-change-control, research-experiment-workflow
+- branch: oyx
+- base_commit: 35e8cd87cc9de2c9ae4e51f9cfa551fd5448f2db
+- worktree_dirty: true（仅保留进入本次操作前已有的 CmResidual activity 差异；本次新增当前活动记录和 ignored viewer 运行目录）
+- scope: 只读加载高分辨率轨迹预览 index，在 `0.0.0.0:8100` 启动 Viser；MANO 为 2048 手点，Inspire-RL 为 10135 手点，物体池为 4096 点，KNN 和累计距离阈值均由 viewer 现场计算。
+- run_id: visualize_grab_highres_20260916_104847
+- run_status: RUNNING
+- conclusion: SUPPORTED（工程启动、HTTP 可达、shape、mesh provenance 和 KNN smoke 均通过；不构成科研效果结论）
+- command: `/home2/wyy/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index src/task/ObjectInteractionCm/research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json --split all --sequence s1/airplane_fly_1 --host 0.0.0.0 --port 8100 --fps 8`
+
+**文件与入口**
+
+- [src/task/ObjectInteractionCm/docs/plan/V1.2.6.md](../plan/V1.2.6.md) — 已批准的高分辨率轨迹预览范围与保护边界。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json](../../research/hand_region_sampling/output/variable_hand_trajectory_preview_20260909/index.json) — MANO 2048 / Inspire-RL 10135 点的只读输入 index。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/](../../research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/) — 本次 viewer 运行目录。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/run_manifest.json](../../research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/run_manifest.json) — 本次命令、输入与点数合同。
+- [src/task/ObjectInteractionCm/research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/viewer.log](../../research/hand_region_sampling/output/visualize_grab_highres_20260916_104847/viewer.log) — Viser 启动输出与实际输入摘要。
+
+**原因**
+
+复用已验证的高分辨率轨迹预览，让用户再次交互检查 MANO 2048 点与 Inspire-RL 10135 点的动态覆盖、累计距离阈值和物体到手 KNN 并集；本次只启动查看器，不把预览切换为正式训练输入。
+
+**验证**
+
+- 启动前两个 `--check-only` 均退出码 0：MANO `hand_points=2048`、Inspire-RL `hand_points=10135`；两者 KNN 1/4/8/16/32/64、物体 mesh 和手 mesh 均可读取。
+- `ss -ltnp '( sport = :8100 )'` 确认启动前端口空闲。
+- 首次以脱离 shell 的后台方式启动后进程立即退出且日志为空；未占用端口、未写输入数据。随后改用受控长运行会话启动，PID `1353568`、exec session `78421`。
+- `ss` 确认 `0.0.0.0:8100` 正在监听；`curl http://127.0.0.1:8100/` 返回 HTTP `200`；viewer 报告 6 条轨迹，初始序列 `s1/airplane_fly_1`、variant `mano`。
+- 不运行训练或评估，不写入输入 cache、GT、split、坐标系、checkpoint 或模型代码。
+
+**回滚入口**
+
+停止本次 viewer 进程并删除本次 ignored 运行目录；输入预览、正式 cache 和既有训练产物均无需恢复。
 
 ## 2026-09-12 13:30:43 +0800 — Cm 后续路线的仓库复核与定向文献调研
 

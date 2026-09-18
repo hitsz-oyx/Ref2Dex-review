@@ -50,7 +50,14 @@ class V118PlannerAgent(CommonAgent):
                 res_dict = self.get_action_values(self.obs)
             for key in self.update_list:
                 self.experience_buffer.update_data(key, n, res_dict[key])
-            teacher = self._task().v118_teacher(res_dict["mus"])
+            if self.cm_distill_coef > 0:
+                teacher = self._task().v118_teacher(res_dict["mus"])
+            else:
+                teacher = {
+                    "teacher_action": res_dict["mus"].detach(),
+                    "teacher_weight": torch.zeros(res_dict["mus"].shape[0], device=res_dict["mus"].device,
+                                                  dtype=res_dict["mus"].dtype),
+                }
             self.experience_buffer.update_data("cm_teacher_actions", n, teacher["teacher_action"])
             self.experience_buffer.update_data("cm_teacher_weights", n, teacher["teacher_weight"].unsqueeze(-1))
             if self.has_central_value:
@@ -59,7 +66,10 @@ class V118PlannerAgent(CommonAgent):
             self.experience_buffer.update_data("rewards", n, self.rewards_shaper(rewards))
             self.experience_buffer.update_data("next_obses", n, self.obs["obs"])
             self.experience_buffer.update_data("dones", n, self.dones)
-            terminated = infos["terminate"].float().unsqueeze(-1)
+            terminated = infos.get("terminate") if isinstance(infos, dict) else None
+            if terminated is None:
+                terminated = self.dones
+            terminated = terminated.float().unsqueeze(-1)
             next_vals = self._eval_critic(self.obs) * (1.0 - terminated)
             self.experience_buffer.update_data("next_values", n, next_vals)
             self.current_rewards += rewards

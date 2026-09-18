@@ -372,7 +372,8 @@ class CmResidual(VecTask):
                               gate_distance_m=float(planner_cfg["gateDistanceM"]),
                               effect_translation_gate_m=float(planner_cfg["effectTranslationGateM"]),
                               effect_rotation_gate_rad=float(planner_cfg["effectRotationGateRad"]),
-                              max_active_envs=int(planner_cfg["maxActiveEnvs"])))
+                              planner_env_microbatch=int(planner_cfg["plannerEnvMicrobatch"]),
+                              interaction_object_chunk=int(planner_cfg["interactionObjectChunk"])))
         return self.v118_planner
 
     @torch.inference_mode()

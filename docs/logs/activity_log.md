@@ -990,3 +990,126 @@
 **回滚**
 
 两个合并提交及功能分支均保留；如需撤销本地合并，可从合并前 `85e70edffa85d8d1698a3e8adb22e111033cb892` 创建新分支复核，避免改写或覆盖原训练工作树。
+
+## 2026-09-17 16:11:29 +0800 — 远端引用抓取与 CmResidual 新方向边界诊断
+
+- activity_id: `ACT-20260917-161129-REF2DEX-FETCH-CMRESIDUAL-DIAGNOSTIC`
+- timestamp: `2026-09-17 16:11:29 +0800`
+- modification_version: `V1.2.15`
+- operation_category: `diagnostic`、`operation`
+- task_mode: `read-only/diagnostic`（Git fetch 仅更新远端引用）
+- change_level: `L0`
+- approval: `user-approved`
+- approval_basis: 用户明确要求 fetch 远端，并询问 Cm 进入 actor 与 DexYCB 训练的歧义。
+- skills_used: `research-experiment-workflow`、`research-change-control`
+- branch: `oyx`
+- base_commit: `683b5d236dc8d8349620e34952c64afd9c892da3`
+- worktree_dirty: `true`（既有 ObjectInteractionCm 用户日志改动；本条仅新增根级诊断记录）
+- scope: 执行 `git fetch --all` 并只读比较远端引用；不 merge、pull、reset，不启动训练或改研究实现。
+
+**原因**
+
+确认远端最新 Cm 模型与仓库状态，再界定新的 actor-Cm / DexYCB 训练计划所需科研决策。
+
+**验证**
+
+- `git fetch --all` 成功；`origin/oyx=e444b1d0cce192dc9a310f0dcfd7bb67eea8f67c`，本地 `HEAD=683b5d236dc8d8349620e34952c64afd9c892da3`，本地落后 17 个提交且无独有提交。
+- 远端新增 `ObjectInteractionCmv2` 的 GRAB 双卡四轮训练入口；已提交计划明确 DexYCB/PPO 不在该 V1.3 训练范围。远端相对本地没有 CmResidual 代码或计划差异。
+- 本地 DexYCB reference manifest 为 `split=evaluation`、`training_eligible=false`；[V1.11 指导](../../src/task/CmResidual/docs/指导/V1.11.md) 限定 base-only 评估，不授权 residual PPO 训练。
+- [当前版本指针](../current_versions.yaml) 的本地 CmResidual 为 `V1.11.2`，远端对应指针未变化。
+
+**保护与回滚**
+
+- 未触碰工作树中既有 `src/task/ObjectInteractionCm/docs/logs/activity_log.md` 差异；仅追加本条诊断记录。可删除本条回滚，远端引用仍保留 fetch 结果。
+
+## 2026-09-18 18:16:43 +0800 — 治理工作流第一阶段收敛
+
+- activity_id: `ACT-20260918-181643-ROOT-GOVERNANCE-PHASE1`
+- timestamp: `2026-09-18 18:16:43 +0800`
+- governance_version: `V1`
+- git_commit: `ebefee4e41916173658de57625fa412a963e7e74`
+- modification_version: `V1`（legacy audit compatibility）
+- base_commit: `ebefee4e41916173658de57625fa412a963e7e74`（legacy audit compatibility）
+- operation_category: `governance`
+- task_mode: `governance`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认先执行指导文档的第一阶段，并要求先创建治理分支。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `ai/governance/phase1`
+- worktree_dirty: `true`（保留用户既有代码、Task 日志、计划和研究版本改动）
+- scope: 仅收敛 AGENTS、两个 Skill、版本政策和 current_versions；不创建 verify.py/CI，不迁移 Task 文档，不修改模型、数据、运行或科研变量。
+
+**文件**
+
+- [docs/指导/指导.md](../指导/指导.md) — 本阶段治理范围的用户指导。
+- [AGENTS.md](../../AGENTS.md) — 将工作模式收敛为 inspect/change/run/governance，明确 L0–L3、三种版本身份、最小上下文和 Git 保护。
+- [.agents/skills/research-change-control/SKILL.md](../../.agents/skills/research-change-control/SKILL.md) — 收敛修改流程、审批、plan 条件、分支、验证和交接合同。
+- [.agents/skills/research-experiment-workflow/SKILL.md](../../.agents/skills/research-experiment-workflow/SKILL.md) — 收敛 run manifest、run_status/conclusion 分离和运行交接。
+- [docs/modification_policy.md](../modification_policy.md) — 将新记录版本身份切换为 governance_version/research_version/git_commit/run_id，保留历史字段只读兼容。
+- [docs/current_versions.yaml](../current_versions.yaml) — repository 使用 governance_version: V1，各 Task 使用 research_version；保留用户已写入的 CmResidual V1.19。
+- [docs/logs/activity_log.md](activity_log.md) — 记录本次治理切换。
+
+**原因**
+
+按照 `docs/指导/指导.md` 的第一阶段建议，先让永久规则、修改流程、实验流程和版本指针使用同一套简化合同，为第二阶段机器门禁和第三阶段 Task 文档迁移保留清晰边界。
+
+**验证**
+
+- `python3` YAML/frontmatter/schema 检查通过；治理文件本地 Markdown 链接检查通过。
+- `git diff --cached --check` 通过。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log docs/logs/activity_log.md --staged --check-links` 通过：4 个暂存治理路径、7 个本地链接可导航；`current_versions.yaml` 保持未暂存以保护用户既有版本修改。
+- 第一阶段没有 `tools/verify.py`，不宣称 `VERIFY PASS`；未运行训练、评估或科研实验。
+- research semantics: `UNCHANGED`；scientific conclusion: `N/A`。
+
+**保护与回滚**
+
+- 当前分支为 `ai/governance/phase1`；用户既有未提交代码、Task 日志、计划、指导和研究版本值未重置或覆盖。
+- 回滚入口是本分支中本次治理文件的独立 diff；不删除历史日志、运行、checkpoint、cache 或数据。
+
+## 2026-09-18 18:39:48 +0800 — 治理工作流第二阶段建立机器门禁
+
+- activity_id: `ACT-20260918-183948-ROOT-GOVERNANCE-PHASE2`
+- timestamp: `2026-09-18 18:39:48 +0800`
+- governance_version: `V1`
+- git_commit: `ebefee4e41916173658de57625fa412a963e7e74`
+- modification_version: `V1`（legacy audit compatibility）
+- base_commit: `ebefee4e41916173658de57625fa412a963e7e74`（legacy audit compatibility）
+- operation_category: `governance`
+- task_mode: `governance`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在第一阶段完成后明确要求继续执行指导文档的后续阶段。
+- skills_used: `research-change-control`、`research-experiment-workflow`
+- branch: `ai/governance/phase1`
+- worktree_dirty: `true`（保留用户既有代码、Task 日志、计划、指导和研究版本改动）
+- scope: 建立 `python3 tools/verify.py --changed` 机器门禁、治理测试和 GitHub CI；本地门禁只读取当前分支已暂存路径，CI 读取 PR 分支差异；不修改 `pytest.ini`、`tests/conftest.py`、模型、数据、运行或科研变量。
+
+**文件**
+
+- [tools/verify.py](../../tools/verify.py) — 按变更路径检查产物、Python、JSON/YAML、Markdown 链接并选择 Task、shared、process 或治理测试。
+- [.github/workflows/verify.yml](../../.github/workflows/verify.yml) — 在 PR 和稳定分支复用同一 `--changed` 入口。
+- [tests/governance/test_verify.py](../../tests/governance/test_verify.py) — 验证产物拒绝、Task 测试选择和治理测试选择合同。
+- [AGENTS.md](../../AGENTS.md) — 第一阶段已收敛的仓库常驻规则。
+- [.agents/skills/research-change-control/SKILL.md](../../.agents/skills/research-change-control/SKILL.md) — 第一阶段已收敛的修改流程 Skill。
+- [.agents/skills/research-experiment-workflow/SKILL.md](../../.agents/skills/research-experiment-workflow/SKILL.md) — 第一阶段已收敛的实验流程 Skill。
+- [docs/modification_policy.md](../modification_policy.md) — 第一阶段已收敛的版本和操作政策。
+
+**原因**
+
+按照 `docs/指导/指导.md` 的第二阶段建议，把变更范围、测试归属、配置解析、Markdown 可导航性和禁止提交的运行产物收敛为可重复执行的门禁，并让 CI 与本地入口一致。
+
+**验证**
+
+- `python3 -m pytest -q tests/governance/test_verify.py`：4 passed；仅有现有 NumPy 兼容警告。
+- `python3 -m py_compile tools/verify.py tests/governance/test_verify.py`：通过。
+- `.github/workflows/verify.yml` 与 `docs/current_versions.yaml` 的 YAML 解析：通过。
+- `git diff --check -- tools/verify.py .github/workflows/verify.yml tests/governance/test_verify.py`：通过。
+- `python3 tools/verify.py --changed`：`VERIFY PASS`；本地只读取当前分支的 7 个已暂存治理路径并运行治理测试，未把工作区中用户既有的未暂存 Task 文件纳入本分支门禁。
+- `python3 .agents/skills/research-change-control/scripts/audit_diff.py --log docs/logs/activity_log.md --staged --check-links`：待本条记录追加后执行；本阶段暂存治理路径共 7 个。
+- research semantics: `UNCHANGED`；scientific conclusion: `N/A`。
+
+**保护与回滚**
+
+- 没有暂存 `docs/current_versions.yaml`、任何用户代码、Task 日志、计划、指导、数据、cache、output 或 checkpoint。
+- 机器门禁和 CI 可通过删除本阶段新增的三个文件回滚；第一阶段治理文件和用户既有工作树改动保持独立。

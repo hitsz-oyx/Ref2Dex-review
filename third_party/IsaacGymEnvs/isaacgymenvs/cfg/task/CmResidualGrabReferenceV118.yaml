@@ -45,7 +45,8 @@ cmPlanner:
   gateDistanceM: 0.04
   effectTranslationGateM: 0.002
   effectRotationGateRad: 0.01
-  maxActiveEnvs: 16
+  plannerEnvMicrobatch: 16
+  interactionObjectChunk: 32
 
 cmBuffer:
   enabled: true

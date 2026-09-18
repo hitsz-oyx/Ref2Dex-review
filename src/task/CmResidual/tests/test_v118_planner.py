@@ -1,7 +1,10 @@
 from pathlib import Path
+import sys
+import types
 
 import numpy as np
 import torch
+import yaml
 
 from src.task.CmDecoderv2.kinematics import InspireKinematics
 from src.task.CmResidual.v118_planner import ACTION_DIM, PlannerConfig, QUERY_LINKS, TorchInspireKinematics
@@ -28,4 +31,100 @@ def test_v118_planner_contract_is_fixed_to_eight_candidates():
     assert PlannerConfig().candidates == 8
     assert PlannerConfig().translation_scale_m == 0.02
     assert PlannerConfig().rotation_scale_rad == 0.05
-    assert PlannerConfig().max_active_envs == 16
+    assert PlannerConfig().planner_env_microbatch == 16
+    assert PlannerConfig().interaction_object_chunk == 32
+
+
+def test_v119_config_uses_streaming_memory_contract():
+    task = yaml.safe_load((ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118.yaml").read_text())
+    planner = task["cmPlanner"]
+    assert planner["plannerEnvMicrobatch"] == 16
+    assert planner["interactionObjectChunk"] == 32
+    assert "maxActiveEnvs" not in planner
+
+
+def test_v119_planner_microbatch_covers_all_active_envs_in_order(monkeypatch):
+    action_mapping = types.ModuleType("action_mapping")
+
+    def compose_reference_residual(base, actions, lower, upper, **kwargs):
+        assert torch.equal(lower, torch.full_like(lower, -1.0))
+        assert torch.equal(upper, torch.full_like(upper, 1.0))
+        return base, {"applied_delta": actions}
+
+    action_mapping.compose_reference_residual = compose_reference_residual
+    dexplore_observation = types.ModuleType("dexplore_observation")
+    dexplore_observation.calc_heading_quat_inv = lambda quat: quat
+    dexplore_observation.quat_rotate = lambda quat, vector: vector
+    monkeypatch.setitem(sys.modules, "isaacgymenvs", types.ModuleType("isaacgymenvs"))
+    monkeypatch.setitem(sys.modules, "isaacgymenvs.tasks", types.ModuleType("tasks"))
+    monkeypatch.setitem(sys.modules, "isaacgymenvs.tasks.cm_residual", types.ModuleType("cm_residual"))
+    monkeypatch.setitem(sys.modules, "isaacgymenvs.tasks.cm_residual.action_mapping", action_mapping)
+    monkeypatch.setitem(sys.modules, "isaacgymenvs.tasks.cm_residual.dexplore_observation", dexplore_observation)
+
+    class FakeAdapter:
+        def __init__(self):
+            self.calls = []
+
+        def predict_effect_only(self, object_points, object_normals, hand_points, hand_normals,
+                                hand_flow, delta_time_s, hand_valid_mask=None,
+                                interaction_object_chunk=None):
+            self.calls.append((object_points.shape[0], interaction_object_chunk))
+            batch = object_points.shape[0]
+            return {"delta_xi_root": torch.zeros(batch, 6),
+                    "token_mask": torch.ones(batch, 16, dtype=torch.bool),
+                    "token_mass": torch.ones(batch, 16)}
+
+    class FakeGeometry:
+        object_local = torch.zeros(4, 3)
+
+        def object(self, object_pose):
+            batch = object_pose.shape[0]
+            points = torch.zeros(batch, 4, 3)
+            normals = torch.zeros_like(points)
+            normals[..., 2] = 1.0
+            return points, normals
+
+        def hand(self, links):
+            batch = links.shape[0]
+            points = torch.zeros(batch, 5, 3)
+            normals = torch.zeros_like(points)
+            normals[..., 2] = 1.0
+            return points, normals
+
+    class FakeKinematics:
+        device = torch.device("cpu")
+
+        def forward(self, targets):
+            batch, candidates, _ = targets.shape
+            return torch.eye(4).expand(batch, candidates, len(QUERY_LINKS), 4, 4).clone()
+
+    adapter = FakeAdapter()
+    planner = __import__("src.task.CmResidual.v118_planner", fromlist=["FrozenCmv2Planner"]).FrozenCmv2Planner(
+        adapter, FakeGeometry(), FakeKinematics(),
+        PlannerConfig(planner_env_microbatch=7, interaction_object_chunk=11))
+    batch = 20
+    links = torch.eye(4).expand(batch, len(QUERY_LINKS), 4, 4).clone()
+    result = planner.teacher(
+        mu=torch.zeros(batch, ACTION_DIM),
+        current_native=torch.zeros(batch, ACTION_DIM),
+        base_target=torch.zeros(batch, ACTION_DIM),
+        native_lower=torch.full((ACTION_DIM,), -1.0),
+        native_upper=torch.full((ACTION_DIM,), 1.0),
+        mimic_scales=tuple(1.0 for _ in range(ACTION_DIM)),
+        current_links=links,
+        object_pose=torch.eye(4).expand(batch, 4, 4).clone(),
+        reference_transport=torch.zeros(batch, 232),
+        desired_delta_xi=torch.zeros(batch, 6))
+    assert adapter.calls == [(56, 11), (56, 11), (48, 11)]
+    assert torch.equal(result["activation"], torch.ones(batch))
+    assert torch.equal(result["teacher_weight"], torch.ones(batch))
+    assert torch.equal(result["valid_fraction"], torch.ones(batch))
+
+
+def test_v119_stage_a_agent_skips_task_teacher_when_coef_zero():
+    source = (ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py").read_text()
+    assert "if self.cm_distill_coef > 0:" in source
+    assert '"teacher_action": res_dict["mus"].detach()' in source
+    assert '"teacher_weight": torch.zeros' in source
+    assert 'infos.get("terminate")' in source
+    assert "terminated = self.dones" in source
