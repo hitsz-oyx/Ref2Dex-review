@@ -25,6 +25,8 @@ from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM as CMV2_CONTEXT_DIM,
 from src.task.CmResidual.cm_v2_action_evaluator import (
     Cmv2ActionEvaluator, build_nominal_hand_sweep, compose_nominal_targets,
     effect_metrics, object_pose_delta_to_xi)
+from src.task.CmResidual.v118_planner import (
+    FrozenCmv2Planner, PlannerConfig, TorchInspireKinematics)
 from src.task.CmResidual.cm_buffer import (
     CmTransitionBuffer, SCHEMA as CM_BUFFER_SCHEMA,
     TRANSITION_ONLY_FIELDS as CM_BUFFER_TRANSITION_ONLY_FIELDS,
@@ -80,7 +82,11 @@ class CmResidual(VecTask):
             reference_cfg.get("allowIneligibleFor", ""))
         self.retargeted_mimic_scales = (tuple(float(self.reference.metadata["mimic_mapping"][str(i)])
                                               for i in MIMIC_NATIVE) if self.retargeted_base else ())
-        self.base_observation_dim = 68 if self.retargeted_base else OBSERVATION_DIM
+        self.use_v118_planner = bool(cfg["basePolicy"].get("useV118Planner", False))
+        if self.use_v118_planner and not self.retargeted_base:
+            raise ValueError("V1.18 requires the retargeted reference")
+        self.base_observation_dim = (1442 if self.use_v118_planner else 68 if self.retargeted_base
+                                     else OBSERVATION_DIM)
         self.use_oi_cm_context = bool(cfg["basePolicy"].get("useOiCmContext", True))
         self.use_cmv2_context = bool(cfg["basePolicy"].get("useCmv2Context", False))
         self.use_cmv2_actor_context = bool(
@@ -94,6 +100,9 @@ class CmResidual(VecTask):
             raise ValueError("Select either Cmv2 observation context or action evaluator")
         if self.use_cmv2_actor_context and not self.retargeted_base:
             raise ValueError("Cmv2 actor context requires retargeted reference")
+        if self.use_v118_planner and (self.use_oi_cm_context or self.use_cmv2_context or
+                                      self.use_cmv2_actor_context or self.use_cmv2_action_evaluator):
+            raise ValueError("V1.18 planner is isolated from legacy Cm context/evaluator paths")
         self.reference_query_indices = None
         if self.use_cmv2_actor_context:
             try:
@@ -138,7 +147,7 @@ class CmResidual(VecTask):
                 raise ValueError("Retargeted episodeLength must equal referenceStart.windowLength")
         elif self.reference_start_mode != "fixed_zero" or self.reward_mode != "lift_distance":
             raise ValueError("Reference windows and tracking reward require retargeted_reference base")
-        if self.reward_mode not in ("lift_distance", "reference_transition"):
+        if self.reward_mode not in ("lift_distance", "reference_transition", "dexplore_dense"):
             raise ValueError("Unsupported CmResidual reward mode")
         if self.reward_mode == "reference_transition":
             required = ("positionScaleM", "rotationScaleRad", "positionWeight",
@@ -152,6 +161,9 @@ class CmResidual(VecTask):
                 raise ValueError("Reference tracking reward scales/weights must be non-negative with positive scales")
         else:
             self.reference_tracking_reward = {}
+        self.v118_reward = dict(reward_cfg) if self.reward_mode == "dexplore_dense" else {}
+        if self.reward_mode == "dexplore_dense" and not self.use_v118_planner:
+            raise ValueError("dexplore_dense reward is reserved for V1.18")
         cfg["env"].update(numObservations=self.actor_observation_dim, numActions=ACTION_DIM, numStates=0,
                           episodeLength=self.max_episode_length)
         self.initial_native = self.reference.robot_q[0].clone()
@@ -216,6 +228,7 @@ class CmResidual(VecTask):
         self.oi_cm_checkpoint_sha256 = None
         self.cmv2 = None
         self.cmv2_action_evaluator = None
+        self.v118_planner = None
         cm_buffer_cfg = cfg.get("cmBuffer", {})
         self.cm_buffer_enabled = bool(cm_buffer_cfg.get("enabled", False))
         self.cm_buffer_mode = str(cm_buffer_cfg.get("mode", "executed_action_v1"))
@@ -233,11 +246,11 @@ class CmResidual(VecTask):
         if self.cm_buffer_mode == "executed_action_v1" and self.cm_buffer_enabled and not self.use_cmv2_action_evaluator:
             raise ValueError("Legacy CmBuffer requires Cmv2 action evaluator")
         if self.cm_buffer_mode == "transition_only":
-            if not self.cm_buffer_enabled or not self.use_cmv2_actor_context:
-                raise ValueError("transition_only CmBuffer requires the Cmv2 actor context")
+            if not self.cm_buffer_enabled or not (self.use_cmv2_actor_context or self.use_v118_planner):
+                raise ValueError("transition_only CmBuffer requires V1.16 actor context or V1.18 planner")
             if self.cm_buffer_schema != CM_BUFFER_TRANSITION_ONLY_SCHEMA:
                 raise ValueError("transition_only CmBuffer requires the V1.16 schema")
-        if (self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_actor_context or
+        if (self.use_oi_cm_context or self.use_cmv2_context or self.use_cmv2_actor_context or self.use_v118_planner or
                 self.use_cmv2_action_evaluator):
             self.cm_geometry = SurfaceGeometry(
                 hand_urdf=hand_urdf, object_urdf=object_urdf, query_links=QUERY_LINKS,
@@ -305,6 +318,15 @@ class CmResidual(VecTask):
         self.episode_max_lift = torch.zeros(self.num_envs, device=self.device)
         self.completed_episodes = 0
         self.successful_episodes = 0
+        self.v118_hand_position_error_m = torch.zeros(self.num_envs, device=self.device)
+        self.v118_hand_rotation_error_rad = torch.zeros(self.num_envs, device=self.device)
+        self.v118_hand_velocity_error_mps = torch.zeros(self.num_envs, device=self.device)
+        self.v118_hand_angular_error_radps = torch.zeros(self.num_envs, device=self.device)
+        self.v118_object_velocity_error_mps = torch.zeros(self.num_envs, device=self.device)
+        self.v118_object_angular_error_radps = torch.zeros(self.num_envs, device=self.device)
+        self.v118_ig_error_m = torch.zeros(self.num_envs, device=self.device)
+        self.v118_contact_error = torch.zeros(self.num_envs, device=self.device)
+        self.v118_scope_done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         self._refresh_state()
         self.reset_idx(torch.arange(self.num_envs, device=self.device))
         self.compute_observations()
@@ -319,6 +341,52 @@ class CmResidual(VecTask):
             self.cmv2 = FrozenCmv2Adapter(
                 base["cmv2Checkpoint"], base["cmv2CheckpointSha256"], self.device)
         return self.cmv2
+
+    def build_v118_planner(self):
+        """Create one frozen local Cmv2 planner for this simulator rank."""
+        if not self.use_v118_planner:
+            raise RuntimeError("V1.18 planner is disabled by this task configuration")
+        if self.v118_planner is None:
+            base = self.cfg["basePolicy"]
+            if (base.get("cmv2Schema") != CMV2_SCHEMA or
+                    dict(base.get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
+                raise ValueError("V1.18 Cmv2 schema/model configuration mismatch")
+            planner_cfg = self.cfg["cmPlanner"]
+            frozen = self.build_cmv2_adapter()
+            frozen.model.eval()
+            for parameter in frozen.model.parameters():
+                parameter.requires_grad_(False)
+            kinematics = TorchInspireKinematics(
+                Path(self.cfg["env"]["asset"]["assetRoot"]) / self.cfg["env"]["asset"]["assetFileName"],
+                self.device)
+            self.v118_planner = FrozenCmv2Planner(
+                frozen, self.cm_geometry, kinematics,
+                PlannerConfig(candidates=int(planner_cfg["candidates"]),
+                              perturbation_std=float(planner_cfg["perturbationStd"]),
+                              temperature=float(planner_cfg["temperature"]),
+                              effect_weight=float(planner_cfg["effectWeight"]),
+                              ig_weight=float(planner_cfg["igWeight"]),
+                              trust_weight=float(planner_cfg["trustWeight"]),
+                              translation_scale_m=float(planner_cfg["translationScaleM"]),
+                              rotation_scale_rad=float(planner_cfg["rotationScaleRad"]),
+                              gate_distance_m=float(planner_cfg["gateDistanceM"]),
+                              effect_translation_gate_m=float(planner_cfg["effectTranslationGateM"]),
+                              effect_rotation_gate_rad=float(planner_cfg["effectRotationGateRad"])))
+        return self.v118_planner
+
+    @torch.inference_mode()
+    def v118_teacher(self, policy_mean: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Plan from the cached pre-action state; output is always detached."""
+        if not self.use_v118_planner:
+            raise RuntimeError("V1.18 teacher requested from a non-V1.18 task")
+        if policy_mean.shape != (self.num_envs, ACTION_DIM):
+            raise ValueError(f"V1.18 policy mean must be [{self.num_envs},18]")
+        return self.build_v118_planner().teacher(
+            mu=policy_mean.detach().to(self.device), current_native=self.v118_current_native,
+            base_target=self.base_action, native_lower=self.native_lower, native_upper=self.native_upper,
+            mimic_scales=self.retargeted_mimic_scales, current_links=self.v118_current_links,
+            object_pose=self.v118_object_pose, reference_transport=self.v118_reference_next,
+            desired_delta_xi=self.v118_reference_delta)
 
     def build_cmv2_action_evaluator(self):
         """Lazily construct the legacy executed-action Cmv2 evaluator."""
@@ -694,8 +762,48 @@ class CmResidual(VecTask):
             target = self.reference.robot_q.index_select(0, next_idx)
             ref_object = self.reference.object_state.index_select(0, idx)
             next_object = self.reference.object_state.index_select(0, next_idx)
-            base_obs = torch.cat((native, sim_to_native(self.dof_vel, self.sim_indices),
-                                  target - native, object_state[:, :7], next_object[:, :7]), dim=-1)
+            if self.use_v118_planner:
+                ref_now = self.reference.frame_v118(idx)
+                ref_next = self.reference.frame_v118(idx, 1)
+                ref_long = self.reference.frame_v118(idx, 16)
+                base_obs = torch.cat((
+                    build_dexplore_observation(
+                        body_pos, body_rot, body_vel, body_ang_vel, body_contact, object_state,
+                        ref_next, self.reference.object_points, self.key_body_indices, self.contact_body_indices,
+                        root_body_id=self.root_body_index, tracking_root_body_id=self.tracking_root_body_index),
+                    build_dexplore_observation(
+                        body_pos, body_rot, body_vel, body_ang_vel, body_contact, object_state,
+                        ref_long, self.reference.object_points, self.key_body_indices, self.contact_body_indices,
+                        root_body_id=self.root_body_index, tracking_root_body_id=self.tracking_root_body_index)), dim=-1)
+                self.v118_current_native = native.detach()
+                self.v118_current_links = links.detach()
+                self.v118_object_pose = obj.detach()
+                self.v118_reference_next = ref_next.detach()
+                self.v118_reference_delta = object_pose_delta_to_xi(
+                    pose_matrix(ref_now[:, 106:113]), pose_matrix(ref_next[:, 106:113])).detach()
+                ref_key_pos = ref_now[:, 119:167].view(self.num_envs, 16, 3)
+                ref_key_rot = ref_now[:, 232:296].view(self.num_envs, 16, 4)
+                ref_key_vel = ref_now[:, 296:344].view(self.num_envs, 16, 3)
+                ref_key_ang = ref_now[:, 344:392].view(self.num_envs, 16, 3)
+                actual_key_pos = body_pos.index_select(1, self.key_body_indices)
+                actual_key_rot = body_rot.index_select(1, self.key_body_indices)
+                actual_key_vel = body_vel.index_select(1, self.key_body_indices)
+                actual_key_ang = body_ang_vel.index_select(1, self.key_body_indices)
+                self.v118_hand_position_error_m.copy_((actual_key_pos - ref_key_pos).norm(dim=-1).mean(dim=-1))
+                dot = (actual_key_rot * ref_key_rot).sum(dim=-1).abs().clamp(0.0, 1.0)
+                self.v118_hand_rotation_error_rad.copy_((2.0 * torch.acos(dot)).mean(dim=-1))
+                self.v118_hand_velocity_error_mps.copy_((actual_key_vel - ref_key_vel).norm(dim=-1).mean(dim=-1))
+                self.v118_hand_angular_error_radps.copy_((actual_key_ang - ref_key_ang).norm(dim=-1).mean(dim=-1))
+                self.v118_object_velocity_error_mps.copy_((object_state[:, 7:10] - ref_now[:, 113:116]).norm(dim=-1))
+                self.v118_object_angular_error_radps.copy_((object_state[:, 10:13] - ref_now[:, 116:119]).norm(dim=-1))
+                self.v118_ig_error_m.copy_(base_obs[:, 721 - 18:721].norm(dim=-1) / 6.0)
+                ref_contact_full = ref_now[:, 168:184]
+                ref_contact = ref_contact_full[:, [3, 6, 9, 12, 15]]
+                actual_contact = (contact.abs().amax(dim=-1) > 0.1).to(ref_contact.dtype)
+                self.v118_contact_error.copy_((actual_contact - ref_contact).abs().mean(dim=-1))
+            else:
+                base_obs = torch.cat((native, sim_to_native(self.dof_vel, self.sim_indices),
+                                      target - native, object_state[:, :7], next_object[:, :7]), dim=-1)
             self.base_action.copy_(target)
             self.reference_root_position_error_m = (
                 body_pos[:, self.root_body_index] - self.reference.wrist_pose[idx, :3, 3]).norm(dim=-1)
@@ -706,7 +814,7 @@ class CmResidual(VecTask):
             relative_rotation = object_rotation.transpose(-1, -2) @ reference_rotation
             cosine = (relative_rotation.diagonal(dim1=-2, dim2=-1).sum(dim=-1) - 1.0) * 0.5
             self.reference_object_rotation_error_rad.copy_(torch.acos(cosine.clamp(-1.0, 1.0)))
-            ref_contact = self.reference.frame(idx)[:, 168:184][:, [3, 6, 9, 12, 15]]
+            ref_contact = (ref_now[:, 168:184] if self.use_v118_planner else self.reference.frame(idx)[:, 168:184])[:, [3, 6, 9, 12, 15]]
             self.reference_contact_occupancy = ref_contact.mean(dim=-1)
             tip_names = self.cfg["env"]["tipLinks"]
             tip_ref_idx = [self.reference.link_order.index(name) for name in tip_names]
@@ -821,6 +929,47 @@ class CmResidual(VecTask):
                 reward["transitionPositionWeight"] * transition["translation_error_m"] / reward["positionScaleM"] +
                 reward["transitionRotationWeight"] * transition["rotation_error_rad"] / reward["rotationScaleRad"] +
                 float(env["actionPenaltyScale"]) * self.prev_actions.square().mean(-1))
+        elif self.reward_mode == "dexplore_dense":
+            current_object_pose = pose_matrix(obj[:, :7])
+            previous_reference = self.reference.object_state.index_select(
+                0, (self.reference_index - 1).clamp_min(0))[:, :7]
+            current_reference = self.reference.object_state.index_select(0, self.reference_index)[:, :7]
+            transition = effect_metrics(
+                object_pose_delta_to_xi(self.previous_object_pose, current_object_pose),
+                object_pose_delta_to_xi(pose_matrix(previous_reference), pose_matrix(current_reference)))
+            self.reference_object_transition_translation_error_m.copy_(transition["translation_error_m"])
+            self.reference_object_transition_rotation_error_rad.copy_(transition["rotation_error_rad"])
+            cfg = self.v118_reward
+            bounded = lambda value, scale: torch.exp(-value / float(scale))
+            hand = (bounded(self.v118_hand_position_error_m, cfg["handPositionScaleM"]) +
+                    bounded(self.v118_hand_rotation_error_rad, cfg["handRotationScaleRad"]) +
+                    bounded(self.v118_hand_velocity_error_mps, cfg["handVelocityScaleMps"]) +
+                    bounded(self.v118_hand_angular_error_radps, cfg["handAngularScaleRadps"])) * 0.25
+            object_tracking = (bounded(self.reference_object_position_error_m, cfg["objectPositionScaleM"]) +
+                               bounded(self.reference_object_rotation_error_rad, cfg["objectRotationScaleRad"]) +
+                               bounded(self.v118_object_velocity_error_mps, cfg["objectVelocityScaleMps"]) +
+                               bounded(self.v118_object_angular_error_radps, cfg["objectAngularScaleRadps"])) * 0.25
+            ig = bounded(self.v118_ig_error_m, cfg["igScaleM"])
+            contact = 1.0 - self.v118_contact_error
+            transition_term = (bounded(transition["translation_error_m"], cfg["transitionPositionScaleM"]) +
+                               bounded(transition["rotation_error_rad"], cfg["transitionRotationScaleRad"])) * 0.5
+            action_penalty = self.prev_actions.square().mean(-1)
+            smooth_penalty = (self.prev_actions - getattr(self, "v118_previous_action", torch.zeros_like(self.prev_actions))).square().mean(-1)
+            self.rew_buf[:] = (float(cfg["handWeight"]) * hand + float(cfg["objectWeight"]) * object_tracking +
+                               float(cfg["igWeight"]) * ig + float(cfg["contactWeight"]) * contact +
+                               float(cfg["transitionWeight"]) * transition_term -
+                               float(cfg["actionWeight"]) * action_penalty - float(cfg["smoothnessWeight"]) * smooth_penalty)
+            self.v118_previous_action = self.prev_actions.clone()
+            contact_phase = self.reference_contact_occupancy > 0.5
+            hand_limit = torch.where(contact_phase, torch.full_like(self.v118_hand_position_error_m, float(cfg["contactHandScopeM"])),
+                                     torch.full_like(self.v118_hand_position_error_m, float(cfg["handScopeM"])))
+            object_limit = torch.where(contact_phase, torch.full_like(self.reference_object_position_error_m, float(cfg["contactObjectScopeM"])),
+                                       torch.full_like(self.reference_object_position_error_m, float(cfg["objectScopeM"])))
+            self.v118_scope_done = ((self.v118_hand_position_error_m > hand_limit) |
+                                    (self.reference_object_position_error_m > object_limit))
+            self.extras.update(v118_reward_hand=hand.mean(), v118_reward_object=object_tracking.mean(),
+                               v118_reward_ig=ig.mean(), v118_reward_contact=contact.mean(),
+                               v118_reward_transition=transition_term.mean(), v118_scope_termination=self.v118_scope_done.float().mean())
         else:
             self.rew_buf[:] = (float(env["liftRewardScale"]) * lift -
                                float(env["distanceRewardScale"]) * distance -
@@ -829,6 +978,7 @@ class CmResidual(VecTask):
         self.episode_max_lift = torch.maximum(self.episode_max_lift, lift)
         success = lift > float(env["successLift"])
         done = ((success & bool(env.get("terminateOnSuccess", True))) |
+                (self.v118_scope_done if self.reward_mode == "dexplore_dense" else torch.zeros_like(success)) |
                 (self.progress_buf >= self.max_episode_length))
         self.reset_buf.copy_(done.long())
         self.completed_episodes += int(done.sum().item())

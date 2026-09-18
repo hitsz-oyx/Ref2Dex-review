@@ -123,6 +123,7 @@ isaacgym_task_map = {
     "CmResidualGrabReferenceTransitionCmBuffer": CmResidual,
     "CmResidualGrabReferenceTransitionCmv2Actor": CmResidual,
     "CmResidualGrabReferenceTransitionCmv2ActorV116": CmResidual,
+    "CmResidualGrabReferenceV118": CmResidual,
     "CmResidualDexYCBBase": CmResidual,
     "CmResidualDexYCBCmv2ActionEval": CmResidual,
     "CmResidualDecoderBank": CmResidual,

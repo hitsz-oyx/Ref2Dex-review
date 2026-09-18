@@ -6,7 +6,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.17`
+- `modification_version`: `V1.18`
+- V1.18：主线改为 `reference-conditioned PPO + frozen Cmv2 one-step planner + planner-to-actor distillation`。actor/critic 均接收 retargeted `+1/+16` 的 1442-D DExplore-layout future reference；Cmv2 仅在 pre-action active state 上为 K=8 local candidates 生成 stop-gradient teacher，PPO 仍执行自身 sampled action。初始实现及工程 smoke 的范围见 [V1.18 最终计划](plan/V1.18.md)，终态以 [活动记录](logs/activity_log.md) 为准。
 - V1.17：DExplore 原始 teacher 仅训练与 CmResidual 对齐的 `s1_airplane_lift` GRAB 序列；输入仍取 `inspire_rl_object_dexplore` 中该序列的 RL rollout 手/物体状态，新 policy 从零初始化。GPU5 单卡容量探测固定 horizon 64、minibatch 256、1 PPO iteration、seed42，逐级确定稳定 env 数；该基线不改 CmResidual/Cmv2 合同。计划见 [V1.17](plan/V1.17.md)，运行状态以 [活动记录](logs/activity_log.md) 为准。
 - V1.16.5：用户批准以已验证的 physical GPU0/1/3、3 rank×128 env 启动正式 PPO 长训；不设人为 epoch budget（配置保留 100000000 的安全上限），由用户人工停止。算法、输入、buffer、奖励与 critic 合同不变；运行状态以 [活动记录](logs/activity_log.md) 为准。
 - V1.16.1：仅修正 DDP 启动器为 active Python 的 `torch.distributed.run` 加真实 `.py` bootstrap，并在 Task 正常退出/Ctrl-C 清理时 flush 未满 CmBuffer shard；不改 actor/Cmv2/reward/critic 或 buffer 字段。3×128 capacity probe 将作为单 epoch 工程测量运行；其运行状态以 [活动记录](logs/activity_log.md) 为准。
@@ -102,6 +103,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.15 最终执行计划](plan/V1.15.md)
 - [V1.16 用户指导](指导/V1.16.md)
 - [V1.16 最终执行计划](plan/V1.16.md)
+- [V1.18 用户指导](指导/V1.18.md)
+- [V1.18 最终执行计划](plan/V1.18.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 

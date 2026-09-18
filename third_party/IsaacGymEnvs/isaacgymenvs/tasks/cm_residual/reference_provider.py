@@ -296,3 +296,68 @@ class RetargetedReferenceProvider(ReferenceProvider):
             raise ValueError("Retargeted link order mismatch")
         self.length = count
         self.retargeted = True
+        self.v118_hoi_data = self._build_v118_reference()
+
+    def _build_v118_reference(self) -> torch.Tensor:
+        """Build the 428-D DExplore transport from retargeted fields only.
+
+        The 721-D observation helper deliberately consumes this legacy-shaped
+        transport.  V1.18 keeps that field layout but never lets the unrelated
+        geometric DExplore source tensor supply a future reference.
+        """
+        from .dexplore_observation import calc_heading_quat_inv
+
+        names = (
+            "hand_base_link", "index_proximal", "index_intermediate", "index_tip",
+            "middle_proximal", "middle_intermediate", "middle_tip",
+            "pinky_proximal", "pinky_intermediate", "pinky_tip",
+            "ring_proximal", "ring_intermediate", "ring_tip",
+            "thumb_proximal_base", "thumb_intermediate", "thumb_tip",
+        )
+        try:
+            indices = torch.as_tensor([self.link_order.index(name) for name in names],
+                                      dtype=torch.long, device=self.device)
+        except ValueError as error:
+            raise ValueError("Retargeted link_order misses a V1.18 DExplore key link") from error
+        links = self.link_pose.index_select(1, indices)
+        link_pose = matrix_pose(links)
+        link_pos, link_rot = link_pose[..., :3], link_pose[..., 3:]
+        link_vel = _difference(link_pos.reshape(self.length, -1)).reshape(self.length, 16, 3)
+        link_rotvec = quat_to_exp_map(link_rot.reshape(-1, 4)).reshape(self.length, 16, 3)
+        link_ang = _difference(link_rotvec.reshape(self.length, -1)).reshape(self.length, 16, 3)
+
+        root = matrix_pose(self.wrist_pose)
+        root_pos, root_rot = root[:, :3], root[:, 3:]
+        root_vel = _difference(root_pos)
+        root_ang = _difference(quat_to_exp_map(root_rot))
+        object_points = object_points_world(self.object_state, self.object_points)
+        distances = torch.cdist(link_pos, object_points)
+        contact = (distances.amin(dim=-1) <= 0.02).to(dtype=torch.float32)
+        heading = calc_heading_quat_inv(root_rot)
+        ref_ig = compute_sdf(link_pos, object_points)
+        ref_ig = quat_rotate(heading[:, None].expand(-1, 16, -1), ref_ig).reshape(self.length, -1)
+
+        result = torch.zeros((self.length, REFERENCE_DIM), dtype=torch.float32, device=self.device)
+        result[:, :4] = root_rot
+        result[:, 4:7] = root_pos
+        result[:, 7:25] = self.robot_q
+        result[:, 55:58] = root_vel
+        result[:, 58:76] = self.robot_dq
+        result[:, 106:119] = self.object_state
+        result[:, 119:167] = link_pos.reshape(self.length, -1)
+        result[:, 168:184] = contact
+        result[:, 184:232] = ref_ig
+        result[:, 232:296] = link_rot.reshape(self.length, -1)
+        result[:, 296:344] = link_vel.reshape(self.length, -1)
+        result[:, 344:392] = link_ang.reshape(self.length, -1)
+        result[:, 392:410] = self.robot_q
+        result[:, 410:428] = self.robot_dq
+        if result.shape != (self.length, REFERENCE_DIM) or not torch.isfinite(result).all():
+            raise RuntimeError("Invalid V1.18 retargeted DExplore transport")
+        return result
+
+    def frame_v118(self, indices: torch.Tensor, offset: int = 0) -> torch.Tensor:
+        """Return a clamped retargeted reference for V1.18 future horizons."""
+        selected = indices.to(self.device, dtype=torch.long).clamp(0, self.length - 1)
+        selected = (selected + int(offset)).clamp(0, self.length - 1)
+        return self.v118_hoi_data.index_select(0, selected)

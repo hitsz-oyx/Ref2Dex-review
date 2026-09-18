@@ -1,0 +1,80 @@
+defaults:
+  - CmResidualGrabReferenceTransition
+  - _self_
+
+name: CmResidualGrabReferenceV118
+
+env:
+  numEnvs: ${resolve_default:128,${...num_envs}}
+  episodeLength: 64
+  numObservations: 1442
+  numActions: 18
+  terminateOnSuccess: false
+
+basePolicy:
+  mode: retargeted_reference
+  useOiCmContext: false
+  useCmv2Context: false
+  useCmv2ActorContext: false
+  useCmv2ActionEvaluator: false
+  useV118Planner: true
+  cmv2Schema: cmv2_v13_rigid_16x40_v1
+  cmv2Checkpoint: ${oc.env:CMRESIDUAL_CMV2_CHECKPOINT,/home2/wyy/oyx_ws/Ref2Dex/third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/latest.pt}
+  cmv2CheckpointSha256: 371fb3396d8fc4ecea61de25178e58954090e26b2f2856aad925f25cb3b01591
+  cmv2ModelConfig:
+    hidden_width: 128
+    num_tokens: 16
+    use_residual: false
+    knn_k: 32
+    interaction_radius_m: 0.02
+    interaction_mode: swept
+    feature_scale_m: 0.02
+    frame_dt_s: 0.03333333333333333
+  cmObjectPoints: 1024
+  cmHandPoints: 1538
+
+cmPlanner:
+  candidates: 8
+  perturbationStd: 0.15
+  temperature: 1.0
+  effectWeight: 1.0
+  igWeight: 0.5
+  trustWeight: 0.05
+  translationScaleM: 0.02
+  rotationScaleRad: 0.05
+  gateDistanceM: 0.04
+  effectTranslationGateM: 0.002
+  effectRotationGateRad: 0.01
+
+cmBuffer:
+  enabled: true
+  mode: transition_only
+  schema: cmresidual.cm_buffer.transition_only.v2
+  outputDir: ${oc.env:CMRESIDUAL_CM_BUFFER_DIR,""}
+  rank: ${oc.env:RANK,0}
+  flushEvery: 8192
+
+referenceTrackingReward:
+  mode: dexplore_dense
+  handPositionScaleM: 0.02
+  handRotationScaleRad: 0.10
+  handVelocityScaleMps: 0.50
+  handAngularScaleRadps: 2.0
+  objectPositionScaleM: 0.02
+  objectRotationScaleRad: 0.05
+  objectVelocityScaleMps: 0.50
+  objectAngularScaleRadps: 2.0
+  igScaleM: 0.02
+  transitionPositionScaleM: 0.02
+  transitionRotationScaleRad: 0.05
+  handWeight: 0.25
+  objectWeight: 1.0
+  igWeight: 0.50
+  contactWeight: 0.25
+  transitionWeight: 0.50
+  actionWeight: 0.01
+  smoothnessWeight: 0.01
+  handScopeM: 0.12
+  objectScopeM: 0.15
+  contactHandScopeM: 0.06
+  contactObjectScopeM: 0.08

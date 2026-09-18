@@ -4365,3 +4365,43 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 
 - `pip show horovod` 确认该包未安装；`pip show nvidia-cuda-nvcc-cu12` 确认仅该隔离环境含版本 `12.1.105`。
 - `ps` 检查确认不存在本次 Horovod pip、CMake 或编译子进程。
+
+## 2026-09-18 12:06:42 +0800 — V1.18 reference PPO 与 frozen-Cmv2 planner 实现
+
+- timestamp: 2026-09-18 12:06:42 +0800
+- activity_id: ACT-20260918-120642-CMRESIDUAL-V118-IMPLEMENT
+- modification_version: V1.18
+- operation_category: architecture、code、experiment、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户在 V1.18 草案形成后明确指示“先开始做 V1.18”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 1d3cbc263b0b8c527c398e1e96d1d1c0b8fa0a93
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户已有 V1.12–V1.18 指导与独立工具；本次只纳入下列 V1.18 路径。）
+- scope: 新建 opt-in V1.18 task/PPO/config/launcher；既有 V1.16 actor、legacy source `frame()`、residual authority、transition-only v2 schema 和历史 outputs 不改写。
+- run_id: 无（实现阶段尚未启动 smoke）
+- run_status: NOT_STARTED
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [V1.18 最终计划](../plan/V1.18.md)、[版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md) — 固定 721-D 字段、reward/termination、K=8 planner 与阶段边界。
+- [GPU FK/planner](../../v118_planner.py)、[retargeted provider](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/reference_provider.py)、[V1.18 task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py) — 从 retargeted fields 重建 428-D transport，构造 `+1/+16` 1442-D observation，并以一次 active `[B*K,...]` Cmv2 forward 产出 detached teacher。
+- [V1.18 PPO agent](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py)、[runner 注册](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/train.py)、[task registry](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py) — 在 rollout buffer 固定存储 teacher action/weight，并只对 actor mean 加 distillation loss。
+- [task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118.yaml)、[PPO config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/train/CmResidualGrabReferenceV118PPO.yaml)、[启动器](../../tools/run_v118_reference_ppo.py)、[定向测试](../../tests/test_v118_planner.py) — 128 env/rank、64-step smoke、配置预检与可审计运行入口。
+
+**原因**
+
+落实用户指定的 reference-conditioned PPO 主架构：future reference 提供任务意图，Cmv2 只作为冻结的局部动作后果 teacher，避免 V1.16 将 Cmv2 token/effect 直接拼入 actor observation 的路径。
+
+**验证**
+
+- `PYTHONPATH=third_party/IsaacGymEnvs:. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_v118_planner.py`：`2 passed`；Torch FK 相对 pinned CPU URDF FK 最大元素误差 `2.38e-7`。
+- `PYTHONPATH=third_party/IsaacGymEnvs:. /home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_reference_contract.py src/task/CmResidual/tests/test_cmv2_action_evaluator.py`：`35 passed`。
+- `train.py --cfg job task=CmResidualGrabReferenceV118 train=CmResidualGrabReferenceV118PPO` 解析为 1442-D observation、18-D action、`cm_planner_continuous`、K=8、`cm_distill_coef=0.1`；`git diff --check` 通过。
+
+**保护与回滚**
+
+删除上述 V1.18 增量并将版本指针恢复 V1.17 即可回滚；不删除 reference、Cmv2 checkpoint、legacy source、V1.16 code/buffer 或任一历史 output。下一个 gate 是独立的 128 env、64 horizon 实现 smoke；成功只说明工程链路，不作学习效果结论。
