@@ -2509,3 +2509,37 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 此 smoke 是独立外部 output；回滚为不使用其数值。保留 manifest、抽样索引和日志用于诊断；不删除或覆盖任何数据、cache、checkpoint 或 queue。
+
+## 2026-09-18 02:58:14 +0000 — V1.4.6 双域 MANO flow 正式抽样评估已启动
+
+- timestamp: `2026-09-18 02:58:14 +0000`
+- activity_id: `ACT-20260918-025814-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-FULL-START`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 离线 checkpoint 评估）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 的三项明确确认；前置 smoke 已完成。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7a674228ce022e61a7ab6d00756dfb9c3a55d082`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z`
+- run_status: `RUNNING`
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.eval_two_domain_mano ... --device cuda:1 --grab-samples 12000 --arctic-samples-per-stride 2000 --batch-size 16 --minimum-free-memory-gib 20`
+- scope: 固定 V1.4.4 epoch-13 `best.pt`，GRAB stride=1 抽 12000，ARCTIC stride=5--10 各抽 2000；逐点输出 EPE、prediction/GT flow magnitude 和有效点夹角。仅使用 GPU1；不训练、不写 cache、不改变 checkpoint、split 或 GPU2 queue。
+- output: [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/run_manifest.json)；`metrics.jsonl`、`metrics_summary.json`、`sample_index.json` 与 `eval.log` 为 `PENDING`，仅在 `RUNNING` 状态存在。
+- conclusion: `INCONCLUSIVE`（运行尚未终态）。
+
+**原因**
+
+已完成 smoke 证明资源和数据合同有效；按用户冻结的 non-full sample 预算启动正式量化，取得可比较的 GRAB/ARCTIC flow 统计，且不干扰 GPU2 的高分辨率 cache 串行 producer。
+
+**验证**
+
+- 启动后 GPU1 进程 PID `928129` 存活，约占用 `1399 MiB`、GPU utilization `54%`；run manifest 已创建且转为 `RUNNING`。
+- GPU2 的既有 GRAB Inspire producer PID `897162` 同时仍存活；未发送停止、重启或参数变更命令。
+
+**回滚**
+
+若用户要求或运行出现资源/实现错误，仅终止 PID `928129`；evaluator 会将本 run manifest 标为 `FAILED`，保留现有产物。不得影响 GPU2 queue 或任何 checkpoint/cache。
