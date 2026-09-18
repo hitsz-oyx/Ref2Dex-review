@@ -2697,3 +2697,39 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 纯只读诊断；无变更，无需回滚。
+
+## 2026-09-18 03:33:34 +0000 — 记录铰接对象的张量流与多-link FK 架构设计
+
+- timestamp: `2026-09-18 03:33:34 +0000`
+- activity_id: `ACT-20260918-033334-CMV2-ARTICULATED-ARCHITECTURE-PROPOSAL`
+- modification_version: `V1.4.6`（当前指针；文档不创建或冻结 V1.5）
+- type: `architecture, documentation`
+- task_mode: `change`
+- change_level: `L2`（记录未来将改变 loader/model/GT/checkpoint 合同的设计；本次不实施该变更）
+- approval: `user-approved`
+- approval_basis: 用户明确要求在 `docs/architecture/` 写出更完整的“先总后分”架构，并特别要求张量规格与数据流。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `90ebb28be3e119dd5535ad5c3e02da15603a5f79`
+- worktree_dirty: `false`（修改前）
+- scope: 新增未冻结的 articulated-object design 文档；说明 ARCTIC two-link/revolute first-stage 与 GRAB rigid fallback 的目标 contract、tensor flow、FK、loss/metric 和实现闸门。不改 Python、YAML、cache、数据、checkpoint、训练、评估、viewer 或版本指针。
+- conclusion: `INCONCLUSIVE`（架构设计已按用户要求记录；尚无代码或工程 smoke，不能声称已有多-link 实现或效果）。
+
+**文件**
+
+- [architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 新增总览→坐标/FK→张量规格→模块→监督→不变量→分阶段闸门的完整设计；状态明确为 `proposal / 未实现 / 未冻结`。
+- [README.md](../README.md) — 在 Task 文档入口增加该设计的状态明确导航。
+- [logs/activity_log.md](activity_log.md) — 记录本次受用户明确授权的架构文档变更和保护边界。
+
+**原因**
+
+现有 V1.0 snapshot 只描述 single-link rigid baseline，无法审计 ARCTIC 的 part ID、current q、root pose、joint prediction 与解析 FK 如何在 mixed GRAB/ARCTIC batch 中流动。先冻结设计级张量和不变量，才能在后续 final plan 中讨论实现，而不把 single-root rigid checkpoint 误解释为 articulated architecture。
+
+**验证**
+
+- 文档逐项对齐已核验的 ARCTIC cache 事实：two-part ID、current articulation、`obj_root_pose_world`、现有 source producer 的 canonical Z-axis/origin revolute 合同，以及当前 V1.3 single-root rigid 的缺失边界。
+- 交接前执行 `git diff --check` 与 scoped `audit_diff.py --check-links`；本次没有运行模型、写入 cache 或创建 output。
+
+**回滚**
+
+回滚为删除此 proposal 文档和本活动条目；不涉及数据、代码、配置、checkpoint 或运行产物。任何把设计变为代码的操作都需要用户确认新版本指导和 final plan。
