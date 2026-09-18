@@ -4709,3 +4709,31 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **保护与回滚**
 
 仅移除本条 formal mode、测试和计划追加即可回滚代码/记录；新的运行目录、外部 DexPlore checkout、隔离环境、输入 tensor、V1.17 capacity smoke 与其他用户改动均不覆盖或删除。
+
+## 2026-09-18 13:12:15 +0800 — V1.17.1 DexPlore 2048-env 正式 teacher 训练运行中
+
+- timestamp: 2026-09-18 13:12:15 +0800
+- activity_id: ACT-20260918-131215-CMRESIDUAL-V1171-DEXPLORE-FORMAL
+- modification_version: V1.17.1
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确选择 2048 env，并授权 Agent 确定正式训练预算和周期 checkpoint；合同已在 V1.17 最终计划追加并提交。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 3fde972e25bc6694433f701b249a21c2776c5ab1
+- worktree_dirty: true（仅本条运行状态记录未提交；根级/ObjectInteractionCm activity 和用户已有未跟踪文档/工具保持不变。）
+- scope: physical GPU5，single-rank 2048 env，`s1_airplane_lift`，horizon64，minibatch256，seed42，从零初始化；`max_iterations=152`，实际目标 153 epoch/20,054,016 env-steps；每 38 epoch checkpoint；不使用 Horovod、capacity-smoke checkpoint 或外部源码修改。
+- run_id: dexplore_grab_teacher_v1171_formal_env2048_20260918_131215
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/)、[config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/config.json)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/run_manifest.json)、[train config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train_config.yaml)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train.log)。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+按已定稿的 V1.17.1 合同启动外部 DExplore teacher；2048 env 是 GPU5 上实际通过 PPO update 的最大容量档位，正式训练仍从零初始化。
+
+**验证**
+
+子进程仍存活；GPU5 显存约 `22.6 GiB` 且持续有计算利用率，manifest 已写入完整 source SHA、外部 commit、运行时、命令与生成的 train config。外部 stdout 是文件块缓冲，首个 epoch 指标尚未刷入日志；当前未见 traceback、OOM 或 non-finite 证据。
