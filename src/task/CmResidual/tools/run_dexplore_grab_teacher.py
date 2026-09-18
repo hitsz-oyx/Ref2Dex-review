@@ -10,18 +10,19 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 import traceback
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DEXPLORE_ROOT = Path("/home2/wyy/oyx_ws/dexplore")
 DATA_ROOT = REPOSITORY_ROOT / "data/processed_data/inspire_rl_object_dexplore"
+SEQUENCE = "s1_airplane_lift"
 OUTPUT_ROOT = REPOSITORY_ROOT / "outputs/Dexplore"
 ENV_CONFIG = "dexplore/data/cfg/inspire.yaml"
 TRAIN_CONFIG = "dexplore/data/cfg/train/rlg/inspire.yaml"
 SMOKE_GPU = 5
 SMOKE_LOGICAL_GPU = 0
-SMOKE_ENVS = 4
 SMOKE_HORIZON = 64
 SMOKE_MINIBATCH = 256
 SMOKE_ITERATIONS = 1
@@ -71,10 +72,12 @@ def _check_inputs() -> dict:
     if (manifest.get("format") != "dexplore_inspire_rl_simulated_object_v1"
             or manifest.get("num_sequences") != 660):
         raise ValueError("Unexpected DExplore GRAB manifest contract")
-    samples = sorted(DATA_ROOT.glob("*/interaction_hand_inspire.pt"))
-    if len(samples) != 660:
-        raise ValueError(f"Expected 660 DExplore GRAB tensors, found {len(samples)}")
-    sample = samples[0]
+    source_samples = sorted(DATA_ROOT.glob("*/interaction_hand_inspire.pt"))
+    if len(source_samples) != 660:
+        raise ValueError(f"Expected 660 source DExplore GRAB tensors, found {len(source_samples)}")
+    sample = DATA_ROOT / SEQUENCE / "interaction_hand_inspire.pt"
+    if not sample.is_file():
+        raise FileNotFoundError(f"Missing selected DExplore GRAB sequence: {sample}")
     import torch
     tensor = torch.load(sample, map_location="cpu", weights_only=True)
     if (not isinstance(tensor, torch.Tensor) or tensor.ndim != 2 or tensor.shape[1] != 598
@@ -83,7 +86,8 @@ def _check_inputs() -> dict:
     return {
         "data_manifest": str(manifest_path.resolve()),
         "data_manifest_sha256": _sha256(manifest_path),
-        "sample_count": len(samples),
+        "source_sample_count": len(source_samples),
+        "selected_sequence": SEQUENCE,
         "sample": {"path": str(sample.resolve()), "sha256": _sha256(sample),
                    "shape": list(tensor.shape), "dtype": str(tensor.dtype)},
         "external_commit": _run(["git", "rev-parse", "HEAD"], cwd=DEXPLORE_ROOT),
@@ -113,13 +117,13 @@ def _materialize_motion_input(output: Path) -> dict:
     """Make a per-run directory view that excludes non-motion source folders."""
     motion_input = _motion_input(output)
     motion_input.mkdir()
-    samples = sorted(DATA_ROOT.glob("*/interaction_hand_inspire.pt"))
-    for sample in samples:
-        (motion_input / sample.parent.name).symlink_to(sample.parent.resolve(), target_is_directory=True)
-    return {"path": str(motion_input.resolve()), "kind": "symlink_view", "sample_count": len(samples)}
+    sequence_root = DATA_ROOT / SEQUENCE
+    (motion_input / SEQUENCE).symlink_to(sequence_root.resolve(), target_is_directory=True)
+    return {"path": str(motion_input.resolve()), "kind": "symlink_view", "sample_count": 1,
+            "selected_sequence": SEQUENCE}
 
 
-def _command(output: Path) -> list[str]:
+def _command(output: Path, *, num_envs: int) -> list[str]:
     return [
         sys.executable, "dexplore/run.py",
         "--task", "Dexplore_Inspire",
@@ -131,7 +135,7 @@ def _command(output: Path) -> list[str]:
         "--sim_device", f"cuda:{SMOKE_LOGICAL_GPU}",
         "--rl_device", f"cuda:{SMOKE_LOGICAL_GPU}",
         "--graphics_device_id", str(SMOKE_LOGICAL_GPU),
-        "--num_envs", str(SMOKE_ENVS),
+        "--num_envs", str(num_envs),
         "--horizon_length", str(SMOKE_HORIZON),
         "--minibatch_size", str(SMOKE_MINIBATCH),
         "--max_iterations", str(SMOKE_ITERATIONS),
@@ -150,12 +154,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--modification-version", required=True, choices=("V1.17",))
+    parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.num_envs < 1:
+        raise ValueError("--num-envs must be positive")
     output = OUTPUT_ROOT / args.run_id
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {output}")
@@ -165,7 +172,7 @@ def main() -> int:
     gpu_used_mib = _gpu_used_mib(SMOKE_GPU)
     if gpu_used_mib > 512:
         raise RuntimeError(f"GPU{SMOKE_GPU} capacity gate failed: {gpu_used_mib} MiB used > 512 MiB")
-    command = _command(output)
+    command = _command(output, num_envs=args.num_envs)
     config = {
         "external_source": str(DEXPLORE_ROOT),
         "runtime_environment": runtime,
@@ -175,7 +182,7 @@ def main() -> int:
         "runtime_contract": {
             "physical_gpu": SMOKE_GPU,
             "logical_gpu": SMOKE_LOGICAL_GPU,
-            "num_envs": SMOKE_ENVS,
+            "num_envs": args.num_envs,
             "horizon_length": SMOKE_HORIZON,
             "minibatch_size": SMOKE_MINIBATCH,
             "max_iterations": SMOKE_ITERATIONS,
@@ -214,6 +221,7 @@ def main() -> int:
         "physical_gpu": SMOKE_GPU,
         "logical_gpu": SMOKE_LOGICAL_GPU,
         "gpu_used_mib_preflight": gpu_used_mib,
+        "gpu_peak_mib": None,
         "log": str(log_path.resolve()),
         "checkpoint": None,
         "tensorboard": None,
@@ -221,22 +229,29 @@ def main() -> int:
         "conclusion": "INCONCLUSIVE",
     }
     _write_json(manifest_path, manifest)
+    gpu_peak_mib = gpu_used_mib
     try:
         with log_path.open("w", encoding="utf-8", buffering=1) as stream:
             environment = os.environ.copy()
             environment["CUDA_VISIBLE_DEVICES"] = str(SMOKE_GPU)
-            result = subprocess.run(command, cwd=DEXPLORE_ROOT, stdout=stream,
-                                    stderr=subprocess.STDOUT, text=True, check=False, env=environment)
+            process = subprocess.Popen(command, cwd=DEXPLORE_ROOT, stdout=stream,
+                                       stderr=subprocess.STDOUT, text=True, env=environment)
+            while process.poll() is None:
+                gpu_peak_mib = max(gpu_peak_mib, _gpu_used_mib(SMOKE_GPU))
+                time.sleep(0.25)
+            exit_code = process.wait()
+        gpu_peak_mib = max(gpu_peak_mib, _gpu_used_mib(SMOKE_GPU))
         checkpoints = sorted((output / "train").rglob("*.pth"))
         events = sorted((output / "train").rglob("events.out.tfevents*"))
-        if result.returncode != 0:
-            raise RuntimeError(f"DExplore subprocess exited with code {result.returncode}")
+        if exit_code != 0:
+            raise RuntimeError(f"DExplore subprocess exited with code {exit_code}")
         if not checkpoints or not events:
             raise RuntimeError("DExplore smoke did not produce both checkpoint and TensorBoard event")
         manifest.update({
             "run_status": "COMPLETED",
             "completed_at": _now(),
-            "exit_code": result.returncode,
+            "exit_code": exit_code,
+            "gpu_peak_mib": gpu_peak_mib,
             "checkpoint": str(checkpoints[-1].resolve()),
             "tensorboard": str(events[-1].resolve()),
             "conclusion": "INCONCLUSIVE",
@@ -248,6 +263,7 @@ def main() -> int:
             "run_status": "FAILED",
             "completed_at": _now(),
             "failure_reason": f"{type(error).__name__}: {error}",
+            "gpu_peak_mib": gpu_peak_mib,
             "traceback": traceback.format_exc(),
             "conclusion": "INVALID_IMPLEMENTATION",
         })

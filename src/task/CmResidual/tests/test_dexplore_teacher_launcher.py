@@ -12,7 +12,7 @@ SPEC.loader.exec_module(LAUNCHER)
 
 
 def test_v117_smoke_command_uses_the_fixed_on_policy_batch_contract():
-    command = LAUNCHER._command(Path("/tmp/dexplore-v117-smoke"))
+    command = LAUNCHER._command(Path("/tmp/dexplore-v117-smoke"), num_envs=4)
 
     def value(option: str) -> str:
         index = command.index(option)
@@ -22,6 +22,7 @@ def test_v117_smoke_command_uses_the_fixed_on_policy_batch_contract():
     assert "--output" not in command
     assert "--headless" in command
     assert value("--motion_file") == str(Path("/tmp/dexplore-v117-smoke") / "motion_input")
+    assert LAUNCHER.SEQUENCE == "s1_airplane_lift"
     assert value("--num_envs") == "4"
     assert value("--horizon_length") == "64"
     assert value("--minibatch_size") == "256"

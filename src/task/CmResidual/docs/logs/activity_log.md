@@ -4275,3 +4275,58 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 **保护与回滚**
 
 删除本版本 launcher、测试、V1.17 文档/README/版本指针和本活动条目可回滚代码记录；全部 smoke output、隔离环境、外部 checkout、660 条输入数据和 CmResidual V1.16.5 停止产物均保留。正式长训需要独立最终计划，明确 GPU 并行规模、总 iteration/环境步预算、周期性 checkpoint 与固定评估协议。
+
+## 2026-09-18 11:19:06 +0800 — V1.17 单轨迹 DExplore GPU5 稳定 env 容量测量完成
+
+- timestamp: 2026-09-18 11:19:06 +0800
+- activity_id: ACT-20260918-113000-CMRESIDUAL-V117-DEXPLORE-CAPACITY
+- modification_version: V1.17
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确指定只训练 CmResidual 已使用的轨迹，并要求立即测量稳定 env 数。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: d643401a9d2576675cd00eac1debd15ffdc9ff75
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户已有 V1.12–V1.18 指导/plan 草稿和独立工具；本次仅更新 V1.17 launcher、测试、README/指导/计划与本活动）。
+- scope: 外部 DExplore 源仍为 commit `c31f57f186409ce5f0de47ced2d347abffe45d06`、clean；physical GPU5 上仅运行 `s1_airplane_lift` 的单卡容量 probe，不改外部源码、CmResidual 合同或输入 tensor。
+- run_id: `dexplore_grab_teacher_v117_single_airplane_env64_20260918_111700`、`dexplore_grab_teacher_v117_single_airplane_env128_20260918_111900`、`dexplore_grab_teacher_v117_single_airplane_env256_20260918_112100`、`dexplore_grab_teacher_v117_single_airplane_env512_20260918_112300`、`dexplore_grab_teacher_v117_single_airplane_env1024_20260918_112500`、`dexplore_grab_teacher_v117_single_airplane_env2048_20260918_112700`、`dexplore_grab_teacher_v117_single_airplane_env4096_20260918_113000`
+- run_status: COMPLETED（64–2048 env）；FAILED（4096 env，CUDA OOM）；稳定容量为 2048 env（仅就两 epoch / 一次 PPO iteration 的工程稳定性）。
+- last_epoch: 2（各成功档位）；last_step: 每个成功档位固定 64 rollout steps / env。
+- best_metric: 不适用；容量 probe 没有固定评估协议。
+- latest_checkpoint: [2048 env GRAB checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env2048_20260918_112700/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)
+- conclusion: SUPPORTED（工程）：GPU5 的单一 `s1_airplane_lift` 可在 2048 env 完成 PPO rollout、更新、checkpoint 与 event；4096 env 在 rollout buffer 展平时 OOM。该结果不证明长训稳定、收敛或抓取效果。
+
+**原因**
+
+原 660 轨迹容量 smoke 只会在 4 env 时加载前四条轨迹。用户要求改为 CmResidual 使用的 `s1_airplane_lift`，使全部并行环境重复采样同一参考，并实测可用 env 上限。
+
+**修改范围**
+
+- [启动器](../../tools/run_dexplore_grab_teacher.py)、[定向测试](../../tests/test_dexplore_teacher_launcher.py)、[Task README](../README.md)、[V1.17 指导](../指导/V1.17.md)、[V1.17 最终计划](../plan/V1.17.md) — 将输入收窄到 `s1_airplane_lift`，新增显式 `--num-envs` 与 GPU5 峰值显存采样。
+
+**结果与证据**
+
+| env | run_status | GPU peak | PPO total fps | 证据 |
+| ---: | --- | ---: | ---: | --- |
+| 64 | COMPLETED | 18,181 MiB | 665.7 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env64_20260918_111700/run_manifest.json) |
+| 128 | COMPLETED | 18,297 MiB | 1,250.7 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env128_20260918_111900/run_manifest.json) |
+| 256 | COMPLETED | 18,617 MiB | 1,919.1 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env256_20260918_112100/run_manifest.json) |
+| 512 | COMPLETED | 19,093 MiB | 2,710.3 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env512_20260918_112300/run_manifest.json) |
+| 1024 | COMPLETED | 20,227 MiB | 3,748.0 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env1024_20260918_112500/run_manifest.json) |
+| 2048 | COMPLETED | 22,583 MiB | 4,505.7 | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env2048_20260918_112700/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env2048_20260918_112700/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env2048_20260918_112700/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789701431.server) |
+| 4096 | FAILED | 23,373 MiB | — | [manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env4096_20260918_113000/run_manifest.json)、[OOM log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_single_airplane_env4096_20260918_113000/train.log) |
+
+- 2048 env 日志明确 `num_motions: 1`、`num_envs: 2048`、`num_obs: 1442`、`num_actions: 18`，第二个 PPO epoch 的 mean reward `5.19`，并生成非空 checkpoint/event。
+- 4096 env 已完成环境创建且峰值达 23,373 MiB，随后 `experience_buffer` 展平请求额外 1.41 GiB 时 OOM；GPU5 退出后恢复至 6 MiB，未遗留训练进程。
+
+**验证**
+
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`：`1 passed`。
+- 每一成功档位都有独立 config、manifest、train log、checkpoint 和 event；失败档保留 manifest/train log，不覆盖任何成功输出。
+
+**保护与回滚**
+
+2048 是本次短 probe 的最后通过档位，正式长训宜保留显存余量而非直接视作长时间稳定保证。删除本次 launcher/测试/文档/活动差异可回滚代码记录；所有 capacity output、隔离环境、外部 checkout、输入和 CmResidual 既有产物均保留。
