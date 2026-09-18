@@ -4637,3 +4637,38 @@ Cmv2 local interaction graph 对 candidate batch 的显存需求使 all-active `
 **保护与回滚**
 
 设置 `maxActiveEnvs=128` 可恢复 all-active 行为，但会复现已记录的 OOM；历史失败 output 不删除。
+
+## 2026-09-18 12:28:16 +0800 — V1.18 128-env 实现 smoke 第四次重试在 active planner batch OOM
+
+- timestamp: 2026-09-18 12:28:16 +0800
+- activity_id: ACT-20260918-122816-CMRESIDUAL-V118-SMOKE-RETRY4
+- modification_version: V1.18
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.18 最终计划定义的首个 128-env、64-horizon rollout/update 工程 gate；本次只包含已提交的 active-batch cap 修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 55cc3802c9db3c970a7bf8dc514f8e55eaa0ccd1
+- worktree_dirty: true（根级/ObjectInteractionCm activity 及用户已有未跟踪文档/工具保持不变；本次只会更新本条运行终态。）
+- scope: physical GPU5，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.1`，single Cmv2 active `[16*8]` batch；未启动正式 Stage A/B/C 长训。
+- run_id: cmresidual_v118_smoke_retry4_20260918_122816
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/)、[config](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/config.json)、[manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/run_manifest.json)、[metrics](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/metrics.jsonl)、[train log](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/train.log)、[buffer manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry4_20260918_122816/cm_buffer/rank_000/manifest.json)。
+- last_step: 0
+- exit_reason: task/agent/planner 已构造；首个 active `[16*8]` frozen-Cmv2 interaction graph batch 额外申请 `2.00 GiB`，GPU5 仅余 `829.81 MiB`，CUDA OOM。
+- best_metric: 不适用；checkpoint: 未生成。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+在固定的 128-env rollout 中，Isaac Gym/PhysX 与 task/agent 已占用 GPU5 的绝大部分显存；当前计划的 16 个 active environment 所需 Cmv2 local-interaction graph 无法在剩余容量内构造。
+
+**验证**
+
+resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=16` 和 `cm_planner_continuous`；训练日志显示 task、agent、planner 和 rank-000 transition-only buffer 均已构造，失败发生在首个 pre-action frozen-Cmv2 forward，未执行 PPO rollout/update。
+
+**后续闸门**
+
+当前最终计划冻结 `maxActiveEnvs=16`。继续将其降为更小的 active batch 会改变每个 rollout 的 teacher 覆盖率，必须经用户确认并更新最终计划后才能进行；本次不启动任何正式 Stage A/B/C 长训。
