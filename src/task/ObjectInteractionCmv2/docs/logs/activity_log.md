@@ -2203,3 +2203,76 @@ queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将�
 
 - `ps -p 516837,443044` 确认两个 PID 均为 `Rsl`；`nvidia-smi` 显示训练 GPU0 利用率 `100%`。
 - 仅检查 [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 的最新两条完整 epoch 记录，未作额外训练或 cache 操作。
+
+## 2026-09-18 02:12:18 +0000 — V1.4.5 高分辨率 producer 串行真实 smoke 启动
+
+- timestamp: `2026-09-18 02:12:18 +0000`
+- activity_id: `ACT-20260918-021218-CMV2-V145-HIGHRES-PRODUCER-SMOKE-STARTED`
+- modification_version: `V1.4.5`
+- type: `data, operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户已确认的 V1.4.5 producer/持续 queue 范围；V1.4 最终计划 §9 要求当前 OakInk2 Inspire 成功完成后，先对三条新 producer 做单条真实数据 smoke，再串行启动 full queue。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `cbc4a798b8c50f81def0181bfe14f5a37fd0eadd`
+- worktree_dirty: `false`（启动前）
+- run_id: `cmv2_v145_highres_producer_smoke_20260918T021218Z`
+- run_status: `STARTED`
+- scope: GPU2 串行运行 GRAB Inspire-20270、ARCTIC Inspire-20270、OakInk2 MANO-4096 各一条真实 source smoke；已有 OakInk2 Inspire-20270 全量回填已 `COMPLETED`，双域训练也已完成。smoke 仅写新的独立 root，不触及旧 cache、训练 checkpoint 或其他 GPU 进程。
+- conclusion: `INCONCLUSIVE`（真实 producer 合同尚待 smoke 结果；不能据此得出模型效果结论）。
+
+**前序状态与计划产物**
+
+- OakInk2 Inspire 前序 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 已 `COMPLETED`，`1849/1849` segment、`379591` frame、`failures=[]`；其 [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/cache_manifest.json) 已存在。
+- GRAB/ARCTIC Inspire smoke 与 OakInk2 MANO smoke 的独立 run root、run manifest 和日志将在产生前标记为 `PENDING`；任一 smoke `FAILED` 即不创建 full queue，已产生的独立 smoke 目录保留审计。
+
+**验证与回滚**
+
+- 启动前确认 GPU2 空闲，且没有 `build_stage4_inspire_highres_v1_4`、`build_oakink2_mano_highres_v1_4` 或 cache queue 进程；所有输入 index、Stage4、annotation、Stage3、MANO 和旧 cache 均按只读输入使用。
+- 回滚入口为终止当前独立 smoke；不删除任何已完成 cache 或 checkpoint。只有三个 smoke 都以 `COMPLETED` manifest 结束，才按 [V1.4 最终计划 §9](../plan/V1.4.md) 创建并启动串行 full queue。
+
+## 2026-09-18 02:19:57 +0000 — V1.4.5 高分辨率 full cache queue 已启动；双域 MANO 训练已完成
+
+- timestamp: `2026-09-18 02:19:57 +0000`
+- activity_id: `ACT-20260918-021957-CMV2-V145-CACHE-QUEUE-STARTED-V144-TRAIN-COMPLETED`
+- modification_version: `V1.4.5`（queue）；`V1.4.4`（已完成训练）
+- type: `operation, data, experiment, documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 GPU2 串行持续导出和 V1.4.4 双域 MANO 训练的明确批准；V1.4 §9 的三项真实 smoke 均已成功完成，满足 full queue 启动条件。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `cbc4a798b8c50f81def0181bfe14f5a37fd0eadd`
+- worktree_dirty: `true`（仅本次活动记录尚未提交；full cache producer 使用同一已提交代码）
+- run_id: `cmv2_v145_highres_queue_20260918T022000Z` / `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`（queue）/ `COMPLETED`（训练）
+- scope: queue 在 GPU2 串行导出 GRAB Inspire-20270、ARCTIC Inspire-20270、OakInk2 MANO-4096；每项仅在自身 success manifest 为 `COMPLETED` 时才解锁下一项。双域训练的既有独立 output 已封存；不启动新的模型训练，不覆盖旧 cache、checkpoint 或其他 GPU 进程。
+- conclusion: `INCONCLUSIVE`（cache queue 仍在运行；训练只提供优化状态，尚无 held-out 跨域效果结论）。
+
+**原因**
+
+此前 queue 缺少三条可审计 producer，因而不能启动；实现后的三个独立真实 smoke 已分别验证 GRAB/ARCTIC Inspire-20270 和 OakInk2 MANO-4096 的数据合同。前序 OakInk2 Inspire 回填也已成功终态，故按计划启动同一 GPU 的单 writer 队列，而不与其他 cache 或训练并发写入。
+
+**真实 smoke 与 queue 证据**
+
+- GRAB Inspire smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_grab_inspire_smoke_20260918T021300Z/run_manifest_cmv2_v145_grab_inspire_smoke_20260918T021300Z.json)：`COMPLETED`，`279` frame，KNN 最大 index `20251`。
+- ARCTIC Inspire smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_arctic_inspire_smoke_20260918T021500Z/run_manifest_cmv2_v145_arctic_inspire_smoke_20260918T021500Z.json)：`COMPLETED`，`732` frame，KNN 最大 index `20269`。
+- OakInk2 MANO smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_oakink2_mano_smoke_20260918T021800Z/run_manifest_cmv2_v145_oakink2_mano_smoke_20260918T021800Z.json)：`COMPLETED`，`1246` frame，KNN 最大 index `4093`；三项均 `failures=[]`。
+- queue 的 [配置](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.json)、[状态](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 与 [启动日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.launcher.log) 已存在；当前 GRAB job 为 `RUNNING`，其 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 与 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 为实时入口。
+
+**双域训练终态**
+
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 为 `COMPLETED`：last epoch `16`、last step `36400`，`best_metric=0.18120233068706187`（epoch 13）；[best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt)、[latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 与 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 均保留。
+
+**验证**
+
+- 三项真实 smoke 都由其独立 `COMPLETED` manifest 和 `failures=[]` 证明 producer、shape、KNN index 上界、30 Hz 及原子输出链路可用；它们是工程 smoke 证据，不是模型效果结论。
+- queue 启动后 PID `897032` 及其 GRAB producer 子进程均存活，GPU2 处于使用状态；queue state 已持久化首项的命令、manifest 和日志入口。
+
+**验证与回滚**
+
+- 启动后 PID `897032`（queue）及其 GRAB producer 子进程均存活；GPU2 处于使用状态。queue 遇任一非零退出或 success manifest 不为 `COMPLETED` 会写 `FAILED` 并停止，不启动后续 job。
+- 回滚入口是终止 queue/当前 job；已完成的独立 full cache 及 smoke 保留审计，不删除、移动或覆盖；恢复时用相同 [queue 配置](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.json) 重新执行，producer 的 `--resume` 只验证并复用完整段。
