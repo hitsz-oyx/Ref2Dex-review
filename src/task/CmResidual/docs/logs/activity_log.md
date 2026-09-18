@@ -4134,3 +4134,47 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 **保护与回滚**
 
 训练输出仅写入新的 `outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/`，不覆盖基线或已有 probe。用户要求停止时向 torchrun 发送中断，并由 Task close/atexit flush 未满 CmBuffer shard；数据、checkpoint、代码、research variable 和用户未提交路径不改写。
+
+## 2026-09-18 10:07:36 +0800 — V1.16.5 正式训练进度与学习效果只读诊断
+
+- timestamp: 2026-09-18 10:07:36 +0800
+- activity_id: ACT-20260918-100736-CMRESIDUAL-V1165-DIAGNOSTIC
+- modification_version: V1.16.5
+- operation_category: diagnostic、operation、documentation
+- task_mode: read-only/diagnostic（仅追加本活动证据）
+- change_level: L0
+- approval: auto（用户明确要求查看训练状态及是否有效学习）
+- approval_basis: 本次用户请求；既有正式训练仍按用户批准的人工停止边界运行。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 80b6255e273b7763fef7042fb3bd8b5b648a6138
+- worktree_dirty: true（保留既有用户改动；本次仅追加 CmResidual activity）
+- scope: 只读检查指定会话、正式运行的进程、train log、TensorBoard scalars、CmBuffer manifest 和存储；不改变训练、checkpoint、配置、数据或研究变量。
+- run_id: cmresidual_v1165_ddp_3x128_formal_20260918_011437
+- run_status: RUNNING（检查时三个 worker 仍运行；已到 epoch 2995，最后完整日志 frames=36,790,272；无固定停止预算）
+- conclusion: INCONCLUSIVE（尚无匹配的固定评估/对照来证明策略收益）；当前在线指标未显示持续有效学习，并有接触与追踪退化迹象。
+
+**文件**
+
+- [本活动记录](activity_log.md) — 追加本次诊断；其他代码、配置与输出未修改。
+
+**原因**
+
+用户请求续接指定会话，检查已经启动的正式训练是否在有效学习。
+
+**证据与判断**
+
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/)、[run manifest](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/config.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train.log)、[TensorBoard scalars](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/summaries/events.out.tfevents.1789665360.server) 为本次实际证据；`metrics.jsonl` 存在但为 0 字节，不作为指标依据。
+- TensorBoard `Episode/success` 按 epoch 50–299 与 2500–2990 分段均值约 `1.58%` / `1.73%`；`success_rate/iter` 是累计完成 episode 的成功率，末段约 `1.80%`，不能当作独立验证成功率。`Episode/return` 两段约 `-5697` / `-5913`，没有持续向好趋势。
+- 同两段的 `reference_object_position_error_m/iter` 约 `1.213` / `1.251 m`，`reference_object_rotation_error_rad/iter` 约 `1.972` / `2.039 rad`；`contact_occupancy/iter` 约 `0.0246` / `0.0178`，而 reference contact occupancy 约 `0.408` / `0.407`。`reference_tip_position_error_m/iter` 约 `0.0147` / `0.0332 m`，也在变差。
+- `residual_rms/iter` 约 `0.178` → `0.614`，但 `residual_saturation_ratio/iter=0`；这说明动作幅度增长没有转化为上述追踪和接触指标的改善，不能以数值有限、checkpoint 持续保存推断有效学习。
+- [rank 0 buffer manifest](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_000/manifest.json)、[rank 1](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_001/manifest.json)、[rank 2](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_002/manifest.json) 在检查时各约 1226 万条。输出目录约 `37 GiB`，所在文件系统约 `889 GiB` 可用；仍需留意持续写盘。
+- [epoch 2995 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_2995_rew_-5741.9053.pth) 是检查时最近 checkpoint；文件名中的 reward 是训练期 episode return，不等于验证集 best metric。本次不指定 best checkpoint。
+
+**验证**
+
+使用 `ps` 检查三个 worker；用 TensorBoard `EventAccumulator` 读取完整 scalar 历史并计算上述分段均值；核对 `train.log`、三个 buffer manifest、磁盘容量及 `metrics.jsonl` 文件大小。指标取自训练在线统计，没有固定评估集或配对零残差对照。
+
+**保护与回滚**
+
+未干预进程。删除本活动条目可回滚记录；运行产物和用户已有改动均保留。若要停止训练、调整奖励或训练变量，需按原人工停止约定和新计划边界执行。
