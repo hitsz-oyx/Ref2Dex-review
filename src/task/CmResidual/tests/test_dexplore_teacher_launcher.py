@@ -60,7 +60,7 @@ def test_v117_horovod_command_uses_two_synchronized_ranks_and_rank_local_env_cou
         str(Path(LAUNCHER.sys.executable).with_name("horovodrun")),
         "-np", "2", "-H", "localhost:2",
     ]
-    assert command[5:7] == [LAUNCHER.sys.executable, "dexplore/run.py"]
+    assert command[5:7] == [LAUNCHER.sys.executable, str(LAUNCHER.HOROVOD_BOOTSTRAP)]
     assert command.count("--horovod") == 1
     assert command[command.index("--num_envs") + 1] == "2048"
     assert settings["target_env_steps"] == 40_108_032

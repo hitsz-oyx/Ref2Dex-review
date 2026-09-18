@@ -36,6 +36,7 @@ HOROVOD_WORLD_SIZE = len(HOROVOD_PHYSICAL_GPUS)
 HOROVOD_TORCH_VERSION = "2.0.1+cu118"
 HOROVOD_GPU_CAPACITY_MIB = 4096
 CUDA_LIBRARY_DIR = Path("/home2/wyy/CUDA/cuda-12.1/lib64")
+HOROVOD_BOOTSTRAP = Path(__file__).resolve().with_name("dexplore_horovod_rank_bootstrap.py")
 
 
 def _run_settings(mode: str, *, num_envs: int = 2048, world_size: int = 1) -> dict:
@@ -175,7 +176,7 @@ def _materialize_motion_input(output: Path) -> dict:
 def _command(output: Path, *, num_envs: int, max_iterations: int,
              train_config: str = TRAIN_CONFIG, horovod: bool = False) -> list[str]:
     command = [
-        sys.executable, "dexplore/run.py",
+        sys.executable, str(HOROVOD_BOOTSTRAP) if horovod else "dexplore/run.py",
         "--task", "Dexplore_Inspire",
         "--cfg_env", ENV_CONFIG,
         "--cfg_train", train_config,
@@ -230,7 +231,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--modification-version", required=True,
-                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3"))
+                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3", "V1.17.4"))
     parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
     parser.add_argument("--launcher", choices=("single", "horovod"), default="single")
