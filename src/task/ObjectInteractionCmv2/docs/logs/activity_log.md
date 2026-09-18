@@ -2429,3 +2429,42 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 纯只读预测；不涉及需回滚的变更。
+
+## 2026-09-18 02:55:26 +0000 — 实现 V1.4.6 双域 MANO checkpoint 离线 flow 评估器
+
+- timestamp: `2026-09-18 02:55:26 +0000`
+- activity_id: `ACT-20260918-025526-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-IMPLEMENTATION`
+- modification_version: `V1.4.6`
+- type: `code, experiment, documentation`
+- task_mode: `change`
+- change_level: `L2`（新增离线指标的聚合与静止角度合同；不改变模型、GT、split、cache 或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户于 2026-09-18 确认：使用 `best.pt`、GRAB stride=1 抽 12000、ARCTIC stride=5--10 各抽 2000，并报告 point-micro EPE、预测/GT 模长与有效点夹角。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `1c355730091047de2d5743cd3cd91f12896eb0c7`
+- worktree_dirty: `false`（实现前）
+- scope: 新增 Task-local 离线 evaluator 和纯指标测试，更新 V1.4 final plan 与版本指针；不启动完整评估，不触碰 GPU2 cache queue、cache、训练配置或任何 checkpoint。
+- conclusion: `INCONCLUSIVE`（实现与 CPU 测试通过；尚未完成 checkpoint/dataset smoke 或正式 24000-transition 评估，不能报告模型数值）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 将本 Task 当前指针更新为 `V1.4.6`。
+- [docs/plan/V1.4.md](../plan/V1.4.md) — 追加已定稿的 §10，冻结 checkpoint、抽样、度量、GPU1 资源门槛与回滚边界。
+- [eval_two_domain_mano.py](../../eval_two_domain_mano.py) — 新增确定性抽样、严格 checkpoint/schema/显存检查、微平均 flow 指标及 run manifest 输出。
+- [tests/test_v1_4_6_two_domain_flow_eval.py](../../tests/test_v1_4_6_two_domain_flow_eval.py) — 覆盖 EPE/模长/夹角/静态点统计和确定性无放回抽样。
+- [logs/activity_log.md](activity_log.md) — 登记本次实现边界与验证证据。
+
+**原因**
+
+已完成的 V1.4.4 双域训练只记录 validation loss，未产生用户所需 EPE、flow 模长或方向误差。离线评估必须固定为用户指定的 best checkpoint、transition 范围和点级单位合同，同时分离静止流的未定义角度，避免以训练 loss 或历史 run 指标替代本次数值。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/eval_two_domain_mano.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_6_two_domain_flow_eval.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`4 passed`。
+- `git diff --check`：通过。提交前还将运行 scoped `audit_diff.py --check-links`；真实 checkpoint/dataset smoke 和完整评估各自以独立 run manifest 记录。
+
+**回滚**
+
+回滚为不使用或删除本次未提交的 evaluator/测试/计划增量；不会删除或覆盖外部 checkpoint、数据 index、cache 或正在运行的 GPU2 queue。后续运行若失败，只保留其独立 output manifest 作为诊断证据。
