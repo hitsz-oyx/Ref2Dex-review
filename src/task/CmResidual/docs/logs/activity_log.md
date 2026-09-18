@@ -4405,3 +4405,64 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 **保护与回滚**
 
 删除上述 V1.18 增量并将版本指针恢复 V1.17 即可回滚；不删除 reference、Cmv2 checkpoint、legacy source、V1.16 code/buffer 或任一历史 output。下一个 gate 是独立的 128 env、64 horizon 实现 smoke；成功只说明工程链路，不作学习效果结论。
+
+## 2026-09-18 12:08:30 +0800 — V1.18 128-env 实现 smoke 初始化失败
+
+- timestamp: 2026-09-18 12:08:30 +0800
+- activity_id: ACT-20260918-120830-CMRESIDUAL-V118-SMOKE
+- modification_version: V1.18
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已批准 V1.18 最终计划并明确指示开始实施；该 smoke 是计划中 128 env、64 horizon 的首个工程 gate。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: a21cadfb972bee99b25e20cd5ff77536b4ecfc12
+- worktree_dirty: true（仅本条 STARTED 运行记录尚未提交；根/ObjectInteractionCm activity 和用户已有未跟踪文档/工具继续保护。）
+- scope: physical GPU5，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.1`；未启动正式 Stage A/B/C 长训。
+- run_id: cmresidual_v118_smoke_20260918_120830
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v118_smoke_20260918_120830/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_20260918_120830/run_manifest.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v118_smoke_20260918_120830/train.log)。
+- last_step: 0
+- exit_reason: V1.18 曾错误进入 legacy OI-Cm fallback，Hydra 工作目录被解释为 checkpoint 路径；未构造 task 或执行 PPO rollout。
+- conclusion: INVALID_IMPLEMENTATION
+
+**修复**
+
+将 V1.18 加入 lazy frozen-Cmv2 分支，禁止它加载无关 OI-Cm；该增量会先经定向测试和提交，再用新的 output 重试同一 128-env smoke。
+
+## 2026-09-18 12:09:30 +0800 — V1.18 修正 frozen-Cmv2 lazy 初始化
+
+- timestamp: 2026-09-18 12:09:30 +0800
+- activity_id: ACT-20260918-120930-CMRESIDUAL-V118-LAZY-CMV2
+- modification_version: V1.18
+- operation_category: code、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已批准 V1.18 实施；这是首个 smoke 的确定性初始化缺陷修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: a21cadf51f86e9c6f8dabb6d06068e4a54a86cca
+- worktree_dirty: true（仅本次修复与运行终态记录未提交；其他用户路径继续保护。）
+- scope: 只修正 V1.18 的 adapter 选择；legacy OI-Cm、V1.16 actor path 和 checkpoint 不改写。
+- run_id: cmresidual_v118_smoke_20260918_120830
+- run_status: FAILED（上述历史 smoke）；修复后将另建 run_id 重试。
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [V1.18 task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[失败 manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_20260918_120830/run_manifest.json) — 将 `useV118Planner` 归入 lazy frozen-Cmv2 分支，避免无关 OI-Cm checkpoint load。
+
+**原因**
+
+V1.18 已要求 Cmv2 是 frozen planner，但初始化条件仅覆盖 V1.16 actor/evaluator，导致 V1.18 误触旧 OI-Cm fallback。
+
+**验证**
+
+`py_compile` 通过；`pytest -q src/task/CmResidual/tests/test_v118_planner.py src/task/CmResidual/tests/test_reference_contract.py` 为 `32 passed`。GPU5 空闲（6 MiB），新的 128-env smoke 仍待启动。
+
+**保护与回滚**
+
+删除该条件中的 `or self.use_v118_planner` 即可回到提交 `a21cadf`；失败运行目录保留，不覆盖。

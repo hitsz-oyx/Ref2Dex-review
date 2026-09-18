@@ -267,10 +267,10 @@ class CmResidual(VecTask):
                     cfg["basePolicy"]["cmv2Checkpoint"],
                     cfg["basePolicy"]["cmv2CheckpointSha256"], self.device)
             else:
-                if self.use_cmv2_actor_context or self.use_cmv2_action_evaluator:
+                if self.use_cmv2_actor_context or self.use_cmv2_action_evaluator or self.use_v118_planner:
                     # The action evaluator loads Cmv2 lazily after the physical task
-                    # has been constructed.  The V1.16 actor path uses the same
-                    # lazy frozen adapter directly, without legacy action evaluation.
+                    # has been constructed.  V1.16 and V1.18 use the same lazy
+                    # frozen adapter directly, without loading the unrelated OI-Cm.
                     pass
                 else:
                     oi_cm_path = Path(str(cfg["basePolicy"].get("oiCmCheckpoint", ""))).expanduser().resolve()
