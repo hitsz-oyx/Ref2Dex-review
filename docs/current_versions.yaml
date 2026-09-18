@@ -1,20 +1,19 @@
-# Ref2Dex 当前治理和研究版本指针。
-# governance_version 标识仓库规则；各 Task 的 research_version 标识研究方法。
-# git commit 和 run_id 属于具体实现与运行，不在此文件中维护。
+# Ref2Dex 当前工作版本指针。
+# modification_version 标识已确认的作用域工作边界；git commit 和 run_id 属于具体实现与运行。
 repository:
-  governance_version: V1.1
+  modification_version: V1.2
 tasks:
   Cm:
-    research_version: V1.2.11
+    modification_version: V1.2.11
   CmDecoder:
-    research_version: V1.2.12
+    modification_version: V1.2.12
   CmDecoderv2:
-    research_version: V1.1.15
+    modification_version: V1.1.15
   CmResidual:
-    research_version: V1.18
+    modification_version: V1.18
   ObjectInteractionCm:
-    research_version: V1.4.22
+    modification_version: V1.4.22
   ObjectInteractionCmv2:
-    research_version: V1.3.4
+    modification_version: V1.3.4
   correspondence_ptv3_v2:
-    research_version: V1.2.16
+    modification_version: V1.2.16

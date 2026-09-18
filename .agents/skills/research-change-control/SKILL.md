@@ -40,7 +40,7 @@ L0/L1 可执行并在交接中报告。L2/L3 编辑前必须说明改变什么�
 
 ## 3. plan 和研究版本
 
-只有新 research_version 或 L2/L3 方案需要最终 plan/V<n>.md。L0/L1 修复不创建新的 plan，也不递增 research version。
+只有新的 modification_version 边界或 L2/L3 方案需要最终 plan/V<n>.md。L0/L1 修复不创建新的 plan，也不创建新版本。
 指导由用户维护；只有用户确认同文件冲突的修订措辞后，Agent 才可修改相应指导。治理任务可以把用户明确的治理指导作为范围依据，不把 plan 草稿冒充实现事实。
 
 如果实现中发现需要改变最终范围、研究变量、公共合同或保护边界，立即暂停并重新确认；不得用代码或配置差异代替计划确认。
@@ -66,7 +66,7 @@ cache、checkpoint、原始数据和大型日志不纳入提交。
       --log <activity_log> --staged --check-links
 
 长期 Activity 存在当前作用域 `activities/`，索引为 `activities/README.md`；旧 `activity_log.md` 仅作历史审计。
-Activity 至少包含精确时间、activity_id 或 work_version、governance_version 或 research_version、git_commit、branch、scope、等级、
+Activity 至少包含精确时间、activity_id 或细分版本、modification_version、base_commit、branch、scope、等级、
 审批、原因、文件、验证和回滚入口。重要事件才写 activity；普通逐步进度和一次性 smoke 不写科研时间线。
 
 ## 6. 交接

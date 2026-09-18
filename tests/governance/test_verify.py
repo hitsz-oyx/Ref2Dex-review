@@ -35,6 +35,8 @@ def test_governance_changes_select_governance_tests() -> None:
 
 def test_local_changed_scope_uses_staged_paths_only(monkeypatch) -> None:
     def fake_git(*args):
+        if args == ("branch", "--show-current"):
+            return "oyx\n"
         if "--cached" in args:
             return "tools/verify.py\0"
         return "src/task/CmResidual/v118_planner.py\0"
@@ -50,7 +52,7 @@ def test_activity_format_requires_traceability_and_sections() -> None:
         "\n".join(
             [
                 "timestamp: 2026-09-18 19:39:43 +0800",
-                "git_commit: abc123",
+                "base_commit: abc123",
                 "branch: ai/governance/phase1",
                 *VERIFY.ACTIVITY_REQUIRED_HEADINGS,
             ]
@@ -82,3 +84,17 @@ def test_guidance_suffix_without_base_is_rejected(tmp_path, monkeypatch) -> None
     failures = []
     VERIFY._check_guidance_paths({"docs/指导/V1.1a.md"}, failures)
     assert failures
+
+
+def test_feature_branch_scope_includes_branch_diff_and_staged_paths(monkeypatch) -> None:
+    def fake_git(*args):
+        if args == ("branch", "--show-current"):
+            return "ai/governance/V1.2\n"
+        if args == ("merge-base", "HEAD", "oyx"):
+            return "base\n"
+        if "--cached" in args:
+            return "docs/plan/V1.2.md\0"
+        return "tools/verify.py\0"
+
+    monkeypatch.setattr(VERIFY, "_git", fake_git)
+    assert VERIFY._changed_paths(None) == {"tools/verify.py", "docs/plan/V1.2.md"}

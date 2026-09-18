@@ -14,7 +14,7 @@ metadata:
 读取最小上下文：AGENTS.md、docs/current_versions.yaml、Task README、相关指导谱系/plan、实验定义、架构和必要的输入
 manifest。确认：
 
-- research_version、可复现的 git_commit 和 Task；
+- modification_version、可复现的 git_commit 和 Task；
 - hypothesis、变量、对照、数据 split、GT、坐标/单位和 checkpoint 初始值；
 - metric、预算、资源、停止条件和输出目录；
 - 研究语义是否保持不变。任何语义变化先停止并请求用户确认。
@@ -30,7 +30,7 @@ manifest。确认：
 正式训练、评估、benchmark 和数据处理都生成小型 run_manifest.json，至少记录：
 
     task
-    research_version
+    modification_version
     git_commit
     run_id
     config snapshot
@@ -71,6 +71,6 @@ run_status 只说明进程状态；conclusion 由 hypothesis、metric 和证据�
 第一阶段工具尚不存在时，记录实际运行命令、配置快照、输入引用、定向 smoke/测试和 manifest 检查，不得称为 VERIFY PASS。
 smoke 只能证明 wiring 或可运行性，不能证明研究效果。
 
-最终回复必须给出 Task、research_version、git_commit、run_id、run_status、输出目录、manifest、metrics/log、checkpoint
+最终回复必须给出 Task、modification_version、git_commit、run_id、run_status、输出目录、manifest、metrics/log、checkpoint
 （存在时）、工程验证和独立科研 conclusion。运行终态由最近作用域 Activity 作为唯一状态入口；历史 summary 可保留，新 BaseRunner
 不自动生成标准 summary。

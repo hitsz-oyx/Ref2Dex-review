@@ -1,28 +1,26 @@
 # Ref2Dex 工作版本与操作规则
 
-本文件定义治理、研究版本、Git 提交和运行身份的职责。它不回写历史记录，也不把每一次 bug fix、训练启动或失败
-包装成新的研究版本。
+本文件定义 modification version、Git 提交和运行身份的职责。它不回写历史记录，也不把每一次命令、测试或训练状态
+包装成新的版本。
 
 ## 一、三个身份
 
-    research_version  → 论文 Methods 中描述的研究方法
+    modification_version → 已确认的作用域工作边界
     git_commit        →  实际执行的代码和配置
     run_id            →  一次独立运行
 
-仓库治理另有 `governance_version`，只记录治理合同的当前版本。当前指针见
-`current_versions.yaml`。历史 modification_version、operation_version、guide_version 和 plan_version 字段只作
-兼容审计，不再作为新记录的版本身份。
+当前指针见 `current_versions.yaml`。历史 operation_version、guide_version 和 plan_version 字段只作兼容审计，
+不再作为新记录的版本身份。
 
-`work_version` 可作为同一 research version 下的已确认工作单元编号（例如 `V1.18.4`）；它是 Activity、branch 或
-PR 的辅助追溯字段，不替代 research_version，也不进入 current_versions。
+`Vn.m.k` 可作为同一工作边界下的已确认细分编号（例如 `V1.18.4`）；它是 Activity、branch 或 PR 的辅助追溯字段，
+不自动随命令、测试或轮询递增。
 
-## 二、research_version 的递增条件
+## 二、modification_version 的使用边界
 
-以下变化不创建新的 research version：bug fix、显存或性能优化、测试、launcher 和日志修复、训练启动或失败、
-seed、GPU、预算调整以及 checkpoint 选择。
+以下情况不创建新的 modification_version：单次命令、测试、轮询、checkpoint 到达、训练启动/失败的过程状态。
 
-只有论文 Methods 需要改变时才递增，例如 observation、action semantics、reward、planner formulation、GT、
-数据 split、核心训练目标或 checkpoint 解释。研究版本改变时，由用户提供或确认新的指导，Agent 起草同版本的最终 plan。
+重大研究、治理或实现边界由用户确认后创建新的 modification_version；它可以覆盖代码、配置、数据处理、训练、评估、
+诊断或运行操作。指导和 plan 通过同一数值基线及 Markdown 链接配对。
 
 ## 三、工作模式和影响等级
 
@@ -44,14 +42,14 @@ AI 只使用四种工作模式：
 
 ## 四、plan、指导和当前状态
 
-- `src/task/<Task>/docs/README.md` 是 Task 当前状态页，维护 research version、研究问题、invariant、blocker、证据
+- `src/task/<Task>/docs/README.md` 是 Task 当前状态页，维护 modification_version、研究问题、invariant、blocker、证据
   入口和重要 entrypoint。
 - `指导/V<n>.md` 只写研究意图、假设、边界、成功标准和禁止事项，由用户维护。同一数值基线的确认细化使用
   `指导/V<n><letter>.md`，后缀限单个小写 `a`–`z`；必须从无后缀基线读至最高确认后缀，不能只读最后一个文件。
   跨文件的明确冲突以较后字母为准，非冲突部分共同生效。单一指导文件内部冲突、无法同时满足或语义不充分时，Agent
   必须暂停，向用户列出冲突和影响，并先在 plan 草案记录候选解释、拟定措辞、保护项、风险、验证与回滚；用户确认后
   才可更新指导、定稿 plan 并继续。
-- 只有新 research version 或 L2/L3 方案需要 `plan/V<n>.md`；L0/L1 修复不创建新 plan。
+- 只有新的 modification_version 边界或 L2/L3 方案需要 `plan/V<n>.md`；L0/L1 修复不创建新 plan。
 - `architecture/V<n>.md` 是按需冻结的架构 snapshot；普通修复不更新。
 - 正式实验使用独立 experiment card，记录 hypothesis、configuration、runs、evidence、conclusion 和 limitations；
   实验参数变化不改全局架构，也不创建 Git branch。
@@ -59,8 +57,8 @@ AI 只使用四种工作模式：
 ## 五、记录和运行合同
 
 当前作用域 `activities/` 下的独立 Activity 记录重要实现、正式指导修订、重要诊断事实、重要操作、版本切换和治理
-事件；`activities/README.md` 只做索引。Activity 至少包含 timestamp、activity_id 或 work_version、governance_version
-或 research_version、git_commit、branch、scope、approval 和 verification。命令、单次测试、轮询、逐 step/checkpoint
+事件；`activities/README.md` 只做索引。Activity 至少包含 timestamp、activity_id 或细分版本、modification_version、
+base_commit、branch、scope、approval 和 verification。命令、单次测试、轮询、逐 step/checkpoint
 进度和普通 smoke 不建立 Activity。旧 `logs/activity_log.md` 只读保留。
 
 运行条目另含 run_id、run_status、命令、输出入口、最后 step/epoch、best metric、关键 checkpoint 和实际生成的
@@ -70,13 +68,13 @@ metrics.jsonl/train.log。使用：
     conclusion: SUPPORTED | REFUTED | INCONCLUSIVE | INVALID_IMPLEMENTATION | N/A
 
 正式实验的科学证据写入 `experiments/` 下的独立 card，一个 card 可以关联多个 run；Activity 不替代 experiment card。
-正式训练、评估、benchmark 和数据处理必须产生小型 run_manifest.json，至少引用 Task、research_version、git commit、
+正式训练、评估、benchmark 和数据处理必须产生小型 run_manifest.json，至少引用 Task、modification_version、git commit、
 配置、输入 manifest、schema、坐标/单位、seed、初始 checkpoint 和输出目录。不得把完整数据合同复制进 manifest，
 不得提交 cache、checkpoint、原始数据或大型输出。
 
 ## 六、Git 和历史兼容
 
-`oyx` 是稳定集成分支。独立任务使用 `ai/<task>/<description>` 分支，经验证和交接后合并。不得 reset、覆盖或带入
+`oyx` 是稳定集成分支。独立任务使用 `ai/<task>/<effective-guidance>-<description>` 分支，经验证和交接后合并。不得 reset、覆盖或带入
 用户已有改动；只显式提交当前任务文件。
 
 旧 modification log、旧 activity、experiment log、plan、checkpoint、cache 和输出不删除、不回写，仍可作为只读审计

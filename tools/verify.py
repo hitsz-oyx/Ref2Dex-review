@@ -66,6 +66,15 @@ def _changed_paths(base: Optional[str]) -> Set[str]:
                 )
             )
         )
+    elif _git("branch", "--show-current").strip() != "oyx":
+        merge_base = _git("merge-base", "HEAD", "oyx").strip()
+        changed.update(
+            _nul_paths(
+                _git(
+                    "diff", "--name-only", "-z", "--diff-filter=ACMR", f"{merge_base}...HEAD"
+                )
+            )
+        )
     # Unstaged and untracked files may belong to another active task. They are
     # deliberately excluded from the local branch gate; the owner stages the
     # paths that belong to this branch before running verify.
@@ -194,6 +203,16 @@ def _local_markdown_target(target: str, source: Path) -> Optional[Path]:
         return Path("__outside_repository__")
 
 
+def _is_index_tracked(relative_path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "--", relative_path.as_posix()],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
 def _markdown_targets(text: str) -> Iterable[str]:
     for match in MARKDOWN_LINK_RE.finditer(text):
         yield (match.group(1) or match.group(2) or "").strip()
@@ -243,6 +262,10 @@ def _check_markdown(paths: Iterable[str], failures: List[str]) -> None:
                 failures.append(
                     f"{relative_path}: Markdown 链接目标不存在: {target}"
                 )
+            elif path.parts and path.parts[0] == "docs" and resolved.suffix == ".md" and not _is_index_tracked(resolved):
+                failures.append(
+                    f"{relative_path}: Git 文档链接目标未跟踪: {target}"
+                )
 
 
 def _is_activity_file(relative_path: str) -> bool:
@@ -258,7 +281,7 @@ def _check_activity_format(
         failures.append(
             f"{relative_path}: Activity 缺少章节: {', '.join(missing)}"
         )
-    required_fields = ("timestamp:", "git_commit:", "branch:")
+    required_fields = ("timestamp:", "base_commit:", "branch:")
     missing_fields = [field for field in required_fields if field not in text]
     if missing_fields:
         failures.append(
@@ -412,13 +435,8 @@ def _verify_all() -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--changed", action="store_true")
-    mode.add_argument("--all", action="store_true")
+    parser.add_argument("--changed", action="store_true", required=True)
     args = parser.parse_args(argv)
-
-    if args.all:
-        return _verify_all()
 
     base = os.environ.get("VERIFY_BASE", "").strip() or None
     try:
