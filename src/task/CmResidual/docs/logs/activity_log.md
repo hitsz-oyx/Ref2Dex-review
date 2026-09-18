@@ -4178,3 +4178,100 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 **保护与回滚**
 
 未干预进程。删除本活动条目可回滚记录；运行产物和用户已有改动均保留。若要停止训练、调整奖励或训练变量，需按原人工停止约定和新计划边界执行。
+
+## 2026-09-18 10:34:34 +0800 — V1.16.5 三卡 PPO 长训按用户指令停止
+
+- timestamp: 2026-09-18 10:34:34 +0800
+- activity_id: ACT-20260918-103434-CMRESIDUAL-V1165-STOPPED
+- modification_version: V1.16.5
+- operation_category: operation、experiment、documentation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确指示“先把目前的长训停止”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 33f381a381ac1878fd61f2e7f78e99931cd652f9
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户指导/plan 草稿与独立工具；本次只追加本 Task 的终态记录）。
+- scope: 向 `cmresidual_v1165_ddp_3x128_formal_20260918_011437` 的三个已确认 rank worker 发送 `SIGINT`；未删除输出、buffer、checkpoint、数据或代码。
+- run_id: cmresidual_v1165_ddp_3x128_formal_20260918_011437
+- run_status: STOPPED
+- last_epoch: 3138
+- last_step: 38,547,456 env-steps（最后一条 epoch 日志的 `frames`）
+- best_metric: 不适用；训练期 `Episode/return` 不是固定评估 best metric。
+- latest_checkpoint: [epoch 3138 checkpoint](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train/CmResidualGrabReferenceTransitionCmv2ActorV116_ddp/nn/last_CmResidualGrabReferenceTransitionCmv2ActorV116PPO_ep_3138_rew_-5813.9316.pth)
+- conclusion: INCONCLUSIVE；停止前的在线指标没有支持持续有效学习，且本运行没有匹配的固定评估。
+
+**文件**
+
+- [运行目录](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/)、[run manifest](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/run_manifest.json)、[config](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/config.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train.log) — 已停止的正式训练及其可复现入口。
+- [rank 0 buffer manifest](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_000/manifest.json)、[rank 1](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_001/manifest.json)、[rank 2](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/cm_buffer/rank_002/manifest.json) — 三个 rank 均已在退出时更新 manifest，各含 `12,853,504` 条 transition-only v2 sample。
+
+**原因**
+
+为释放 GPU0/1/3 的资源，并停止此前在线指标未显示持续收益的 CmResidual 长训。
+
+**验证**
+
+- 三个指定 worker（PID `3872228`、`3872232`、`3872233`）已退出；检查时 GPU0/1/3 分别回落至 `2553/776/1997 MiB` 的既有占用，GPU 使用率为 `0`。
+- [train log](../../../../../outputs/CmResidual/cmresidual_v1165_ddp_3x128_formal_20260918_011437/train.log) 最后一条完整 epoch 为 `3138/100000000`、`frames=38,547,456`；其后三个 rank 都记录 `KeyboardInterrupt`，是本次人工 `SIGINT` 的预期结果。
+- 最新 checkpoint 存在且非空；三个 buffer manifest 的 mtime 晚于中断，表明 close/atexit flush 已完成。`metrics.jsonl` 仍为 0 字节；训练曲线以 TensorBoard event 和 train log 为准。
+
+**保护与回滚**
+
+停止是可逆的运行状态操作：可从上述 epoch 3138 checkpoint 单独协商恢复，但不自动恢复。现有输出约 38 GiB，未删除或覆盖。
+
+## 2026-09-18 10:56:32 +0800 — V1.17 外部 DExplore GRAB teacher 单卡容量 smoke 完成
+
+- timestamp: 2026-09-18 10:56:32 +0800
+- activity_id: ACT-20260918-110300-CMRESIDUAL-V117-DEXPLORE
+- modification_version: V1.17
+- operation_category: code、experiment、operation、documentation
+- task_mode: change，随后 run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认用已存在的 RL rollout 灵巧手轨迹训练 DExplore；确认输入应为含实际物体状态的 `inspire_rl_object_dexplore`，并要求开始训练。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 33f381a381ac1878fd61f2e7f78e99931cd652f9
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户已有 V1.12–V1.18 指导/plan 草稿和独立工具；本次只新增 V1.17 启动器、测试、文档与本活动）。
+- scope: 不改写外部 `/home2/wyy/oyx_ws/dexplore`（commit `c31f57f186409ce5f0de47ced2d347abffe45d06`、clean）；以其原始 DExplore teacher 在物理 GPU5 运行新的单卡容量 smoke。
+- run_id: dexplore_grab_teacher_v117_smoke_20260918_110300
+- run_status: COMPLETED
+- last_epoch: 2
+- last_step: 64 rollout steps × 4 env（由固定 smoke 合同）；训练日志报告 epoch 1/2 的 mean reward 分别为 `2.95` / `2.96`。
+- best_metric: 不适用；这是容量 smoke，没有固定评估协议。
+- latest_checkpoint: [GRAB checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)
+- conclusion: SUPPORTED（工程）：外部训练代码、660 条 RL rollout 参考、GPU PhysX、1442-D observation、18-D action、64 步 rollout、PPO 更新、checkpoint 与 TensorBoard event 已形成完整链路；不据此推断 teacher 收敛或抓取成功。
+
+**原因**
+
+用户要求停止无有效学习证据的 CmResidual 长训，并直接训练外部 DExplore 的 GRAB teacher；输入根经核对后改为保留 policy 实际手/物体状态的 `inspire_rl_object_dexplore`。
+
+**修改范围**
+
+- [版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md) — 切换 CmResidual 当前版本至 V1.17 并导航本次运行。
+- [V1.17 指导](../指导/V1.17.md)、[V1.17 最终计划](../plan/V1.17.md)、[启动器](../../tools/run_dexplore_grab_teacher.py)、[定向测试](../../tests/test_dexplore_teacher_launcher.py) — 本次新增或更新的受控范围。
+
+**文件与运行合同**
+
+- [V1.17 指导](../指导/V1.17.md)、[V1.17 最终计划](../plan/V1.17.md)、[启动器](../../tools/run_dexplore_grab_teacher.py)、[定向测试](../../tests/test_dexplore_teacher_launcher.py) — 运行范围、输入/输出保护和 CLI 合同。
+- [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/)、[run manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/run_manifest.json)、[config](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/config.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110300/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789700178.server) — 实际运行证据。
+- 输入是 [RL rollout manifest](../../../../../data/processed_data/inspire_rl_object_dexplore/manifest.json)：660 条 `(T,598)` tensor，已有 `inspire.pth` rollout 的 18-DOF 与实际物体 pose；本次训练 `initial_checkpoint=null`，没有续训。
+
+**实现与排障**
+
+- 启动器在每个新 output 下创建仅包含 660 条 sequence 的 `motion_input/` 符号链接视图。源根中的 `_logs/` 不再被外部 loader 当作样本；不复制、修改或删除 GRAB tensor。
+- 外部代码要求 `rl-games==1.1.4`，共享 `graspenv` 实际为 `1.6.5` 且缺少 `Runner.model_builder`。已在 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117` 创建隔离环境并安装 `1.1.4`，未改动共享环境。
+- 外部实现部分张量固定使用逻辑 `cuda:0`。启动器设 `CUDA_VISIBLE_DEVICES=5`，因此逻辑 `cuda:0` 对应 physical GPU5；manifest 记录了此映射。
+- 先前两次失败运行均保留： [rl-games API 失败](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_105700/)、[源根 `_logs/` 扫描失败](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_105900/)；第三次在 source 设备硬编码处失败的输出也保留为 [设备映射失败证据](../../../../../outputs/Dexplore/dexplore_grab_teacher_v117_smoke_20260918_110100/)。三者均为 `INVALID_IMPLEMENTATION`，未产生可用 checkpoint。
+
+**验证**
+
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`：`1 passed`。
+- 启动前预检验证 source clean、资产、660 个 finite float32 `(T,598)` tensor、GPU5 仅 `6 MiB` 占用和 `rl-games==1.1.4`；成功日志确认 `Device count 1`、`Physics Device: cuda:0`、`num_motions: 4`、`num_obs: 1442`、`num_actions: 18`、checkpoint/event 存在且非空。
+
+**保护与回滚**
+
+删除本版本 launcher、测试、V1.17 文档/README/版本指针和本活动条目可回滚代码记录；全部 smoke output、隔离环境、外部 checkout、660 条输入数据和 CmResidual V1.16.5 停止产物均保留。正式长训需要独立最终计划，明确 GPU 并行规模、总 iteration/环境步预算、周期性 checkpoint 与固定评估协议。
