@@ -4523,3 +4523,60 @@ V1.18 已要求 Cmv2 是 frozen planner，但初始化条件仅覆盖 V1.16 acto
 **保护与回滚**
 
 删除该 alias 即可回到提交 `dc1bf2d`；两个失败 smoke 的输出均保留。
+
+## 2026-09-18 12:12:30 +0800 — V1.18 128-env 实现 smoke 第二次重试在 planner mask 形状失败
+
+- timestamp: 2026-09-18 12:12:30 +0800
+- activity_id: ACT-20260918-121230-CMRESIDUAL-V118-SMOKE-RETRY2
+- modification_version: V1.18
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.18 最终计划的首个工程 smoke；仅包含已验证的 V1.18 专用 agent compatibility 修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 2cab285aa43f7ef7b93b481814e4a39ff5244c6a
+- worktree_dirty: true（仅本条 STARTED 记录未提交；用户现有改动继续保护。）
+- scope: physical GPU5，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.1`；未启动正式 Stage A/B/C 长训。
+- run_id: cmresidual_v118_smoke_retry2_20260918_121230
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry2_20260918_121230/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry2_20260918_121230/run_manifest.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry2_20260918_121230/train.log)。
+- last_step: 0
+- exit_reason: 已进入 V1.18 planner，但扁平 `[B*K,18]` `applied_delta` 未恢复为 `[B,K,18]`，feasibility mask 相与时报维度不匹配。
+- conclusion: INVALID_IMPLEMENTATION
+
+## 2026-09-18 12:13:30 +0800 — V1.18 修正 planner candidate shape 恢复
+
+- timestamp: 2026-09-18 12:13:30 +0800
+- activity_id: ACT-20260918-121330-CMRESIDUAL-V118-PLANNER-SHAPE
+- modification_version: V1.18
+- operation_category: code、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已批准 V1.18 实施；这是实际 planner rollout 揭示的局部 shape 缺陷修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 2cab285aa43f7ef7b93b481814e4a39ff5244c6a
+- worktree_dirty: true（只含本次修复与运行终态记录；用户改动未纳入。）
+- scope: 仅将已有 `compose_reference_residual` 输出的 `applied_delta` 按 candidate 恢复形状；candidate 语义、authority、K=8 和 Cmv2 均不变。
+- run_id: cmresidual_v118_smoke_retry2_20260918_121230
+- run_status: FAILED（上述 retry）；修复后将另建 output 重试。
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [GPU planner](../../v118_planner.py)、[失败 manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry2_20260918_121230/run_manifest.json) — 统一 `targets` 与 `applied_delta` 的 `[B,K,18]` candidate contract。
+
+**原因**
+
+flat Cmv2 batch 前，retargeted residual mapping 仍返回 `[B*K,18]` 辅助张量；planner 只恢复了 target，遗漏了 feasibility 所需 applied delta。
+
+**验证**
+
+`py_compile` 通过；`pytest -q src/task/CmResidual/tests/test_v118_planner.py` 为 `2 passed`。GPU5 仍为 6 MiB，新的 128-env smoke 待启动。
+
+**保护与回滚**
+
+删除该 `view(count, K, 18)` 即可回到提交 `2cab285`；三个失败 smoke 输出均保留。

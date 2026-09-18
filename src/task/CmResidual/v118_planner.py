@@ -247,7 +247,8 @@ class FrozenCmv2Planner:
                 translation_scale_m=0.015, rotation_scale_rad=0.20, finger_scale_rad=0.08,
                 mimic_scales=mimic_scales)
             targets = targets.view(count, self.config.candidates, ACTION_DIM)
-            feasible = torch.isfinite(targets).all(dim=-1) & torch.isfinite(details["applied_delta"]).all(dim=-1)
+            applied_delta = details["applied_delta"].view(count, self.config.candidates, ACTION_DIM)
+            feasible = torch.isfinite(targets).all(dim=-1) & torch.isfinite(applied_delta).all(dim=-1)
             next_links = self.kinematics.forward(targets)
             current_points, current_normals = self.geometry.hand(current_links.index_select(0, ids))
             next_points, next_normals = self.geometry.hand(next_links.reshape(-1, len(QUERY_LINKS), 4, 4))
