@@ -2621,3 +2621,43 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 若用户要求停止，仅停止本 viewer 进程并将 manifest 更新为 `STOPPED`；其独立 output 可保留或删除，不影响 ARCTIC raw data、训练 cache、checkpoint、评估 output 或 cache queue。
+
+## 2026-09-18 03:13:51 +0000 — ARCTIC 铰接对象合同是否进入 V1.4.4 双域训练核验
+
+- timestamp: `2026-09-18 03:13:51 +0000`
+- activity_id: `ACT-20260918-031351-CMV2-V146-ARCTIC-ARTICULATION-TRAINING-DIAGNOSTIC`
+- modification_version: `V1.4.6`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问已完成 ARCTIC 训练是否加入铰接类物体的超参/架构处理；本条只读检查指导、冻结训练配置、cache schema、loader、模型和 loss。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `1ca03f7559d3069b1b154128b113f607422426dc`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`（既有训练，仅作检查）
+- scope: 判定 ARCTIC `obj_articulation`、`obj_part_id`、joint/FK metadata 或铰接专属 hyperparameter 是否进入该 run 的输入、model head 或 loss；不重新训练/评估，不更改代码、配置、cache、checkpoint、viewer 或 GPU2 queue。
+- conclusion: `REFUTED`（“V1.4.4 已按铰接物体架构处理 ARCTIC”的判断不成立：cache 保留了 articulation/part 数据，但 completed model 既未读取也未使用，且固定为 single-root rigid SE(3)）。
+
+**状态与证据**
+
+- [冻结训练 config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/config.json) 固定 `architecture_version=v1_3_rigid_only`、`use_residual=false`、`interaction_mode=swept`、KNN32/2 cm；没有 link、joint、axis、origin、joint-q、part-pooling 或 articulation 参数。
+- [multi_domain.py](../../multi_domain.py) 的 `ARRAYS` 仅读取 frame time、source frame、object point/normal pool、`obj_pose_world` 和 KNN hand streams；`obj_articulation.npy`、`obj_part_id.npy`、`obj_root_pose_world.npy` 均不在输入 batch。`obj_flow_gt` 直接来自 current/future world point 在 current `object_pose_t` 的差。
+- [model.py](../../model.py) 的 V1.3 模型强制 `use_residual=false`，输出单一 `delta_xi_root` 与由其重建的 `obj_flow_pred`；[object_interaction_v13_loss](../../model.py) 仅对该根 translation、root rotation 和 point flow 施加 loss，没有 joint head/FK、link group 或 articulation loss。
+- 一条实际 ARCTIC cache [geometry manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/sequences/train/mano/arctic/s01/mixer_grab_01/geometry/manifest.json) 声明 `articulated_world_points_identity_reference_pose`；`obj_articulation.npy` 为 `[593,1]`、`obj_part_id.npy` 含 `1255/2841` 两个 part 点，而 `obj_pose_world` 恒为 identity。遍历 35 条 ARCTIC validation sequence：35/35 的 articulation 发生变化，最大 angle span `3.14349 rad`。
+- 以该 cache frame `55→65`（stride 10）复算：GT point-flow mean/p95 为 `90.408/102.263 mm`；使用 cache 的单 root pose 重建的残差恰为 `90.408/102.263 mm`，即此运动不能由该 identity root 的一个 SE(3) 解释。V1.0 架构快照明确将 articulation graph、joint metadata/FK 作为后续多-link 版本，而非 V1.0/V1.3 rigid path。
+
+**原因**
+
+需要严格区分“ARCTIC 数据生产时保存了铰接信息”与“训练的模型消费了该信息”。前者成立，后者在 V1.4.4 completed run 中不成立；否则会把未建模的 joint motion 误读为普通刚体 flow 误差或错误的 GT magnitude。
+
+**验证**
+
+- 对冻结 config、loader required arrays/batch 字段、V1.3 model/loss、ARCTIC geometry manifest 和实际 memmap 做只读源码/shape/finite/范围核验；没有发现 articulation 字段进入前向或 loss 的路径。
+- 对全部 35 条 ARCTIC validation geometry 的 `obj_articulation.npy` 只读扫描，并对代表 transition 用 cache 的 documented root-SE(3) 公式重建逐点 future position；无文件写入、无 CUDA/训练/评估运行。
+
+**回滚**
+
+纯只读诊断；无代码、配置、数据、模型或运行状态修改，无需回滚。若要加入铰接处理，必须作为新的 L2/L3 版本计划，明确 link/joint schema、GT、FK、split、loss、checkpoint compatibility 与对照实验，不能把 V1.4.4 checkpoint 静默解释为该模型。
