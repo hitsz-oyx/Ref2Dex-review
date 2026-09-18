@@ -4330,3 +4330,38 @@ V1.16.4 已在相同物理卡和 env 数下完成一 epoch、三 rank buffer、c
 **保护与回滚**
 
 2048 是本次短 probe 的最后通过档位，正式长训宜保留显存余量而非直接视作长时间稳定保证。删除本次 launcher/测试/文档/活动差异可回滚代码记录；所有 capacity output、隔离环境、外部 checkout、输入和 CmResidual 既有产物均保留。
+
+## 2026-09-18 11:33:34 +0800 — V1.17 DExplore Horovod 双卡依赖探测失败
+
+- timestamp: 2026-09-18 11:33:34 +0800
+- activity_id: ACT-20260918-113334-CMRESIDUAL-V117-HOROVOD-PROBE
+- modification_version: V1.17
+- operation_category: operation、diagnostic、documentation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确询问并授权补齐双卡 DExplore 所需环境。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 3fccb5141d2edf2e6cba2e93a050b3a5d1c359d5
+- worktree_dirty: true（保留根 activity、ObjectInteractionCm activity、用户已有 V1.12–V1.18 指导/plan 草稿和独立工具；本次仅追加 CmResidual activity）。
+- scope: 仅尝试在 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117` 安装 GPU/NCCL Horovod；不改外部 DExplore 源、共享 `graspenv`、训练输入或运行输出。
+- run_id: dexplore_horovod_install_probe_20260918_113334
+- run_status: FAILED
+- conclusion: INVALID_IMPLEMENTATION（当前运行时组合）：`horovod==0.28.1` 已识别 MPI、CUDA、NCCL 与 PyTorch，但其 PyTorch C++ 扩展不能编译到当前 `torch==2.4.1+cu121`；没有安装 Horovod，也没有启动双卡训练。
+
+**原因**
+
+外部 DExplore 原始多卡路径在 `multi_gpu=True` 时直接导入 `horovod.torch`；用户希望以双卡承载单卡无法容纳的并行环境。
+
+**证据与保护**
+
+- [V1.17 最终计划](../plan/V1.17.md) — 当前单轨迹与容量合同；本次只检查其双卡所需运行依赖。
+- 当前隔离环境保留 `rl-games==1.1.4`；为构建探测新增局部 `nvidia-cuda-nvcc-cu12==12.1.105` 与局部 NCCL 兼容链接。共享环境没有改动，`horovod` 仍不存在。
+- 初次构建缺少 pip NCCL 的无版本 `libnccl.so` 链接；局部兼容链接后 CMake 已找到 MPI、CUDA 12.4、NCCL 与 PyTorch，但在 Horovod 0.28.1 的 `cuda_util.cc` 对 Torch 2.4 API 编译时失败。
+- 中断后确认没有遗留 Horovod pip、CMake 或编译进程。可删除隔离环境内的 `nvidia-cuda-nvcc-cu12` 和 `third_party/nccl/` 兼容目录回滚本次依赖探测；未删除，因为后续可在与 DExplore README 声明的 Torch 2.2.2 匹配的独立环境中复用。
+
+**验证**
+
+- `pip show horovod` 确认该包未安装；`pip show nvidia-cuda-nvcc-cu12` 确认仅该隔离环境含版本 `12.1.105`。
+- `ps` 检查确认不存在本次 Horovod pip、CMake 或编译子进程。
