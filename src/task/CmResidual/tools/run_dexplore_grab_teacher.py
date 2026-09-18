@@ -31,7 +31,7 @@ SMOKE_ITERATIONS = 1
 SMOKE_SEED = 42
 FORMAL_ITERATIONS = 152
 FORMAL_SAVE_FREQUENCY = 38
-HOROVOD_PHYSICAL_GPUS = (0, 1, 3)
+HOROVOD_PHYSICAL_GPUS = (0, 3)
 HOROVOD_WORLD_SIZE = len(HOROVOD_PHYSICAL_GPUS)
 HOROVOD_TORCH_VERSION = "2.0.1+cu118"
 HOROVOD_GPU_CAPACITY_MIB = 4096
@@ -230,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--modification-version", required=True,
-                        choices=("V1.17", "V1.17.1", "V1.17.2"))
+                        choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3"))
     parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
     parser.add_argument("--launcher", choices=("single", "horovod"), default="single")

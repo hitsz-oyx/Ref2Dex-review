@@ -4822,3 +4822,30 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **验证**
 
 preflight 在创建输出前以非零状态退出，且 `nvidia-smi` 与 launcher 报告一致；没有启动 Isaac Gym、没有写 checkpoint/训练日志、没有发送信号给任何现有任务。
+
+## 2026-09-18 15:26:21 +0800 — V1.17.3 GPU0/3 双卡 Horovod 执行合同
+
+- timestamp: 2026-09-18 15:26:21 +0800
+- activity_id: ACT-20260918-152621-CMRESIDUAL-V1173-DEXPLORE-2GPU-LAUNCHER
+- modification_version: V1.17.3
+- operation_category: code、experiment、operation、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户明确要求“用0和3这两张卡跑，graspenv的其他进程停一下”。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 86f66ed6dd6f76e4830a8420706df421dff2b663
+- scope: 向 GPU0 上的 `1419735/1433137/1790780` InteractionTransfer viewer 与 GPU3 上的 `2035553/2436140/2678096` CmDecoderv2 viewer/rollout 服务发送 SIGINT；它们均为 `graspenv` 进程且均退出。[`V1.17`](../plan/V1.17.md) 追加 V1.17.3，[`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 固定 Horovod physical GPU `(0,3)`、world size 2，[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 同步双卡预算。未停止 GPU1/2/4/5/6/7 进程，未触碰非 `graspenv` 进程、外部 DExplore、数据、观测、动作、奖励、物理或旧 output。
+- runtime_contract: `CUDA_VISIBLE_DEVICES=0,3`、`horovodrun -np 2 -H localhost:2`、每 rank 2048 env、总 4096 env；smoke `262,144` steps，formal 最多 `40,108,032` steps；从零初始化。
+- validation: `graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`（5 passed）；真实双 rank NCCL Sum all-reduce：rank/local_rank/device `0/0/0` 与 `1/1/1` 均得到 `sum=3.0`；SIGINT 后 GPU0、GPU3 均降为 2MiB。
+- rollback: `git revert` 本次 launcher 提交可恢复三卡 `(0,1,3)` 定义；被停止的 viewer/rollout 服务没有删除产物，可由其原始命令重新启动。
+- conclusion: INCONCLUSIVE（双卡通信与资源释放已验证；DExplore capacity smoke 尚未启动，不能作为训练效果结论。）
+
+**原因**
+
+三卡 preflight 因 GPU1 的高负载未启动；用户改为两卡并明确授权仅停止 GPU0、GPU3 的 `graspenv` 进程。world size 是同步训练的运行合同，故同时更新计划、启动器、测试和预算，避免将双卡运行误记为三卡。
+
+**验证**
+
+两个目标 GPU 已无残留的计算进程；双卡 collective 在指定的逻辑设备上通过。下一步是使用新的 run_id 运行完整 DExplore 1-iteration smoke，检查 Isaac Gym 初始化、PPO 迭代、checkpoint 与 TensorBoard 产物。
