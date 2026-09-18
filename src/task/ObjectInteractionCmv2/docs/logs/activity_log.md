@@ -3482,3 +3482,43 @@ V1.8 的启动闸门是实际二域 B64 step，而不是按 B16 显存线性外�
 **回滚**
 
 评估已完成；忽略/保留独立 V1.9.2 output 即可。若需移除实现增量，删除 V1.9 evaluator/config/docs 并恢复 pointer；不得删除 V1.8 checkpoint、训练 output、cache、GT 或 split。
+
+## 2026-09-18 15:16:21 +0000 — V1.9.2 ARCTIC GT flow magnitude 与 raw viewer 口径核对
+
+- timestamp: `2026-09-18 15:16:21 +0000`
+- activity_id: `ACT-20260918-151621-CMV2-V192-ARCTIC-FLOW-VIEWER-DIAGNOSTIC`
+- modification_version: `V1.9.2`
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 用户询问 ARCTIC 各 stride 的平均点流移动量与 raw trajectory 可视化差异；只读核对 V1.9 metrics、articulated loader 与既有 raw viewer 的采样/坐标/时间合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `be27e5f6d2ab561066a77ea6b99f719107672470`
+- worktree_dirty: `false`（核对开始时；本次只追加本活动记录。）
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `COMPLETED`
+- scope: 只读读取 V1.9 summary；检查 articulated loader 的 `obj_flow_gt` 构造和既有 `ObjectInteractionCm.visualize_grab` 的 raw trajectory viewer。未修改模型、cache、GT、split、checkpoint、训练或评估产物。
+- evidence: ARCTIC GT point-micro magnitude（全 validation、1024 uniform sampled points/transition）按 actual stride `5..10` 为 `22.6057/26.3443/29.5176/33.5507/37.6468/39.7068 mm`，pooled 为 `31.5577 mm`。loader 用同一 current root frame 表达 future/current world points 再相减；这是刚体旋转坐标变换，保持同一对应点的位移范数。raw viewer 则显示一条 raw bilateral trajectory 的 world-frame `4096` point cloud，future delta 可由 GUI 在 `0..30` cache frames 选择。
+- conclusion: `INCONCLUSIVE`（数值与可视化不是同一统计对象：不同 split/sequence/frame、future delta、4096 vs 1024 point pool 以及“全点微平均”与单帧点云叠加都会改变直观感受；尚无证据表明 GT flow 计算或坐标变换错误。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — articulated loader、V1.9 evaluator、配置、实验与活动记录；本次未改实现。
+- [V1.9 summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[V1.9 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json) — stride-wise GT magnitude 证据。
+- [raw viewer implementation](../../../ObjectInteractionCm/visualize_grab.py)、[viewer launch activity](../../../ObjectInteractionCm/docs/logs/activity_log.md) — raw world-frame point cloud、可调 future-delta 与既有查看器启动合同。
+
+**原因**
+
+视觉查看器适合检查一条轨迹上的局部时序和接触；它不显示全 validation 的 point-micro average。若要逐值复现，应锁定同一 sequence、source frame 与 future delta，并在同一 `4096` pool 或同一 `1024` deterministic selection 上计算 `mean(||p_{t+Δ}-p_t||)`；不能比较不同 split 的总体均值与单帧屏幕重叠。
+
+**验证**
+
+- `metrics_summary.json` 的 six group GT magnitudes 与 pooled summary/experiment log 一致。
+- `articulated.py` 明确以 `_world_to_frame(future_world, root) - _world_to_frame(object_world, root)` 构造 GT，且同一 rotation 的欧氏范数不变。
+- `visualize_grab.py` 读取 `obj_points_world`、显示 full 4096 pool、`future_delta_cache_frames` 为 GUI `0..30`；其原启动 activity 记录初始 `future-delta=10`，但用户可在界面改变。
+
+**回滚**
+
+本条为只读诊断，唯一修改是活动记录；删除该条文档增量即可，不涉及数据、模型或运行产物。
