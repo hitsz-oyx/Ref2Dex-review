@@ -2468,3 +2468,44 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 回滚为不使用或删除本次未提交的 evaluator/测试/计划增量；不会删除或覆盖外部 checkpoint、数据 index、cache 或正在运行的 GPU2 queue。后续运行若失败，只保留其独立 output manifest 作为诊断证据。
+
+## 2026-09-18 02:57:00 +0000 — V1.4.6 checkpoint/dataset load smoke 完成
+
+- timestamp: `2026-09-18 02:57:00 +0000`
+- activity_id: `ACT-20260918-025700-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-SMOKE`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 checkpoint 离线评估 smoke）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 对 checkpoint、sample scope、指标的三项确认；本 smoke 是完整评估前冻结的工程门槛。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3b5eea87d9dba57b063c117dc89ceaa40203cb9`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z`
+- run_status: `COMPLETED`
+- scope: GPU1 上载入固定 V1.4.4 `best.pt`，GRAB stride=1 与 ARCTIC stride=5--10 各评估一个确定性 transition；不运行全量 24000-transition 统计，不写 cache，不修改 checkpoint，也不接触 GPU2 queue。
+- last_step: `null`
+- last_epoch: `13`（所载入 best checkpoint）
+- best_metric: `null`（本操作不做 checkpoint selection）
+- conclusion: `INCONCLUSIVE`（工程 smoke 支持 checkpoint、数据、指标和资源合同；每 group 仅 1 个样本，绝非科研统计）。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/run_manifest.json) 为 `COMPLETED`，记录固定 checkpoint/config 的 SHA256、GPU1、抽样 seed 和 metric contract。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/metrics_summary.json)、[sample index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/sample_index.json) 和 [eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/eval.log) 均已生成，共 `7` 个 transition、`7168` object point。
+- smoke 发现 GRAB stride=1 可用 `24652` 个 transition，ARCTIC 各 stride=5--10 均可用 `20139` 个，均大于完整 run 所需的 `12000` / `2000`；不存在缩样。
+
+**原因**
+
+正式统计前必须实际验证已冻结 checkpoint 能严格加载、每个指定 stride 有足量 validation transition、`object_pose_t` flow 张量可计算且 GPU1 的 20 GiB 资源门槛成立；否则完整运行的数值没有可审计的工程前提。
+
+**验证**
+
+- 执行固定 V1.4.4 checkpoint/config 的 evaluator，进程成功退出，manifest 为 `COMPLETED`，7 个 group 的 sample/point 计数与预期一致。
+- `nvidia-smi` 运行前显示 GPU1 空闲 `48506 MiB`；GPU2 producer PID `897162` 保持运行，未发送运行控制信号。
+
+**回滚**
+
+此 smoke 是独立外部 output；回滚为不使用其数值。保留 manifest、抽样索引和日志用于诊断；不删除或覆盖任何数据、cache、checkpoint 或 queue。
