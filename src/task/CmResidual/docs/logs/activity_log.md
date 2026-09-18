@@ -4737,3 +4737,59 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **验证**
 
 子进程仍存活；GPU5 显存约 `22.6 GiB` 且持续有计算利用率，manifest 已写入完整 source SHA、外部 commit、运行时、命令与生成的 train config。外部 stdout 是文件块缓冲，首个 epoch 指标尚未刷入日志；当前未见 traceback、OOM 或 non-finite 证据。
+
+## 2026-09-18 14:21:40 +0800 — V1.17.2 DexPlore 单卡正式训练按用户指令停止
+
+- timestamp: 2026-09-18 14:21:40 +0800
+- activity_id: ACT-20260918-142140-CMRESIDUAL-V1172-DEXPLORE-STOP
+- modification_version: V1.17.2
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求“先把目前的 dexplore 训练停了”，并要求改在 physical GPU 0/1/3 进行同步多卡 DexPlore 训练。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: ebfb44fe15eb226c651a47767a389ee2e52a3a07
+- worktree_dirty: true（根级/ObjectInteractionCm activity、用户已有未跟踪指导/工具和 V1.19 plan 草案保持不变；本条只更新既有 V1.17 运行的终态。）
+- scope: 仅向 `dexplore_grab_teacher_v1171_formal_env2048_20260918_131215` 的 process group 发送 `SIGINT`；不删除 output、checkpoint、TensorBoard event、外部 checkout 或输入数据，也不停止其他 GPU 任务。
+- run_id: dexplore_grab_teacher_v1171_formal_env2048_20260918_131215
+- run_status: STOPPED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/)、[manifest](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train.log)、[best checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)、[latest checkpoint](../../../../../outputs/Dexplore/dexplore_grab_teacher_v1171_formal_env2048_20260918_131215/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00000114.pth)。
+- last_epoch: 123；last_step: 16,121,856；best_metric: 日志中未单独导出；best_checkpoint: `GRAB.pth`；latest_checkpoint: `GRAB_00000114.pth`。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+原定 153 epochs 的 single-rank GPU5 formal teacher 已完成至少 123 个 epoch；用户要求停止该运行并迁移到 GPU0/1/3 的同步多卡版本。该人工停止不代表 OOM、non-finite 或科研假设失败。
+
+**验证**
+
+`kill -INT -- -389105` 后 launcher 和其 DExplore child 均已退出；日志最后一段为 `KeyboardInterrupt`，来自用户指定的 SIGINT。checkpoint 保留 epoch 38/76/114，TensorBoard event 存在。多卡新运行尚未启动：现有 DexPlore 代码仅以 Horovod 实现同步多卡，而现有 `graspenv` 三卡环境为 `torch.distributed` 且没有 Horovod；不会将三张卡启动为相互独立的三个 PPO 训练冒充 DDP。
+
+## 2026-09-18 15:20:11 +0800 — V1.17.2 三卡 Horovod launcher 与合同
+
+- timestamp: 2026-09-18 15:20:11 +0800
+- activity_id: ACT-20260918-152011-CMRESIDUAL-V1172-DEXPLORE-HOROVOD-LAUNCHER
+- modification_version: V1.17.2
+- operation_category: code、experiment、documentation
+- task_mode: change
+- change_level: L2
+- approval: user-approved
+- approval_basis: 用户明确要求在 physical GPU 0/1/3 跑 DExplore，并在停止既有单卡训练后继续；[`V1.17`](../plan/V1.17.md) 的 V1.17.2 追加合同已据此定稿。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: ebfb44fe15eb226c651a47767a389ee2e52a3a07
+- scope: [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 新增 opt-in `--launcher horovod`，固定 physical GPU 0/1/3、`horovodrun -np 3 -H localhost:3`、每 rank 2048 env、rank-local CUDA 映射、isolated CUDA/NCCL runtime 与三卡 manifest；[`test_dexplore_teacher_launcher.py`](../../tests/test_dexplore_teacher_launcher.py) 覆盖启动命令和三卡 formal/smoke 预算。单卡默认模式、数据、观测、动作、奖励、物理、seed、外部 DExplore checkout 与既有输出均未修改。
+- runtime: 新建且不纳入 Git 的 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117_hvd`，Python 3.8、Torch `2.0.1+cu118`、`rl-games==1.1.4`、Horovod `0.28.1`、MPI/CUDA/NCCL；Torch `2.2.2+cu121` 无法编译 Horovod 0.28.1 的 PyTorch C++ 扩展，故按兼容性证据替换。
+- validation: `graspenv/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py`；`graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`（5 passed）；`CUDA_VISIBLE_DEVICES=0,1,3 horovodrun -np 3 -H localhost:3 ... hvd.allreduce_(..., op=hvd.Sum)` 三 rank 分别 `rank/local_rank/device=0/0/0, 1/1/1, 2/2/2` 且均得到 `sum=6.0`。
+- rollback: `git revert` 本次 launcher 提交即可恢复单卡-only launcher；隔离 runtime 与 output 不属于版本库且未影响共享环境。
+- conclusion: INCONCLUSIVE（工程通信和启动合同已通过；尚未运行 DExplore 三卡 capacity smoke，不能解释为 teacher 收敛或抓取效果。）
+
+**原因**
+
+外部 DExplore 的同步多卡实现是 Horovod；既有 Ref2Dex `torch.distributed` 环境无法成为该入口的替代。用户指定使用 GPU 0/1/3，且 2048 env 是每 rank 的既定容量，因而新增显式、可审计的 Horovod launcher，而不改变单卡路径或外部源码。
+
+**验证**
+
+静态编译与 5 个 launcher 合同测试通过；在 `CUDA_VISIBLE_DEVICES=0,1,3` 下的真实 NCCL `Sum` all-reduce 由三 rank 全部返回 6.0。该证据只证明通信与启动合同，正式 DExplore smoke 仍是下一道门。
