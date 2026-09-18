@@ -2543,3 +2543,47 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 若用户要求或运行出现资源/实现错误，仅终止 PID `928129`；evaluator 会将本 run manifest 标为 `FAILED`，保留现有产物。不得影响 GPU2 queue 或任何 checkpoint/cache。
+
+## 2026-09-18 02:58:59 +0000 — V1.4.6 双域 MANO flow 抽样评估完成
+
+- timestamp: `2026-09-18 02:58:59 +0000`
+- activity_id: `ACT-20260918-025859-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-FULL-COMPLETED`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 离线 checkpoint 评估）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 对 checkpoint、抽样范围、指标的确认；预置 smoke 已成功。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7a674228ce022e61a7ab6d00756dfb9c3a55d082`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z`
+- run_status: `COMPLETED`
+- last_step: `null`
+- last_epoch: `13`（载入 fixed `best.pt`）
+- best_metric: `null`（纯评估，不做 selection）
+- scope: GRAB stride=1 的 12000 transition，ARCTIC stride=5--10 各 2000（共 24000）；按 1024 object point/transition 在 `object_pose_t` 下统计 point-micro flow EPE、prediction/GT magnitude 和有效点 angle。
+- conclusion: `INCONCLUSIVE`（统计本身已完成且可复现；数据来自 checkpoint selection 所用 validation sources，且没有对照/held-out test，不能据此作泛化或优越性结论）。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/run_manifest.json) 为 `COMPLETED`，开始于 `02:57:39`、结束于 `02:58:59 +0000`，固定 epoch-13 `best.pt` 与 V1.4.4 resolved config。
+- [metrics summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/metrics_summary.json)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/metrics.jsonl)、[sample index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/sample_index.json) 与 [eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/eval.log) 均非空。
+- GRAB：`12000` transition / `12288000` point，EPE `3.9029 mm`，prediction/GT magnitude `10.5788 / 10.8730 mm`，angle `41.5272°`；仅 `1` 个 GT-static point 被排除 angle。
+- ARCTIC pooled：`12000` transition / `12288000` point，EPE `28.0533 mm`，prediction/GT magnitude `11.5572 / 34.6068 mm`，angle `52.9060°`；所有 point angle 有效。stride 5→10 EPE 为 `19.4863, 23.1555, 27.1467, 29.4669, 32.7959, 36.2683 mm`。
+- 全体 pooled：`24000` transition / `24576000` point，EPE `15.9781 mm`，prediction/GT magnitude `11.0680 / 22.7399 mm`，angle `47.2166°`；angle-excluded `1`，GT-static `1`，prediction-static/both-static 均为 `0`。
+- [experiment log](experiment_log.md) 保留完整 per-stride 值、解释边界与结论等级。
+
+**原因**
+
+按用户明确的 stride 和指标合同完成不全量定量评估，填补 V1.4.4 training metrics 只有 loss、无法回答双域实际 flow 误差的问题；独立 output 与 sample index 让后续复核能重放完全相同的 transition 集。
+
+**验证**
+
+- 审计 manifest 状态、6 个必需输出的非空性、sample index 的域/stride 分组和 summary 的 sample/point counts：GRAB 恰为 `12000`，ARCTIC 每个 stride 恰为 `2000`，总计 `24000`；无未声明缩样。
+- 运行进程以 exit code `0` 结束。GPU2 GRAB Inspire queue 在运行前、运行中和结束后均未收到控制指令，未被本操作修改。
+
+**回滚**
+
+本次运行不修改模型/数据；回滚为不采用该独立 output 的数字。保留 manifest、index、metrics 和 log 供审计，不删除 checkpoint、cache 或 queue。
