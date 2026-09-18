@@ -2587,3 +2587,37 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 本次运行不修改模型/数据；回滚为不采用该独立 output 的数字。保留 manifest、index、metrics 和 log 供审计，不删除 checkpoint、cache 或 queue。
+
+## 2026-09-18 03:08:08 +0000 — ARCTIC KNN/距离着色交互轨迹查看器已启动
+
+- timestamp: `2026-09-18 03:08:08 +0000`
+- activity_id: `ACT-20260918-030808-CMV2-V146-ARCTIC-KNN-TRAJECTORY-VIEWER`
+- modification_version: `V1.4.6`
+- type: `diagnostic, operation`
+- task_mode: `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户要求直接展示 ARCTIC trajectory，复用此前确定的 KNN/累计距离着色 viewer，并明确表示 stride 由其在界面自行调节。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0fc8f3f6023d30bbbd7d0980348712495fce356c`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_arctic_knn_viewer_20260918T030600Z`
+- run_status: `RUNNING`
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index <existing ARCTIC raw bilateral viewer index> --sequence arctic/s01/box_use_01 --future-delta 10 --host 127.0.0.1 --port 8113 --modification-version V1.4.6`
+- scope: 只读展示既有 ARCTIC bilateral MANO trajectory；默认初始轨迹 `arctic/s01/box_use_01`、future delta=10，GUI 可切换轨迹、帧及 delta=1--30，并显示红色累计 object--hand 距离和黄色 object→hand KNN 手点。无 mesh 时保持关闭，绝不伪造 articulated object mesh；不修改原始 ARCTIC、Cmv2 cache、GT、split、checkpoint、评估结果或 GPU2 queue。
+- output: [viewer run manifest](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/run_manifest.json) 和 [viewer log](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/viewer.log)；服务地址 `http://127.0.0.1:8113`。
+- conclusion: `SUPPORTED`（读取 ARCTIC trajectory、KNN 与距离着色的工程可视化链路已启动；视觉检查不替代 GT 数值审计或模型效果结论）。
+
+**原因**
+
+用户质疑 ARCTIC GT magnitude，需要先以同一类原始 ARCTIC 30 Hz bilateral MANO 轨迹直观检查物体/双手的时序运动与局部 KNN、距离关系。查看器的 future-delta 是可调的可视化时间间隔，而不是对已完成量化评估的重新采样或修改。
+
+**验证**
+
+- `http://127.0.0.1:8113` 返回 HTTP `200`；[run manifest](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/run_manifest.json) 为 `RUNNING`，记录 ARCTIC raw bilateral input、`30 Hz` 与 future delta=`10`。
+- [viewer log](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/viewer.log) 记录 `6` 条可选 trajectory、初始 `mano_bilateral_raw` 数据和服务 URL。未写回任何输入文件。
+
+**回滚**
+
+若用户要求停止，仅停止本 viewer 进程并将 manifest 更新为 `STOPPED`；其独立 output 可保留或删除，不影响 ARCTIC raw data、训练 cache、checkpoint、评估 output 或 cache queue。
