@@ -2661,3 +2661,39 @@ queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 j
 **回滚**
 
 纯只读诊断；无代码、配置、数据、模型或运行状态修改，无需回滚。若要加入铰接处理，必须作为新的 L2/L3 版本计划，明确 link/joint schema、GT、FK、split、loss、checkpoint compatibility 与对照实验，不能把 V1.4.4 checkpoint 静默解释为该模型。
+
+## 2026-09-18 03:13:51 +0000 — Cmv2 后续多-link 铰接设计的代码实现状态核验
+
+- timestamp: `2026-09-18 03:13:51 +0000`
+- activity_id: `ACT-20260918-031351-CMV2-V146-ARTICULATION-DESIGN-IMPLEMENTATION-STATUS`
+- modification_version: `V1.4.6`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问现有代码是否已有后续的铰接对象设计；只读检查 Cmv2 Python/YAML/测试与冻结架构文档。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `9f10e3ae80ecc410428b1c5e3e1f5a62fc2d7509`
+- worktree_dirty: `false`（查询前）
+- scope: 区分已实现可训练的 articulation graph/joint/FK 路径，与仅存在于指导、架构快照、synthetic rigid 占位或 cache producer 的后续设计；不修改任何代码或运行。
+- conclusion: `INCONCLUSIVE`（后续设计已被明确文档化并有单-link placeholder，但多-link articulated implementation 尚不存在，故不能称为“代码已具备该处理”）。
+
+**状态与证据**
+
+- [指导/V1.0.md](../指导/V1.0.md) 已定义预期的 `obj_link_id_pool`、joint parent/child/type/axis/origin/limits/q、articulation graph 和 FK 路线；其迁移步骤明确写为“rigid case 后才加入 articulation metadata 和 graph layer”。
+- [architecture/V1.0.md](../architecture/V1.0.md) 冻结范围写明 `num_links=1`、`J=0`，articulation graph 为单 rigid part，joint message passing 留给未来多-link 版本；这是一份设计快照，不是实施声明。
+- [synthetic.py](../../synthetic.py) 与 [oakink2.py](../../oakink2.py) 中仅存在全零的 `obj_link_id` / `num_links=1` single-link placeholder；它们没有 joint schema、graph module 或 FK joint flow。
+- Cmv2 Python/YAML/tests 中未发现可调用的 `obj_articulation`/`obj_part_id` loader、link-wise pooling、joint head、joint loss、articulation graph 或多-link FK 实现；现有 [model.py](../../model.py) 仍是单 `delta_xi_root` rigid path。
+
+**原因**
+
+“已经规划结构”与“已经在运行代码中消费 ARCTIC 铰接元数据”是不同状态。必须明确后者目前不存在，避免将 zero-valued placeholder 或文档 API 当成可用于 V1.4.4 checkpoint 的功能。
+
+**验证**
+
+- 对 `src/task/ObjectInteractionCmv2` 的 Python、YAML、JSON、测试和 Markdown 作只读关键词/文件清单核验；命中均为文档、cache 生产、single-link synthetic/OakInk2 placeholder 或当前 rigid model，没有多-link runtime path。
+
+**回滚**
+
+纯只读诊断；无变更，无需回滚。
