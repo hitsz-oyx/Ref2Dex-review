@@ -4793,3 +4793,32 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **验证**
 
 静态编译与 5 个 launcher 合同测试通过；在 `CUDA_VISIBLE_DEVICES=0,1,3` 下的真实 NCCL `Sum` all-reduce 由三 rank 全部返回 6.0。该证据只证明通信与启动合同，正式 DExplore smoke 仍是下一道门。
+
+## 2026-09-18 15:22:00 +0800 — V1.17.2 三卡 DExplore capacity preflight 未启动
+
+- timestamp: 2026-09-18 15:22:00 +0800
+- activity_id: ACT-20260918-152145-CMRESIDUAL-V1172-DEXPLORE-HOROVOD-SMOKE
+- modification_version: V1.17.2
+- operation_category: diagnostic、operation
+- task_mode: run-only/operation
+- change_level: L2
+- approval: user-approved
+- approval_basis: V1.17.2 最终合同的 capacity/synchronization smoke 前置门；用户要求在指定三卡继续运行 DExplore。
+- skills_used: research-experiment-workflow
+- branch: oyx
+- base_commit: a46a83024f0560f0ff6f17d3b59c76815a63a0c4
+- scope: 仅执行 [`run_dexplore_grab_teacher.py`](../../tools/run_dexplore_grab_teacher.py) 的 Horovod dry-run preflight，核验 [`V1.17`](../plan/V1.17.md) 的三卡容量门；未创建训练 output，也未修改外部 DExplore、数据、配置或其他任务。
+- run_id: dexplore_grab_teacher_v1172_hvd3x2048_smoke_20260918_152145
+- run_status: NOT_STARTED
+- command: `dexplore_v117_hvd/bin/python src/task/CmResidual/tools/run_dexplore_grab_teacher.py --launcher horovod --mode smoke --num-envs 2048 --dry-run`。
+- output: PENDING（dry-run 未创建 output/manifest/train.log；容量门未通过前不得创建正式 smoke 目录）。
+- evidence: Horovod 三 rank NCCL Sum all-reduce 已通过；随后 launcher preflight 读取 physical GPU 0/1/3 为 `2553/6901/1997 MiB`，GPU1 `80%` 利用率，超过保守 4096 MiB 共存门限；全机 GPU2/4/5/6/7 也分别有 `6543/6550/6131/6130/6394 MiB` 且 `70%/77%/91%/90%/81%` 利用率。
+- conclusion: INCONCLUSIVE（环境和同步实现已验证；资源容量不足导致 smoke 未启动，不是 DExplore、NCCL、数据或科研假设失败。）
+
+**原因**
+
+每 rank 2048 env 的 DExplore 容量已知会占用大部分 24GiB 卡，且现有任务正在高利用率运行；抢占或与其混跑会使结果不可靠，并可能使无关任务 OOM。用户尚未授权停止这些其他运行，也未授权改为少于三 rank 或改变每 rank 2048 env 合同。
+
+**验证**
+
+preflight 在创建输出前以非零状态退出，且 `nvidia-smi` 与 launcher 报告一致；没有启动 Isaac Gym、没有写 checkpoint/训练日志、没有发送信号给任何现有任务。
