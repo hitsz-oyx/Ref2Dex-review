@@ -43,3 +43,44 @@ GRAB 的 `12288000` point 中有 `1` 个 GT-static / angle-excluded point；ARCT
 - [metrics summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/metrics_summary.json)
 - [sample index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/sample_index.json)
 - [activity](activity_log.md)
+
+## EXP-20260918-145725-CMV2-V192-ARTICULATED-VALIDATION-EVAL
+
+- timestamp: `2026-09-18 15:05:33 +0000`
+- modification_version: `V1.9.2`
+- operation: `experiment / validation diagnostic`
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `COMPLETED`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- checkpoint: V1.8.1 `best.pt` 在评估读取时解析为 epoch `11`、step `88770`、selection metric `0.09729951618777996`，SHA-256 `a04bf59890003bad6dec2bef3e7e7d5b0eff25d9e741b9b1afa56e1cf7172ddf`。
+- hypothesis: 在当前 ARCTIC test split 缺失时，量化冻结 V1.5 articulated checkpoint 于现有 validation split 的 GRAB stride=1 与 ARCTIC stable stride=5..10 flow 表现；不把该诊断视为 held-out 泛化。
+- outcome: `INCONCLUSIVE`
+
+### 固定合同
+
+- split：全量现有 `val`，GRAB `40762` transition、ARCTIC `25522` transition。
+- GRAB：固定 stride=`1`；ARCTIC：以 seed=42、sequence/current frame stable assignment 在 stride=`5..10` 选取，并按实际 stride 分组。
+- batch=`64`、GPU1、每 transition `1024` object points；点级 EPE/magnitude 是 micro average（mm）；flow angle 仅在 prediction 和 GT norm 均 `>=1e-6 m` 时统计。
+- 评估与训练并发执行，但只读加载 checkpoint；产物 manifest 固化 checkpoint hash、epoch 和 step。
+
+### 结果
+
+| group | transition | EPE (mm) | pred mag (mm) | GT mag (mm) | angle (°) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GRAB / 1 | 40762 | 3.0771 | 6.9118 | 6.9033 | 61.2356 |
+| ARCTIC / pooled 5..10 | 25522 | 19.1902 | 25.1008 | 31.5577 | 49.9500 |
+| ARCTIC / 5 | 4310 | 13.7949 | 17.8528 | 22.6057 | 50.8774 |
+| ARCTIC / 6 | 4259 | 16.2314 | 20.7260 | 26.3443 | 50.8965 |
+| ARCTIC / 7 | 4169 | 17.5448 | 23.9141 | 29.5176 | 49.4200 |
+| ARCTIC / 8 | 4228 | 20.1664 | 26.5476 | 33.5507 | 48.9000 |
+| ARCTIC / 9 | 4300 | 23.2573 | 29.4201 | 37.6468 | 49.6366 |
+| ARCTIC / 10 | 4256 | 24.1478 | 32.1797 | 39.7068 | 49.9423 |
+
+### 解释与证据
+
+GRAB 的预测/GT flow magnitude 接近（`6.9118` 对 `6.9033` mm），而 ARCTIC pooled 的预测 magnitude 低于 GT（`25.1008` 对 `31.5577` mm）。ARCTIC EPE 随实际 stride 从 5 到 10 整体升高（`13.7949` 到 `24.1478` mm）。这只是同一 validation split 上的描述性诊断；ARCTIC 当前没有 held-out test bucket，且正式训练尚在运行，不能解释为最终泛化或相对基线结论。
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json)
+- [metrics summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)
+- [metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics.jsonl)
+- [activity](activity_log.md)

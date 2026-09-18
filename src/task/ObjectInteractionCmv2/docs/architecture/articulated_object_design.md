@@ -1,9 +1,10 @@
 # ObjectInteractionCmv2 铰接对象架构设计
 
-- 状态：`proposal / 未实现 / 未冻结`
+- 状态：`V1.5.1 首阶段实现中 / loader、graph 与 analytic FK 已实现 / 真实 cache FK replay 未通过，训练未批准`
 - 目的：把当前 V1.3 的 single-root rigid flow 路径扩展为“root 刚体运动 + 多 link joint motion + 解析 FK flow”。
 - 适用数据：GRAB 等刚体对象退化为单 link；ARCTIC 当前的双 link、单 revolute joint 对象为第一实现目标。
-- 非目标：本文件不批准代码、cache 重写、训练或 checkpoint 转换；这些必须由后续同版本指导与 final plan 单独冻结。
+- 非目标：本文件不批准 cache 重写、训练或 checkpoint 转换；V1.5 的代码边界由同版本 final plan 冻结，
+  真实 cache 的 FK replay 仍是训练前阻断闸门。
 
 ## 1. 总览：从手-物局部交互到结构化多 link flow
 
@@ -46,7 +47,11 @@ current object points/normals + current hand points/normals + hand flow
 - `q_t[J]`：当前 joint coordinate；只作为输入状态。`q_{t+\Delta}`、`Δq_gt` 和 future root pose 只用于监督。
 - `ΔT_root,t→t+Δ = (T^w_{r,t})^{-1} T^w_{r,t+Δ}`：future root 在当前 root frame 的相对变换；其 6D Lie-algebra 参数是 `Δξ_root_gt[B,6]`。
 
-对 ARCTIC 第一阶段，cache producer 已使用的运动合同是：link 0 为底部，link 1 为顶部；top 在 canonical root frame 围绕 `axis=(0,0,1)`、`origin=(0,0,0)` 作 revolute rotation，再接受 root SE(3)。正式实现前必须把这个约定写进 manifest 或被严格校验的 source metadata，不能只靠 object 名称猜测。泛化接口允许每 joint 提供 axis/origin/type/limits。
+对 ARCTIC 第一阶段，cache producer 已使用的运动合同是：link 0 为底部，link 1 为顶部；在 producer 的
+row-vector 约定下，top 在 canonical root frame 围绕 `axis=(0,0,-1)`、`origin=(0,0,0)` 作 revolute rotation，
+再接受 root SE(3)。该符号已由 `process/ARCTIC/raw.py` 的 `R_arti` 与真实 cache replay 验证，并冻结在
+[`configs/active/arctic_articulation_v1_5.json`](../../configs/active/arctic_articulation_v1_5.json)；不能只靠
+object 名称猜测。泛化接口允许每 joint 提供 axis/origin/type/limits。
 
 令 `A_j(q)` 为 joint `j` 的齐次变换，`L(i)` 为 point `i` 的 link。预测 future point（表达在 current root frame）为：
 
@@ -228,4 +233,8 @@ Phase D  independent GRAB-rigid vs ARCTIC-articulated benchmark
 
 ## 9. 当前状态与决策入口
 
-该设计已经明确了目标张量、数据流、预测变量和验证闸门，但尚未确认：正式 version/指导、joint metadata 的持久化方式、loss 权重、是否启用 joint limits、训练预算，以及对旧 checkpoint 的 baseline protocol。因此它是实现计划的输入，不是可直接执行的 final plan。
+V1.5.1 已实现 Task-local loader/collate、two-link graph、root/joint head 与 masked analytic FK，并以 synthetic
+mixed GRAB/ARCTIC batch 完成 forward/backward smoke。现有 ARCTIC cache 尚未持久化经验证的 per-object
+axis/origin metadata；现已由 producer 源码恢复并冻结为 `axis=(0,0,-1), origin=(0,0,0)`。在 `phone_use_01`
+四个真实 transition 上，GT FK replay 的 mean error 为 `0.001529/0.000111/0.000130/0.000054 mm`，但全 cache
+replay、loss 权重、joint limits、训练预算及旧 checkpoint baseline protocol 仍需后续计划冻结；当前实现不得用于训练。
