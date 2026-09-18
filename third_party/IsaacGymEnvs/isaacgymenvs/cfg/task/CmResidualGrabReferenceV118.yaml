@@ -45,6 +45,7 @@ cmPlanner:
   gateDistanceM: 0.04
   effectTranslationGateM: 0.002
   effectRotationGateRad: 0.01
+  maxActiveEnvs: 16
 
 cmBuffer:
   enabled: true

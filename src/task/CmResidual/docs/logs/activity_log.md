@@ -4580,3 +4580,60 @@ flat Cmv2 batch 前，retargeted residual mapping 仍返回 `[B*K,18]` 辅助张
 **保护与回滚**
 
 删除该 `view(count, K, 18)` 即可回到提交 `2cab285`；三个失败 smoke 输出均保留。
+
+## 2026-09-18 12:14:30 +0800 — V1.18 128-env 实现 smoke 第三次重试在 Cmv2 active batch OOM
+
+- timestamp: 2026-09-18 12:14:30 +0800
+- activity_id: ACT-20260918-121430-CMRESIDUAL-V118-SMOKE-RETRY3
+- modification_version: V1.18
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.18 最终计划的首个工程 smoke；仅包含已验证的 planner shape 修复。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: a8278243dbfb148835489a8be3fbf7ebaf26bc8b
+- worktree_dirty: true（仅本条 STARTED 记录未提交；用户现有改动继续保护。）
+- scope: physical GPU5，单 rank×128 env，window/horizon=64，K=8，`lambda_cm=0.1`；未启动正式 Stage A/B/C 长训。
+- run_id: cmresidual_v118_smoke_retry3_20260918_121430
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry3_20260918_121430/)、[manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry3_20260918_121430/run_manifest.json)、[train log](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry3_20260918_121430/train.log)。
+- last_step: 0
+- exit_reason: task/agent/planner 已构造，首个 all-active `[128*8]` frozen-Cmv2 interaction graph batch 额外申请 `2.84 GiB`，GPU5 可用 `2.22 GiB`，CUDA OOM。
+- conclusion: INVALID_IMPLEMENTATION
+
+## 2026-09-18 12:15:30 +0800 — V1.18 限定并轮转 Cmv2 active planner batch
+
+- timestamp: 2026-09-18 12:15:30 +0800
+- activity_id: ACT-20260918-121530-CMRESIDUAL-V118-ACTIVE-CAP
+- modification_version: V1.18
+- operation_category: code、experiment、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户批准 V1.18 实施；该资源边界由已保留的 128-env smoke OOM 直接测得。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: a8278243dbfb148835489a8be3fbf7ebaf26bc8b
+- worktree_dirty: true（只含本次修复和运行终态记录；用户改动未纳入。）
+- scope: 维持每 rank 128 env、K=8 和 single Cmv2 forward；仅将同时进入 frozen Cmv2 graph 的 active env 配置化限为 16，并以确定性游标轮转。
+- run_id: cmresidual_v118_smoke_retry3_20260918_121430
+- run_status: FAILED（上述 retry）；修复后将另建 output 重试。
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [GPU planner](../../v118_planner.py)、[V1.18 task](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/tasks/cm_residual/task.py)、[task config](../../../../../third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118.yaml)、[定向测试](../../tests/test_v118_planner.py)、[V1.18 最终计划](../plan/V1.18.md)、[失败 manifest](../../../../../outputs/CmResidual/cmresidual_v118_smoke_retry3_20260918_121430/run_manifest.json) — 新增 `maxActiveEnvs=16` 的旋转 active gate。
+
+**原因**
+
+Cmv2 local interaction graph 对 candidate batch 的显存需求使 all-active `128×8` 无法在 24 GiB GPU 运行；该上限保持 PPO 的 128 env rollout 和每个被选 env 的 K=8 one-batch planner 语义。
+
+**验证**
+
+`py_compile` 通过；`pytest -q src/task/CmResidual/tests/test_v118_planner.py` 为 `2 passed`；Hydra 解析确认 `numObservations=1442`、`maxActiveEnvs=16` 和 `cm_planner_continuous`。新的 128-env smoke 待启动。
+
+**保护与回滚**
+
+设置 `maxActiveEnvs=128` 可恢复 all-active 行为，但会复现已记录的 OOM；历史失败 output 不删除。

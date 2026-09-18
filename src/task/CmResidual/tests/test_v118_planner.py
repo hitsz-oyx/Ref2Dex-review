@@ -28,3 +28,4 @@ def test_v118_planner_contract_is_fixed_to_eight_candidates():
     assert PlannerConfig().candidates == 8
     assert PlannerConfig().translation_scale_m == 0.02
     assert PlannerConfig().rotation_scale_rad == 0.05
+    assert PlannerConfig().max_active_envs == 16

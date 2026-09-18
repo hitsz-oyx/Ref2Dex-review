@@ -181,6 +181,7 @@ class PlannerConfig:
     gate_distance_m: float = 0.04
     effect_translation_gate_m: float = 0.002
     effect_rotation_gate_rad: float = 0.01
+    max_active_envs: int = 16
 
 
 class FrozenCmv2Planner:
@@ -193,6 +194,9 @@ class FrozenCmv2Planner:
                config.rotation_scale_rad, config.gate_distance_m) <= 0:
             raise ValueError("V1.18 planner scales must be positive")
         self.adapter, self.geometry, self.kinematics, self.config = adapter, geometry, kinematics, config
+        if config.max_active_envs <= 0:
+            raise ValueError("max_active_envs must be positive")
+        self._active_cursor = 0
         self.key_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in KEY_LINKS], dtype=torch.long,
                                                  device=kinematics.device)
         self.tip_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in TIP_LINKS], dtype=torch.long,
@@ -235,7 +239,17 @@ class FrozenCmv2Planner:
             active = self._activation(current_links, object_points, reference_transport, desired_delta_xi)
             if not bool(active.any()):
                 return fallback
-            ids = active.nonzero(as_tuple=False).flatten()
+            active_ids = active.nonzero(as_tuple=False).flatten()
+            # Cmv2's local interaction graph is quadratic in the concatenated
+            # candidate batch.  Select a deterministic rotating subset, while
+            # retaining one unchunked [B_active*K,...] Cmv2 forward.
+            if len(active_ids) > self.config.max_active_envs:
+                start = self._active_cursor % len(active_ids)
+                order = torch.cat((active_ids[start:], active_ids[:start]))
+                ids = order[:self.config.max_active_envs]
+                self._active_cursor = (self._active_cursor + self.config.max_active_envs) % len(active_ids)
+            else:
+                ids = active_ids
             actions = candidate_actions.index_select(0, ids)
             count = len(ids)
             expanded_base = base_target.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1).reshape(-1, ACTION_DIM)
