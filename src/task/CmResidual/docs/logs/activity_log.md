@@ -4672,3 +4672,40 @@ resolved config 确认 1442-D observation、18-D action、K=8、`maxActiveEnvs=1
 **后续闸门**
 
 当前最终计划冻结 `maxActiveEnvs=16`。继续将其降为更小的 active batch 会改变每个 rollout 的 teacher 覆盖率，必须经用户确认并更新最终计划后才能进行；本次不启动任何正式 Stage A/B/C 长训。
+
+## 2026-09-18 13:11:19 +0800 — V1.17.1 固定 DexPlore 2048-env 正式训练合同
+
+- timestamp: 2026-09-18 13:11:19 +0800
+- activity_id: ACT-20260918-131119-CMRESIDUAL-V1171-DEXPLORE-FORMAL-CONTRACT
+- modification_version: V1.17.1
+- operation_category: code、experiment、operation、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确选择 2048 env，并授权 Agent 自主确定正式训练的预算、checkpoint 节奏与停止条件。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 7f3374e565ca151815286f3ef2f6f958a59e2ab2
+- worktree_dirty: true（根级/ObjectInteractionCm activity 及用户已有未跟踪文档/工具保持不变；本次只纳入 V1.17 launcher、测试、计划和本条记录。）
+- scope: 外部 DexPlore checkout、GRAB tensor、1442-D observation、18-D action、reward、物理、single trajectory、seed42、GPU5 与无 Horovod 不变；新 formal launcher 固定 2048 env、horizon64、minibatch256、从零初始化，运行约 20.05M env-steps。
+- run_id: dexplore_grab_teacher_v1171_formal_env2048_20260918_131119
+- run_status: NOT_STARTED
+- conclusion: INCONCLUSIVE
+
+**文件**
+
+- [V1.17 最终计划](../plan/V1.17.md)、[启动器](../../tools/run_dexplore_grab_teacher.py)、[定向测试](../../tests/test_dexplore_teacher_launcher.py) — 新增 formal mode：`max_iterations=152`（实际 153 epoch）、每 38 epoch 保存 checkpoint，并将生成的训练 YAML 固定在独立运行目录。
+
+**原因**
+
+2048 env 已完成完整 PPO smoke，4096 env 在 rollout-buffer flatten OOM；用户选择已验证的 2048 env，并授权设置可审计的正式预算。外部运行实现以 `epoch_num > max_epochs` 才停止，故 152 的参数对应实际 153 个 PPO epoch/20,054,016 env-steps。
+
+**验证**
+
+- `PYTHONPATH=. /home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m py_compile src/task/CmResidual/tools/run_dexplore_grab_teacher.py` 通过。
+- `PYTHONPATH=. /home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_teacher_launcher.py`：`3 passed`。
+- formal dry-run 通过：输入 source/asset/runtime 合同、`rl-games==1.1.4`、GPU5 预检 `6 MiB`、2048 env、64 horizon、256 minibatch、152 max iterations 均已解析。
+
+**保护与回滚**
+
+仅移除本条 formal mode、测试和计划追加即可回滚代码/记录；新的运行目录、外部 DexPlore checkout、隔离环境、输入 tensor、V1.17 capacity smoke 与其他用户改动均不覆盖或删除。

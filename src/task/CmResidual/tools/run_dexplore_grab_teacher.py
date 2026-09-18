@@ -13,6 +13,8 @@ import sys
 import time
 import traceback
 
+import yaml
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 DEXPLORE_ROOT = Path("/home2/wyy/oyx_ws/dexplore")
@@ -27,6 +29,20 @@ SMOKE_HORIZON = 64
 SMOKE_MINIBATCH = 256
 SMOKE_ITERATIONS = 1
 SMOKE_SEED = 42
+FORMAL_ITERATIONS = 152
+FORMAL_SAVE_FREQUENCY = 38
+
+
+def _run_settings(mode: str) -> dict:
+    if mode == "smoke":
+        return {"max_iterations": SMOKE_ITERATIONS, "save_frequency": None,
+                "target_env_steps": SMOKE_ITERATIONS * SMOKE_HORIZON}
+    if mode == "formal":
+        # DExplore terminates only after epoch_num > max_epochs, so 152 yields
+        # 153 completed PPO epochs and 20,054,016 env-steps at 2048x64.
+        return {"max_iterations": FORMAL_ITERATIONS, "save_frequency": FORMAL_SAVE_FREQUENCY,
+                "target_env_steps": (FORMAL_ITERATIONS + 1) * 2048 * SMOKE_HORIZON}
+    raise ValueError(f"Unknown V1.17 run mode: {mode}")
 
 
 def _now() -> str:
@@ -123,12 +139,13 @@ def _materialize_motion_input(output: Path) -> dict:
             "selected_sequence": SEQUENCE}
 
 
-def _command(output: Path, *, num_envs: int) -> list[str]:
+def _command(output: Path, *, num_envs: int, max_iterations: int,
+             train_config: str = TRAIN_CONFIG) -> list[str]:
     return [
         sys.executable, "dexplore/run.py",
         "--task", "Dexplore_Inspire",
         "--cfg_env", ENV_CONFIG,
-        "--cfg_train", TRAIN_CONFIG,
+        "--cfg_train", train_config,
         "--motion_file", str(_motion_input(output)),
         "--output_path", str(output / "train"),
         "--headless",
@@ -138,7 +155,7 @@ def _command(output: Path, *, num_envs: int) -> list[str]:
         "--num_envs", str(num_envs),
         "--horizon_length", str(SMOKE_HORIZON),
         "--minibatch_size", str(SMOKE_MINIBATCH),
-        "--max_iterations", str(SMOKE_ITERATIONS),
+        "--max_iterations", str(max_iterations),
         "--seed", str(SMOKE_SEED),
     ]
 
@@ -149,12 +166,26 @@ def _write_json(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
+def _write_formal_train_config(output: Path, *, save_frequency: int) -> Path:
+    source = DEXPLORE_ROOT / TRAIN_CONFIG
+    with source.open("r", encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)
+    params = config["params"]["config"]
+    params["save_frequency"] = save_frequency
+    params["save_best_after"] = save_frequency
+    path = output / "train_config.yaml"
+    with path.open("w", encoding="utf-8") as stream:
+        yaml.safe_dump(config, stream, allow_unicode=True, sort_keys=False)
+    return path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", required=True, choices=("V1.17",))
+    parser.add_argument("--modification-version", required=True, choices=("V1.17", "V1.17.1"))
     parser.add_argument("--num-envs", type=int, required=True)
+    parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -163,6 +194,8 @@ def main() -> int:
     args = parse_args()
     if args.num_envs < 1:
         raise ValueError("--num-envs must be positive")
+    if args.mode == "formal" and args.num_envs != 2048:
+        raise ValueError("The approved V1.17 formal run is fixed to 2048 environments")
     output = OUTPUT_ROOT / args.run_id
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite existing output: {output}")
@@ -172,7 +205,13 @@ def main() -> int:
     gpu_used_mib = _gpu_used_mib(SMOKE_GPU)
     if gpu_used_mib > 512:
         raise RuntimeError(f"GPU{SMOKE_GPU} capacity gate failed: {gpu_used_mib} MiB used > 512 MiB")
-    command = _command(output, num_envs=args.num_envs)
+    settings = _run_settings(args.mode)
+    train_config = TRAIN_CONFIG
+    if not args.dry_run and args.mode == "formal":
+        output.mkdir(parents=True)
+        train_config = str(_write_formal_train_config(output, save_frequency=settings["save_frequency"]))
+    command = _command(output, num_envs=args.num_envs, max_iterations=settings["max_iterations"],
+                       train_config=train_config)
     config = {
         "external_source": str(DEXPLORE_ROOT),
         "runtime_environment": runtime,
@@ -185,7 +224,10 @@ def main() -> int:
             "num_envs": args.num_envs,
             "horizon_length": SMOKE_HORIZON,
             "minibatch_size": SMOKE_MINIBATCH,
-            "max_iterations": SMOKE_ITERATIONS,
+            "mode": args.mode,
+            "max_iterations": settings["max_iterations"],
+            "target_env_steps": settings["target_env_steps"],
+            "save_frequency": settings["save_frequency"],
             "seed": SMOKE_SEED,
             "initial_checkpoint": None,
         },
@@ -195,7 +237,7 @@ def main() -> int:
                           "command": command}, ensure_ascii=False))
         return 0
 
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
     motion_input = _materialize_motion_input(output)
     config_path = output / "config.json"
     manifest_path = output / "run_manifest.json"
@@ -205,7 +247,7 @@ def main() -> int:
         "manifest_schema": "ref2dex.run.v1",
         "created_at": _now(),
         "task": "Dexplore",
-        "mode": "capacity_smoke",
+        "mode": f"v117_{args.mode}",
         "run_id": args.run_id,
         "activity_id": args.activity_id,
         "run_status": "STARTED",
@@ -213,6 +255,7 @@ def main() -> int:
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output.resolve()),
         "config_snapshot": str(config_path.resolve()),
+        "training_config_snapshot": train_config if args.mode == "formal" else None,
         "metadata_snapshot": inputs["data_manifest"],
         "input_references": inputs,
         "motion_input": motion_input,

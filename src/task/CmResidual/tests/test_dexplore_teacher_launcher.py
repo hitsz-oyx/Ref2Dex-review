@@ -12,7 +12,8 @@ SPEC.loader.exec_module(LAUNCHER)
 
 
 def test_v117_smoke_command_uses_the_fixed_on_policy_batch_contract():
-    command = LAUNCHER._command(Path("/tmp/dexplore-v117-smoke"), num_envs=4)
+    command = LAUNCHER._command(Path("/tmp/dexplore-v117-smoke"), num_envs=4,
+                                max_iterations=LAUNCHER.SMOKE_ITERATIONS)
 
     def value(option: str) -> str:
         index = command.index(option)
@@ -30,3 +31,33 @@ def test_v117_smoke_command_uses_the_fixed_on_policy_batch_contract():
     assert value("--seed") == "42"
     assert value("--sim_device") == "cuda:0"
     assert value("--rl_device") == "cuda:0"
+
+
+def test_v117_formal_contract_is_fixed_to_2048_envs_and_five_million_step_checkpoints():
+    settings = LAUNCHER._run_settings("formal")
+    command = LAUNCHER._command(Path("/tmp/dexplore-v117-formal"), num_envs=2048,
+                                max_iterations=settings["max_iterations"],
+                                train_config="/tmp/dexplore-v117-formal/train_config.yaml")
+
+    def value(option: str) -> str:
+        index = command.index(option)
+        return command[index + 1]
+
+    assert settings == {"max_iterations": 152, "save_frequency": 38, "target_env_steps": 20_054_016}
+    assert value("--num_envs") == "2048"
+    assert value("--max_iterations") == "152"
+    assert value("--cfg_train") == "/tmp/dexplore-v117-formal/train_config.yaml"
+
+
+def test_v117_formal_train_config_only_changes_checkpoint_cadence(tmp_path):
+    import yaml
+
+    path = LAUNCHER._write_formal_train_config(tmp_path, save_frequency=38)
+    with path.open("r", encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)
+
+    params = config["params"]["config"]
+    assert params["save_frequency"] == 38
+    assert params["save_best_after"] == 38
+    assert params["horizon_length"] == 64
+    assert params["minibatch_size"] == 16384
