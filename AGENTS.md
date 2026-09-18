@@ -1,180 +1,120 @@
 # Ref2Dex Agent 规范
 
-本文件只保留 Ref2Dex 的本地事实和必须始终生效的安全规则。通用修改治理和实验流程由仓库内的 Skill 提供，避免每次任务加载一份过长的总说明。
+本文件只规定 Ref2Dex 中必须始终成立的规则。工作方法由
+`.agents/skills/research-change-control/` 和
+`.agents/skills/research-experiment-workflow/` 说明；项目当前事实由各级
+`README.md`、指导、实验卡和活动记录说明。
 
-## 0. 需求确认与高风险边界
+## 1. 权威入口
 
-开始修改代码、配置、数据处理逻辑或实验实现前，先确认目标、范围、保持不变的内容和科研约束。涉及坐标系、单位、GT、数据 split、cache/schema、评估指标、checkpoint 解释、公共 `src/base`、仓库治理、数据迁移、破坏性操作或长时间任务时，必须先向用户说明方案并获得确认。
+- 仓库导航：`docs/README.md`
+- 当前治理和研究版本：`docs/current_versions.yaml`
+- Task 当前状态：`src/task/<Task>/docs/README.md`
+- 研究目标：`src/task/<Task>/docs/指导/V<n>.md` 及同基线已确认的 `V<n><letter>.md`
+- 仓库治理指导：`docs/指导/V<n>.md` 及同基线已确认的 `V<n><letter>.md`
+- 重大版本方案：`src/task/<Task>/docs/plan/V<n>.md`
+- 实验索引和实验卡：`src/task/<Task>/docs/experiments/`
+- 目录职责：`docs/目录规范.md`
+- 版本和操作规则：`docs/modification_policy.md`
 
-不确定改动等级时按高等级处理。普通实现细节可以自主选择，但不得擅自改变研究目标、数据语义或关键 invariant。
+默认上下文只加载 AGENTS、current_versions、当前 Task README、当前指导谱系、相关代码和测试。只有出现历史
+兼容、证据追溯或冲突时，才搜索 activity archive、experiment、decision 或 Git 历史；不得每次批量读取全部历史日志。
 
-## 1. 默认语言
+## 2. AI 工作模式
 
-项目文档、研究日志、实验记录和 Git 提交信息默认使用中文。代码标识符、接口名、命令、配置字段和兼容 schema 字段保留英文。
+每个请求开始时声明一个主模式。模式切换时先说明新的范围和审批闸门。
 
-## 2. Skill 路由
-
-这些 Skill 位于 `.agents/skills/`，内容应保持任务无关，未来可整体复制到其他仓库：
-
-- 修改代码、配置或文档：使用 `research-change-control`。
-- 训练、评估、数据处理、benchmark 或长任务：使用 `research-experiment-workflow`。
-- 按任务模式选择闸门：`read-only/diagnostic`、`run-only/operation`、`change`、`governance`；只读检查不因缺少 plan 被阻塞，运行已有实验不默认修改代码或研究变量。
-
-每次请求开始时先在交接中声明一个主任务模式；如果执行中从只读检查转为运行或变更，必须重新确认范围并切换相应闸门：
-
-| 模式 | 允许动作 | 必须留下的记录 |
+| 模式 | 允许动作 | 入口要求 |
 | --- | --- | --- |
-| `read-only/diagnostic` | 阅读、扫描、解释、只读查询和诊断 | 若产生新证据，记录 activity；不得改代码、配置、数据或科研结论 |
-| `run-only/operation` | 按既有 final plan/experiment 运行、等待、停止、恢复和查询 | activity 的 `run_id`、`run_status`、命令、`base_commit`、输出和检查依据；正式实验另写 experiment |
-| `change` | 按 final plan 修改代码、配置、数据处理或测试 | activity 的等级、审批、文件、原因、验证和回滚入口 |
-| `governance` | 修改 AGENTS、Skill、目录、版本或公共记录合同 | L3、用户批准、最终 plan、完整 diff 审计和规范反馈 |
+| `inspect` | 阅读、扫描、解释和只读诊断 | 不改代码、配置、数据或研究结论 |
+| `change` | 修改代码、配置、测试和普通文档 | 判断 L0–L2，必要时使用最终 plan |
+| `run` | 训练、评估、benchmark、数据处理和长任务 | 代码、配置和研究变量已固定，使用 run manifest |
+| `governance` | 修改 AGENTS、Skill、公共规范、目录或版本合同 | 按 L3，先说明范围、风险、回滚和验证并获用户确认 |
 
-模式本身不改变科研目标；任何模式都不得覆盖用户已有改动、旧运行或不可逆产物。
-Skill 负责通用流程；本文件负责下面的 Ref2Dex 特殊路径、日志和科学事实。
+模式不改变研究目标，也不能覆盖用户已有修改、旧运行、数据、cache 或 checkpoint。
 
-### 2.1 文档导航与加载规则
+## 3. 影响等级和审批
 
-`AGENTS.md` 是仓库级常驻指令；普通 `docs/*.md` 不会因为存在而自动加载。以下文件按任务条件主动读取：
+- **L0**：说明文档、格式、测试、只读诊断和不改变运行变量的元数据。
+- **L1**：Task 内实现，保持 observation、action、reward、GT、坐标、单位、split、指标和 checkpoint
+  解释不变。
+- **L2**：改变研究语义或公共合同，包括 observation、action、reward、GT、坐标、单位、split、cache/schema、
+  metric、checkpoint 解释和共享接口。
+- **L3**：仓库治理、AGENTS、Skill、共享 `src/base`、依赖、数据迁移、破坏性操作或长时外部任务。
 
-- [`docs/README.md`](docs/README.md)：文档入口和职责导航，所有任务先读。
-- [`docs/current_versions.yaml`](docs/current_versions.yaml)：当前各作用域的 `modification_version` 指针，所有会产生记录或运行的任务先读。
-- [`docs/modification_policy.md`](docs/modification_policy.md)：版本线、`modification_version` 和操作类别；涉及版本判断、plan/指导、activity 归档、治理或文档规范修改时必读。
-- [`docs/目录规范.md`](docs/目录规范.md)：数据、cache、资产、research、运行目录和 manifest 的放置规则；创建、移动或判断这些产物路径时必读。
-- [`docs/ai_task_checklist.md`](docs/ai_task_checklist.md)：开始/完成交接的摘要清单；复杂交接、长任务或用户要求复核时读取。它不新增或覆盖其他规范。
-- [`tests/README.md`](tests/README.md)：现有根测试的 legacy 分类和未来测试归属；涉及测试选择、迁移或验证范围时读取。
+L0/L1 可以执行，完成后汇报。L2/L3 必须在编辑前说明拟改变和保持不变的内容、风险、验证和回滚，并得到用户确认。
+修改 AGENTS、Skill 和公共治理合同固定为 L3。拿不准时按更高等级处理，不把沉默当作批准。
 
-文档权威性按以下顺序解释：本文件的安全与审批规则优先；具体路径和产物职责以 `docs/目录规范.md` 为准；版本和操作分类以 `docs/modification_policy.md` 为准；交接清单仅作检查表。发现冲突时暂停并记录，不静默选择。
+## 4. 三种版本身份
 
-## 3. 递归记录与唯一时间线
+- `research_version`：研究方法身份；只有论文 Methods 需要改变时才递增。
+- `git_commit`：具体实现身份；每个运行和重要活动都记录可复现的提交哈希。
+- `run_id`：一次训练、评估、benchmark 或数据处理运行的身份。
 
-记录按最近作用域维护，不为形式批量创建空文件。`activity_log.md` 是从切换点开始的唯一工作活动时间线；历史 `modification_log.md` 只作只读审计记录，不再新增条目：
+治理合同的当前身份是 `governance_version`，记录在 `docs/current_versions.yaml`。bug fix、性能或显存优化、
+测试、日志、seed、GPU 和训练失败不递增 research version；改变 observation、action、reward、planner formulation、
+GT、split 或核心训练目标时才创建新的研究版本。
 
-| 文档 | 文件名 | 用途 |
-|---|---|---|
-| activity | `activity_log.md` | 代码、配置、数据、训练、评估、诊断、启动/停止和产物的摘要时间线 |
-| memory | `repo_memory.md` / `machine_memory.md` | 可迁移事实 / 本机环境事实 |
-| architecture | `architecture_log.md`（现有）或 `architecture.md`（目标命名） | Pipeline、数据流、schema、张量、指标和 invariant |
-| experiment | `experiment_log.md` | 正式实验假设、结果和结论 |
-| decision | `decision_log.md` | 需求明确后的非平凡自主选择 |
+`work_version`（如 `V1.18.4`）可作为一个已确认工作单元的辅助追溯编号，通常对应一个 branch、Activity 和 PR；它不
+替代 research_version，不进入 current_versions，也不因命令、测试或轮询自动递增。
 
-根级路径为 `docs/logs/`，Task 级路径为 `src/task/<Task>/docs/logs/`。根级只记录跨 Task 或全仓库事实；Task 级记录局部事实。`machine_memory.md` 必须被 Git 忽略，`repo_notes_log.md` 已废弃且禁止重新创建。`status_log.md` 从切换点起不再作为规范入口。
+### 指导谱系与冲突
 
-活动条目按事件类型记录必要字段：修改事件包含 `change_level`、`approval`、分支、scope、文件、原因和验证；运行事件包含 `run_id`、`run_status`、命令、输出和证据入口。训练/评估终态还应记录 `last_step`/`last_epoch`（可得时）、`best_metric`、最佳/最近 checkpoint（存在时）、运行产生的 `metrics.jsonl`/`train.log` 入口；失败或停止时记录退出原因。所有活动条目都包含精确到秒的 `timestamp`、`activity_id`、`modification_version` 和 `base_commit`。
+同一数值基线使用 `V<n>.md`，其已确认细化使用单个小写字母后缀 `V<n><letter>.md`（`a`–`z`）。开始 change、run
+或 governance 前，必须按无后缀基线、`a` 至最高已确认后缀的顺序读取全部同基线指导，不能只读最新文件。
 
-## 4. 开始修改 Task 前的入口
+不同文件的明确冲突由较后字母覆盖该冲突部分，其他约束共同生效；超过 `z` 不得自行定义排序。若同一指导文件内部
+存在冲突、无法同时满足或语义不充分，立即停止相关实施，向用户指出原文和影响范围，并先把候选解释、拟定措辞、
+保护项、风险、验证与回滚写入计划草案。仅在用户确认后，才可修改该指导、定稿计划并继续。
 
-所有任务先读取文档入口和当前版本指针，再按 §2.1 的条件读取规范文件；随后读取最近作用域的事实记录和相关代码：
+## 5. Git 和用户改动保护
 
-```text
-docs/README.md
-docs/current_versions.yaml
-docs/logs/activity_log.md
-docs/logs/architecture_log.md
-docs/logs/repo_memory.md
-docs/logs/machine_memory.md（存在时）
-src/task/<Task>/docs/logs/activity_log.md
-src/task/<Task>/docs/logs/architecture_log.md
-src/task/<Task>/docs/logs/repo_memory.md
-src/task/<Task>/docs/logs/machine_memory.md（存在时）
-相关 experiment/decision/activity 历史、指导和最终 plan
-相关代码
-```
+`oyx` 是稳定集成分支。除非用户明确要求，不在 `oyx` 上直接开发；独立任务使用
+`ai/<task>/<description>` 分支，完成实现、验证和交接后再合并。实验参数变化不创建分支。
 
-### 4.1 指导与执行计划
+开始工作前检查 git status、git diff 和 git diff --cached。不得 reset、revert、overwrite 或带入用户已有修改；
+不确定归属时暂停并询问。只显式提交当前任务文件。outputs、checkpoint、cache、原始数据和大型日志不提交，
+根 output 只读且不新增内容。
 
-任务研究方向由用户提供的 `src/task/<Task>/docs/指导/V<n>.md` 定义；具体代码修改前，
-必须与用户协商形成同版本的 `src/task/<Task>/docs/plan/V<n>.md`。两者一一对应：
+## 6. 文档、计划和记录
 
-- `指导/V<n>.md`：研究目标、科学假设、希望探索的方向和明确的禁止事项；用户负责提供和修订；
-- `plan/V<n>.md`：将指导转成可执行的文件范围、接口/schema、保持不变的不变量、修改等级、
-  审批边界、验证命令和回滚方式；由 Agent 起草，和用户商讨后定稿；
-- 计划在协商期间允许反复修改，只有明确标记为最终版本后，Agent 才能按该计划修改代码、配置、
-  数据处理或实验流程；计划未定稿时只能阅读、分析和提出方案；
-- 计划版本号必须与指导版本号一致。若实现过程中发现最终计划无法执行或科研语义需要变化，
-  必须暂停并重新协商，不得静默偏离；
-- 协商中的 plan 草稿变化不写入 `activity_log.md`。定稿后的 plan 版本和实际实现结果，
-  在执行完成时一并写入对应的最终修改记录；plan 不是实验记录、架构事实源或修改流水账。
+- Task `docs/README.md` 是当前状态页，记录 research version、研究问题、已接受架构、invariant、blocker、证据
+  入口和重要 entrypoint；它不是历史流水账。
+- `指导/V<n>.md` 及其字母补充指导由用户维护研究目标、假设、成功标准和禁止事项；仅在用户确认同文件冲突的修订
+  措辞后，AI 才可修改相应指导。
+- 只有新研究版本或 L2/L3 方案需要最终 `plan/V<n>.md`；L0/L1 修复不为每次任务创建 plan。
+- `architecture/V<n>.md` 是按需冻结的架构快照，普通 bug fix 不更新。
+- 重要正式实验使用 experiment card，记录假设、配置、run、证据、结论和限制。
+- `activities/` 的独立 Activity 记录具有长期追溯价值的完成工作单元；`activities/README.md` 只做索引。
+  重要实现、正式指导修订、重要诊断事实、重要操作、研究版本或治理切换应写 Activity；单行修复、命令、逐 step
+  进度、轮询和普通 smoke 不写。`experiments/` 的 card 只记录科学假设、证据与结论；一个 card 可关联多个 run。
+- `logs/activity_log.md`、`experiment_log.md` 及其他旧日志仅作只读历史审计，不批量回填或拆分。
+- 历史 modification log、旧 experiment log、repo memory 和 machine memory 保留为只读或本机事实，不批量重写。
 
-开始 `change` 或改变研究变量的 `run-only/operation` 工作时，除读取指导文档外，还应检查同数字后缀的 `docs/plan/V<n>.md` 是否存在、是否已定稿；没有定稿计划时，先进入计划协商，不得直接实现或运行。
-`read-only/diagnostic` 可以在没有新 plan 时执行，但不得写入代码、配置、数据、实验结论或架构事实。
+Activity 至少包含 timestamp、activity_id 或 work_version、governance_version 或 research_version、git_commit、分支、scope、
+审批、验证和回滚入口。运行事件还包含 run_id、run_status、命令、输出目录、最后 step/epoch、best metric、关键
+checkpoint 和 metrics.jsonl/train.log 入口（存在时）。run_status 与科学 conclusion 分开记录。
 
-涉及实验读取 `experiment_log.md`；涉及已有设计选择读取 `decision_log.md`；修改、回归或历史行为读取相关 `activity_log.md` 和历史 `modification_log.md`。文档用于导航，代码和可复现实验结果是事实最终来源；发现不一致时先调查再更新文档。
+## 7. 标准工作流
 
-## 5. 通用交接与版本规范
+1. inspect：读取最小上下文，确认 Task、研究版本、保护边界和当前 Git 状态。
+2. change：读取全部适用指导并审查冲突；新研究方案或 L2/L3 先形成并确认 plan；在任务分支实施最小差异并补定向测试。
+3. run：读取全部适用指导并审查冲突，固定代码提交、研究版本、假设、变量、指标、预算和停止条件；生成独立 run_id、配置快照和 run_manifest，
+   结束后记录 activity 与实验卡。
+4. governance：治理修改按 L3 处理；审阅 diff、文档链接、兼容边界和回滚入口。
 
-### 5.1 完成汇报与规范反馈
+统一机器验证入口是：
 
-每次完成代码、配置、数据处理、实验、诊断或文档工作后，Agent 的最终汇报必须包含：
+    python tools/verify.py --changed
 
-- 完成结果、实际修改范围、未修改的保护边界和可回滚入口；
-- 使用的 `modification_version`、操作类别和审批状态；如涉及 plan/指导，提供其文档链接而不是新增版本字段；
-- 验证命令、关键结果、输出/manifest 入口，以及结果属于 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 还是 `INVALID_IMPLEMENTATION`；
-- 明确区分工程 smoke 证据与科研结论，不把实现可运行误报为效果成立；
-- 只要产生或更新 plan、activity、实验产物、运行目录或 manifest，必须提供可点击的 Markdown 路径；运行状态同时给出 `run_id` 和 `run_status`；终态以 activity 为唯一状态入口，并链接实际生成的 `metrics.jsonl`/`train.log` 和关键 checkpoint；
-- 上述本地链接的显示文本使用仓库根目录相对路径；仓库文档中的 target 按该 Markdown 文件位置使用
-  相对链接，聊天回复中的 target 使用当前客户端支持的本地绝对文件路径，不把文档中的 `../` 原样
-  复制到回复；回复中的本地路径或路径链接与前后中文、标点之间留半角空格，即在“活动记录：”与
-  链接、链接与句号之间各留一个半角空格；独立列表项的行首和行尾除外；
-- 活动记录至少导航到本次输出目录和关键产物；交接前使用 `audit_diff.py --check-links` 校验最新活动
-  条目的本地链接。运行中尚未生成的链接只允许在 `run_status` 为 `STARTED` / `RUNNING` 且同一行标记
-  `PENDING` 时保留；终态不得留下失效链接；
-- 本次是否遇到格式、目录、版本、日志或审批规则的阻碍。
+该入口在治理迁移第二阶段建立。第一阶段过渡期不能声称 VERIFY PASS；必须记录实际定向测试、语法检查和链接审计。
 
-如果现有格式或规范迫使 Agent 采取不自然、重复、易错或无法审计的做法，Agent 必须在完成汇报中单独列出“规范反馈”，说明：
+## 8. Ref2Dex 路径和科学边界
 
-1. 具体受限场景和当前 workaround；
-2. 可能造成的风险或维护成本；
-3. 建议新增/修改的规则、适用范围和兼容影响；
-4. 是否需要用户确认后才能修改 `AGENTS.md`、Skill 或公共合同。
+共享运行时在 `src/base/`，数据预处理在 `process/`，Task 实现在 `src/task/<Task>/`，独立研究在
+`src/task/<Task>/research/<experiment>/`。实际数据和 cache 按 `docs/目录规范.md` 放置，不复制到 Task 目录。
+代码、配置、数据处理和实验实现不得擅自改变坐标系、单位、GT、split、cache/schema、指标、checkpoint 解释或其他
+研究 invariant。
 
-Agent 可以提出规范改进建议，但不得因为建议本身擅自改变用户指导、版本线、架构快照或公共合同。只有用户明确要求或确认后，才把建议写入 `AGENTS.md`、Skill 或对应版本文档；规则修改本身也要记录在最近作用域的 `activity_log.md`。
-
-### 5.2 版本线与 AI 行为
-
-仓库按 `Vn/Vn.m/Vn.m.k` 组织 `modification_version`：`Vn` 由用户确认创建，`Vn.m` 是工作/计划边界，
-`Vn.m.k` 用于该边界下的具体实现、并行实验和状态变化，不单独创建 plan。指导文档只由用户
-更新或在用户明确指令下更新；架构快照只有用户明确要求时才更新。每次实质改动都必须在相关
-activity、experiment、decision 或 architecture 记录中写完整 `modification_version` 和操作类别。
-指导/plan 的数字后缀只用于文档配对，不作为运行 JSON 的额外版本字段。
-
-操作类别固定为 `governance`、`architecture`、`code`、`data`、`experiment`、`diagnostic`、
-`operation`、`documentation`；无法归类时必须在回复中说明并补充类别。完整规则见
-[`docs/modification_policy.md`](docs/modification_policy.md)。
-
-## 6. Git 与用户改动保护
-
-提交前检查：
-
-```bash
-git status
-git diff
-git diff --cached
-```
-
-只 `git add` 当前任务相关的显式路径。用户已有的修改、未跟踪实验脚本、数据、cache、output 和 checkpoint 不得被覆盖、reset、revert 或带入提交；不确定归属时先询问用户。提交信息默认中文且描述实际研究/实现结果。
-
-## 7. 子任务
-
-简单问题由当前 Agent 完成；只有独立调查、独立模块、独立实验或需要单独 review 时才拆分子任务，不为形式上的 Agent 化创建层层代理。
-
-子任务继承根 `AGENTS.md`、根项目总览和父 Task 的研究指导，不复制项目总览。只有当子任务形成独立研究/实现边界时才创建自己的 `docs/README.md`；其 `docs/logs/` 按事件按需创建 `activity_log.md`、`experiment_log.md`、`decision_log.md` 或局部架构记录，没有内容不建空文件。子任务的活动记录必须能回链父 Task 的 `activity_id`、实验或运行目录。
-
-## 8. Ref2Dex 仓库特有约定
-
-### 8.1 路径、运行和目录路由
-
-共享运行时在 `src/base/`，数据预处理入口在 `process/`，Task 实现在 `src/task/<Task>/`，诊断实验在
-`src/task/<Task>/research/<experiment>/`。具体目录、递归文档、运行产物、数据/cache、资产、测试和各类
-manifest 的唯一规范见 [`docs/目录规范.md`](docs/目录规范.md)；Agent 不需要用户为每次小改动指定目录，
-应按该规范自动归类。
-
-`outputs/`、研究 output、训练输出、cache、原始数据和 checkpoint 默认不提交；根 `output/` 只作为历史
-兼容目录，不再新增内容。训练、评估、benchmark 和正式数据处理仍必须生成 `run_manifest.json`，并在
-activity 中登记 `activity_id`、`run_id`、精确到秒的时间戳、`base_commit`、终态字段和可点击产物路径；
-BaseRunner 不再自动生成标准 `summary.json`，历史或 Task 专属 summary 可保留。字段和路径细节以目录规范
-及适用 Skill 为准。
-
-测试归属和验证范围遵循 [`tests/README.md`](tests/README.md) 与目录规范：单一 Task 的新测试放入
-`src/task/<Task>/tests/`，共享基础设施、跨 Task、数据处理和治理测试分别放入约定目录；根 `tests/`
-中现有文件暂作为 legacy 保留，根目录不再新增测试。Task 内小改动默认不运行无关 Task 的测试，
-公共合同或跨 Task 改动才扩大验证范围。
+最终交接使用固定字段：Task、研究版本、branch、git commit、research semantics、changed、protected、verification、
+scientific conclusion 和 next step。工程 smoke 只能证明接线或可运行性，不能冒充科研效果。
