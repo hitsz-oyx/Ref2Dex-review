@@ -7,6 +7,7 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.20`
+- V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。
 - V1.20a 四卡拓扑 smoke：用户授权跳过实际 rank-state hash 补充后，`0,1,3,6` 上的 4 rank × 64 env/rank 短 smoke 已完成，GPU PhysX、NCCL、rank-0 checkpoint/event 与有限性均通过。它仅支持四卡拓扑接线；`4×2048` 语义保持、正式训练及科研结论仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-173839-CMRESIDUAL-V120-DDP4-TOPOLOGY-SMOKE.md)。
 - V1.20c：已验证 raw GRAB 的 airplane/table `mesh.obj` 与既有可运行 DExplore mesh 逐字节一致；两项均为上游刻意忽略的运行时资产。V1.20a launcher 在执行前以固定哈希物化它们，既不提交也不软链接；计划见 [V1.20c](plan/V1.20c.md)。
 - V1.20：按用户授权建立 `s1_airplane_lift` 的隔离 DExplore 单序列 reconstructed baseline。原生 120 Hz contact、598-D schema、上游 reward/observation/action/physics 与坐标合同保持不变；公开 producer 缺失部分仅由 Task-local adapter 组装。DExplore 固定为 [vendor snapshot](../../../../third_party/DExplore/UPSTREAM.md)，多卡路径为 [V1.20a](plan/V1.20a.md) 定义的无 Horovod PyTorch/NCCL facade；vendor 迁移见 [V1.20b](plan/V1.20b.md)。`22dc69f` 的 2 rank × 64 env/rank 短 smoke 已完成，checkpoint/event finite；工程接线为 `SUPPORTED`，但未输出实际 rank 间 model-state hash，四 rank 与科研结论仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-173446-CMRESIDUAL-V120-DDP2-SMOKE.md)。
