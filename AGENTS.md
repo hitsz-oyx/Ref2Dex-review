@@ -65,6 +65,11 @@ L0/L1 可以执行，完成后汇报。L2/L3 必须在编辑前说明拟改变�
 
 `oyx` 是稳定集成分支。除非用户明确要求，不在 `oyx` 上直接开发；独立任务使用 `ai/<task>/<description>` 分支，完成实现、验证和交接后再合并。实验参数变化不创建分支。
 
+开始分支工作前检查现有 worktree 及其 Git 状态。没有真实并行需求时，复用一个干净的 AI worktree，
+不得为每个顺序分支新增 worktree；仅在并行工作、既有 worktree 有待保护修改，或用户要求长期保留隔离环境时
+新增，并记录原因。已合并 worktree 只有在干净、无未跟踪内容且用户明确授权后才可移除；未知、用户拥有、含
+修改或临时 worktree 不得触碰。移除 worktree 不会也不得隐含删除分支，删除分支须另获确认。
+
 开始工作前检查 git status、git diff 和 git diff --cached。不得 reset、revert、overwrite 或带入用户已有修改；不确定归属时暂停并询问。只显式提交当前任务文件。outputs、checkpoint、cache、原始数据和大型日志不提交，根 output 只读且不新增内容。
 
 ## 6. 文档、记录和路径

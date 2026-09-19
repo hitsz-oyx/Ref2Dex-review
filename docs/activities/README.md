@@ -6,6 +6,7 @@
 
 | Date | Activity | work_version | Type | Result |
 | --- | --- | --- | --- | --- |
+| 2026-09-19 | [V1.2g retire remote CI and retain worktree lifecycle](V1.2g-retire-remote-ci-worktree-lifecycle.md) | V1.2g | governance | completed |
 | 2026-09-19 | [V1.2e hermetic CI test selection](V1.2e-hermetic-ci-test-selection.md) | V1.2e | governance | completed |
 | 2026-09-19 | [V1.2d tracked-source migration gate](V1.2d-tracked-source-migration-gate.md) | V1.2d | governance | completed |
 | 2026-09-19 | [V1.2c directory exception control](V1.2c-directory-exception-control.md) | V1.2c | governance | completed |

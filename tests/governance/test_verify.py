@@ -62,3 +62,16 @@ def test_unresolved_directory_path_contract_is_discoverable() -> None:
     assert "目录合同不能决定新内容的位置" in agents
     assert "向用户确认位置" in directory_skill
     assert "是否应把该例外提升为本" in directory_skill
+
+
+def test_worktree_lifecycle_is_discoverable() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    change_control = (ROOT / ".agents/skills/research-change-control/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for document in (agents, change_control):
+        assert "复用一个干净的 AI worktree" in document
+        assert "无未跟踪内容且用户明确授权后" in document
+        assert "删除分支" in document
+        assert "确认" in document
