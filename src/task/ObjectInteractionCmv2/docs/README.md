@@ -24,5 +24,6 @@
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
 - [Task 活动记录](logs/activity_log.md)：本 Task 的治理、文档、实现和运行时间线。
+- [当前 Activities](activities/README.md)：合并后治理合同下的长期运行与诊断记录。
 
 本 Task 与旧 `ObjectInteractionCm` 独立。旧 Task 的代码、数据、cache、checkpoint、输出和未提交改动均不在本 Task 范围内。
