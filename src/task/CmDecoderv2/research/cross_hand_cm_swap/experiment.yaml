@@ -1,5 +1,5 @@
 name: cross_hand_cm_swap
-modification_version: V1.1.9
+work_version: V1.1.9
 importance: primary
 pinned: true
 tags: [cm, cross-hand, frozen, mano, inspire, paired-control]

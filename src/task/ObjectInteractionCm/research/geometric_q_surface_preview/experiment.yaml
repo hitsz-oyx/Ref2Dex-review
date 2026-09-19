@@ -1,6 +1,6 @@
 name: geometric_q_surface_preview
 task: ObjectInteractionCm
-modification_version: V1.4.8
+work_version: V1.4.8
 importance: exploratory
 pinned: false
 tags: [grab, mano, inspire, geometric-retarget, native-q, visualization]

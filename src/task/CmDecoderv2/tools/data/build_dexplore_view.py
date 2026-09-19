@@ -94,7 +94,7 @@ def build(args: argparse.Namespace) -> Path:
     source_index = _resolve(repo, args.index)
     output_root = _resolve(repo, args.output)
     urdf_path = _resolve(repo, args.urdf)
-    modification_version = str(args.modification_version)
+    work_version = str(args.work_version)
     _prepare_output(output_root, args.resume)
     source = json.loads(source_index.read_text(encoding="utf-8"))
     source_schema = source.get("schema_name")
@@ -164,7 +164,7 @@ def build(args: argparse.Namespace) -> Path:
                     raise ValueError(f"Invalid existing sidecar for {item['id']}")
                 sequence_manifest = {
                     "schema_name": SCHEMA_NAME,
-                    "modification_version": modification_version,
+                    "work_version": work_version,
                     "sequence_id": item["id"],
                     "split": split,
                     "variant": "inspire_rl",
@@ -229,7 +229,7 @@ def build(args: argparse.Namespace) -> Path:
     index_payload = {
         "schema_name": SCHEMA_NAME,
         "schema_version": "1.0.0",
-        "modification_version": modification_version,
+        "work_version": work_version,
         "created_at": _now(),
         "source_index": str(source_index),
         "source_index_sha256": _sha256(source_index),
@@ -290,7 +290,7 @@ def build(args: argparse.Namespace) -> Path:
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "CmDecoderv2",
         "activity_id": args.activity_id,
-        "modification_version": modification_version,
+        "work_version": work_version,
         "operation_category": ["data", "operation"],
         "operation": "build_dexplore_rl_decoder_view",
         "run_id": run_id,
@@ -300,7 +300,7 @@ def build(args: argparse.Namespace) -> Path:
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
         "inputs": {"source_index": str(source_index), "source_index_sha256": _sha256(source_index), "urdf": str(urdf_path), "urdf_sha256": _sha256(urdf_path)},
-        "parameters": {"mode": args.mode, "max_sequences": args.max_sequences, "window_size": args.window_size, "cache_stride": 1, "right_hand_only": True, "effective_fps": 30.0, "resume": args.resume, "modification_version": modification_version},
+        "parameters": {"mode": args.mode, "max_sequences": args.max_sequences, "window_size": args.window_size, "cache_stride": 1, "right_hand_only": True, "effective_fps": 30.0, "resume": args.resume, "work_version": work_version},
         "counts": {**index_payload["counts"], "rl_sidecars": converted, "windows": {split: sum(int(item.get("window_count", 0)) for item in output_entries[split]) for split in ("train", "val")}, "discarded_tail_frames": {split: len(output_entries[split]) * int(args.window_size) for split in ("train", "val")}},
         "outputs": {"root": str(output_root), "manifest": str(cache_manifest_out), "index": str(index_out)},
         "conclusion": "SUPPORTED",
@@ -319,7 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-sequences", type=int, default=None)
     parser.add_argument("--window-size", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--modification-version", default=DEFAULT_MODIFICATION_VERSION)
+    parser.add_argument("--work-version", default=DEFAULT_MODIFICATION_VERSION)
     parser.add_argument("--activity-id", required=True)
     return parser.parse_args()
 

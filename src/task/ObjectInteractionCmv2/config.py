@@ -30,7 +30,7 @@ def load_grab_config(path: str | Path) -> dict:
         if any("effect" in str(key).lower() for section in (cfg, model, cfg.get("training", {}))
                for key in section):
             raise ValueError("V1.3.2 does not configure an effect branch")
-        version = cfg.get("modification_version", "V1.3.2")
+        version = cfg.get("work_version", "V1.3.2")
         if version not in ("V1.3.2", "V1.3.3", "V1.3.4"):
             raise ValueError("Unsupported V1.3 run version")
         training = cfg.get("training", {})

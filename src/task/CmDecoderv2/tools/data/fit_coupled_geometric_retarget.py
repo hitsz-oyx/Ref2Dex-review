@@ -150,7 +150,7 @@ def main():
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     run_manifest = {
         "schema_name": "ref2dex_run_manifest_v1", "task": "CmDecoderv2", "run_id": args.run_id,
-        "run_status": "RUNNING", "modification_version": "V1.1.13", "operation_category": ["data", "operation"],
+        "run_status": "RUNNING", "work_version": "V1.1.13", "operation_category": ["data", "operation"],
         "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"), "base_commit": commit,
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
         "command": " ".join(__import__("sys").argv), "output_dir": str(output.resolve()),
@@ -182,7 +182,7 @@ def main():
         manifest = {
             "schema_name": "ref2dex_dexplore_coupled_geometric_v1", "diagnostic_only": False,
             "training_eligible": not args.smoke, "run_id": args.run_id, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "modification_version": "V1.1.13", "input_root": str(args.input_root.resolve()),
+            "work_version": "V1.1.13", "input_root": str(args.input_root.resolve()),
             "output_root": str(output.resolve()), "source_format": "dexplore_inspire_filtered_v1",
             "native_q_slice": [373, 391], "independent_finger_indices": [6, 8, 10, 12, 14, 15],
             "mimic_source": MIMIC_SOURCE.tolist(), "mimic_target": MIMIC_TARGET.tolist(), "mimic_scale": MIMIC_SCALE.tolist(),

@@ -555,7 +555,7 @@ def main() -> None:
         "run_id": run_id,
         "run_status": "RUNNING",
         "activity_id": args.activity_id,
-        "modification_version": str(cfg.modification_version),
+        "work_version": str(cfg.work_version),
         "operation_category": ["experiment", "operation"],
         "created_at": _now(),
         "base_commit": __import__("subprocess").check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

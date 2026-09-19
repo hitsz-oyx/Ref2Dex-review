@@ -1,6 +1,7 @@
 """rl_games network consuming frozen, simulator-generated OI-Cm context."""
 from __future__ import annotations
 
+import torch
 from torch import nn
 from rl_games.algos_torch import network_builder
 
@@ -94,3 +95,73 @@ class CmBuilder(network_builder.A2CBuilder):
 
     def build(self, name, **kwargs):
         return CmBuilder.Network(self.params, **kwargs)
+
+
+class CmEffectBuilder(CmBuilder):
+    """V1.15 actor-only Cmv2 token pooling over a raw 68+16×40+18 transport."""
+
+    class Network(CmBuilder.Network):
+        base_dim = 68
+        token_count = 16
+        token_dim = 40
+        effect_dim = 18
+        pooled_dim = 128
+        raw_actor_input_dim = base_dim + token_count * token_dim + effect_dim
+        effective_actor_input_dim = base_dim + pooled_dim + effect_dim
+
+        def __init__(self, params, **kwargs):
+            configured_actor_dim = int(params.get("actor_input_dim", self.raw_actor_input_dim))
+            configured_critic_dim = int(params.get("critic_input_dim", self.base_dim))
+            if configured_actor_dim != self.raw_actor_input_dim:
+                raise ValueError(
+                    f"Cmv2 actor transport must be {self.raw_actor_input_dim}, got {configured_actor_dim}")
+            if configured_critic_dim != self.base_dim:
+                raise ValueError(f"Cmv2 critic input must remain {self.base_dim}, got {configured_critic_dim}")
+            if not bool(params.get("separate", False)):
+                raise ValueError("Cmv2 actor-only context requires separate=true")
+            super().__init__(params, **kwargs)
+            self.raw_actor_input_dim = configured_actor_dim
+            self.actor_input_dim = self.effective_actor_input_dim
+            self._replace_first(self.actor_mlp, self.actor_input_dim)
+            self.token_encoder = nn.Sequential(
+                nn.Linear(self.token_dim, self.pooled_dim), nn.ELU(),
+                nn.Linear(self.pooled_dim, self.pooled_dim), nn.ELU())
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=self.pooled_dim, nhead=4, dim_feedforward=self.pooled_dim * 2,
+                dropout=0.0, activation="gelu", batch_first=True, norm_first=False)
+            self.token_attention = nn.TransformerEncoder(encoder_layer, num_layers=1)
+            self.effect_query = nn.Sequential(
+                nn.Linear(self.base_dim + self.effect_dim, self.pooled_dim), nn.ELU(),
+                nn.Linear(self.pooled_dim, self.pooled_dim))
+            self.attention_pool = nn.MultiheadAttention(
+                embed_dim=self.pooled_dim, num_heads=4, dropout=0.0, batch_first=True)
+
+        def _cm_input(self, obs):
+            if obs.ndim != 2 or obs.shape[-1] < self.raw_actor_input_dim:
+                raise ValueError(
+                    f"Cmv2 actor observation must be [B,>={self.raw_actor_input_dim}], got {tuple(obs.shape)}")
+            raw = obs[..., :self.raw_actor_input_dim]
+            if not torch.isfinite(raw).all():
+                raise FloatingPointError("Non-finite Cmv2 actor observation")
+            base = raw[..., :self.base_dim]
+            tokens = raw[..., self.base_dim:self.base_dim + self.token_count * self.token_dim].reshape(
+                raw.shape[0], self.token_count, self.token_dim)
+            effects = raw[..., -self.effect_dim:]
+            valid = tokens[..., -1] > 0.5
+            has_valid = valid.any(dim=1)
+            # MHA disallows an all-masked sequence.  A zero dummy token preserves
+            # a deterministic all-invalid representation while contributing no Cmv2 data.
+            safe_valid = valid.clone()
+            safe_valid[~has_valid, 0] = True
+            encoded = self.token_encoder(tokens)
+            encoded = encoded.masked_fill(~valid[..., None], 0.0)
+            encoded = self.token_attention(encoded, src_key_padding_mask=~safe_valid)
+            encoded = encoded.masked_fill(~valid[..., None], 0.0)
+            query = self.effect_query(torch.cat((base, effects), dim=-1)).unsqueeze(1)
+            pooled, _ = self.attention_pool(query, encoded, encoded,
+                                            key_padding_mask=~safe_valid, need_weights=False)
+            pooled = torch.where(has_valid[:, None], pooled[:, 0], torch.zeros_like(pooled[:, 0]))
+            return torch.cat((base, pooled, effects), dim=-1)
+
+    def build(self, name, **kwargs):
+        return CmEffectBuilder.Network(self.params, **kwargs)

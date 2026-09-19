@@ -1,6 +1,6 @@
 name: hand_region_sampling
 task: ObjectInteractionCm
-modification_version: V1.2.6
+work_version: V1.2.6
 importance: exploratory
 pinned: false
 tags: [mano, inspire, region-weighted-sampling, visualization]

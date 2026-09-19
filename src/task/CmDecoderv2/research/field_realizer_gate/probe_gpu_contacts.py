@@ -24,7 +24,7 @@ def main() -> None:
     os.dup2(log.fileno(), 2)
     manifest = {
         "manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2",
-        "modification_version": "V1.1.16", "operation_category": ["diagnostic", "operation"],
+        "work_version": "V1.1.16", "operation_category": ["diagnostic", "operation"],
         "run_id": args.output.name, "run_status": "RUNNING", "seed": 42,
         "created_at": datetime.now(timezone.utc).isoformat(), "command": sys.argv,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

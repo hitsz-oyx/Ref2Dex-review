@@ -233,7 +233,7 @@ def run(args: argparse.Namespace) -> dict:
         "run_status": "COMPLETED",
         "started_at": started_at,
         "completed_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],

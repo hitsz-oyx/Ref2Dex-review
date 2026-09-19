@@ -23,7 +23,7 @@ from eval_zero_residual import (
     _now,
     _write_json,
 )
-from eval_residual_stability import DEFAULT_REFERENCE, _resolve_modification_version
+from eval_residual_stability import DEFAULT_REFERENCE, _resolve_work_version
 from run_ppo_formal import _event_metrics, _tensor_tree_finite
 
 
@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
     parser.add_argument(
-        "--modification-version", default="",
+        "--work-version", default="",
         help="Explicit run provenance version; V1.10 experiments must pass V1.10.1")
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--dexplore-checkpoint", type=Path, default=DEFAULT_DEXPLORE)
@@ -89,12 +89,21 @@ def _resolved_config(overrides: list[str]) -> dict:
 
 def _build_model(params: dict, observation_dim: int):
     import torch
-    from isaacgymenvs.learning.cm_models import ModelCmContinuous
-    from isaacgymenvs.learning.cm_network_builder import CmBuilder
+    from isaacgymenvs.learning.cm_models import ModelCmContinuous, ModelCmEffectContinuous
+    from isaacgymenvs.learning.cm_network_builder import CmBuilder, CmEffectBuilder
 
-    builder = CmBuilder()
+    builder_name = params["network"].get("name", "cm_actor_critic")
+    builders = {"cm_actor_critic": CmBuilder, "cm_effect_actor_critic": CmEffectBuilder}
+    if builder_name not in builders:
+        raise ValueError(f"Unsupported CmResidual network builder {builder_name}")
+    builder = builders[builder_name]()
     builder.load(params["network"])
-    model = ModelCmContinuous(builder).build({
+    model_name = params["model"].get("name", "cm_continuous")
+    models = {"cm_continuous": ModelCmContinuous,
+              "cm_effect_continuous": ModelCmEffectContinuous}
+    if model_name not in models:
+        raise ValueError(f"Unsupported CmResidual model {model_name}")
+    model = models[model_name](builder).build({
         "input_shape": (observation_dim,), "actions_num": 18, "num_seqs": 1, "value_size": 1,
         "normalize_input": bool(params["config"]["normalize_input"]),
         "normalize_value": bool(params["config"]["normalize_value"]),
@@ -225,8 +234,8 @@ def _matched_actor_initialization_contract(control_params: dict, critic_cm_param
 def main() -> int:
     args = parse_args()
     is_v19 = args.variant in V19_VARIANTS
-    modification_version = _resolve_modification_version(
-        args.variant, args.modification_version)
+    work_version = _resolve_work_version(
+        args.variant, args.work_version)
     variant_contract = V19_VARIANTS.get(args.variant)
     observation_dim = 2005 if is_v19 else 1442
     train_config = (
@@ -234,7 +243,7 @@ def main() -> int:
     use_oi_cm_context = bool(is_v19)
     if args.gpu != 5 or args.seed != 42 or args.num_envs != NUM_ENVS:
         raise ValueError(
-            f"{modification_version} stability stages are locked to GPU5, seed42, and 64 envs")
+            f"{work_version} stability stages are locked to GPU5, seed42, and 64 envs")
     if args.max_epochs in (2, 10) and args.initial_checkpoint is not None:
         raise ValueError(f"T{args.max_epochs} must start without a residual checkpoint")
     if args.max_epochs == 20 and args.initial_checkpoint is None:
@@ -292,11 +301,11 @@ def main() -> int:
         overrides.append("train.params.config.save_frequency=1")
     resolved = _resolved_config(overrides)
     if bool(resolved["task"]["basePolicy"]["useOiCmContext"]) != use_oi_cm_context:
-        raise RuntimeError(f"{modification_version} OI-Cm context contract drift")
+        raise RuntimeError(f"{work_version} OI-Cm context contract drift")
     resolved_max_epochs = int(resolved["train"]["params"]["config"]["max_epochs"])
     if resolved_max_epochs != args.max_epochs:
         raise RuntimeError(
-            f"{modification_version} stage budget drift: requested {args.max_epochs}, resolved {resolved_max_epochs}")
+            f"{work_version} stage budget drift: requested {args.max_epochs}, resolved {resolved_max_epochs}")
     contract = _safe_contract(resolved["train"]["params"], observation_dim)
     if variant_contract:
         for name in (
@@ -306,7 +315,7 @@ def main() -> int:
                 raise RuntimeError(
                     f"{args.variant} {name} drift: {contract[name]} != {variant_contract[name]}")
     if not contract["passed"]:
-        raise RuntimeError(f"{modification_version} safe policy contract failed: {contract}")
+        raise RuntimeError(f"{work_version} safe policy contract failed: {contract}")
     if args.initial_checkpoint:
         _, initial_validation = _load_checkpoint(
             args.initial_checkpoint.resolve(), resolved["train"]["params"], observation_dim)
@@ -348,9 +357,9 @@ def main() -> int:
         "mode": f"{run_label}_stability_t{args.max_epochs}", "task": "CmResidual",
         "run_id": run_id,
         "activity_id": args.activity_id or (
-            f"ACT-CMRESIDUAL-{modification_version.replace('.', '')}-"
+            f"ACT-CMRESIDUAL-{work_version.replace('.', '')}-"
             f"{args.variant.upper()}-T{args.max_epochs}"),
-        "run_status": "STARTED", "modification_version": modification_version,
+        "run_status": "STARTED", "work_version": work_version,
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": " ".join(shlex.quote(value) for value in command_values),
@@ -426,7 +435,7 @@ def main() -> int:
                             "value": validation["deterministic_reload_action_max_abs_diff"]},
             "checkpoint": str(last_checkpoint),
             "checkpoint_validation": str(validation_path),
-            "exit_reason": f"Reached {modification_version} {args.variant} T{args.max_epochs} training budget",
+            "exit_reason": f"Reached {work_version} {args.variant} T{args.max_epochs} training budget",
             "gate_passed": passed,
             "conclusion": "SUPPORTED" if passed else "INVALID_IMPLEMENTATION",
             "scientific_conclusion": "INCONCLUSIVE",
@@ -434,7 +443,7 @@ def main() -> int:
         })
         _write_json(manifest_path, manifest)
         if not passed:
-            raise RuntimeError(f"{modification_version} training contract failed: {validation}")
+            raise RuntimeError(f"{work_version} training contract failed: {validation}")
     except BaseException as error:
         traceback.print_exc()
         if not metrics_path.exists():

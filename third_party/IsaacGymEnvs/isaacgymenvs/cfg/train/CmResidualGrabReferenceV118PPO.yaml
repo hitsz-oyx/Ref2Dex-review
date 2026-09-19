@@ -1,0 +1,25 @@
+defaults:
+  - CmResidualSafePPO
+  - _self_
+
+params:
+  algo:
+    name: cm_planner_continuous
+  model:
+    name: cm_continuous
+  network:
+    name: cm_actor_critic
+    separate: true
+    actor_input_dim: 1442
+    critic_input_dim: 1442
+  config:
+    name: CmResidualGrabReferenceV118PPO
+    full_experiment_name: CmResidualGrabReferenceV118PPO
+    normalize_input: true
+    max_epochs: 100000000
+    horizon_length: 64
+    minibatch_size: 8192
+    mini_epochs: 4
+    save_best_after: 0
+    save_frequency: 625
+    cm_distill_coef: 0.10

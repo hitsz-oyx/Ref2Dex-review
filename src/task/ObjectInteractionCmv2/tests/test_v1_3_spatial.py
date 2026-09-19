@@ -46,6 +46,23 @@ def test_empty_contact_finite_and_no_gt_leakage():
     assert all(torch.isfinite(p.grad).all() for p in net.parameters() if p.grad is not None)
 
 
+def test_v13_interaction_object_chunk_matches_unchunked_outputs():
+    torch.manual_seed(19)
+    value = batch()
+    net = model().eval()
+    with torch.no_grad():
+        unchunked = net(value)
+        chunked_value = dict(value)
+        chunked_value["interaction_object_chunk"] = 3
+        chunked = net(chunked_value)
+    for key in ("delta_xi_root", "obj_flow_pred", "cm_tokens", "token_mass",
+                "contact_features", "edge_distances"):
+        torch.testing.assert_close(chunked[key], unchunked[key], atol=1e-6, rtol=1e-6)
+    assert torch.equal(chunked["token_mask"], unchunked["token_mask"])
+    assert torch.equal(chunked["edge_indices"], unchunked["edge_indices"])
+    assert torch.equal(chunked["edge_valid_mask"], unchunked["edge_valid_mask"])
+
+
 def test_competitive_mass_conservation_and_permutation():
     torch.manual_seed(1)
     tokens = CompetitiveContactTokens(8, 4)

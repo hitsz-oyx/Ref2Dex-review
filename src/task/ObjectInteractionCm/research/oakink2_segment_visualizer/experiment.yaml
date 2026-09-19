@@ -1,6 +1,6 @@
 name: oakink2_segment_visualizer
 task: ObjectInteractionCm
-modification_version: V1.4.4
+work_version: V1.4.4
 importance: exploratory
 pinned: false
 tags: [oakink2, active-tool, segmentation, visualization, mano]

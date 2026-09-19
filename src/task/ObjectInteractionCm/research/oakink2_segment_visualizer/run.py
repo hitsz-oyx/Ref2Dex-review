@@ -510,7 +510,7 @@ def _prepare_run(args: argparse.Namespace, index: dict, groups: Mapping[str, Seq
         "run_id": output.name,
         "run_status": "RUNNING",
         "started_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": shlex.join([sys.executable, *sys.argv]),

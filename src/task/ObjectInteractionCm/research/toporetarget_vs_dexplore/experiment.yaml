@@ -1,6 +1,6 @@
 name: toporetarget_vs_dexplore
 Task: ObjectInteractionCm
-modification_version: V1.4.2
+work_version: V1.4.2
 importance: exploratory
 pinned: false
 tags: [inspire, geometric, toporetarget, bilateral, pilot]

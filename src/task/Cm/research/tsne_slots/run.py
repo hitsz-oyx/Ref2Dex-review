@@ -427,7 +427,7 @@ def main() -> None:
     (output_root / "metadata.json").write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
     experiment_config = {
         "experiment_id": "tsne_slots",
-        "modification_version": "V1.2.1",
+        "work_version": "V1.2.1",
         "inputs": {
             "checkpoint": str(args.checkpoint),
             "grab_root": str(args.grab_root),

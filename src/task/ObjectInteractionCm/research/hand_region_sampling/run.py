@@ -525,7 +525,7 @@ def _parse_args() -> argparse.Namespace:
         default="balanced",
         help="sampling profile; uniform_surface applies no Region or link quota, uniform_surface_ratio uses area-ratio counts",
     )
-    parser.add_argument("--modification-version", default="V1.2.6")
+    parser.add_argument("--work-version", default="V1.2.6")
     return parser.parse_args()
 
 
@@ -610,7 +610,7 @@ def main() -> int:
 
     summary = {
         "schema_name": "ref2dex_hand_region_sampling_preview_v1",
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "total_points": NUM_POINTS if len(set(point_counts.values())) == 1 else None,
         "point_counts": point_counts,
         "surface_seed": args.surface_seed,
@@ -645,7 +645,7 @@ def main() -> int:
     manifest = {
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "ObjectInteractionCm",
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "operation": "hand_region_sampling_preview",
         "run_id": output_dir.name,
         "run_status": "COMPLETED",

@@ -51,7 +51,7 @@ def execute(args):
     if not len(frames) or frames[-1] >= raw["n_frames"]:
         raise ValueError("Requested frames outside source")
     prepare_assets(args.dexplore_assets, args.assets, sides=args.sides, left_assets=args.left_assets)
-    report = {"modification_version": VERSION, "source": info(source), "sequence": args.sequence,
+    report = {"work_version": VERSION, "source": info(source), "sequence": args.sequence,
               "fps": float(raw["framerate"]), "source_frame_ids": frames.tolist(), "sides": {}}
     arrays = {"source_frame_id": frames, "timestamps": frames / raw["framerate"]}
     for side, key in (("left", "lhand"), ("right", "rhand")):
@@ -131,7 +131,7 @@ def main():
     args = parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[5]
-    manifest = {"Task": "ObjectInteractionCm", "modification_version": VERSION,
+    manifest = {"Task": "ObjectInteractionCm", "work_version": VERSION,
                 "run_id": args.output.name, "run_status": "RUNNING", "seed": 42, "checkpoint": None,
                 "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "base_commit": subprocess.check_output(["git","rev-parse","HEAD"],cwd=repo,text=True).strip(),

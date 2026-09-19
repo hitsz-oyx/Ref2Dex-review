@@ -1,0 +1,18 @@
+defaults:
+  - CmResidualGrabReferenceTransitionCmv2Actor
+  - _self_
+
+name: CmResidualGrabReferenceTransitionCmv2ActorV116
+
+basePolicy:
+  # V1.16 actor uses the GPU nominal-base path directly; legacy executed-action
+  # Cmv2 remains available only to the V1.14.5 diagnostic buffer config.
+  useCmv2ActionEvaluator: false
+
+cmBuffer:
+  enabled: true
+  mode: transition_only
+  schema: cmresidual.cm_buffer.transition_only.v2
+  outputDir: ${oc.env:CMRESIDUAL_CM_BUFFER_DIR,""}
+  rank: ${oc.env:RANK,0}
+  flushEvery: 8192

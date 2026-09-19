@@ -2,7 +2,7 @@ _base_: src/task/Cm/configs/active/hrdexdb_inspire_f1_finetune_cm64_additive.yam
 
 name: cm_grab_inspire_f1_hand_flow_cm64_additive
 
-modification_version: V1.2.1
+work_version: V1.2.1
 operation_category: [experiment, data]
 
 meta:

@@ -211,7 +211,7 @@ def main() -> int:
         "run_id": run_id,
         "activity_id": activity_id,
         "run_status": "STARTED",
-        "modification_version": "V1.7",
+        "work_version": "V1.7",
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": command,

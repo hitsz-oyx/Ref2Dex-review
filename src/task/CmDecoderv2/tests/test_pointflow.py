@@ -95,7 +95,7 @@ def test_coupled_training_config_matches_label_surface() -> None:
     assert cfg.data.batch_size == 8
     assert cfg.meta.finger_q_dim == 6
     index = json.loads((Path(cfg.data.view_root) / "index.json").read_text())
-    assert index["modification_version"] == cfg.modification_version
+    assert index["work_version"] == cfg.work_version
     surface = DifferentiableInspireSurface(
         cfg.model.surface_urdf, sample_count=cfg.meta.num_hand_points,
         surface_sampling=cfg.model.surface_sampling,

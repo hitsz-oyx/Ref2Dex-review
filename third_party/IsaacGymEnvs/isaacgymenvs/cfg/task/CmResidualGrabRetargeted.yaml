@@ -1,0 +1,74 @@
+name: CmResidualGrabRetargeted
+physics_engine: ${..physics_engine}
+env:
+  numEnvs: ${resolve_default:64,${...num_envs}}
+  envSpacing: 2.0
+  episodeLength: 366
+  controlFrequencyInv: 2
+  numObservations: 68
+  numActions: 18
+  clipObservations: 10.0
+  clipActions: 1.0
+  liftRewardScale: 20.0
+  distanceRewardScale: 2.0
+  actionPenaltyScale: 0.01
+  successLift: 0.08
+  terminateOnSuccess: true
+  wristStiffness: 200.0
+  wristDamping: 20.0
+  plane:
+    staticFriction: 1.0
+    dynamicFriction: 1.0
+    restitution: 1.0
+  tipLinks: [index_tip, middle_tip, pinky_tip, ring_tip, thumb_tip]
+  asset:
+    assetRoot: /home2/wyy/oyx_ws/Ref2Dex/src/task/CmDecoderv2/assets
+    assetFileName: inspire_hand_new/inspire_hand_right.urdf
+    objectAssetRoot: /home2/wyy/oyx_ws/dexplore/dexplore/data/assets/mjcf
+    objectAssetFileName: airplane.urdf
+
+task:
+  randomize: false
+  randomization_params: {}
+
+basePolicy:
+  mode: retargeted_reference
+  useOiCmContext: false
+  cmFeatureDim: 32
+  cmNumSlots: 16
+  cmObjectPoints: 1024
+  cmHandPoints: 1538
+reference:
+  profile: grab_retargeted_v1_13
+  allowIneligibleFor: ""
+  path: ${oc.env:CMRESIDUAL_REFERENCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/cm_residual/reference_tracking_v2/s1_airplane_lift/reference.npz}
+  sha256: a2d710b911cf8988750208450c411b3095e187ed2b2f05df459c24d5748812c1
+  sourceTensor: ${oc.env:CMRESIDUAL_DEXPLORE_SOURCE,/home2/wyy/oyx_ws/Ref2Dex/data/processed_data/inspire_geometric_dexplore_coupled_v1_20260912/s1_airplane_lift/interaction_hand_inspire.pt}
+  sourceTensorSha256: 19b110dc81c4928b4f3e6197d8549b011fd48a8157e75fd06668bd306dc396cf
+  frameStart: 44
+  frameEnd: 410
+
+residual:
+  translationScaleM: 0.015
+  rotationScaleRad: 0.20
+  fingerScaleRad: 0.08
+
+sim:
+  dt: 0.016666666666666666
+  substeps: 4
+  up_axis: z
+  use_gpu_pipeline: ${eq:${...pipeline},"gpu"}
+  gravity: [0.0, 0.0, -9.81]
+  physx:
+    num_threads: 8
+    solver_type: 1
+    use_gpu: ${contains:"cuda",${....sim_device}}
+    num_position_iterations: 8
+    num_velocity_iterations: 1
+    contact_offset: 0.01
+    rest_offset: 0.0
+    bounce_threshold_velocity: 0.2
+    max_depenetration_velocity: 20.0
+    default_buffer_size_multiplier: 25.0
+    num_subscenes: ${....num_subscenes}
+    max_gpu_contact_pairs: 41943040

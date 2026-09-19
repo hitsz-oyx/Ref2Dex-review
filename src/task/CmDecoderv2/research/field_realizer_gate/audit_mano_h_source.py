@@ -21,7 +21,7 @@ def main() -> None:
     parent_root = Path("data/processed_data/cm_object_v2_surface512_object_pose_20260830")
     grab_root = Path("data/raw_data/GRAB")
     manifest = {
-        "manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "modification_version": "V1.1.16",
+        "manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "work_version": "V1.1.16",
         "operation_category": ["diagnostic"], "run_id": args.output.name, "run_status": "RUNNING",
         "created_at": datetime.now(timezone.utc).isoformat(), "command": sys.argv,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

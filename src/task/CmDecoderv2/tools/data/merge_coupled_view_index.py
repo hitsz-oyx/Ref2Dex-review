@@ -38,7 +38,7 @@ def main() -> None:
     args.output_root.mkdir(parents=True)
     (args.output_root / "index.json").write_text(json.dumps(output, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "CmDecoderv2", "operation": "merge_coupled_view_index", "run_id": args.output_root.name, "run_status": "COMPLETED", "modification_version": "V1.1.13", "operation_category": ["data", "operation"], "created_at": datetime.now().astimezone().isoformat(timespec="seconds"), "base_commit": commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)), "command": [sys.executable, *sys.argv], "counts": output["counts"], "outputs": {"index": str((args.output_root / "index.json").resolve())}, "conclusion": "SUPPORTED"}
+    manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "CmDecoderv2", "operation": "merge_coupled_view_index", "run_id": args.output_root.name, "run_status": "COMPLETED", "work_version": "V1.1.13", "operation_category": ["data", "operation"], "created_at": datetime.now().astimezone().isoformat(timespec="seconds"), "base_commit": commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)), "command": [sys.executable, *sys.argv], "counts": output["counts"], "outputs": {"index": str((args.output_root / "index.json").resolve())}, "conclusion": "SUPPORTED"}
     (args.output_root / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(manifest["counts"], ensure_ascii=False))
 

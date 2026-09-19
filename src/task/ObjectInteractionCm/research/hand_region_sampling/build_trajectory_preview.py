@@ -351,7 +351,7 @@ def main() -> int:
     parser.add_argument("--split", choices=("train", "val", "test"), default="train")
     parser.add_argument("--count-per-variant", type=int, default=DEFAULT_COUNT_PER_VARIANT)
     parser.add_argument("--surface-seed", type=int, default=SURFACE_SEED)
-    parser.add_argument("--modification-version", default="V1.2.15")
+    parser.add_argument("--work-version", default="V1.2.15")
     args = parser.parse_args()
     if args.surface_seed != SURFACE_SEED:
         raise ValueError(f"area-ratio preview is pinned to surface_seed={SURFACE_SEED}")
@@ -391,7 +391,7 @@ def main() -> int:
         )
     assignment = {
         "schema_name": "ref2dex_object_interaction_cm_variable_hand_preview_assignment_v1",
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "source_index": str(source_index_path),
         "split": args.split,
         "count_per_variant": args.count_per_variant,
@@ -431,7 +431,7 @@ def main() -> int:
         "run_id": output_root.name,
         "run_status": "COMPLETED",
         "created_at": _now(),
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": " ".join([sys.executable, *sys.argv]),

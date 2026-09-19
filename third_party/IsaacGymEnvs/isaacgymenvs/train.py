@@ -98,6 +98,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning import amp_players
     from isaacgymenvs.learning import amp_models
     from isaacgymenvs.learning import amp_network_builder
+    from isaacgymenvs.learning import v118_agent
     import isaacgymenvs
 
 
@@ -187,11 +188,14 @@ def launch_rlg_hydra(cfg: DictConfig):
     def build_runner(algo_observer):
         runner = Runner(algo_observer)
         runner.algo_factory.register_builder('amp_continuous', lambda **kwargs : amp_continuous.AMPAgent(**kwargs))
+        runner.algo_factory.register_builder('cm_planner_continuous', lambda **kwargs: v118_agent.V118PlannerAgent(**kwargs))
         runner.player_factory.register_builder('amp_continuous', lambda **kwargs : amp_players.AMPPlayerContinuous(**kwargs))
         model_builder.register_model('continuous_amp', lambda network, **kwargs : amp_models.ModelAMPContinuous(network))
         model_builder.register_network('amp', lambda **kwargs : amp_network_builder.AMPBuilder())
         model_builder.register_model('cm_continuous', lambda network, **kwargs: cm_models.ModelCmContinuous(network))
+        model_builder.register_model('cm_effect_continuous', lambda network, **kwargs: cm_models.ModelCmEffectContinuous(network))
         model_builder.register_network('cm_actor_critic', lambda **kwargs: cm_network_builder.CmBuilder())
+        model_builder.register_network('cm_effect_actor_critic', lambda **kwargs: cm_network_builder.CmEffectBuilder())
 
         return runner
 

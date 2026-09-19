@@ -87,3 +87,64 @@ def compose_physical_residual(
         "applied_delta": applied,
         "saturation": saturation,
     }
+
+
+def compose_reference_residual(base_targets: torch.Tensor, residual_action: torch.Tensor,
+                               lower: torch.Tensor, upper: torch.Tensor, *,
+                               translation_scale_m: float, rotation_scale_rad: float,
+                               finger_scale_rad: float,
+                               mimic_scales: tuple[float, ...]) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Add a bounded residual to an absolute retargeted native PD target."""
+    for name, value in (("base_targets", base_targets), ("residual_action", residual_action),
+                        ("lower", lower), ("upper", upper)):
+        _validate(name, value)
+    if ((base_targets < lower - 1e-5) | (base_targets > upper + 1e-5)).any():
+        raise ValueError("Retargeted base target exceeds native joint limits")
+    if len(mimic_scales) != len(MIMIC_NATIVE):
+        raise ValueError("Retargeted mimic scale count mismatch")
+    def couple(value):
+        result = value.clone()
+        independent = result[..., list(INDEPENDENT_NATIVE)]
+        for mimic, source, scale in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+            result[..., mimic] = independent[..., source] * float(scale)
+        return result
+    if not torch.allclose(couple(base_targets), base_targets, atol=1e-5, rtol=0):
+        raise ValueError("Retargeted base target violates mimic coupling")
+    residual = residual_action.clamp(-1.0, 1.0)
+    configured_authority = torch.zeros_like(base_targets)
+    configured_authority[..., :3] = float(translation_scale_m)
+    configured_authority[..., 3:6] = float(rotation_scale_rad)
+    configured_authority[..., list(INDEPENDENT_NATIVE)] = float(finger_scale_rad)
+    effective_lower, effective_upper = lower.clone(), upper.clone()
+    for mimic, source, scale in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+        if float(scale) <= 0:
+            raise ValueError("Retargeted mimic scale must be positive")
+        source_native = INDEPENDENT_NATIVE[source]
+        effective_lower[..., source_native] = torch.maximum(
+            effective_lower[..., source_native], lower[..., mimic] / float(scale))
+        effective_upper[..., source_native] = torch.minimum(
+            effective_upper[..., source_native], upper[..., mimic] / float(scale))
+    effective_authority = torch.zeros_like(base_targets)
+    requested = torch.zeros_like(base_targets)
+    independent = tuple(range(6)) + tuple(INDEPENDENT_NATIVE)
+    for index in independent:
+        positive = torch.minimum(configured_authority[..., index],
+                                 (effective_upper[..., index] - base_targets[..., index]).clamp_min(0))
+        negative = torch.minimum(configured_authority[..., index],
+                                 (base_targets[..., index] - effective_lower[..., index]).clamp_min(0))
+        effective_authority[..., index] = torch.where(residual[..., index] >= 0, positive, negative)
+        requested[..., index] = residual[..., index] * effective_authority[..., index]
+    # A zero residual retains the exact reference target; it is not an
+    # authority reduction event even if that target lies on a joint boundary.
+    authority_limited = ((effective_authority < configured_authority - 1e-7) &
+                         (residual.abs() > 1e-7))
+    for mimic, source, _ in zip(MIMIC_NATIVE, MIMIC_SOURCE, mimic_scales):
+        authority_limited[..., mimic] = authority_limited[..., INDEPENDENT_NATIVE[source]]
+    unclamped = couple(base_targets + requested)
+    targets = unclamped.clamp(lower, upper)
+    saturation = (targets.sub(unclamped).abs() > 1e-7).to(targets.dtype)
+    return targets, {"base_targets": base_targets, "requested_delta": requested,
+                     "applied_delta": targets - base_targets, "saturation": saturation,
+                     "configured_authority": configured_authority,
+                     "effective_authority": effective_authority,
+                     "authority_limited": authority_limited.to(targets.dtype)}

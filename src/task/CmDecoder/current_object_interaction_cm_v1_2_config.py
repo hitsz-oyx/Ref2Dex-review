@@ -5,7 +5,7 @@ from src.task.CmDecoder.config import Config as BaselineConfig
 
 
 class Config(BaselineConfig):
-    modification_version = "V1.2.0"
+    work_version = "V1.2.0"
     operation_category = ["architecture", "code", "data", "experiment", "operation"]
 
     class meta(BaselineConfig.meta):

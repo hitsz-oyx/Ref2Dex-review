@@ -45,17 +45,17 @@ LEGACY_MODIFICATION_VERSIONS = {
 V110_MODIFICATION_VERSION = "V1.10.1"
 
 
-def _resolve_modification_version(variant: str, requested: str = "") -> str:
+def _resolve_work_version(variant: str, requested: str = "") -> str:
     legacy = LEGACY_MODIFICATION_VERSIONS[variant]
-    modification_version = requested or legacy
+    work_version = requested or legacy
     allowed = {legacy}
     if variant in V19_VARIANTS:
         allowed.add(V110_MODIFICATION_VERSION)
-    if modification_version not in allowed:
+    if work_version not in allowed:
         raise ValueError(
-            f"Unsupported modification version {modification_version!r} for {variant}; "
+            f"Unsupported work version {work_version!r} for {variant}; "
             f"expected one of {sorted(allowed)}")
-    return modification_version
+    return work_version
 
 
 def _install_isaacgym_numpy_compat() -> None:
@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--variant", choices=("v18_no_cm", *V19_VARIANTS), default="v18_no_cm")
     parser.add_argument(
-        "--modification-version", default="",
+        "--work-version", default="",
         help="Explicit run provenance version; V1.10 experiments must pass V1.10.1")
     parser.add_argument("--steps", type=int, default=PROTOCOL_STEPS)
     parser.add_argument("--num-envs", type=int, default=PROTOCOL_ENVS)
@@ -136,15 +136,15 @@ def _load_policy(checkpoint: Path, params: dict, device, observation_dim: int):
 def main() -> int:
     args = parse_args()
     is_v19 = args.variant in V19_VARIANTS
-    modification_version = _resolve_modification_version(
-        args.variant, args.modification_version)
+    work_version = _resolve_work_version(
+        args.variant, args.work_version)
     train_config = V19_VARIANTS.get(args.variant, "CmResidualSafePPO")
     use_oi_cm_context = bool(is_v19)
     observation_dim = 2005 if is_v19 else 1442
     if (args.steps != PROTOCOL_STEPS or args.num_envs != PROTOCOL_ENVS
             or args.gpu != 5 or args.seed != 42):
         raise ValueError(
-            f"{modification_version} protocol is locked to GPU5, 367 steps, 64 envs, and seed 42")
+            f"{work_version} protocol is locked to GPU5, 367 steps, 64 envs, and seed 42")
     if bool(args.checkpoint) != bool(args.baseline_manifest):
         raise ValueError("checkpoint evaluation requires --baseline-manifest, and baseline uses neither")
     mode = "checkpoint_mean" if args.checkpoint else "zero_residual"
@@ -201,10 +201,10 @@ def main() -> int:
         "task": "CmResidual",
         "run_id": run_id,
         "activity_id": args.activity_id or (
-            f"ACT-CMRESIDUAL-{modification_version.replace('.', '')}-"
+            f"ACT-CMRESIDUAL-{work_version.replace('.', '')}-"
             f"{args.variant.upper()}-STABILITY-EVAL"),
         "run_status": "STARTED",
-        "modification_version": modification_version,
+        "work_version": work_version,
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": " ".join(shlex.quote(value) for value in [sys.executable, *sys.argv]),
@@ -289,7 +289,7 @@ def main() -> int:
                     "input_sha256", "reward", "residual_scale")}
                 if resolved_contract != expected_contract:
                     raise RuntimeError(
-                        f"{modification_version} evaluation contract drift: {resolved_contract} != {expected_contract}")
+                        f"{work_version} evaluation contract drift: {resolved_contract} != {expected_contract}")
                 _write_json(config_path, {"run_id": run_id, "resolved": resolved,
                                           "runtime_overrides": overrides, "protocol": protocol})
                 env = isaacgymenvs.make(
@@ -403,7 +403,7 @@ def main() -> int:
         "best_metric": {"name": "mean_env_max_lift_m",
                         "value": summary["mean_env_max_lift_m"]},
         "checkpoint": checkpoint["path"] if checkpoint else None,
-        "exit_reason": f"Reached {modification_version} {args.variant} deterministic evaluation budget",
+        "exit_reason": f"Reached {work_version} {args.variant} deterministic evaluation budget",
         "gate": gate, "gate_passed": bool(gate["passed"]),
         "conclusion": "SUPPORTED" if gate["passed"] else "REFUTED",
         "scientific_conclusion": "INCONCLUSIVE", "summary": summary,

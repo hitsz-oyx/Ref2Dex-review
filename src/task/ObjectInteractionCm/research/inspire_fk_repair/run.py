@@ -152,7 +152,7 @@ def _export(
     sequence: str,
     input_root: Path,
     output_root: Path,
-    modification_version: str,
+    work_version: str,
 ) -> tuple[list[str], str]:
     command = [
         str(python),
@@ -167,8 +167,8 @@ def _export(
         source,
         "--sequence",
         sequence,
-        "--modification-version",
-        modification_version,
+        "--work-version",
+        work_version,
     ]
     result = subprocess.run(command, cwd=REPO_ROOT, text=True, capture_output=True)
     combined = result.stdout + result.stderr
@@ -192,7 +192,7 @@ def main() -> None:
     )
     parser.add_argument("--grab-sequence", default="s1/airplane_fly_1")
     parser.add_argument("--arctic-sequence", default="s01/box_use_01")
-    parser.add_argument("--modification-version", default="V1.4.6")
+    parser.add_argument("--work-version", default="V1.4.6")
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
     args = parser.parse_args()
 
@@ -201,7 +201,7 @@ def main() -> None:
     started_at = _now()
     commit, dirty = _git_info()
     config = {
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "grab_input_root": str(args.grab_input_root.resolve()),
         "arctic_input_root": str(args.arctic_input_root.resolve()),
         "grab_sequence": args.grab_sequence,
@@ -218,7 +218,7 @@ def main() -> None:
         "run_id": output.name,
         "run_status": "RUNNING",
         "started_at": started_at,
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "config": str((output / "config.json").resolve()),
@@ -238,7 +238,7 @@ def main() -> None:
                 sequence=sequence,
                 input_root=input_root.resolve(),
                 output_root=output / "cache" / dataset,
-                modification_version=args.modification_version,
+                work_version=args.work_version,
             )
             commands.append(command)
             logs.append(f"$ {shlex.join(command)}\n{log}")

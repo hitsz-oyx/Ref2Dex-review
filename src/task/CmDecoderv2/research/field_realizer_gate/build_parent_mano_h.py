@@ -47,7 +47,7 @@ def build(entry: dict, out: Path) -> dict:
     np.save(out / "mano_h.npy", h)
     np.save(out / "raw_frame_id.npy", raw_ids)
     manifest = {
-        "schema_name": "ref2dex_mano_h_parent_cache_v1", "modification_version": "V1.1.16",
+        "schema_name": "ref2dex_mano_h_parent_cache_v1", "work_version": "V1.1.16",
         "source_type": "mano_parent_pose_in_parent_object_pose", "coordinate_frame": "parent_object_pose_t",
         "field_definition": "H=wrist_object_t[3]+wrist_object_rot6d[6]+hand_pose[24]+betas[10]",
         "frame_count": int(len(raw_ids)), "raw_frame_id_sha256": sha(parent / "shared/raw_frame_id.npy"),
@@ -74,7 +74,7 @@ def main() -> None:
     for entry in selected:
         out = out_root / entry["split"] / entry["id"].replace("/", "_")
         rows.append(build(entry, out))
-    run = {"manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "modification_version": "V1.1.16",
+    run = {"manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "work_version": "V1.1.16",
            "operation_category": ["data", "diagnostic"], "run_id": args.run_id, "run_status": "COMPLETED",
            "created_at": datetime.now(timezone.utc).isoformat(), "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
            "requested": len(selected), "built": len(rows), "source_index": str(VIEW / "index.json"),

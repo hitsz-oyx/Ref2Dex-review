@@ -57,7 +57,7 @@ def test_run_summary_is_terminal_user_readable_snapshot(tmp_path: Path) -> None:
         output_dir=output,
         mode="eval",
         run_status="COMPLETED",
-        modification_version="V1.2.3",
+        work_version="V1.2.3",
         metrics={"test/loss": 0.25},
         global_step=12,
         artifact_paths={"config": output / "config_eval_20260901_120000.json"},
@@ -66,7 +66,7 @@ def test_run_summary_is_terminal_user_readable_snapshot(tmp_path: Path) -> None:
     assert payload["summary_schema"] == "ref2dex.run_summary.v1"
     assert payload["run_id"] == "example_20260901_120000"
     assert payload["run_status"] == "COMPLETED"
-    assert payload["modification_version"] == "V1.2.3"
+    assert payload["work_version"] == "V1.2.3"
     assert payload["metrics"]["test/loss"] == 0.25
     assert payload["artifacts"]["config"].endswith("config_eval_20260901_120000.json")
 
@@ -87,14 +87,14 @@ def test_run_manifest_records_version_and_component_selection(tmp_path: Path) ->
         output_dir=tmp_path / "run",
         mode="train",
         config={
-            "modification_version": "V1.2.3",
+            "work_version": "V1.2.3",
             "operation_category": ["experiment", "diagnostic"],
             "component_registry": "src/task/Example/components/components.json",
             "components": components,
         },
         metadata={},
     )
-    assert payload["modification_version"] == "V1.2.3"
+    assert payload["work_version"] == "V1.2.3"
     assert "guide_version" not in payload
     assert "plan_version" not in payload
     assert "operation_version" not in payload

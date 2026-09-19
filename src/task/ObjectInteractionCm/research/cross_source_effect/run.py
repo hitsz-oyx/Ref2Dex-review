@@ -210,7 +210,7 @@ def run(args):
     payload = torch.load(CHECKPOINT, map_location="cpu", weights_only=False)
     cfg = payload["config"]
     meta, data = cfg["meta"], cfg["data"]
-    assert cfg["modification_version"] == "V1.3"
+    assert cfg["work_version"] == "V1.3"
     for key, value in {"num_obj_points": 1024, "num_obj_pool": 4096, "knn_k": 32,
                        "hand_stream_mode": "unique_knn_edges", "interaction_radius_m": .02,
                        "hand_supervision_radius_m": .02, "coordinate_frame": "object_pose_t"}.items():
@@ -228,13 +228,13 @@ def run(args):
     if args.smoke:
         entries = [next(e for e in entries if e["source"] == source) for source in SOURCES]
     protected = {str(p): sha256(p) for p in (CHECKPOINT, index_path, scale_path)}
-    model = ObjectInteractionCmModel(SimpleNamespace(meta=SimpleNamespace(**meta), modification_version="V1.3"))
+    model = ObjectInteractionCmModel(SimpleNamespace(meta=SimpleNamespace(**meta), work_version="V1.3"))
     model.load_state_dict(payload["model"], strict=True)
     model.requires_grad_(False).eval().to(args.device)
     original_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     out = Path(__file__).parent / "output" / args.run_id
     out.mkdir(parents=True, exist_ok=False)
-    config = {"modification_version": "V1.3.1", "operation_category": ["diagnostic", "experiment"],
+    config = {"work_version": "V1.3.1", "operation_category": ["diagnostic", "experiment"],
               "train": {"seed": 42}, "checkpoint": str(CHECKPOINT), "data": data, "meta": meta,
               "arguments": vars(args), "evaluation_partition": "val", "dataset_epoch": 0,
               "loader_active_only": False, "primary_mask": "full_active_count > 0 and sample_valid",
