@@ -39,6 +39,14 @@ class V118PlannerAgent(CommonAgent):
         self.experience_buffer.tensor_dict["cm_teacher_weights"] = torch.zeros_like(values)
         self.tensor_list += ["cm_teacher_actions", "cm_teacher_weights"]
 
+    def prepare_dataset(self, batch_dict):
+        super().prepare_dataset(batch_dict)
+        # rl_games only forwards its standard PPO fields into the dataset.
+        # Teacher tensors are rollout-time fixed targets and must follow the
+        # same shuffled minibatch indices as observations/actions.
+        self.dataset.values_dict["cm_teacher_actions"] = batch_dict["cm_teacher_actions"]
+        self.dataset.values_dict["cm_teacher_weights"] = batch_dict["cm_teacher_weights"]
+
     def _task(self):
         task = getattr(self.vec_env, "env", None)
         if task is None or not hasattr(task, "v118_teacher"):
