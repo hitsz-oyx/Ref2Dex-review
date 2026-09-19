@@ -153,7 +153,7 @@ class V118PlannerAgent(CommonAgent):
         else:
             self.scaler.step(self.optimizer); self.scaler.update()
         with torch.no_grad():
-            kl = torch_ext.policy_kl(mu.detach(), sigma.detach(), input_dict["mu"], input_dict["sigma"], reduce_kl=not self.is_rnn)
+            kl = torch_ext.policy_kl(mu.detach(), sigma.detach(), input_dict["mu"], input_dict["sigma"], not self.is_rnn)
         self.train_result = {"entropy": entropy, "kl": kl, "last_lr": self.last_lr, "lr_mul": 1.0,
                              "b_loss": bounds_loss, "cm_distill_loss": distill_loss,
                              "cm_teacher_weight": teacher_weight.mean()}
