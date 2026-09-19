@@ -66,6 +66,9 @@ def main() -> None:
     epochs = int(args.max_epochs) if args.max_epochs is not None else (1 if args.stage == "smoke" else 100000000)
     if epochs <= 0:
         raise ValueError("--max-epochs must be positive")
+    # The vendored CommonAgent stops on ``epoch > max_epochs``.  Interpret the
+    # public launcher argument as the actual requested count instead.
+    trainer_max_epochs = epochs - 1
     train_dir, cm_buffer = output / "train", output / "cm_buffer"
     overrides = [
         "task=CmResidualGrabReferenceV118", "train=CmResidualGrabReferenceV118PPO",
@@ -73,7 +76,7 @@ def main() -> None:
         "graphics_device_id=0", "num_envs=128", "num_subscenes=4", "seed=42",
         f"task.env.episodeLength={window}", f"task.referenceStart.windowLength={window}",
         f"task.cmBuffer.outputDir={cm_buffer}", f"train.params.config.cm_distill_coef={lambda_cm}",
-        f"train.params.config.max_epochs={epochs}", f"+train.params.config.train_dir={train_dir}",
+        f"train.params.config.max_epochs={trainer_max_epochs}", f"+train.params.config.train_dir={train_dir}",
         f"+full_experiment_name=CmResidualGrabReferenceV118_{args.stage}",
         f"hydra.run.dir={output / 'hydra'}", "hydra.job.chdir=True",
     ]
@@ -96,6 +99,7 @@ def main() -> None:
         "input_references": [reference, source], "initial_checkpoint": str(checkpoint) if checkpoint else None,
         "metrics": str(metrics_path), "log": str(log_path), "cm_buffer": str(cm_buffer), "physical_gpu": args.gpu,
         "budget": {"envs": 128, "window": window, "target_env_steps": budget_steps, "max_epochs": epochs,
+                   "trainer_max_epochs": trainer_max_epochs,
                    "lambda_cm": lambda_cm}, "conclusion": "INCONCLUSIVE",
     }
     _write_json(manifest_path, manifest)

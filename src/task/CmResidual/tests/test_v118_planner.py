@@ -140,3 +140,4 @@ def test_v118_launcher_honors_explicit_physical_gpu():
     source = (ROOT / "src/task/CmResidual/tools/run_v118_reference_ppo.py").read_text()
     assert 'env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)' in source
     assert '"physical_gpu": args.gpu' in source
+    assert "trainer_max_epochs = epochs - 1" in source
