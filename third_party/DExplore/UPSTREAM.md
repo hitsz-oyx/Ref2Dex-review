@@ -13,6 +13,13 @@
   71 MiB after local LFS smudge).  They remain in the external source mirror and must be supplied by an explicit
   checkpoint path for evaluation; no checkpoint is vendored into Ref2Dex.
 
+## Ignored runtime meshes
+
+Upstream deliberately ignores `dexplore/data/assets/mjcf/objects/`; it is not part of this vendor's tracked-source
+snapshot.  V1.20c materializes only the required airplane/table meshes byte-for-byte from the fixed raw GRAB paths
+at execution time, after SHA256 verification.  They remain Git-ignored, are never symlinks, and are recorded in each
+run manifest; see [V1.20c](../../src/task/CmResidual/docs/plan/V1.20c.md).
+
 ## Ref2Dex integration boundary
 
 V1.20a uses this immutable source through a Task-local `torch.distributed` facade under

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from typing import Sequence
@@ -15,6 +17,14 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 BOOTSTRAP = Path(__file__).resolve().with_name("dexplore_ddp_rank_bootstrap.py")
 DEFAULT_DEXPLORE_RUN = REPOSITORY_ROOT / "third_party/DExplore/dexplore/run.py"
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "outputs/Dexplore"
+RUNTIME_ASSETS = (
+    (REPOSITORY_ROOT / "data/raw_data/GRAB/objects/airplane/mesh.obj",
+     Path("dexplore/data/assets/mjcf/objects/airplane/airplane.obj"),
+     "dcbb1cce38e65b3ee608e20f0846cbf93aa3b7bbf863a67582d9944f9a0d64f0"),
+    (REPOSITORY_ROOT / "data/raw_data/GRAB/objects/table/mesh.obj",
+     Path("dexplore/data/assets/mjcf/objects/table/table.obj"),
+     "25c6fb8b774a04f5314a13a538b9c26886716d196d46a68979e817755cf0e383"),
+)
 
 
 def parse_gpus(value: str) -> tuple[int, ...]:
@@ -40,6 +50,42 @@ def _timestamp() -> str:
 
 def _write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def prepare_runtime_assets(dexplore_run: Path) -> list[dict[str, str | bool]]:
+    """Materialize DExplore's ignored mesh inputs from fixed raw GRAB sources.
+
+    DExplore deliberately ignores this asset directory; copying is byte-for-byte,
+    refuses unexpected existing content, and never follows a symlink.
+    """
+    source_root = dexplore_run.resolve().parents[1]
+    records = []
+    for raw_source, relative_target, expected_sha256 in RUNTIME_ASSETS:
+        if not raw_source.is_file() or raw_source.is_symlink():
+            raise FileNotFoundError(f"missing regular raw GRAB asset: {raw_source}")
+        source_sha256 = _sha256(raw_source)
+        if source_sha256 != expected_sha256:
+            raise ValueError(f"raw GRAB asset hash mismatch: {raw_source}")
+        target = source_root / relative_target
+        copied = False
+        if target.exists():
+            if target.is_symlink() or not target.is_file() or _sha256(target) != expected_sha256:
+                raise ValueError(f"refusing to replace unexpected runtime asset: {target}")
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(raw_source, target, follow_symlinks=False)
+            copied = True
+        records.append({"raw_source": str(raw_source), "target": str(target),
+                        "sha256": expected_sha256, "materialized": copied})
+    return records
 
 
 def _git_commit(path: Path) -> str | None:
@@ -96,6 +142,7 @@ def main(argv=None) -> None:
         output = (args.output_root / args.run_id).resolve()
         if output.exists():
             raise FileExistsError(f"refusing to overwrite output: {output}")
+        runtime_assets = prepare_runtime_assets(args.dexplore_run)
         dexplore_args = smoke_dexplore_args(motion_root=motion_root, output=output,
                                             num_envs=args.num_envs,
                                             max_iterations=args.max_iterations, seed=args.seed)
@@ -106,6 +153,7 @@ def main(argv=None) -> None:
         output = None
         input_record = None
         manifest = None
+        runtime_assets = []
     command = torchrun_command(gpus=gpus, dexplore_run=args.dexplore_run.resolve(), dexplore_args=dexplore_args)
     source_root = args.dexplore_run.resolve().parents[1]
     environment = os.environ.copy()
@@ -121,7 +169,8 @@ def main(argv=None) -> None:
                    "horovod_package": False, "legacy_cli_facade": True}
         config = {"command": command, "runtime": runtime, "num_envs_per_rank": args.num_envs,
                   "max_iterations": args.max_iterations, "seed": args.seed,
-                  "motion_root": str(args.motion_root.resolve()), "input_manifest": str(manifest)}
+                  "motion_root": str(args.motion_root.resolve()), "input_manifest": str(manifest),
+                  "runtime_assets": runtime_assets}
         _write_json(output / "config.json", config)
         manifest_path = output / "run_manifest.json"
         run_manifest = {
@@ -130,6 +179,7 @@ def main(argv=None) -> None:
             "git_commit": _git_commit(REPOSITORY_ROOT), "external_source_commit": _git_commit(source_root),
             "run_status": "STARTED", "command": command, "runtime": runtime,
             "input_manifest": str(manifest), "input_classification": input_record["classification"],
+            "runtime_assets": runtime_assets,
             "output_dir": str(output), "config": str(output / "config.json"),
             "train_log": str(output / "train.log"), "seed": args.seed,
         }

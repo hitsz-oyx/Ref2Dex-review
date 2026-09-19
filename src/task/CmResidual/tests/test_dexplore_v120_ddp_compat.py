@@ -94,3 +94,16 @@ def test_launcher_default_source_is_repo_local_vendor_snapshot():
     launcher = _load_module("dexplore_v120_ddp_launcher_vendor", LAUNCHER_PATH)
     assert launcher.DEFAULT_DEXPLORE_RUN == launcher.REPOSITORY_ROOT / "third_party/DExplore/dexplore/run.py"
     assert launcher.DEFAULT_DEXPLORE_RUN.is_file()
+
+
+def test_runtime_assets_are_fixed_raw_grab_meshes():
+    launcher = _load_module("dexplore_v120_ddp_launcher_assets", LAUNCHER_PATH)
+    assert [(source.relative_to(launcher.REPOSITORY_ROOT), target, digest)
+            for source, target, digest in launcher.RUNTIME_ASSETS] == [
+        (Path("data/raw_data/GRAB/objects/airplane/mesh.obj"),
+         Path("dexplore/data/assets/mjcf/objects/airplane/airplane.obj"),
+         "dcbb1cce38e65b3ee608e20f0846cbf93aa3b7bbf863a67582d9944f9a0d64f0"),
+        (Path("data/raw_data/GRAB/objects/table/mesh.obj"),
+         Path("dexplore/data/assets/mjcf/objects/table/table.obj"),
+         "25c6fb8b774a04f5314a13a538b9c26886716d196d46a68979e817755cf0e383"),
+    ]
