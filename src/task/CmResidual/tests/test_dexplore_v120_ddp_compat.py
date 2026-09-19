@@ -84,10 +84,22 @@ def test_launcher_strips_remainder_separator(monkeypatch, capsys):
 def test_smoke_arguments_fix_the_engineering_contract(tmp_path):
     launcher = _load_module("dexplore_v120_ddp_launcher_args", LAUNCHER_PATH)
     arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
-                                             num_envs=64, max_iterations=1, seed=42)
+                                             num_envs=64, horizon_length=64, minibatch_size=256,
+                                             max_iterations=1, seed=42)
     assert arguments[arguments.index("--minibatch_size") + 1] == "256"
     assert arguments[arguments.index("--horizon_length") + 1] == "64"
     assert arguments[-1] == "--horovod"
+
+
+def test_launcher_accepts_explicit_formal_training_batch_contract(tmp_path):
+    launcher = _load_module("dexplore_v120_ddp_launcher_formal_args", LAUNCHER_PATH)
+    arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
+                                             num_envs=2048, horizon_length=64, minibatch_size=16384,
+                                             max_iterations=4999, seed=42)
+    assert arguments[arguments.index("--num_envs") + 1] == "2048"
+    assert arguments[arguments.index("--horizon_length") + 1] == "64"
+    assert arguments[arguments.index("--minibatch_size") + 1] == "16384"
+    assert arguments[arguments.index("--max_iterations") + 1] == "4999"
 
 
 def test_launcher_default_source_is_repo_local_vendor_snapshot():

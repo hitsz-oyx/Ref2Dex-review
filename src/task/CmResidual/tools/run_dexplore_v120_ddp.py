@@ -97,15 +97,16 @@ def _git_commit(path: Path) -> str | None:
 
 
 def smoke_dexplore_args(*, motion_root: Path, output: Path, num_envs: int,
+                        horizon_length: int, minibatch_size: int,
                         max_iterations: int, seed: int) -> list[str]:
-    if num_envs < 1 or max_iterations < 1:
-        raise ValueError("--num-envs and --max-iterations must be positive")
+    if min(num_envs, horizon_length, minibatch_size, max_iterations) < 1:
+        raise ValueError("--num-envs, --horizon-length, --minibatch-size, and --max-iterations must be positive")
     return ["--task", "Dexplore_Inspire", "--cfg_env", "dexplore/data/cfg/inspire.yaml",
             "--cfg_train", "dexplore/data/cfg/train/rlg/inspire.yaml",
             "--motion_file", str(motion_root), "--output_path", str(output / "train"),
             "--headless", "--sim_device", "cuda:0", "--rl_device", "cuda:0",
             "--graphics_device_id", "0", "--num_envs", str(num_envs),
-            "--horizon_length", "64", "--minibatch_size", "256",
+            "--horizon_length", str(horizon_length), "--minibatch_size", str(minibatch_size),
             "--max_iterations", str(max_iterations), "--seed", str(seed), "--horovod"]
 
 
@@ -118,6 +119,8 @@ def main(argv=None) -> None:
     parser.add_argument("--input-manifest", type=Path, help="motion-root provenance manifest; required for --execute")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--num-envs", type=int, default=64)
+    parser.add_argument("--horizon-length", type=int, default=64)
+    parser.add_argument("--minibatch-size", type=int, default=256)
     parser.add_argument("--max-iterations", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--execute", action="store_true", help="create a new run directory and execute the smoke")
@@ -145,6 +148,8 @@ def main(argv=None) -> None:
         runtime_assets = prepare_runtime_assets(args.dexplore_run)
         dexplore_args = smoke_dexplore_args(motion_root=motion_root, output=output,
                                             num_envs=args.num_envs,
+                                            horizon_length=args.horizon_length,
+                                            minibatch_size=args.minibatch_size,
                                             max_iterations=args.max_iterations, seed=args.seed)
     else:
         dexplore_args = list(args.dexplore_args)
@@ -168,6 +173,7 @@ def main(argv=None) -> None:
                    "physical_gpus": list(gpus), "backend": "torch.distributed:nccl",
                    "horovod_package": False, "legacy_cli_facade": True}
         config = {"command": command, "runtime": runtime, "num_envs_per_rank": args.num_envs,
+                  "horizon_length": args.horizon_length, "minibatch_size": args.minibatch_size,
                   "max_iterations": args.max_iterations, "seed": args.seed,
                   "motion_root": str(args.motion_root.resolve()), "input_manifest": str(manifest),
                   "runtime_assets": runtime_assets}
