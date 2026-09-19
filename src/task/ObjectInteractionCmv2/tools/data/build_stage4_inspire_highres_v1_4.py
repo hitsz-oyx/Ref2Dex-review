@@ -32,7 +32,7 @@ from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import Insp
 from src.task.ObjectInteractionCm.tools.data.retarget_stage4_bilateral_inspire import canonical_cloud_to_visual_local
 
 
-MODIFICATION_VERSION = "V1.4.5"
+WORK_VERSION = "V1.11.1"
 OBJECT_POINTS = 4096
 DECODER_PER_SIDE = 1538
 DECODER_POINTS = 3076
@@ -211,7 +211,7 @@ def _process(entry: Entry, converter: InspireConverter, device: torch.device, fr
                                 ("hand_points_world", decoder), ("hand_normals_world", decoder_normals),
                                 ("obj_candidate_mask_5cm", np.logical_or.reduce(masks) if masks else np.ones((len(obj), OBJECT_POINTS), dtype=bool))): np.save(geometry / f"{name}.npy", value)
         mano_cache._build_knn(geometry, device=device, frame_batch_size=frame_batch, object_chunk=object_chunk)
-        _write_json(geometry / "manifest.json", {"schema_name": "ref2dex_object_interaction_cmv2_stage4_inspire_v1_4", "schema_version": "1.0.0", "modification_version": MODIFICATION_VERSION,
+        _write_json(geometry / "manifest.json", {"schema_name": "ref2dex_object_interaction_cmv2_stage4_inspire_v1_4", "schema_version": "1.0.0", "work_version": WORK_VERSION,
             "sequence_id": entry.sequence_id, "dataset": entry.domain, "source_dataset": entry.domain, "source": "inspire_f1", "hand_variant": "inspire_f1", "split": entry.split,
             "source_path": str(entry.source.resolve()), "coordinate_frame": "object_pose_t", "hand_side": "bilateral_merged_left_then_right", "frame_count": len(ids),
             "object_pool_points": OBJECT_POINTS, "decoder_hand_points": DECODER_POINTS, "decoder_points_per_side": DECODER_PER_SIDE, "knn_hand_points": INSPIRE_POINTS,
@@ -233,7 +233,7 @@ def run(args: argparse.Namespace) -> int:
     entries = _entries(args.source_index.resolve(), args.source_root.resolve(), output, args.domain, args.sequence)
     if args.limit: entries = entries[:args.limit]
     commit, dirty = _git_state(); manifest_path = output / f"run_manifest_{args.run_id}.json"
-    manifest = {"schema_name": "ref2dex_data_run_manifest_v1", "task": "ObjectInteractionCmv2", "operation": "stage4_inspire_highres_export", "run_id": args.run_id, "run_status": "STARTED", "started_at": _now(), "modification_version": MODIFICATION_VERSION, "base_commit": commit, "worktree_dirty": dirty, "device": str(device), "expected_sequences": len(entries), "completed_sequences": 0, "completed_frames": 0, "failures": [], "inputs": {"source_index": str(args.source_index.resolve()), "source_root": str(args.source_root.resolve())}, "outputs": {"root": str(output)}, "conclusion": "INCONCLUSIVE"}
+    manifest = {"schema_name": "ref2dex_data_run_manifest_v1", "task": "ObjectInteractionCmv2", "operation": "stage4_inspire_highres_export", "run_id": args.run_id, "run_status": "STARTED", "started_at": _now(), "work_version": WORK_VERSION, "base_commit": commit, "worktree_dirty": dirty, "device": str(device), "expected_sequences": len(entries), "completed_sequences": 0, "completed_frames": 0, "failures": [], "inputs": {"source_index": str(args.source_index.resolve()), "source_root": str(args.source_root.resolve())}, "outputs": {"root": str(output)}, "conclusion": "INCONCLUSIVE"}
     _write_json(manifest_path, manifest); converter = InspireConverter(args.dex_root.resolve()); records = []
     for ordinal, entry in enumerate(entries, 1):
         try:
@@ -246,8 +246,8 @@ def run(args: argparse.Namespace) -> int:
     if manifest["failures"]:
         manifest.update({"run_status": "FAILED", "finished_at": _now(), "conclusion": "INVALID_IMPLEMENTATION"}); _write_json(manifest_path, manifest); return 1
     split_rows = {split: [record for record in records if record["split"] == split] for split in ("train", "val", "test")}
-    index = {"schema_name": "ref2dex_object_interaction_cm_index_v1_2", "schema_version": "1.4.0", "modification_version": MODIFICATION_VERSION, "created_at": _now(), "object_pool_points": OBJECT_POINTS, "model_object_points": 1024, "decoder_hand_points_per_stream": DECODER_POINTS, "knn_hand_points_per_stream": {"inspire_f1": INSPIRE_POINTS}, "max_knn_hand_points": INSPIRE_POINTS, "knn_k": KNN_K, "source_probability": {"inspire_f1": 1.0}, "split_policy": {args.domain: "preserved from source MANO index"}, "sequences": split_rows, "counts": {key: len(value) for key, value in split_rows.items()}, "frame_counts": {key: sum(int(row["frame_count"]) for row in value) for key, value in split_rows.items()}}
-    _write_json(output / "index.json", index); _write_json(output / "cache_manifest.json", {"schema_name": "ref2dex_cmv2_highres_cache_manifest_v1", "modification_version": MODIFICATION_VERSION, "dataset": args.domain, "variant": "inspire_f1", "total_sequences": len(records), "total_frames": sum(int(row["frame_count"]) for row in records), "hand_contract": "decoder bilateral 3076 compatibility points; Inspire KNN bilateral 20270 points", "effective_fps": 30.0, "knn_k": KNN_K, "validation": {"bad_count": 0, "bad_examples": []}})
+    index = {"schema_name": "ref2dex_object_interaction_cm_index_v1_2", "schema_version": "1.4.0", "work_version": WORK_VERSION, "created_at": _now(), "object_pool_points": OBJECT_POINTS, "model_object_points": 1024, "decoder_hand_points_per_stream": DECODER_POINTS, "knn_hand_points_per_stream": {"inspire_f1": INSPIRE_POINTS}, "max_knn_hand_points": INSPIRE_POINTS, "knn_k": KNN_K, "source_probability": {"inspire_f1": 1.0}, "split_policy": {args.domain: "preserved from source MANO index"}, "sequences": split_rows, "counts": {key: len(value) for key, value in split_rows.items()}, "frame_counts": {key: sum(int(row["frame_count"]) for row in value) for key, value in split_rows.items()}}
+    _write_json(output / "index.json", index); _write_json(output / "cache_manifest.json", {"schema_name": "ref2dex_cmv2_highres_cache_manifest_v1", "work_version": WORK_VERSION, "dataset": args.domain, "variant": "inspire_f1", "total_sequences": len(records), "total_frames": sum(int(row["frame_count"]) for row in records), "hand_contract": "decoder bilateral 3076 compatibility points; Inspire KNN bilateral 20270 points", "effective_fps": 30.0, "knn_k": KNN_K, "validation": {"bad_count": 0, "bad_examples": []}})
     manifest.update({"run_status": "COMPLETED", "finished_at": _now(), "outputs": {"root": str(output), "index": str((output / "index.json").resolve()), "cache_manifest": str((output / "cache_manifest.json").resolve())}, "conclusion": "SUPPORTED"}); _write_json(manifest_path, manifest); print(json.dumps({"status": "COMPLETED", "sequences": len(records), "frames": manifest["completed_frames"]}), flush=True); return 0
 
 
