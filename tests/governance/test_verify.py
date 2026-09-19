@@ -44,3 +44,14 @@ def test_markdown_skips_historical_logs() -> None:
 
 def test_governance_change_selects_governance_tests() -> None:
     assert "tests/governance/test_verify.py" in VERIFY._select_tests({"AGENTS.md"})
+
+
+def test_unresolved_directory_path_contract_is_discoverable() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    directory_skill = (ROOT / ".agents/skills/directory-and-artifacts/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "目录合同不能决定新内容的位置" in agents
+    assert "向用户确认位置" in directory_skill
+    assert "是否应把该例外提升为本" in directory_skill

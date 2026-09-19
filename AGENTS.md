@@ -82,6 +82,11 @@ Activity 至少包含 timestamp、activity_id 或 work_version、work_version、
 目录、数据、资产、运行产物、manifest 与测试归属的完整合同见 `directory-and-artifacts`；
 涉及训练、评估、benchmark、数据处理等长任务时，run 模式同时使用 `long-running-tasks`。
 
+当目录合同不能决定新内容的位置时，在创建、移动或写入前必须向用户确认位置。若发现已在
+未确认位置先行创建、移动或写入内容，下一次回复必须优先汇报精确路径、内容/规模、原因、
+合同偏离、影响、Git/忽略状态和保留/迁移/删除选项；该报告不构成追认。报告时还必须询问
+用户是否将该例外提升为 `directory-and-artifacts` 的通用规范，未确认不得自行固化。
+
 ## 7. 标准工作流与门禁
 
 1. inspect：读取最小上下文，确认 Task、work_version、保护边界和 Git 状态。
