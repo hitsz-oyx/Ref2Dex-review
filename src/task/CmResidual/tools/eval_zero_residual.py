@@ -147,7 +147,7 @@ def main() -> int:
         "run_name": run_id,
         "activity_id": activity_id,
         "run_status": "STARTED",
-        "modification_version": "V1.4.2",
+        "work_version": "V1.4.2",
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": command,

@@ -1,5 +1,5 @@
 name: cross_hand_pair_coverage
-modification_version: V1.1.10
+work_version: V1.1.10
 importance: primary
 pinned: true
 tags: [cm, cross-hand, temporal-pairing, coverage, no-training]

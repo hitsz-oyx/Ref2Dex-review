@@ -81,7 +81,7 @@ class CmDecoderV2Runner(BaseRunner):
     def configure_data(self, metadata: dict[str, Any], train_dataset: Any | None = None) -> None:
         super().configure_data(metadata, train_dataset)
         expected = {
-            "modification_version": str(self.cfg.modification_version),
+            "work_version": str(self.cfg.work_version),
             "coordinate_frame": str(self.cfg.meta.coordinate_frame),
             "window_size": int(self.cfg.meta.window_size),
             "effective_fps": float(self.cfg.meta.effective_fps),

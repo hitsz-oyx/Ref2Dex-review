@@ -32,7 +32,7 @@ class FieldRealizerRunner(BaseRunner):
         val_loader = DataLoader(val, batch_size=int(getattr(data_cfg, "val_batch_size", data_cfg.batch_size)), shuffle=False, sampler=val_sampler, **common)
         metadata = {
             "schema_name": "ref2dex_v1_1_16_parent_f7_field_realizer",
-            "modification_version": str(self.cfg.modification_version),
+            "work_version": str(self.cfg.work_version),
             "coordinate_frame": "object_pose_t",
             "window_size": int(self.cfg.meta.window_size),
             "effective_fps": 30.0,

@@ -537,7 +537,7 @@ def main() -> None:
         "run_status": "RUNNING",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "pure Inspire teacher/rollout qualitative diagnostic; not formal split or checkpoint selection",
-        "modification_version": str(cfg.modification_version),
+        "work_version": str(cfg.work_version),
         "operation_category": ["data", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

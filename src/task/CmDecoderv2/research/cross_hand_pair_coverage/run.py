@@ -36,7 +36,7 @@ def run(args):
             raise TimeoutError('20 minute budget')
         if torch.cuda.max_memory_allocated()>4*1024**3:
             raise MemoryError('4 GiB allocation budget')
-    manifest = dict(task='CmDecoderv2',modification_version='V1.1.10',
+    manifest = dict(task='CmDecoderv2',work_version='V1.1.10',
         schema_name='ref2dex.cross_hand_pair_coverage.v1',run_id=args.run_id,activity_id=args.run_id,
         run_status='STARTED',conclusion='INCONCLUSIVE',seed=42,
         started_at=datetime.now().astimezone().isoformat(timespec='seconds'),

@@ -25,7 +25,7 @@ def run(args):
         line=datetime.now().astimezone().isoformat(timespec='seconds')+' '+s
         print(line,flush=True)
         with (output/'run.log').open('a') as f:f.write(line+'\n')
-    manifest=dict(task='CmDecoderv2',modification_version='V1.1.12',run_id=args.run_id,activity_id=args.run_id,
+    manifest=dict(task='CmDecoderv2',work_version='V1.1.12',run_id=args.run_id,activity_id=args.run_id,
         schema_name='ref2dex.trajectory_quality_gate.v1',diagnostic_only=True,run_status='STARTED',conclusion='INCONCLUSIVE',
         started_at=datetime.now().astimezone().isoformat(timespec='seconds'),seed=42,checkpoint='not_loaded',
         base_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),worktree_dirty=True,

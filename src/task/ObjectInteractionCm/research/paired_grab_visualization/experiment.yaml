@@ -1,6 +1,6 @@
 name: paired_grab_visualization
 task: ObjectInteractionCm
-modification_version: V1.4.7
+work_version: V1.4.7
 importance: exploratory
 pinned: false
 tags: [diagnostic, visualization, grab, mano, inspire]

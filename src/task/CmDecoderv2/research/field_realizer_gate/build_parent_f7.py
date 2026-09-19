@@ -76,7 +76,7 @@ def build_sequence(parent: Path, output: Path, *, anchor_count: int, tau_m: floa
     np.save(output / "raw_frame_id.npy", raw)
     manifest = {
         "schema_name": "ref2dex_field_f7_parent_cache_v1",
-        "modification_version": "V1.1.16",
+        "work_version": "V1.1.16",
         "source_type": "mano_parent_surface_in_parent_object_pose",
         "coordinate_frame": "parent_object_pose_t",
         "field_definition": "F7=[r,d,v]; no p/c/contact/E",
@@ -129,7 +129,7 @@ def main() -> None:
         result = build_sequence(parent, args.output, anchor_count=args.anchor_count, tau_m=args.tau_m, batch_frames=args.batch_frames)
     run_manifest = {
         "schema_name": "ref2dex.run_manifest_v1", "task": "CmDecoderv2",
-        "modification_version": "V1.1.16", "operation": "parent_f7_cache_smoke",
+        "work_version": "V1.1.16", "operation": "parent_f7_cache_smoke",
         "run_id": args.output.name, "run_status": "COMPLETED", "conclusion": "SUPPORTED",
         "base_commit": base_commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)),
         "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

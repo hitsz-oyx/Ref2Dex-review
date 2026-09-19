@@ -310,7 +310,7 @@ def main():
                                              "repositories": repositories})
     (output / "pip_freeze.txt").write_text(subprocess.check_output([sys.executable, "-m", "pip", "freeze"], text=True))
     (output / "run_source.py").write_bytes(Path(__file__).read_bytes())
-    manifest = {"task": "ObjectInteractionCm", "modification_version": VERSION,
+    manifest = {"task": "ObjectInteractionCm", "work_version": VERSION,
                 "run_id": output.name, "started_at": now(),
                 "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
                 "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO)),

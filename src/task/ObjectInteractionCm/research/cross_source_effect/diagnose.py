@@ -173,7 +173,7 @@ def run(args):
         assert (stat.st_size, stat.st_mtime_ns) == (record["size_bytes"], record["mtime_ns"])
     out = Path(__file__).parent / "output" / args.run_id
     out.mkdir(parents=True, exist_ok=False)
-    config_snapshot = {"modification_version": "V1.3.2", "operation_category": ["diagnostic", "experiment"],
+    config_snapshot = {"work_version": "V1.3.2", "operation_category": ["diagnostic", "experiment"],
                        "train": {"seed": 42}, "source_output_path": str(source),
                        "index_path": str(index_path), "arguments": vars(args), "evaluation_partition": "val",
                        "bootstrap_repeats": 2000, "meta": config["meta"],

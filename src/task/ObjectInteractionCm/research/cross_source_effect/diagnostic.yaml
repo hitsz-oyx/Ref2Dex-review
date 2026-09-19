@@ -1,5 +1,5 @@
 name: cross_source_effect_mechanism
-modification_version: V1.3.2
+work_version: V1.3.2
 operation_category: [diagnostic, experiment]
 importance: exploratory
 pinned: true

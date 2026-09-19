@@ -238,7 +238,7 @@ def test_v1_3_scales_keep_decoder_and_knn_flow_separate(tmp_path: Path) -> None:
     assert payload["scales"]["s_obj_flow"] > 0.0
     assert payload["scales"]["s_geo"] > 0.0
     meta = SimpleNamespace(
-        modification_version="V1.3",
+        work_version="V1.3",
         processing_dim=16,
         cm_dim=8,
         num_cm_tokens=2,

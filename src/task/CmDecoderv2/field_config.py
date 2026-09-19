@@ -7,7 +7,7 @@ from src.base import TaskConfig
 class Config(TaskConfig):
     name = "cm_decoder_v2_field_realizer_v1_1_16"
     runner_class = "src.task.CmDecoderv2.field_runner.FieldRealizerRunner"
-    modification_version = "V1.1.16"
+    work_version = "V1.1.16"
     operation_category = ["architecture", "code", "data", "experiment", "operation"]
 
     class meta(TaskConfig.meta):

@@ -77,7 +77,7 @@ def main():
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--steps", type=int, default=366)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--modification-version", default="V1.13.1")
+    parser.add_argument("--work-version", default="V1.13.1")
     parser.add_argument("--gpu", type=int)
     parser.add_argument("--wrist-stiffness", type=float, default=200.0)
     parser.add_argument("--wrist-damping", type=float, default=20.0)
@@ -101,7 +101,7 @@ def main():
         "operation": "grab_retargeted_zero_residual_" + args.object_protocol,
         "run_id": args.run_id,
         "activity_id": args.activity_id, "run_status": "STARTED", "created_at": stamp(),
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "operation_category": ["experiment", "operation"],
         "base_commit": commit,
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),

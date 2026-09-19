@@ -848,7 +848,7 @@ def _prepare_run(
         "run_id": output.name,
         "run_status": "RUNNING",
         "started_at": _now(),
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": shlex.join([sys.executable, *sys.argv]),
@@ -1515,8 +1515,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional independent diagnostic run directory for config, manifest, and viewer log.",
     )
     parser.add_argument(
-        "--modification-version", default=MODIFICATION_VERSION,
-        help="Modification version recorded in this visualization run's manifest.",
+        "--work-version", default=MODIFICATION_VERSION,
+        help="Work version recorded in this visualization run's manifest.",
     )
     parser.add_argument("--check-only", action="store_true")
     return parser

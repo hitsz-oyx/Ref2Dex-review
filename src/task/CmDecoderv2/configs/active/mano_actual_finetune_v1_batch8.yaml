@@ -1,7 +1,7 @@
 _base_: src.task.CmDecoderv2.config:Config
 
 name: cm_decoder_v2_mano_actual_finetune_v1_batch8
-modification_version: V1.1.14
+work_version: V1.1.14
 operation_category: [data, experiment, operation]
 
 meta:

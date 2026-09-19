@@ -31,7 +31,7 @@ def run(args):
         line = datetime.now().astimezone().isoformat(timespec='seconds')+' '+message
         print(line,flush=True)
         with (output/'run.log').open('a') as f:f.write(line+'\n')
-    manifest = dict(task='CmDecoderv2',modification_version='V1.1.11',run_id=args.run_id,activity_id=args.run_id,
+    manifest = dict(task='CmDecoderv2',work_version='V1.1.11',run_id=args.run_id,activity_id=args.run_id,
         schema_name='ref2dex.object_tracking_audit.v1',run_status='STARTED',conclusion='INCONCLUSIVE',
         base_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),worktree_dirty=True,
         started_at=datetime.now().astimezone().isoformat(timespec='seconds'),seed=42,checkpoint='not_loaded',

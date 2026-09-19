@@ -1,6 +1,6 @@
 name: oakink2_inspire_pilot
 task: ObjectInteractionCm
-modification_version: V1.4.1
+work_version: V1.4.1
 importance: exploratory
 pinned: false
 tags: [oakink2, mano, inspire, geometric, bilateral]

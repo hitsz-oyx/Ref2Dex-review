@@ -1,7 +1,7 @@
 _base_: src.task.ObjectInteractionCm.config:Config
 
 name: object_interaction_cm_grab_arctic_inspire_geometric_v1_4
-modification_version: V1.4
+work_version: V1.4
 operation_category: [experiment, operation, data]
 
 meta:

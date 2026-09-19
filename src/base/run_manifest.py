@@ -243,8 +243,12 @@ def build_run_manifest(
     output = Path(output_dir).resolve()
     config_data = dict(config)
     metadata_data = dict(metadata)
-    modification_version = _first_value(
-        config_data, metadata_data, keys=("modification_version", "revision")
+    work_version = _first_value(
+        config_data,
+        metadata_data,
+        # The legacy spelling is read-only compatibility for existing configs
+        # and manifests. New records always emit ``work_version`` below.
+        keys=("work_version", "modification_version", "revision"),
     )
     operation_category = _first_value(
         config_data, metadata_data, keys=("operation_category", "category")
@@ -264,7 +268,7 @@ def build_run_manifest(
         "mode": str(mode),
         "task": str(task),
         "run_name": str(run_name),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "operation_category": to_jsonable(operation_category or []),
         "output_dir": str(output),
         "config_source": None if config_source is None else str(Path(config_source).resolve()),
@@ -328,7 +332,7 @@ def write_run_summary(
     mode: str,
     run_status: str,
     conclusion: str = "N/A",
-    modification_version: str | None = None,
+    work_version: str | None = None,
     started_at: str | None = None,
     finished_at: str | None = None,
     metrics: Mapping[str, Any] | None = None,
@@ -343,7 +347,7 @@ def write_run_summary(
 
     ``BaseRunner`` no longer calls this helper for new train/eval runs.  It is
     retained for older task-specific callers and historical compatibility;
-    terminal status for shared runs belongs in ``activity_log.md``.
+    terminal status for shared runs belongs in a directory-based Activity.
     """
     target = Path(path)
     output = Path(output_dir).resolve()
@@ -367,7 +371,7 @@ def write_run_summary(
         "mode": str(mode),
         "run_status": str(run_status),
         "conclusion": str(conclusion),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "started_at": started_at,
         "finished_at": finished_at,
         "base_commit": git.get("commit"),

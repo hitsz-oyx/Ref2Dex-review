@@ -173,7 +173,7 @@ def main() -> None:
     index = {
         "schema_name": "ref2dex_cm_decoder_v2_dexplore_paired_view_v1",
         "schema_version": "1.0.0",
-        "modification_version": "V1.1.14",
+        "work_version": "V1.1.14",
         "source_actual_index": str(args.actual_index.resolve()),
         "source_object_index": str(args.object_index.resolve()),
         "split_contract": {"train": "mano_source_actual_inspire", "val": "mano_source_actual_inspire", "test": "not_built"},
@@ -186,7 +186,7 @@ def main() -> None:
     (args.output_root / "index.json").write_text(json.dumps(index, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest = {
         "schema_name": "ref2dex.run_manifest_v1", "task": "CmDecoderv2", "operation": "prepare_mano_actual_finetune_view",
-        "run_id": args.output_root.name, "run_status": "COMPLETED", "modification_version": "V1.1.14",
+        "run_id": args.output_root.name, "run_status": "COMPLETED", "work_version": "V1.1.14",
         "operation_category": ["data", "operation"], "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),

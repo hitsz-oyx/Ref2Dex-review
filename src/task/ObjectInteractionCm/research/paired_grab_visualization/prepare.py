@@ -115,7 +115,7 @@ def main() -> None:
             "run_status": "COMPLETED",
             "started_at": _now(),
             "completed_at": _now(),
-            "modification_version": "V1.4.7",
+            "work_version": "V1.4.7",
             "base_commit": commit,
             "worktree_dirty": dirty,
             "command": shlex.join([sys.executable, *sys.argv]),

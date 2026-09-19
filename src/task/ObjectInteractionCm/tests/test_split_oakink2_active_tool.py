@@ -139,7 +139,7 @@ def test_build_emits_two_candidates_and_run_manifest(tmp_path):
 
     result = build(
         annotation_root, object_root, stage3_root, output,
-        run_id="synthetic-run", modification_version="V1.4.3",
+        run_id="synthetic-run", work_version="V1.4.3",
     )
     index = json.loads((output / "index.json").read_text())
     run_manifest = json.loads((output / "run_manifest.json").read_text())

@@ -1,5 +1,5 @@
 name: cross_source_effect
-modification_version: V1.3.1
+work_version: V1.3.1
 operation_category: [diagnostic, experiment]
 importance: primary
 pinned: true

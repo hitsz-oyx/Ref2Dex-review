@@ -608,7 +608,7 @@ def main() -> None:
 
     metrics = {
         "run_id": run_id,
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "label_map": LABELS,
         "index_schema": index_schema,
         "held_out_split": "val-held-out",
@@ -631,7 +631,7 @@ def main() -> None:
         "run_status": "COMPLETED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "small classifier diagnostic of source/embodiment information in frozen OICM cm_tokens; not a hand-shape disentanglement proof",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

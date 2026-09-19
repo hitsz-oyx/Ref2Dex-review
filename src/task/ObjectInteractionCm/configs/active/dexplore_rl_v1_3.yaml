@@ -1,7 +1,7 @@
 _base_: src.task.ObjectInteractionCm.config:Config
 
 name: object_interaction_cm_dexplore_rl_v1_3
-modification_version: V1.3
+work_version: V1.3
 operation_category: [experiment, operation, data]
 
 meta:

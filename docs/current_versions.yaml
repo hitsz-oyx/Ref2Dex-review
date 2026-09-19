@@ -1,20 +1,20 @@
-# Ref2Dex 当前版本指针。
-# 这里只记录各作用域的 modification_version；指导/plan 通过数字后缀和 Markdown 链接配对。
-# Task 值表示该 Task 最近的 Task-scoped 研究修改；跨 Task 治理事件可在 Task activity 中引用根版本。
+# Ref2Dex 当前工作版本指针。
+# 这里只记录各作用域的 work_version；指导/plan 通过数字后缀和 Markdown 链接配对。
+# Task 值表示该 Task 最近的 Task-scoped 工作边界；跨 Task 治理事件可在 Task Activity 中引用根版本。
 repository:
-  modification_version: V1.2.15
+  work_version: V1.2c
 tasks:
   Cm:
-    modification_version: V1.2.11
+    work_version: V1.2.11
   CmDecoder:
-    modification_version: V1.2.12
+    work_version: V1.2.12
   CmDecoderv2:
-    modification_version: V1.1.15
+    work_version: V1.1.15
   CmResidual:
-    modification_version: V1.20
+    work_version: V1.20
   ObjectInteractionCm:
-    modification_version: V1.4.22
+    work_version: V1.4.22
   ObjectInteractionCmv2:
-    modification_version: V1.3.4
+    work_version: V1.3.4
   correspondence_ptv3_v2:
-    modification_version: V1.2.16
+    work_version: V1.2.16

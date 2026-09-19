@@ -56,7 +56,7 @@ def canonical_cloud_to_visual_local(
 
 
 def main():
-    ap=argparse.ArgumentParser(); ap.add_argument("--input-root",type=Path,required=True); ap.add_argument("--output-root",type=Path,required=True); ap.add_argument("--source",required=True,choices=["grab","arctic"]); ap.add_argument("--fps",type=float,default=None); ap.add_argument("--limit",type=int,default=None); ap.add_argument("--sequence",action="append",default=[]); ap.add_argument("--modification-version",default="V1.4.6")
+    ap=argparse.ArgumentParser(); ap.add_argument("--input-root",type=Path,required=True); ap.add_argument("--output-root",type=Path,required=True); ap.add_argument("--source",required=True,choices=["grab","arctic"]); ap.add_argument("--fps",type=float,default=None); ap.add_argument("--limit",type=int,default=None); ap.add_argument("--sequence",action="append",default=[]); ap.add_argument("--work-version",default="V1.4.6")
     a=ap.parse_args(); inp=a.input_root.resolve(); out=a.output_root.resolve(); out.mkdir(parents=True,exist_ok=True)
     RetargetingConfig.set_default_urdf_dir(DEX/"assets/robots/hands")
     models={}; samplings={}; retargeters={}
@@ -139,7 +139,7 @@ def main():
             hand=np.concatenate(points,axis=1); hn=np.concatenate(normals,axis=1)
             target.mkdir(parents=True,exist_ok=False); g=target/"geometry"; g.mkdir()
             for name,val in (("obj_points_pool_world",obj),("obj_normals_pool_world",norms),("obj_pose_world",pose),("source_frame_id",raw),("frame_time",np.asarray(raw,dtype=np.float32)/120.0 if a.source=="grab" else np.asarray(raw,dtype=np.float32)/30.0),("hand_points_world",hand),("hand_normals_world",hn),("obj_candidate_mask_5cm",np.logical_or.reduce(masks) if masks else np.ones((T,),dtype=bool))): np.save(g/(name+".npy"),val)
-            manifest={"schema_name":"ref2dex_object_interaction_cm_bilateral_geometry_v1","schema_version":"1.0.0","sequence_id":rel.as_posix(),"split":"train","source":"inspire_f1","source_dataset":a.source,"source_type":"stage4_mano_to_inspire_position_retarget","coordinate_frame":"object_pose_t","hand_side":"bilateral_merged_left_then_right","merged_hand_sides":True,"object_pool_points":int(obj.shape[1]),"hand_points":int(hand.shape[1]),"effective_fps":float(fps),"source_fps":120.0 if a.source=="grab" else 30.0,"candidate_threshold_m":0.05,"surface_sampling_space":"visual_mesh_local","surface_fk_application_count":1,"producer_fix":"canonical_zero_q_to_visual_local_before_fk_v1","modification_version":a.modification_version}
+            manifest={"schema_name":"ref2dex_object_interaction_cm_bilateral_geometry_v1","schema_version":"1.0.0","sequence_id":rel.as_posix(),"split":"train","source":"inspire_f1","source_dataset":a.source,"source_type":"stage4_mano_to_inspire_position_retarget","coordinate_frame":"object_pose_t","hand_side":"bilateral_merged_left_then_right","merged_hand_sides":True,"object_pool_points":int(obj.shape[1]),"hand_points":int(hand.shape[1]),"effective_fps":float(fps),"source_fps":120.0 if a.source=="grab" else 30.0,"candidate_threshold_m":0.05,"surface_sampling_space":"visual_mesh_local","surface_fk_application_count":1,"producer_fix":"canonical_zero_q_to_visual_local_before_fk_v1","work_version":a.work_version}
             (g/"manifest.json").write_text(json.dumps(manifest,indent=2)+"\n")
             done+=1
             if done%20==0: print(f"converted={done}",flush=True)

@@ -469,7 +469,7 @@ def make_dataloaders(data_cfg: Any, seed: int, *, meta_cfg: Any, distributed: An
     val_loader = DataLoader(val_dataset, **val_kwargs)
     metadata = {
         "schema_name": index["schema_name"],
-        "modification_version": index["modification_version"],
+        "work_version": index["work_version"],
         "coordinate_frame": "object_pose_t",
         "window_size": int(meta_cfg.window_size),
         "effective_fps": 30.0,

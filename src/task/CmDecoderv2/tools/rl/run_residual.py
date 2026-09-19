@@ -279,7 +279,7 @@ def main():
         config["task"]["basePolicy"]["sourceManifest"] = str(args.source_manifest.resolve())
     write_json(args.output / "config.json", config)
     manifest = {"manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "mode": args.mode,
-                "run_id": args.output.name, "modification_version": "V1.1.15", "operation_category": ["experiment", "operation"],
+                "run_id": args.output.name, "work_version": "V1.1.15", "operation_category": ["experiment", "operation"],
                 "created_at": datetime.now(timezone.utc).isoformat(), "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                 "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True)),
                 "command": sys.argv, "seed": 42, "config_snapshot": "config.json", "metadata_snapshot": "metadata.json",
