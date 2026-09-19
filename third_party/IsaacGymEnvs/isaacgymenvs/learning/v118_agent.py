@@ -13,6 +13,14 @@ from .common_agent import CommonAgent
 class V118PlannerAgent(CommonAgent):
     """Keep planner targets in the rollout buffer and distil only into actor μ."""
 
+    def __init__(self, base_name, params):
+        super().__init__(base_name, params)
+        # CommonAgent is a vendored A2C variant and does not initialize this
+        # alias although its bootstrap critic path consumes it.  Keep the
+        # standard rl_games normalizer selection local to V1.18.
+        self.value_mean_std = (self.central_value_net.model.value_mean_std
+                               if self.has_central_value else self.model.value_mean_std)
+
     def _load_config_params(self, config):
         super()._load_config_params(config)
         # This vendored CommonAgent predates rl-games renaming ``seq_len`` to

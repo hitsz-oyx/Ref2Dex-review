@@ -123,6 +123,7 @@ def test_v119_planner_microbatch_covers_all_active_envs_in_order(monkeypatch):
 
 def test_v119_stage_a_agent_skips_task_teacher_when_coef_zero():
     source = (ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py").read_text()
+    assert "self.value_mean_std = (self.central_value_net.model.value_mean_std" in source
     assert "if self.cm_distill_coef > 0:" in source
     assert '"teacher_action": res_dict["mus"].detach()' in source
     assert '"teacher_weight": torch.zeros' in source
