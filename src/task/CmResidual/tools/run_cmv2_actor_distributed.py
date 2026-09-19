@@ -67,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"cmresidual_v116_ddp_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", default="V1.16.3")
+    parser.add_argument("--work-version", default="V1.16.3")
     parser.add_argument("--gpus", type=_parse_gpus, required=True)
     parser.add_argument("--envs-per-rank", type=int, choices=(128, 256), required=True)
     parser.add_argument("--capacity-probe", action="store_true",
@@ -135,7 +135,7 @@ def main() -> None:
         "manifest_schema": "ref2dex.run.v1", "created_at": _now(), "task": "CmResidual",
         "mode": "v116_cmv2_actor_ddp_capacity" if args.capacity_probe else "v116_cmv2_actor_ddp_formal",
         "run_id": args.run_id, "activity_id": args.activity_id, "run_status": "STARTED",
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "operation_category": ["experiment", "operation"], "output_dir": str(output),
         "seed": 42, "base_commit": _git("rev-parse", "HEAD"),
         "worktree_dirty": bool(_git("status", "--porcelain")), "config_snapshot": str(config_path),

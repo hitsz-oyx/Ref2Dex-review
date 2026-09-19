@@ -1,7 +1,7 @@
 _base_: src.task.CmDecoderv2.config:Config
 
 name: cm_decoder_v2_dexplore_rl_v1_1_1_smoke
-modification_version: V1.1.1
+work_version: V1.1.1
 operation_category: [experiment, operation]
 
 model:

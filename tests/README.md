@@ -93,7 +93,7 @@ NumPy 兼容 fixture 和 CI 收集范围，避免迁移一半时出现环境差�
 
 ### 治理 → `tests/governance/`
 
-`test_audit_diff.py`
+`test_verify.py`、`test_work_version_migration.py`
 
 ## 四、迁移边界
 

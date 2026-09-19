@@ -1,5 +1,5 @@
 name: cm_condition_dependence
-modification_version: V1.1.8
+work_version: V1.1.8
 importance: exploratory
 pinned: false
 tags: [cm, conditioning, inspire, frozen, control, short-rollout]

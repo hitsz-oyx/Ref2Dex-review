@@ -28,7 +28,7 @@ def main() -> None:
         with np.load(root / "left.npz") as z: left = {k: np.asarray(z[k]) for k in z.files}
         with np.load(root / "right.npz") as z: right = {k: np.asarray(z[k]) for k in z.files}
         data[label] = {"root": root, "shared": shared, "left": left, "right": right}
-    manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "ObjectInteractionCm", "operation": "bilateral_mano_trajectory_visualization", "run_id": args.output.name, "run_status": "RUNNING", "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "modification_version": "V1.4.6", "inputs": {k: str(v) for k, v in paths.items()}, "viewer": f"http://{args.host}:{args.port}", "output": str(args.output.resolve()), "conclusion": "INCONCLUSIVE"}
+    manifest = {"schema_name": "ref2dex_run_manifest_v1", "task": "ObjectInteractionCm", "operation": "bilateral_mano_trajectory_visualization", "run_id": args.output.name, "run_status": "RUNNING", "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "work_version": "V1.4.6", "inputs": {k: str(v) for k, v in paths.items()}, "viewer": f"http://{args.host}:{args.port}", "output": str(args.output.resolve()), "conclusion": "INCONCLUSIVE"}
     (args.output / "run_manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     server = viser.ViserServer(host=args.host, port=args.port)
     server.scene.set_up_direction("+z")

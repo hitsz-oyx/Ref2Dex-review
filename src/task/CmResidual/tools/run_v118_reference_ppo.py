@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--activity-id", required=True)
     parser.add_argument("--run-id", default=f"cmresidual_v118_{datetime.now():%Y%m%d_%H%M%S}")
-    parser.add_argument("--modification-version", default="V1.18")
+    parser.add_argument("--work-version", default="V1.18")
     parser.add_argument("--stage", choices=("smoke", "a", "b", "c128", "c366"), required=True)
     parser.add_argument("--gpu", type=int, default=5)
     parser.add_argument("--checkpoint", default="", help="Pinned Stage-A checkpoint required for B/C.")
@@ -89,7 +89,7 @@ def main() -> None:
     manifest = {
         "manifest_schema": "ref2dex.run.v1", "created_at": _now(), "task": "CmResidual",
         "mode": f"v118_reference_ppo_{args.stage}", "run_id": args.run_id, "activity_id": args.activity_id,
-        "run_status": "STARTED", "modification_version": args.modification_version,
+        "run_status": "STARTED", "work_version": args.work_version,
         "operation_category": ["experiment", "operation"], "output_dir": str(output), "seed": 42,
         "base_commit": _git("rev-parse", "HEAD"), "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path), "metadata_snapshot": str(REFERENCE.with_name("manifest.json")),

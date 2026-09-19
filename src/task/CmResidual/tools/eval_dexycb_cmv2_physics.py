@@ -89,7 +89,7 @@ def main():
     manifest = {"manifest_schema": "ref2dex.run.v1", "created_at": now(),
                 "mode": "eval_dexycb_cmv2_action_effect_counterfactual", "task": "CmResidual",
                 "run_id": args.run_id, "activity_id": args.activity_id, "run_status": "STARTED",
-                "modification_version": "V1.12.4", "operation_category": ["experiment", "operation"],
+                "work_version": "V1.12.4", "operation_category": ["experiment", "operation"],
                 "output_dir": str(output), "command": " ".join(shlex.quote(x) for x in [sys.executable, *sys.argv]),
                 "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                 "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()),

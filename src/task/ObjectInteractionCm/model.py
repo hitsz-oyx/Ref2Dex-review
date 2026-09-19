@@ -127,7 +127,7 @@ class ObjectInteractionCmModel(nn.Module):
         del condition_shape, target_shape
         super().__init__()
         meta = getattr(cfg, "meta", cfg)
-        version = str(getattr(cfg, "modification_version", "") or getattr(meta, "modification_version", ""))
+        version = str(getattr(cfg, "work_version", "") or getattr(meta, "work_version", ""))
         self.legacy = version.startswith("V1.1")
         if self.legacy:
             self._init_legacy(meta)

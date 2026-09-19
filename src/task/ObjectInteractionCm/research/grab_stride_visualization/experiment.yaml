@@ -1,6 +1,6 @@
 name: grab_stride_visualization
 task: ObjectInteractionCm
-modification_version: V1.4.5
+work_version: V1.4.5
 importance: exploratory
 pinned: false
 tags: [grab, stride, point-flow, visualization]

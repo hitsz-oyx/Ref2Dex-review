@@ -47,9 +47,9 @@ class TaskConfig(BaseConfig):
     """任务配置模板。具体任务应继承此类并显式覆盖字段。"""
 
     name = "task"
-    # Every current run/change points to one modification boundary.  Guidance
+    # Every current run/change points to one work boundary. Guidance
     # and plan numbers remain document-only links and are not config fields.
-    modification_version = ""
+    work_version = ""
     operation_category = []
     component_registry = ""
     # Task configs override this with entries from their local
@@ -209,6 +209,18 @@ def load_config(config: str | Path | dict[str, Any] | TaskConfig | type[Any], ov
         if candidate.is_file():
             config_source = str(candidate.resolve())
     raw = config_to_dict(config)
+    # Existing configuration snapshots can still be loaded after the V1.2a
+    # field migration. New snapshots and all writes use ``work_version``.
+    legacy_work_version = raw.get("modification_version")
+    if legacy_work_version is not None:
+        raw = copy.deepcopy(raw)
+        current_work_version = raw.get("work_version")
+        if current_work_version is not None and current_work_version != legacy_work_version:
+            raise ValueError(
+                "work_version conflicts with legacy modification_version in one config."
+            )
+        raw["work_version"] = legacy_work_version
+        del raw["modification_version"]
     if overrides:
         raw = copy.deepcopy(raw)
         for override in overrides:

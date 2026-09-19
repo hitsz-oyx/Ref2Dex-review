@@ -279,7 +279,7 @@ def _git_info() -> tuple[str, bool]:
 def build(annotation_root: Path, object_root: Path, stage3_root: Path,
           output: Path, translation_m: float = 0.001,
           rotation_deg: float = 1.0, run_id: str | None = None,
-          modification_version: str = "V1.4.3") -> dict:
+          work_version: str = "V1.4.3") -> dict:
     if output.exists():
         raise FileExistsError(f"Output already exists: {output}")
     part_tree_path = object_root / "object_affordance/object_part_tree.json"
@@ -421,7 +421,7 @@ def build(annotation_root: Path, object_root: Path, stage3_root: Path,
         "run_id": run_id or output.name,
         "run_status": "COMPLETED",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "base_commit": base_commit,
         "worktree_dirty": worktree_dirty,
         "command": [sys.executable, *sys.argv],
@@ -464,13 +464,13 @@ def main() -> None:
     parser.add_argument("--translation-motion-threshold-m", type=float, default=0.001)
     parser.add_argument("--rotation-motion-threshold-deg", type=float, default=1.0)
     parser.add_argument("--run-id", default=None)
-    parser.add_argument("--modification-version", default="V1.4.3")
+    parser.add_argument("--work-version", default="V1.4.3")
     args = parser.parse_args()
     print(json.dumps(build(args.annotation_root.resolve(), args.object_root.resolve(),
                            args.stage3_root.resolve(), args.output.resolve(),
                            args.translation_motion_threshold_m,
                            args.rotation_motion_threshold_deg,
-                           args.run_id, args.modification_version), ensure_ascii=False, indent=2))
+                           args.run_id, args.work_version), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":

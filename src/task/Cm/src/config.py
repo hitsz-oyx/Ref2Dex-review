@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[4]
 class Config(TaskConfig):
     name = "cm_action"
     runner_class = "src.task.Cm.src.runner.CmActionRunner"
-    modification_version = "V1.2.11"
+    work_version = "V1.2.11"
     operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):

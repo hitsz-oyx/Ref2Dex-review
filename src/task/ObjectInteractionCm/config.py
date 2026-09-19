@@ -7,7 +7,7 @@ from src.base import TaskConfig
 class Config(TaskConfig):
     name = "object_interaction_cm"
     runner_class = "src.task.ObjectInteractionCm.runner.ObjectInteractionCmRunner"
-    modification_version = "V1.2.1"
+    work_version = "V1.2.1"
     operation_category = ["architecture", "code", "data", "operation"]
 
     class meta(TaskConfig.meta):

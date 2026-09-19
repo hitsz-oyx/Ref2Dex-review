@@ -82,7 +82,7 @@ def main():
         "manifest_schema": "ref2dex.run.v1", "created_at": _now(),
         "mode": "exploratory_grab_retargeted_ppo", "task": "CmResidual",
         "run_id": args.run_id, "activity_id": args.activity_id,
-        "run_status": "STARTED", "modification_version": "V1.13.4",
+        "run_status": "STARTED", "work_version": "V1.13.4",
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output), "seed": 42, "base_commit": _git("rev-parse", "HEAD"),
         "worktree_dirty": bool(_git("status", "--porcelain")),

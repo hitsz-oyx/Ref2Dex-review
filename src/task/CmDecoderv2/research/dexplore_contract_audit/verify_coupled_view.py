@@ -43,8 +43,8 @@ def main():
     cfg = load_config(args.config)
     index_path = Path(cfg.data.view_root) / "index.json"
     index = json.loads(index_path.read_text())
-    if index["modification_version"] != cfg.modification_version:
-        raise ValueError("Runner requires matching training and view modification_version")
+    if index["work_version"] != cfg.work_version:
+        raise ValueError("Runner requires matching training and view work_version")
     output = Path(__file__).parent / "output" / args.run_id
     output.mkdir(parents=True, exist_ok=False)
     start = time.perf_counter()
@@ -66,7 +66,7 @@ def main():
     write_json(output / "metadata.json", metadata)
     manifest = {
         "task": "CmDecoderv2", "run_id": args.run_id,
-        "modification_version": cfg.modification_version, "operation_category": ["diagnostic"],
+        "work_version": cfg.work_version, "operation_category": ["diagnostic"],
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True)),

@@ -321,7 +321,7 @@ def rollout(args: argparse.Namespace) -> Path:
         "run_status": "COMPLETED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "qualitative export only; awaiting human inspection",
-        "modification_version": str(cfg.modification_version),
+        "work_version": str(cfg.work_version),
         "operation_category": ["experiment", "operation"],
         "created_at": _now(),
         "base_commit": commit,

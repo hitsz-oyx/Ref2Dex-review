@@ -281,7 +281,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", required=True,
+    parser.add_argument("--work-version", required=True,
                         choices=("V1.17", "V1.17.1", "V1.17.2", "V1.17.3", "V1.17.4", "V1.17.5"))
     parser.add_argument("--num-envs", type=int, required=True)
     parser.add_argument("--mode", choices=("smoke", "formal"), default="smoke")
@@ -383,7 +383,7 @@ def main() -> int:
         "run_id": args.run_id,
         "activity_id": args.activity_id,
         "run_status": "STARTED",
-        "modification_version": args.modification_version,
+        "work_version": args.work_version,
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output.resolve()),
         "config_snapshot": str(config_path.resolve()),

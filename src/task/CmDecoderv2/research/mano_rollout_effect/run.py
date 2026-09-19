@@ -358,7 +358,7 @@ def main() -> None:
         "run_status": "RUNNING" if args.serve else "COMPLETED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "MANO-source rollout-generated Inspire hand flow forwarded through frozen OICM; no future object GT comparison",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

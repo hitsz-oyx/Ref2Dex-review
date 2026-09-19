@@ -120,7 +120,7 @@ def build(source_manifest: Path, output_root: Path, checkpoint: Path) -> dict:
         "run_id": output_root.name,
         "run_status": "COMPLETED",
         "run_type": "pair_index_build",
-        "modification_version": "V1.2.0",
+        "work_version": "V1.2.0",
         "operation_category": "data",
         "output_root": str(output_root.resolve()),
         "manifest": str(manifest_path.resolve()),

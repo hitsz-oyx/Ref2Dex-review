@@ -1,5 +1,5 @@
 name: dexplore_contract_audit
-modification_version: V1.1.13
+work_version: V1.1.13
 importance: primary
 pinned: true
 tags: [dexplore, paired-data, state-contract, preflight]

@@ -80,7 +80,7 @@ def main() -> int:
         "run_id": run_id,
         "activity_id": args.activity_id or f"ACT-{datetime.now():%Y%m%d-%H%M%S}-CMRESIDUAL-V1111-DEXYCB",
         "run_status": "STARTED",
-        "modification_version": "V1.11.2",
+        "work_version": "V1.11.2",
         "operation_category": ["experiment", "operation"],
         "output_dir": str(output),
         "command": " ".join(shlex.quote(value) for value in [sys.executable, *sys.argv]),

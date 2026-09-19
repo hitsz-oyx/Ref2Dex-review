@@ -41,7 +41,7 @@ def main() -> None:
     manifest = {
         "schema_name": "ref2dex.field_realizer_gate_audit.v1",
         "task": "CmDecoderv2",
-        "modification_version": "V1.1.16",
+        "work_version": "V1.1.16",
         "run_id": args.run_id,
         "run_status": "STARTED",
         "conclusion": "INCONCLUSIVE",
@@ -55,7 +55,7 @@ def main() -> None:
         view = json.loads((VIEW / "manifest.json").read_text())
         index = json.loads((VIEW / "index.json").read_text())
         contact = json.loads(CONTACT.read_text())
-        assert view["modification_version"] == "V1.1.14"
+        assert view["work_version"] == "V1.1.14"
         assert view["split_contract"] == {"train": "mano_source_actual_inspire", "val": "mano_source_actual_inspire", "test": "not_built"}
         assert view["counts"] == {"train": 254, "val": 30, "test": 0}
         assert view["cm_source_contract"]["coordinate_frame"] == "object_pose_t"

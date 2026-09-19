@@ -683,7 +683,7 @@ def _worker(
     geometry_batch_size: int,
     knn_batch_size: int,
     resume: bool,
-    modification_version: str,
+    work_version: str,
 ) -> int:
     if num_shards <= 0 or not 0 <= shard_index < num_shards:
         raise ValueError(f"Invalid shard {shard_index}/{num_shards}")
@@ -729,7 +729,7 @@ def _worker(
         "run_id": f"oicm-v1.3-worker-{shard_index}",
         "run_status": "COMPLETED",
         "created_at": _now(),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "source_index": str(index_path),
@@ -755,7 +755,7 @@ def _finalize(
     index_path: Path,
     output_root: Path,
     num_shards: int,
-    modification_version: str,
+    work_version: str,
 ) -> int:
     source_payload = json.loads(index_path.read_text(encoding="utf-8"))
     source_entries = _source_entries(index_path)
@@ -804,7 +804,7 @@ def _finalize(
         sequences[split].sort(key=lambda item: str(item["id"]))
     assignment = {
         "schema_name": "ref2dex_object_interaction_cm_v1_3_assignment",
-        "modification_version": modification_version,
+        "work_version": work_version,
         "source_index": str(index_path.resolve()),
         "source_index_sha256": _sha256(index_path),
         "split_preserved": True,
@@ -859,7 +859,7 @@ def _finalize(
         "run_id": f"oicm-dexplore-rl-v1-3-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         "run_status": "COMPLETED",
         "created_at": _now(),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
@@ -903,7 +903,7 @@ def _pilot(
     surface_seed: int,
     geometry_batch_size: int,
     knn_batch_size: int,
-    modification_version: str,
+    work_version: str,
 ) -> int:
     entries = _source_entries(index_path)
     matches = [entry for entry in entries if str(entry["id"]) == sequence_id]
@@ -942,7 +942,7 @@ def _pilot(
         "run_id": output_root.name,
         "run_status": "COMPLETED",
         "created_at": _now(),
-        "modification_version": modification_version,
+        "work_version": work_version,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
@@ -979,7 +979,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--geometry-batch-size", type=int, default=DEFAULT_GEOMETRY_BATCH)
     parser.add_argument("--knn-batch-size", type=int, default=DEFAULT_KNN_BATCH)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--modification-version", default="V1.3")
+    parser.add_argument("--work-version", default="V1.3")
     return parser.parse_args()
 
 
@@ -1005,7 +1005,7 @@ def main() -> int:
             surface_seed=args.surface_seed,
             geometry_batch_size=args.geometry_batch_size,
             knn_batch_size=args.knn_batch_size,
-            modification_version=args.modification_version,
+            work_version=args.work_version,
         )
     if args.mode == "worker":
         return _worker(
@@ -1018,13 +1018,13 @@ def main() -> int:
             geometry_batch_size=args.geometry_batch_size,
             knn_batch_size=args.knn_batch_size,
             resume=args.resume,
-            modification_version=args.modification_version,
+            work_version=args.work_version,
         )
     return _finalize(
         index_path=index_path,
         output_root=output_root,
         num_shards=args.num_shards,
-        modification_version=args.modification_version,
+        work_version=args.work_version,
     )
 
 

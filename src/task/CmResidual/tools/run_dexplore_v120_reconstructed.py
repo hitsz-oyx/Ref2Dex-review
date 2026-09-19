@@ -140,7 +140,7 @@ def main() -> int:
                                      "num_envs": args.num_envs, "epochs": epochs})
     manifest = {"manifest_schema": "ref2dex.run.v1", "created_at": _now(),
                 "run_id": args.run_id, "activity_id": args.activity_id,
-                "modification_version": "V1.20", "operation_category": ["experiment", "operation"],
+                "work_version": "V1.20", "operation_category": ["experiment", "operation"],
                 "run_status": "STARTED", "output_dir": str(output.resolve()), "command": command,
                 "runtime": runtime, "input_references": inputs, "log": str((output / "train.log").resolve()),
                 "conclusion": "INCONCLUSIVE"}

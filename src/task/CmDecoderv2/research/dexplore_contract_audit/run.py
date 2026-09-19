@@ -86,7 +86,7 @@ def main():
     inputs = [args.source_index, args.geometric_root / "manifest.json", args.actual_root / "manifest.json"]
     manifest = {
         "schema_name": "ref2dex.run.v1", "task": "CmDecoderv2", "run_id": args.run_id,
-        "run_status": "RUNNING", "modification_version": VERSION,
+        "run_status": "RUNNING", "work_version": VERSION,
         "operation_category": ["diagnostic"], "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
         "base_commit": commit, "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),
         "command": " ".join(__import__("sys").argv), "seed": 2024, "checkpoint": None,
@@ -189,7 +189,7 @@ def run(args, output):
                 print(message, flush=True)
     np.savez_compressed(output / "state_samples.npz", **{key: np.concatenate(value) for key, value in samples.items()})
     write_json(output / "paired_manifest.json", {"schema_name": "ref2dex_dexplore_pair_audit_v1", "diagnostic_only": True,
-               "training_eligible": False, "modification_version": VERSION, "sequences": records})
+               "training_eligible": False, "work_version": VERSION, "sequences": records})
     summary = {"sequences": len(names), "frames": sum(row["frame_count"] for row in records),
                "existing_split_counts": dict(Counter(row["existing_split"] for row in records)),
                "pair_shapes_and_unchanged_fields": "passed", "canonical_identity_and_frame_count": "passed",
