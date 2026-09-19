@@ -75,3 +75,17 @@ def test_worktree_lifecycle_is_discoverable() -> None:
         assert "无未跟踪内容且用户明确授权后" in document
         assert "删除分支" in document
         assert "确认" in document
+
+
+def test_final_plan_append_rule_is_discoverable() -> None:
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    change_control = (ROOT / ".agents/skills/research-change-control/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "状态不是 `FINAL` 的 plan 可在原文件原地修订" in agents
+    assert "一旦 `FINAL`" in agents
+    assert "必须建立 `plan/V<n><letter>.md`" in agents
+    assert "状态不是 `FINAL` 的 plan 可原地修订" in change_control
+    assert "一旦 `FINAL`" in change_control
+    assert "必须建立 `plan/V<n><letter>.md`" in change_control
