@@ -92,6 +92,14 @@ def test_smoke_arguments_fix_the_engineering_contract(tmp_path):
     assert arguments[-1] == "--horovod"
 
 
+def test_smoke_arguments_map_one_actual_upstream_epoch_to_zero_max_iterations(tmp_path):
+    launcher = _load_module("dexplore_v120_ddp_launcher_one_epoch", LAUNCHER_PATH)
+    arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
+                                             num_envs=64, horizon_length=64, minibatch_size=256,
+                                             max_iterations=0, seed=42)
+    assert arguments[arguments.index("--max_iterations") + 1] == "0"
+
+
 def test_launcher_accepts_explicit_formal_training_batch_contract(tmp_path):
     launcher = _load_module("dexplore_v120_ddp_launcher_formal_args", LAUNCHER_PATH)
     arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",

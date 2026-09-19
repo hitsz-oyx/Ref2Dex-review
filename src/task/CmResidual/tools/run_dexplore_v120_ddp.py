@@ -100,8 +100,8 @@ def _git_commit(path: Path) -> str | None:
 def smoke_dexplore_args(*, motion_root: Path, output: Path, num_envs: int,
                         horizon_length: int, minibatch_size: int,
                         max_iterations: int, seed: int) -> list[str]:
-    if min(num_envs, horizon_length, minibatch_size, max_iterations) < 1:
-        raise ValueError("--num-envs, --horizon-length, --minibatch-size, and --max-iterations must be positive")
+    if min(num_envs, horizon_length, minibatch_size) < 1 or max_iterations < 0:
+        raise ValueError("--num-envs, --horizon-length, and --minibatch-size must be positive; --max-iterations must be non-negative")
     return ["--task", "Dexplore_Inspire", "--cfg_env", "dexplore/data/cfg/inspire.yaml",
             "--cfg_train", "dexplore/data/cfg/train/rlg/inspire.yaml",
             "--motion_file", str(motion_root), "--output_path", str(output / "train"),
