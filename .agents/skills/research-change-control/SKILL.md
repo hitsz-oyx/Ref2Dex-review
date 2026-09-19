@@ -23,7 +23,7 @@ metadata:
 
 `work_version` 是唯一版本术语；git_commit 和 run_id 是独立身份。新记录和新 manifest 只写 work_version，旧的 modification_version/research_version/governance_version 只作为历史读取兼容，不能回写为新规范。
 
-只有新 work_version 边界或 L2/L3 方案需要最终 plan。指导补充不自动建立 plan，也不要求一一对应：已有 `a`、`b`、`c` 指导后才协商的计划仍为 `plan/V<n>.md`。已定稿并执行的 plan 若被后续 `指导/V<n><letter>.md` 改变实施合同，才建立同后缀 `plan/V<n><letter>.md`；草案原地修订，已定稿计划不得静默覆盖。开始实施前读取基线 plan 及适用补充。
+只有新 work_version 边界或 L2/L3 方案需要最终 plan。指导补充不自动建立 plan，也不要求一一对应：已有 `a`、`b`、`c` 指导后才协商的计划仍为 `plan/V<n>.md`。状态不是 `FINAL` 的 plan 可原地修订；一旦 `FINAL`，后续任何改变实施合同的修改都不得静默覆盖，必须建立 `plan/V<n><letter>.md`。由同基线指导补充触发时使用该指导字母；没有对应指导时使用 plan 谱系下一个未使用字母。开始实施前读取基线 plan 及适用补充。
 
 ## 分支、记录和验证
 
