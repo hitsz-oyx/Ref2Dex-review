@@ -5687,6 +5687,157 @@ export 日志显示 checkpoint 成功加载并导出 1 条 RL rollout；`rollout
 
 截至 epoch1208，最近 50 epoch reward 范围为 111.55–135.25，线性斜率约 +0.007 reward/epoch；最近 100 epoch 斜率约 -0.0365 reward/epoch，最近 20 epoch 为 -0.3101 reward/epoch。四个 rank 仍存活，GPU0/1/3/7 均约 22.9 GiB 且约 49–53% 利用率。证据支持“近期平台波动”，不支持对抓取能力作出新结论。
 
+## 2026-09-19 11:26:55 +0800 — V1.20 官方 Inspire checkpoint 输入合同诊断
+
+- timestamp: 2026-09-19 11:26:55 +0800
+- activity_id: ACT-20260919-112655-CMRESIDUAL-V120-OFFICIAL-CKPT-DIAG
+- modification_version: V1.20
+- operation_category: experiment、diagnostic、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-requested
+- approval_basis: 用户要求以官方 checkpoint 在当前环境和 `s1_airplane_lift` 重建轨迹上运行，用作 motion/环境合同诊断。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4421ca031c796e14668bfb9f90fed61b6aa787a0
+- worktree_dirty: true（用户已有 `docs/plan/V1.2.15.md` 删除与 `docs/指导/V1.3.md` 未跟踪改动保持原样；本次只写入本活动记录和 ignored evaluation output，未修改训练、checkpoint、输入、上游 source 或用户文档改动。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[官方 checkpoint 诊断 manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/run_manifest.json)、[eval log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/eval.log)、[物理 rollout](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[抬升指标](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/rollout_metrics.json)；未改任何这些输入或训练文件。
+- run_id: dexplore_v120_official_ckpt_lift_20260919_1030
+- parent_run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=6 ... --test --checkpoint /home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth --motion_file <V1.20 converted_attempt2> --num_envs 1 --export_rl`；只读官方 checkpoint 与 V1.20 输入，导出 1 条 432 帧确定性物理 rollout。
+- output: [评估目录](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/run_manifest.json)、[eval log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/eval.log)、[rollout](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[metrics](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_lift_20260919_1030/rollout_metrics.json)。
+- checkpoint: `/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth`；SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`。
+- rollout_metrics: object z start=1.337033m、max=1.373354m、end=1.328253m；max lift=0.036320m；end lift=-0.008780m；lift >2cm=11 frames，>5/10/15/20cm=0 frames；reference max lift=0.218118m；xyz RMSE=0.036963m。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+官方 README 将 `checkpoint/inspire.pth` 标为提供的 pretrained Inspire teacher。把它加载到当前单序列重建输入可直接检验输入 tensor、观测维度、asset、物理任务与 checkpoint 的加载和 action 执行能否兼容；它不能单独逐字段证明未公开 producer 的 motion 语义完全等价，也不能要求该通用 checkpoint 必然在该单一序列达到参考轨迹质量。
+
+**验证**
+
+官方 checkpoint 含 `model`、`running_mean_std` 与 `amp_input_mean_std`；评估日志确认两次 checkpoint restore 成功并导出 1 条物理 rollout。对象实际达到 3.63cm 峰值抬升，说明当前重建数据至少没有阻断官方策略的模型加载和物理执行；但只维持 11 帧超过 2cm，未超过 5cm，最终落回初始高度下方，显著低于参考 21.81cm 抬升。因此该结果不能支持“motion 已完全没有问题”，也不能将当前自训策略的 0cm 抬升仅归因于训练失败。父训练与用户既有文档改动均未修改。
+
+## 2026-09-19 11:36:21 +0800 — V1.20 viewer 坐标合同诊断
+
+- timestamp: 2026-09-19 11:36:21 +0800
+- activity_id: ACT-20260919-113621-CMRESIDUAL-V120-COORDINATE-DIAG
+- modification_version: V1.20
+- operation_category: diagnostic
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户在官方 checkpoint Gym viewer 中观察到飞机在桌面而手在桌下，要求检查。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4421ca031c796e14668bfb9f90fed61b6aa787a0
+- scope: 只读检查 [当前 V1.20 tensor](../../../../../data/processed_data/dexplore_reconstructed_v120/converted_attempt2/s1_airplane_lift/interaction_hand_inspire.pt)、[legacy 对照 tensor](../../../../../data/processed_data/inspire_rl_object_dexplore/s1_airplane_lift/interaction_hand_inspire.pt)、清洁官方 task、fork task 差异及 [官方 checkpoint viewer log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_viewer_20260919_1130/viewer.log)；未修改数据、转换器、训练、checkpoint、viewer、source 或用户已有文档差异。
+- run_id: dexplore_v120_official_ckpt_viewer_20260919_1130
+- run_status: RUNNING
+- output: [viewer log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_viewer_20260919_1130/viewer.log)；X11 Gym 窗口仍显示在 `DISPLAY=localhost:10.0`。
+- conclusion: INVALID_IMPLEMENTATION（仅针对“V1.20 reconstructed tensor 的手/物体/桌面可被当作同一 world-frame reference”这一数据合同。）
+
+**原因**
+
+用户观察到 viewer 中飞机和手处于桌面两侧；这需要区分 checkpoint 来源、task source 改动和输入几何关系。checkpoint 已验证与清洁官方 checkout 的 Git LFS SHA256 完全相同。fork task 相对清洁 task 的差异仅涉及 export path 的 motion filtering 与空 interaction 起点处理，不会在本次非 export viewer 中改变 table/target/reset 坐标。
+
+**验证**
+
+当前 V1.20 tensor 首帧 table=(0.00294,-0.10541,1.30873)、object=(0.01824,-0.08290,1.33703)，object-table=(0.01530,0.02252,0.02831)m；legacy 对照的 object-table=(0.01471,0.02290,0.02831)m，说明桌面与物体相对关系保留。当前右手 reference 相对 object 为 (-0.62473,1.27719,0.03411)m，legacy 为 (-0.65762,1.26058,0.45289)m；z 相差约 -0.419m。相反，object/table 的全局 z 由 legacy 的 0.91826/0.88995m 增至当前的 1.33703/1.30873m，约 +0.419m，而手的全局 z 均约 1.371m。物体/桌面发生了 +0.419m 的变换而手 reference 没有同步，故当前 adapter 组装出的 motion 与 object frame 不兼容，足以解释该 viewer 现象与抓取失败。
+
+## 2026-09-19 11:39:25 +0800 — V1.20 无效坐标合同训练终止
+
+- timestamp: 2026-09-19 11:39:25 +0800
+- activity_id: ACT-20260919-113925-CMRESIDUAL-V120-INVALID-STOP
+- modification_version: V1.20
+- operation_category: operation、experiment
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.20 最终计划规定数据合同失败即停止；此前坐标合同诊断已判定当前 input 为 `INVALID_IMPLEMENTATION`。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4421ca031c796e14668bfb9f90fed61b6aa787a0
+- scope: 终止 [V1.20 正式运行](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)，并只读保留 [manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log) 与 [最近 checkpoint](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00001000.pth)；未删除或覆盖数据、checkpoint、输出、viewer、source 或用户文档改动。
+- run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: FAILED
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)、[checkpoint](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00001000.pth)。
+- last_epoch: 1364；best_logged_mean_reward: 146.68 at epoch1352；latest_checkpoint: GRAB_00001000.pth；gpu_peak_mib: GPU0=23436、GPU1/3/7=22879。
+- exit_reason: 由 Agent 按既定数据合同失败门主动发送 `KeyboardInterrupt`；manifest 中的 launcher traceback 是该受控停止，不是 OOM、数值异常或上游训练错误。
+- conclusion: INVALID_IMPLEMENTATION
+
+**原因**
+
+当前训练从开始即使用手 reference 相对物体 z 错配约 0.419m 的重建 tensor。继续优化只会学习这一无效几何合同，不能用于评估 DExplore 复现或抓取能力。
+
+**验证**
+
+tmux、mpirun 和 4 个 rank 已退出；GPU0/1/3/7 均回到约 2 MiB。输出、日志和 epoch500/1000 checkpoint 完整保留，供后续修复坐标变换后做输入对照；不复用这些 checkpoint。
+
+## 2026-09-19 11:52:51 +0800 — V1.20 坐标修复与官方 checkpoint 复核
+
+- timestamp: 2026-09-19 11:52:51 +0800
+- activity_id: ACT-20260919-115251-CMRESIDUAL-V120-COORDFIX-OFFICIAL-EVAL
+- modification_version: V1.20
+- operation_category: code、data、diagnostic、experiment、operation、documentation
+- task_mode: change → run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求修复已确认的手/物体/桌面坐标问题，并检查官方 checkpoint 表现。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4421ca09e7504eeed377f2ce7c0982c805d25998
+- worktree_dirty: true（保留用户已有 `docs/plan/V1.2.15.md` 删除与 `docs/指导/V1.3.md` 未跟踪改动；本次只修改 V1.20 adapter/test/plan/activity，并生成 ignored 数据和评估 output。）
+- scope: [V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[活动记录](activity_log.md)、[修复输入 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120_coordfix_v3/manifest.json)、[修复 tensor](../../../../../data/processed_data/dexplore_reconstructed_v120_coordfix_v3/converted_attempt1/s1_airplane_lift/interaction_hand_inspire.pt)、[官方评估目录](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/)、[评估 manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/run_manifest.json)、[eval log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/eval.log)、[物理 rollout](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[抬升指标](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/rollout_metrics.json)。
+- run_id: dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155
+- run_status: COMPLETED
+- command: adapter 使用修复前 tensor 与 legacy 对照 tensor 推导每帧 `body.params.transl`，随后以未改动上游 `convert_grab.py` 转换；`CUDA_VISIBLE_DEVICES=0 ... --test --checkpoint inspire.pth --motion_file <coordfix_v3> --num_envs 1 --export_rl`。
+- output: [修复数据根](../../../../../data/processed_data/dexplore_reconstructed_v120_coordfix_v3/)、[转换输出](../../../../../data/processed_data/dexplore_reconstructed_v120_coordfix_v3/converted_attempt1/)、[官方评估目录](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/run_manifest.json)、[eval log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/eval.log)、[rollout](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[metrics](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_retry_20260919_1155/rollout_metrics.json)。
+- last_epoch: N/A；best_metric: N/A；metrics.jsonl: N/A；checkpoint: `/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth`（SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`）。
+- data_gate: PASS；修复 tensor `(432,598)`、`float32`、finite；right-hand/object 相对位置对 legacy 的最大误差 `2.98e-7m`（低于 1cm）；object/table 相对位置对修复前 reconstructed tensor 的最大变化 `1.19e-7m`。
+- rollout_metrics: object z start=0.916851m、max=0.996869m、end=0.024199m；max lift=0.080018m；end lift=-0.892652m；lift >2cm=11 frames，>5cm=8 frames，>10/15/20cm=0 frames；reference max lift=0.281432m；object xyz RMSE=0.855295m。
+- conclusion: REFUTED（针对“坐标修复后，官方 `inspire.pth` 在该 reconstructed input 上可实现与参考动作相当的物体抬升”这一命题）；数据合同本身为 SUPPORTED。
+
+**原因**
+
+坐标诊断显示 432 帧所需手/物相对修正的范围为 8–12cm，不能以常量平移处理。adapter 现以 `convert_grab.py` 中的 `rotation_x_90` 逆变换，将每帧输出坐标的 right-hand/object 相对差映射到唯一允许修改的 `body.params.transl`；两份输入 tensor 的路径、SHA256、方法和数值范围写入候选 manifest。raw contact、object/table、mesh、skeleton、body rotation 与所有其他 body 参数未变。
+
+**验证**
+
+`py_compile`、定向 pytest（4 passed）及 `git diff --check` 通过。清洁上游 converter 生成修复 tensor；右手/物体关系达到数值一致，object/table 不变量保持。官方 checkpoint 两次 restore 成功并导出完整 432 帧 Isaac Gym rollout，但物体只短暂抬升 8.0cm，随后落至桌面，远低于参考 28.1cm。因此不启动容量 smoke 或新的四卡训练；当前 reconstructed baseline 仍不能支持效果复现结论。
+
+## 2026-09-19 11:56:00 +0800 — V1.20 修复输入官方 checkpoint Gym viewer
+
+- timestamp: 2026-09-19 11:56:00 +0800
+- activity_id: ACT-20260919-115600-CMRESIDUAL-V120-COORDFIX-OFFICIAL-VIEWER
+- modification_version: V1.20
+- operation_category: diagnostic、operation、documentation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-requested
+- approval_basis: 用户明确要求现在提供 Gym 可视化。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4421ca09e7504eeed377f2ce7c0982c805d25998
+- worktree_dirty: true（保留用户已有 `docs/plan/V1.2.15.md` 删除与 `docs/指导/V1.3.md` 未跟踪改动；本次不改训练、checkpoint、输入、上游 source 或配置。）
+- scope: [V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[修复 tensor](../../../../../data/processed_data/dexplore_reconstructed_v120_coordfix_v3/converted_attempt1/s1_airplane_lift/interaction_hand_inspire.pt)、[viewer manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156/run_manifest.json)、[viewer log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156/viewer.log)、[活动记录](activity_log.md)。
+- run_id: dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156
+- run_status: RUNNING
+- command: `DISPLAY=localhost:10.0 CUDA_VISIBLE_DEVICES=0 ... --test --checkpoint inspire.pth --motion_file <coordfix_v3> --num_envs 1`。
+- output: [viewer 运行目录](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156/run_manifest.json)、[viewer log](../../../../../outputs/Dexplore/dexplore_v120_official_ckpt_coordfix_v3_viewer_20260919_1156/viewer.log)。
+- checkpoint: `/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth`（SHA256 `8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553`）。
+- evidence: `xwininfo -display localhost:10.0` 已确认 `Isaac Gym` 窗口 1600×900；GPU0 运行单环境 PhysX。
+- conclusion: INCONCLUSIVE（viewer 用于视觉检查；不替代已完成的数值 rollout 评估。）
+
+**原因**
+
+此前 viewer 使用的是已判定无效的坐标输入。该运行改为通过数据门的 `coordfix_v3` tensor，以便用户直接检查修复后的手、物体与桌面的关系。
+
+**验证**
+
+Isaac Gym 已成功连接 `DISPLAY=localhost:10.0` 并创建 1600×900 窗口；运行日志显示 GPU PhysX 初始化完成。运行保持在 tmux `ref2dex_v120_coordfix_v3_viewer_1156` 中，尚未修改或启动训练。
+
 ## 2026-09-18 20:28:37 +0800 — V1.17.5 DExplore reward 趋势复核
 
 - timestamp: 2026-09-18 20:28:37 +0800
@@ -5714,3 +5865,67 @@ export 日志显示 checkpoint 成功加载并导出 1 条 RL rollout；`rollout
 **验证**
 
 截至 20:28:31，训练进程仍存活；日志从 epoch115 记录到 epoch261。最近三个 10-epoch 窗口均值分别为 90.277（epoch232–241）、87.509（epoch242–251）、87.032（epoch252–261），最近 30 epoch 线性斜率为 -0.184 reward/epoch。
+
+## 2026-09-19 15:39:42 +0800 — V1.20 Horovod 旧构建迁移可行性诊断
+
+- timestamp: 2026-09-19 15:39:42 +0800
+- activity_id: ACT-20260919-153942-CMRESIDUAL-V120-HOROVOD-TORCH-ABI-DIAG
+- modification_version: V1.20
+- operation_category: diagnostic
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户要求接续指定历史会话，并判断能否保留已经编译的 Horovod 环境、逐步过渡到可复现官方 checkpoint 的 PyTorch 2.4 运行时。
+- skills_used: research-change-control、openai-docs
+- branch: oyx
+- base_commit: 4421ca09e7504eeed377f2ce7c0982c805d25998
+- worktree_dirty: true（保留用户已有 `docs/plan/V1.2.15.md` 删除、`docs/指导/V1.3.md` 未跟踪文件及 V1.20 代码/计划/activity 差异；本次除追加本诊断记录外未修改环境、代码、配置、数据、checkpoint 或运行产物。）
+- scope: 只读检查 [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md) 与 [活动记录](activity_log.md)；解析本机 Codex 会话 `01a0b50c-6194-7892-9428-2ec65bfae823`；检查 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117`、`dexplore_v117_hvd`、`dexplore_v120_train` 与 `dexplore_v121_hvd` 的 PyTorch、rl-games、Horovod 包元数据、`horovodrun --check-build`、Horovod `metadata.json`、PyTorch 扩展动态链接和 pip wheel cache。
+- conclusion: REFUTED（针对“保留现有 PyTorch 2.0 Horovod 二进制，仅升级其余环境即可得到 PyTorch 2.4 官方 checkpoint 运行时”）；单卡直接使用 `dexplore_v117` 不需要 Horovod，为 SUPPORTED。
+
+**原因**
+
+Horovod 顶层 wheel 的 `Requires` 不含 PyTorch，因为 Horovod 支持多个框架；但 DExplore 多卡路径导入 `horovod.torch`。该模块包含编译后的 `mpi_lib_v2`，必须与构建时的 PyTorch/CUDA/C++ ABI 匹配。现有 Horovod 构建均只记录 `pytorch=2.0.1+cu118`，机器上没有 PyTorch `2.4.1+cu121` 对应的已安装构建或缓存 wheel。
+
+**验证**
+
+- `dexplore_v117_hvd/bin/horovodrun --check-build`：Horovod 0.28.1 的 PyTorch、MPI、Gloo、NCCL 后端均可用，但当前 PyTorch 为 `2.0.1+cu118`。
+- `readelf -d .../horovod/torch/mpi_lib_v2*.so`：扩展直接依赖 `libc10.so`、`libtorch.so`、`libtorch_cpu.so`、`libtorch_python.so`、`libc10_cuda.so`，并把 `dexplore_v117_hvd/.../torch/lib` 写入 `RUNPATH`。
+- 在 `dexplore_v117` 的 PyTorch `2.4.1+cu121` 进程中交叉导入旧 `horovod.torch`，稳定失败为 `HorovodVersionMismatchError`：构建版本 `2.0.1+cu118`，当前版本 `2.4.1+cu121`，要求按新 PyTorch 重新安装/构建 Horovod。
+- 全机受检环境仅 `dexplore_v117_hvd` 与 `dexplore_v120_train` 含 Horovod，二者 `metadata.json` 均绑定 `2.0.1+cu118`；pip cache 未找到 Horovod wheel。
+
+**保护与回滚**
+
+本次没有安装、卸载、复制或重编译任何包，也没有启动训练/评估。回滚仅需删除本活动条目；用户已有工作树差异和全部运行环境保持不变。
+
+## 2026-09-19 15:57:00 +0800 — V1.20 坐标修复 adapter 实现归档
+
+- timestamp: 2026-09-19 15:57:00 +0800
+- activity_id: ACT-20260919-155700-CMRESIDUAL-V120-COORDFIX-ARCHIVE
+- modification_version: V1.20
+- operation_category: code、data、documentation
+- task_mode: change
+- change_level: L3
+- approval: user-approved
+- approval_basis: 沿用已记录的 V1.20 最终计划与用户对坐标合同修复、官方 checkpoint 复核的明确授权；本条仅归档已完成实现以便提交。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4421ca09e7504eeed377f2ce7c0982c805d25998
+- worktree_dirty: true（保留用户已有 `docs/plan/V1.2.15.md` 删除，不纳入本次提交。）
+- scope: [V1.20 最终计划](../plan/V1.20.md)、[坐标修复 adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter 定向测试](../../tests/test_dexplore_v120_motion_input.py) 与 [活动记录](activity_log.md)；不修改上游 DExplore、既有 Horovod 环境、数据、checkpoint 或训练输出。
+- run_status: COMPLETED（实现与定向工程验证完成；不代表新的训练运行。）
+- conclusion: SUPPORTED（仅支持修复 adapter 的几何合同检查和工程接线；不构成新的抓取科研结论。）
+
+**原因**
+
+将每帧 hand/object 对齐、输入 provenance 和 V1.20 计划的坐标修复约束作为 Task-local 可测试实现归档，确保该实现能与后续不使用 Horovod 的独立探索清楚区分。
+
+**验证**
+
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_v120_motion_input.py`：4 passed。
+- `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python -m py_compile src/task/CmResidual/tools/data/build_dexplore_v120_motion_input.py`：通过。
+- `git diff --check`：通过；提交前将以 Python 3 运行 activity 链接与暂存差异审计。
+
+**回滚入口**
+
+回退本次提交即可撤销 adapter、测试、计划补充和本归档条目；忽略的 V1.20 数据与运行产物不在提交内。

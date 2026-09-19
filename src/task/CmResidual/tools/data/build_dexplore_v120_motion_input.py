@@ -10,6 +10,7 @@ producer.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -24,6 +25,7 @@ DEFAULT_LEGACY_ROOT = REPOSITORY_ROOT / "data/processed_data/dexplore_grab/seque
 DEFAULT_RAW_ROOT = REPOSITORY_ROOT / "data/raw_data/GRAB/grab"
 DEFAULT_RAW_OBJECT_ROOT = REPOSITORY_ROOT / "data/raw_data/GRAB/objects"
 DEFAULT_RAW_TOOLS_ROOT = REPOSITORY_ROOT / "data/raw_data/GRAB/tools"
+DEFAULT_SKELETON_ROOT = REPOSITORY_ROOT.parent / "InterAct/simulation/intermimic/data/assets/smplx"
 DEFAULT_OUTPUT_ROOT = REPOSITORY_ROOT / "data/processed_data/dexplore_reconstructed_v120"
 
 
@@ -69,8 +71,41 @@ def _validate(legacy: dict[str, Any], raw: dict[str, Any]) -> tuple[int, dict[st
     return frames, native
 
 
+def derive_body_translation(*, baseline_tensor: Path, reference_tensor: Path) -> tuple[np.ndarray, dict[str, Any]]:
+    """Derive a per-frame source-frame body translation from DExplore tensors.
+
+    DExplore rotates SMPL-X translations by +90 degrees about X while emitting
+    the 598-D tensor.  The correction aligns the right-hand/object relative
+    position (slots 51:54 and 198:201) with the geometric reference and then
+    applies the inverse rotation: ``[x, y, z]_source = [x, z, -y]_output``.
+    """
+    import torch
+
+    baseline = torch.load(baseline_tensor, map_location="cpu", weights_only=True).float()
+    reference = torch.load(reference_tensor, map_location="cpu", weights_only=True).float()
+    if baseline.ndim != 2 or reference.ndim != 2 or baseline.shape != reference.shape or baseline.shape[1] != 598:
+        raise ValueError("alignment tensors must have matching (T, 598) shapes")
+    if not torch.isfinite(baseline).all() or not torch.isfinite(reference).all():
+        raise ValueError("alignment tensors must be finite")
+    output_delta = ((reference[:, 51:54] - reference[:, 198:201])
+                    - (baseline[:, 51:54] - baseline[:, 198:201])).detach().numpy()
+    source_delta = np.stack((output_delta[:, 0], output_delta[:, 2], -output_delta[:, 1]), axis=1).astype(np.float32)
+    provenance = {
+        "method": "right_hand_object_relative_inverse_rotation_x90",
+        "baseline_tensor": {"path": str(baseline_tensor.resolve()), "sha256": _sha256(baseline_tensor)},
+        "reference_tensor": {"path": str(reference_tensor.resolve()), "sha256": _sha256(reference_tensor)},
+        "output_relative_delta_m": {
+            "shape": list(output_delta.shape), "min": output_delta.min(axis=0).tolist(),
+            "max": output_delta.max(axis=0).tolist(), "mean": output_delta.mean(axis=0).tolist(),
+        },
+    }
+    return source_delta, provenance
+
+
 def build(*, sequence: str, legacy_root: Path, raw_root: Path, raw_object_root: Path,
-          raw_tools_root: Path, output_root: Path) -> dict[str, Any]:
+          raw_tools_root: Path, skeleton_root: Path, output_root: Path,
+          body_translation: np.ndarray | tuple[float, float, float] = (0.0, 0.0, 0.0),
+          alignment_provenance: dict[str, Any] | None = None) -> dict[str, Any]:
     subject, action = sequence.split("_", 1)
     legacy_dir = legacy_root / sequence
     legacy_motion = legacy_dir / "motion.npz"
@@ -95,8 +130,18 @@ def build(*, sequence: str, legacy_root: Path, raw_root: Path, raw_object_root: 
     raw_subject_mesh = raw_tools_root.parent / subject_template
     if not raw_subject_mesh.is_file():
         raise FileNotFoundError(f"missing raw subject mesh: {raw_subject_mesh}")
+    skeleton = skeleton_root / f"smplx_grab_{subject}.xml"
+    if not skeleton.is_file():
+        raise FileNotFoundError(f"missing InterAct skeleton: {skeleton}")
     target_dir.mkdir(parents=True)
-    payload = dict(legacy)
+    translation = np.asarray(body_translation, dtype=np.float32)
+    if translation.shape not in {(3,), (frames, 3)}:
+        raise ValueError(f"body_translation must have shape (3,) or {(frames, 3)}, got {translation.shape}")
+    payload = copy.deepcopy(legacy)
+    transl = np.asarray(payload["body"]["params"].get("transl"))
+    if transl.shape != (frames, 3):
+        raise ValueError(f"body.params.transl must have shape {(frames, 3)}, got {transl.shape}")
+    payload["body"]["params"]["transl"] = transl.astype(np.float32, copy=True) + translation
     payload["contact"] = native_contact
     np.savez(target_dir / "motion.npz", **payload)
     shutil.copy2(legacy_object, target_dir / "object.npz")
@@ -106,6 +151,9 @@ def build(*, sequence: str, legacy_root: Path, raw_root: Path, raw_object_root: 
     output_subject_mesh = output_root / subject_template
     output_subject_mesh.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(raw_subject_mesh, output_subject_mesh)
+    output_skeleton = output_root / "skeletons" / skeleton.name
+    output_skeleton.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(skeleton, output_skeleton)
     manifest = {
             "schema": "dexplore_reconstructed_motion_input_v1",
             "classification": "reconstructed_baseline",
@@ -114,12 +162,19 @@ def build(*, sequence: str, legacy_root: Path, raw_root: Path, raw_object_root: 
             "contact_source": "raw_grab_native_rate",
             "contact_frames": {key: int(value.shape[0]) for key, value in native_contact.items()
                                if isinstance(value, np.ndarray) and value.ndim > 0},
+            "body_world_translation_m": {
+                "kind": "constant" if translation.ndim == 1 else "per_frame",
+                "shape": list(translation.shape),
+                "min": translation.min(axis=0).tolist(), "max": translation.max(axis=0).tolist(),
+                "mean": translation.mean(axis=0).tolist(),
+            },
             "inputs": {
                 "legacy_motion": {"path": str(legacy_motion.resolve()), "sha256": _sha256(legacy_motion)},
                 "legacy_object": {"path": str(legacy_object.resolve()), "sha256": _sha256(legacy_object)},
                 "raw_grab": {"path": str(raw_motion.resolve()), "sha256": _sha256(raw_motion)},
                 "raw_object_mesh": {"path": str(raw_mesh.resolve()), "sha256": _sha256(raw_mesh)},
                 "raw_subject_mesh": {"path": str(raw_subject_mesh.resolve()), "sha256": _sha256(raw_subject_mesh)},
+                "legacy_interact_skeleton": {"path": str(skeleton.resolve()), "sha256": _sha256(skeleton)},
             },
             "outputs": {
                 "motion": {"path": str((target_dir / "motion.npz").resolve()),
@@ -128,15 +183,19 @@ def build(*, sequence: str, legacy_root: Path, raw_root: Path, raw_object_root: 
                            "sha256": _sha256(target_dir / "object.npz")},
                 "object_mesh": {"path": str(output_mesh.resolve()), "sha256": _sha256(output_mesh)},
                 "subject_mesh": {"path": str(output_subject_mesh.resolve()), "sha256": _sha256(output_subject_mesh)},
+                "skeleton": {"path": str(output_skeleton.resolve()), "sha256": _sha256(output_skeleton)},
             },
             "invariants": [
                 "body metadata and parameters are copied from legacy 30 Hz motion",
                 "object.npz is copied byte-for-byte from legacy input",
                 "raw object mesh is copied byte-for-byte into the public converter's filename convention",
                 "subject template is copied byte-for-byte into the public converter's vtemp convention",
+                "legacy InterAct-generated skeleton is copied byte-for-byte for this reconstructed converter input",
                 "raw contact arrays are copied without interpolation, repetition, filtering, or numeric conversion",
             ],
         }
+    if alignment_provenance is not None:
+        manifest["body_translation_alignment"] = alignment_provenance
     (output_root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
 
@@ -148,12 +207,30 @@ def main() -> None:
     parser.add_argument("--raw-root", type=Path, default=DEFAULT_RAW_ROOT)
     parser.add_argument("--raw-object-root", type=Path, default=DEFAULT_RAW_OBJECT_ROOT)
     parser.add_argument("--raw-tools-root", type=Path, default=DEFAULT_RAW_TOOLS_ROOT)
+    parser.add_argument("--skeleton-root", type=Path, default=DEFAULT_SKELETON_ROOT)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--body-translation", type=float, nargs=3, metavar=("X", "Y", "Z"),
+                        default=(0.0, 0.0, 0.0),
+                        help="Explicit world-frame translation applied only to body.params.transl")
+    parser.add_argument("--alignment-baseline-tensor", type=Path,
+                        help="598-D baseline tensor used to derive a per-frame body translation")
+    parser.add_argument("--alignment-reference-tensor", type=Path,
+                        help="598-D geometric tensor used as the alignment reference")
     args = parser.parse_args()
+    if bool(args.alignment_baseline_tensor) != bool(args.alignment_reference_tensor):
+        parser.error("--alignment-baseline-tensor and --alignment-reference-tensor must be supplied together")
+    translation: np.ndarray | tuple[float, float, float] = tuple(args.body_translation)
+    alignment_provenance = None
+    if args.alignment_baseline_tensor:
+        translation, alignment_provenance = derive_body_translation(
+            baseline_tensor=args.alignment_baseline_tensor, reference_tensor=args.alignment_reference_tensor)
     print(json.dumps(build(sequence=args.sequence, legacy_root=args.legacy_root,
                            raw_root=args.raw_root, raw_object_root=args.raw_object_root,
                            raw_tools_root=args.raw_tools_root,
-                           output_root=args.output_root), indent=2))
+                           skeleton_root=args.skeleton_root,
+                           output_root=args.output_root,
+                           body_translation=translation,
+                           alignment_provenance=alignment_provenance), indent=2))
 
 
 if __name__ == "__main__":
