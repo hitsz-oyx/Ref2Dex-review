@@ -6,7 +6,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
-- `modification_version`: `V1.18`
+- `modification_version`: `V1.20`
+- V1.20：按用户授权建立 `s1_airplane_lift` 的隔离上游 DExplore 单序列重建复现。训练前必须取得清洁上游源码、匹配的运行时依赖、原生 120 Hz contact 与未改动的上游转换器输出；公开 producer 缺失部分由 Task-local adapter 以既有 30 Hz body/object、原始 contact 和逐字节复制的 converter 资产组装，严格标为 reconstructed baseline。计划见 [V1.20](plan/V1.20.md)，状态以 [活动记录](logs/activity_log.md) 为准。
 - V1.18：主线改为 `reference-conditioned PPO + frozen Cmv2 one-step planner + planner-to-actor distillation`。actor/critic 均接收 retargeted `+1/+16` 的 1442-D DExplore-layout future reference；Cmv2 仅在 pre-action active state 上为 K=8 local candidates 生成 stop-gradient teacher，PPO 仍执行自身 sampled action。初始实现及工程 smoke 的范围见 [V1.18 最终计划](plan/V1.18.md)，终态以 [活动记录](logs/activity_log.md) 为准。
 - V1.17：DExplore 原始 teacher 仅训练与 CmResidual 对齐的 `s1_airplane_lift` GRAB 序列；输入仍取 `inspire_rl_object_dexplore` 中该序列的 RL rollout 手/物体状态，新 policy 从零初始化。GPU5 单卡容量探测固定 horizon 64、minibatch 256、1 PPO iteration、seed42，逐级确定稳定 env 数；该基线不改 CmResidual/Cmv2 合同。计划见 [V1.17](plan/V1.17.md)，运行状态以 [活动记录](logs/activity_log.md) 为准。
 - V1.16.5：用户批准以已验证的 physical GPU0/1/3、3 rank×128 env 启动正式 PPO 长训；不设人为 epoch budget（配置保留 100000000 的安全上限），由用户人工停止。算法、输入、buffer、奖励与 critic 合同不变；运行状态以 [活动记录](logs/activity_log.md) 为准。

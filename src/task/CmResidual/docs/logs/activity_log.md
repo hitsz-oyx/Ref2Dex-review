@@ -5080,6 +5080,366 @@ V1.17.4 最新 smoke 已完成 PPO epoch 和 checkpoint 写出，但 rank0 达�
 
 启动前 GPU0/3 均为 2MiB、利用率 0%；输入 checkpoint 存在且 dry-run 已确认 resume formal 预算。
 
+## 2026-09-18 23:07:36 +0800 — V1.20 单序列官方 DExplore 复现计划定稿
+
+- timestamp: 2026-09-18 23:07:36 +0800
+- activity_id: ACT-20260918-230736-CMRESIDUAL-V120-OFFICIAL-REPRO-PLAN
+- modification_version: V1.20
+- operation_category: governance、documentation
+- task_mode: governance
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确授权 Agent 创建 V1.20 指导、写最终计划并开始单序列官方复现。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: false（修改前）
+- scope: [V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[Task README](../README.md) 与 [当前版本指针](../../../../../docs/current_versions.yaml)；未改代码、数据、外部 checkout、环境、checkpoint 或现有 outputs。
+- run_id: N/A
+- run_status: N/A
+- conclusion: INCONCLUSIVE（计划已定稿；严格官方数据、smoke 与训练均尚未启动）。
+
+**原因**
+
+此前两条临时兼容转换的数值对照证明本地数据不是上游转换的等价产物，但 30 Hz contact 重复、SAPIEN headless port 和资产重定向不能作为官方复现。用户已授权建立隔离的单序列复现单元，因此将原生 120 Hz contact、清洁上游源码和未改动转换器设为正式训练的硬门。
+
+**验证**
+
+计划与指导均明确固定 `s1_airplane_lift`、从零 153 PPO epoch、正式数据/转换器约束、smoke 门、停止条件和回滚方式；既有 V1.17.5 训练与其输入保持独立。后续将先审计 source/environment/data gate，再决定是否能启动转换与 smoke。
+
+**回滚**
+
+回滚本次文档与版本指针差异即可；没有创建或修改数据、环境或运行产物。
+
+## 2026-09-18 23:13:31 +0800 — V1.20 上游源码与 GRAB contact 数据门预检
+
+- timestamp: 2026-09-18 23:13:31 +0800
+- activity_id: ACT-20260918-231331-CMRESIDUAL-V120-OFFICIAL-SOURCE-PREFLIGHT
+- modification_version: V1.20
+- operation_category: diagnostic、operation、documentation
+- task_mode: change，随后进入 read-only/diagnostic
+- change_level: L3
+- approval: user-approved
+- approval_basis: [V1.20 最终计划](../plan/V1.20.md) 已定稿，用户已授权建立隔离官方复现单元并开始。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅本次 V1.20 指导、计划、版本指针、README、活动记录和 ignored 预检 manifest；既有数据、checkout、训练与 outputs 未改。）
+- scope: [V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[Task README](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml)、仓库外清洁的 DExplore/InterAct/dex-urdf source snapshot，原始 GRAB `s1_airplane_lift` contact 与既有 processed motion contract；未创建 V1.20 数据、未改上游源码、未创建环境、未启动转换、smoke 或训练。
+- run_id: official_source_preflight_20260918_231331
+- run_status: COMPLETED
+- output: [预检 manifest](../../research/dexplore_official_reproduction/output/official_source_preflight_20260918_231331/run_manifest.json)
+- conclusion: INCONCLUSIVE（清洁源码和原始 120 Hz contact 可获得；公开 InterAct 未提供 DExplore `motion.npz` producer，严格数据路径尚未闭合）。
+
+**原因**
+
+V1.20 要求用未改动的上游转换器和原生采样 contact 构造正式数据。此前的临时转换已证明不能把本地 30 Hz contact 或兼容层当作官方输入，故先建立清洁 source snapshot 并追查公开 producer。
+
+**结果**
+
+- DExplore 上游 `d0b9320aa0495bf3df78d0cd44c2fad718f8a622`、InterAct 上游 `96180a34f7b516e7f3520b853c19ea8679b8204f` 与 dex-urdf 上游 `f5e7132f22108164577fea4c25ef99b5cc0e1900` 均在新建的仓库外目录 clean checkout；上游 `convert_grab.py` SHA256 为 `afd81af5df4e463c259b34755fccd5d9f16137e7a7b542e18f3c705226206f5c`。
+- 原始 `s1/airplane_lift.npz` 的 body/object contact 分别为 `(1726,10475)` / `(1726,25002)`，可满足 432 个 motion frame 的 `4*t` 读取；当前本地 `motion.npz` 的对应 contact 已降为 `(432,...)`。
+- 清洁 InterAct 的当前版本及 DExplore 发布日前历史版本都只写 `human.npz`、`object.npz`，不写 DExplore 转换器读取的 `motion.npz`（其需同时包含 `body` 与 native-rate `contact`）。DExplore 公开 source 也没有该 producer。
+
+**验证**
+
+三个外部 checkout 均为 clean；上游转换器的工作树 SHA256 与 Git object 内容 SHA256 一致。使用项目 `graspenv` 解析原始和现有 NPZ：原始 contact 为 1726 帧，既有输入 contact 为 432 帧。以 `git show` 检查 DExplore 发布日前的 InterAct `process_grab.py` 历史版本，均只保存 `human.npz` 与 `object.npz`。预检 [manifest](../../research/dexplore_official_reproduction/output/official_source_preflight_20260918_231331/run_manifest.json) 通过 JSON 语法校验。
+
+**停止条件**
+
+按 V1.20 数据门暂停，未用 30→120 Hz 重复、headless shim、路径补丁或本地 fork 数据替代。若用户接受一个新、可审计的 adapter 仅组装 clean InterAct 输出与未改原始 contact，则必须先更新 V1.20 计划并为该数据 schema 追加验证；否则需要用户提供官方 `motion.npz` producer 或已生成的官方输入。
+
+**回滚**
+
+回滚本活动、V1.20 文档和 ignored 预检 manifest；外部三个 clone 可以独立删除，不影响现有 checkout、数据或 outputs。
+
+## 2026-09-19 00:02:51 +0800 — V1.20 重建输入通过未改动上游转换器数据门
+
+- timestamp: 2026-09-19 00:02:51 +0800
+- activity_id: ACT-20260919-000251-CMRESIDUAL-V120-RECONSTRUCTED-CONVERT
+- modification_version: V1.20
+- operation_category: data、code、operation、documentation
+- task_mode: change → run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户在追查 GitHub 公开 producer 后明确授权“那你尝试按自己的理解做吧”；[`V1.20 最终计划`](../plan/V1.20.md) 已更新为 reconstructed baseline 范围。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅本次 V1.20 版本指针、README、指导、计划、activity、adapter/test 与 ignored 的隔离数据/预检产物；未改现有数据根、DExplore/InterAct checkout、GPU0/3 的既有训练、checkpoint 或 outputs。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[定向测试](../../tests/test_dexplore_v120_motion_input.py)、[重建输入 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120/manifest.json)、[转换张量](../../../../../data/processed_data/dexplore_reconstructed_v120/converted_attempt2/s1_airplane_lift/interaction_hand_inspire.pt)；上游 `convert_grab.py` 保持未改动，adapter 只复制既有 30 Hz body/object、原始 native-rate contact、原始 object mesh、原始 subject template 和既有 InterAct 生成的 skeleton。
+- run_id: dexplore_v120_reconstructed_convert_s1_airplane_lift_20260918_2359
+- run_status: COMPLETED
+- command: `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v120_data/bin/python data_processing/convert_grab.py --robot inspire --grab_dir /home2/wyy/oyx_ws/Ref2Dex/data/processed_data/dexplore_reconstructed_v120 --original_grab_dir /home2/wyy/oyx_ws/Ref2Dex/data/raw_data/GRAB/grab --object_dir /home2/wyy/oyx_ws/Ref2Dex/data/processed_data/dexplore_reconstructed_v120/objects --smplx_model_dir /home2/wyy/oyx_ws/Ref2Dex/data/raw_data/ARCTIC/arctic/models --skeleton_dir /home2/wyy/oyx_ws/Ref2Dex/data/processed_data/dexplore_reconstructed_v120/skeletons --dex_retarget_dir /home2/wyy/oyx_ws/_external/dex_urdf_official_v120/robots/hands --output_dir /home2/wyy/oyx_ws/Ref2Dex/data/processed_data/dexplore_reconstructed_v120/converted_attempt2 --filter s1_airplane_lift`
+- output: [重建输入 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120/manifest.json)、[转换张量](../../../../../data/processed_data/dexplore_reconstructed_v120/converted_attempt2/s1_airplane_lift/interaction_hand_inspire.pt)、[上游预检 manifest](../../research/dexplore_official_reproduction/output/official_source_preflight_20260918_231331/run_manifest.json)
+- last_step: N/A；last_epoch: N/A；best_metric: `(432, 598)`、`torch.float32`、all finite；checkpoint: N/A；metrics.jsonl/train.log: N/A（数据转换操作）。
+- exit_reason: 转换器首次因目标数据根缺少 `tools/subject_meshes/male/s1.ply` 失败；补齐公开输入布局后第二次转换产生唯一序列张量。外层调用在最终 `tqdm` 尾行前返回，随后确认转换进程已退出且张量可成功加载、形状/dtype/finiteness 均通过。
+- conclusion: SUPPORTED（仅支持 reconstructed baseline 的输入组合和未改动 converter 的 `(T,598)` 工程数据门；不证明其等价于作者未公开的 producer，PPO 效果仍为 INCONCLUSIVE。）
+
+**原因**
+
+公开 DExplore converter 读取 native-rate contact，并通过 `body.vtemp` 读取受试者模板；公开 InterAct 没有生成该输入的 producer。首次运行发现重建根仅缺少该公开期望的模板布局，故 adapter 由 legacy `vtemp` 字段确定路径，逐字节复制原始 GRAB 模板；同样复制 object mesh 和已有 InterAct skeleton，避免路径 shim 或数值修改。
+
+**验证**
+
+`/home2/wyy/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/CmResidual/tests/test_dexplore_v120_motion_input.py`：`2 passed`；`py_compile` adapter：通过。原始 subject template 与重建副本 SHA256 相同，skeleton 与来源副本 SHA256 相同；转换输出可由独立环境的 torch 成功加载，形状 `(432, 598)`、dtype `float32`、所有元素 finite。上游 `convert_grab.py` 使用预检记录的 SHA256 `afd81af5df4e463c259b34755fccd5d9f16137e7a7b542e18f3c705226206f5c`，未写入或 patch source。
+
+**下一门禁与回滚**
+
+转换数据门已经通过；尚未创建 V1.20 PPO 启动器、未启动 1-iteration smoke 或 153 epoch 训练。下一步只能以该隔离数据根构建并验证启动器。回滚入口为本次 Git 差异；重建数据、外部环境和 source snapshot 均为隔离产物，保留作为证据，不影响既有运行。
+
+## 2026-09-19 00:06:32 +0800 — V1.20 隔离训练环境通过上游导入预检
+
+- timestamp: 2026-09-19 00:06:32 +0800
+- activity_id: ACT-20260919-000632-CMRESIDUAL-V120-TRAIN-ENV-PREFLIGHT
+- modification_version: V1.20
+- operation_category: operation、diagnostic
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已授权 V1.20 隔离上游复现和其独立运行时；[`V1.20 最终计划`](../plan/V1.20.md) 要求不改写既有 checkout 或运行环境。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅本次 V1.20 Git 差异和仓库外隔离环境/数据；现有 V1.17 环境、GPU0/3 训练、checkpoint 和 outputs 未改。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[定向测试](../../tests/test_dexplore_v120_motion_input.py)、[重建数据 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120/manifest.json) 与仓库外 `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v120_train`；后者由既有 V1.17 运行时复制后仅在副本中固定 `numpy==1.23.5`，并安装上游无条件 import 所需 `torch-cluster==1.6.3+pt20cu118` 与 `torch-geometric==2.6.1`。没有启动 DExplore task、PPO 或 GPU simulation。
+- run_id: dexplore_v120_train_env_preflight_20260919_000632
+- run_status: COMPLETED
+- output: 仓库外隔离 runtime `/home2/wyy/oyx_ws/.runtime_envs/dexplore_v120_train`
+- last_step: N/A；last_epoch: N/A；best_metric: 上游 `dexplore/run.py` import 成功；checkpoint: N/A；metrics.jsonl/train.log: N/A。
+- exit_reason: N/A
+- conclusion: SUPPORTED（运行时导入合同成立；尚未支持 PPO 运行或科研效果结论。）
+
+**原因**
+
+原有 V1.17 runtime 的 NumPy 1.24.4 已移除 Isaac Gym 预览版使用的 `np.float`，且该 runtime 正服务于既有训练，不能原地变更。清洁 DExplore `run.py` 还无条件 import distillation 模块，导致 Stage 1 也要求 PyG 依赖。
+
+**验证**
+
+新 runtime 报告 PyTorch `2.0.1+cu118` 与 NumPy `1.23.5`；Isaac Gym 的 `gym_38`、`gymtorch`、`rlgpu_38` 均加载，随后 `import run` 成功。依赖 wheel 与运行时均位于新目录，未写入外部 DExplore source 或既有 V1.17 environment。
+
+**下一门禁与回滚**
+
+下一步只实现和 dry-run V1.20 启动器，之后才按 GPU 容量门启动 1 iteration smoke。回滚可独立移除该新 runtime；不需要也不得改动原 V1.17 runtime。
+
+## 2026-09-19 00:08:53 +0800 — V1.20 单序列 PPO 启动器 dry-run 通过
+
+- timestamp: 2026-09-19 00:08:53 +0800
+- activity_id: ACT-20260919-000853-CMRESIDUAL-V120-LAUNCHER-DRYRUN
+- modification_version: V1.20
+- operation_category: code、operation、documentation
+- task_mode: change → run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已授权 V1.20 reconstructed baseline 的独立复现；[`V1.20 最终计划`](../plan/V1.20.md) 已定稿。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 文档、adapter/test、启动器和隔离产物；未改既有数据根、V1.17 runtime/GPU0/3 训练、checkpoint 或 outputs。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 PPO 启动器](../../tools/run_dexplore_v120_reconstructed.py)、[重建数据 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120/manifest.json) 与 [转换张量](../../../../../data/processed_data/dexplore_reconstructed_v120/converted_attempt2/s1_airplane_lift/interaction_hand_inspire.pt)。启动器只读 source/data，未创建 smoke output。
+- run_id: dexplore_v120_dryrun_20260919_0010
+- run_status: COMPLETED
+- output: N/A（dry-run 不创建输出目录。）
+- last_step: N/A；last_epoch: N/A；best_metric: preflight passed；checkpoint: N/A；metrics.jsonl/train.log: N/A。
+- exit_reason: N/A
+- conclusion: SUPPORTED（启动器的输入、runtime、GPU 容量和命令合同成立；尚未证明 PPO 可运行或研究效果。）
+
+**原因**
+
+上游 task 会直接枚举 `interaction_hand_inspire.pt` 所在序列目录，故启动器直接只读 V1.20 converter 输出，不构造 symlink、复制张量或改写 source。外部 converter 曾生成未跟踪的 `data_processing/smplx_vert_segmentation.json`；它是唯一允许的派生产物，tracked 与 staged source 均无差异，启动器会拒绝任何其他未跟踪或 source 修改。
+
+**验证**
+
+`py_compile` 启动器：通过。以隔离 V1.20 runtime 执行 `--dry-run --num-envs 64 --gpu 7`：通过；固定 source commit `d0b9320aa0495bf3df78d0cd44c2fad718f8a622`、`run.py` SHA256、重建 manifest SHA256、转换 tensor SHA256、shape `(432,598)`、`float32` 和 GPU7 预检。命令将物理 GPU7 映射为子进程 `cuda:0`，max iterations 为 1。
+
+**下一门禁与回滚**
+
+下一步可在 GPU7 启动一次 64-env/64-horizon PPO smoke；只有 subprocess 退出码为 0 且产生 checkpoint 与 TensorBoard event 才可进入 153 epoch。回滚入口为本次 Git 差异；dry-run 没有创建 output，外部 source/data 均未改写。
+
+## 2026-09-19 00:11:20 +0800 — V1.20 GPU7 单序列 PPO smoke 通过
+
+- timestamp: 2026-09-19 00:11:20 +0800
+- activity_id: ACT-20260919-001120-CMRESIDUAL-V120-PPO-SMOKE
+- modification_version: V1.20
+- operation_category: experiment、operation、code、documentation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户已授权 V1.20 单序列复现及 153 epoch；[`V1.20 最终计划`](../plan/V1.20.md) 规定先通过 1-iteration smoke。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 文档、adapter/test、launcher、隔离数据/环境与新的 ignored smoke outputs；未改既有 V1.17 runtime/GPU0/3 训练、checkpoint 或 outputs。）
+- scope: [V1.20 启动器](../../tools/run_dexplore_v120_reconstructed.py)、[V1.20 最终计划](../plan/V1.20.md)、[失败 run manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_20260919_0010/run_manifest.json)、[成功 run manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/run_manifest.json)、[成功 train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789747850.server) 与 [checkpoint](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)。上游 tracked source、V1.20 tensor、existing training 不修改。
+- run_id: dexplore_v120_reconstructed_smoke_gpu7_20260919_0010
+- run_status: FAILED
+- output: [失败运行目录](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_20260919_0010/)
+- exit_reason: 上游硬编码 `dexplore/data/assets/mjcf/objects/{table,airplane}/*.obj`，清洁 checkout 缺少用户数据 assets；退出码 1，未产生 event/checkpoint。
+- conclusion: INVALID_IMPLEMENTATION
+
+- run_id: dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012
+- run_status: COMPLETED
+- output: [成功运行目录](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789747850.server)、[checkpoint](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_smoke_gpu7_retry1_20260919_0012/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)
+- last_step: 8192；last_epoch: 2（上游 `max_iterations=1` 实际完成 epoch 1–2）；best_metric: latest mean reward 17.62；checkpoint: `GRAB.pth`；metrics.jsonl: N/A；train.log: 已生成。
+- exit_reason: 正常完成；exit code 0；GPU7 peak 18397 MiB。
+- conclusion: SUPPORTED（PPO smoke 的环境、finite 数据、GPU physics、event/checkpoint 合同成立；两 epoch reward 不是抓取效果结论。）
+
+**原因**
+
+首次 smoke 暴露上游 README 所述但 source tree 不携带的用户 GRAB assets。按官方目录约定，逐字节提供 V1.20 airplane mesh 和既有 InterAct GRAB table mesh 后重试；两者只作为被 `.gitignore` 忽略的用户资产，tracked source 无差异。
+
+**验证**
+
+retry1 的 manifest 记录 source/data/tensor 哈希；日志确认 GPU PhysX、64 env、18 action、1442 observation、1 个 motion，epoch 1/2 mean reward 分别 10.14/17.62，正常写 checkpoint。启动器验证 subprocess exit=0、event 和 checkpoint 非空；GPU7 峰值 18397 MiB。
+
+**下一门禁与回滚**
+
+smoke 已通过，按计划可从零开始 153 epoch 单卡正式训练。回滚入口为 V1.20 Git 差异；失败和成功 outputs 均保留为证据，不覆盖彼此或既有运行。
+
+## 2026-09-19 00:11:57 +0800 — V1.20 GPU7 153 epoch 正式训练已启动
+
+- timestamp: 2026-09-19 00:11:57 +0800
+- activity_id: ACT-20260919-001157-CMRESIDUAL-V120-FORMAL-START
+- modification_version: V1.20
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确授权 V1.20 从零 153 PPO epoch；[`V1.20 最终计划`](../plan/V1.20.md) 的数据和 smoke 门均已通过。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 文档、adapter/test、launcher、隔离数据/环境与新的 ignored outputs；未改既有 V1.17 runtime/GPU0/3 训练、checkpoint 或 outputs。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[启动器](../../tools/run_dexplore_v120_reconstructed.py)、[输入 manifest](../../../../../data/processed_data/dexplore_reconstructed_v120/manifest.json) 与 [正式运行 manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/run_manifest.json)。
+- run_id: dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013
+- run_status: STARTED
+- command: `CUDA_VISIBLE_DEVICES=7 /home2/wyy/oyx_ws/.runtime_envs/dexplore_v120_train/bin/python src/task/CmResidual/tools/run_dexplore_v120_reconstructed.py --run-id dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013 --activity-id ACT-20260919-0013-CMRESIDUAL-V120-FORMAL-START --mode formal --num-envs 64 --gpu 7`
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/train.log)；checkpoint/TensorBoard event: PENDING。
+- last_step: PENDING；last_epoch: PENDING；best_metric: PENDING；checkpoint: PENDING；metrics.jsonl: N/A；train.log: [入口](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/train.log)。
+- conclusion: INCONCLUSIVE（运行中；不从启动状态推断训练效果。）
+
+**原因**
+
+V1.20 data conversion 和 GPU7 64-env smoke 均已通过。按已定稿计划，用相同单卡、64 env、64 horizon、seed42 从零开始；上游 `max_iterations=152` 的终止语义对应 153 completed PPO epoch。
+
+**验证**
+
+启动器已写入 `STARTED` manifest，记录 clean source commit、data/tensor SHA256、完整命令和 GPU7 预检 2 MiB。训练由独立 launcher PID 1291060 监督；终态将由同一 manifest 写入，未产生时的证据字段以 PENDING 标记。
+
+**停止条件与回滚**
+
+OOM、non-finite、traceback、缺失 event/checkpoint、资源冲突或数据合同失败将写为 FAILED 并停止；不复用 checkpoint。回滚 Git 差异不会删除运行证据；正式运行可由其 launcher 单独管理。
+
+## 2026-09-19 00:13:55 +0800 — V1.20 正式训练通过 tmux 重新启动
+
+- timestamp: 2026-09-19 00:13:55 +0800
+- activity_id: ACT-20260919-001355-CMRESIDUAL-V120-FORMAL-RETRY1
+- modification_version: V1.20
+- operation_category: experiment、operation
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: V1.20 已获用户授权的 153 epoch 正式训练；前一 launcher 在 spawn 前退出，按既有计划保留失败证据后以独立会话重启。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 文档、adapter/test、launcher、隔离数据/环境与 ignored outputs；未改既有 V1.17 runtime/GPU0/3 训练、checkpoint 或 outputs。）
+- scope: [前一 launcher 失败 manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_20260919_0013/run_manifest.json)、[当前运行目录](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/)、[当前 manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/run_manifest.json)、[当前 train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/train.log)；运行由 `tmux` session `ref2dex_v120_formal_0015` 承载。
+- run_id: dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015
+- run_status: RUNNING
+- command: `tmux new-session -d -s ref2dex_v120_formal_0015 '<V1.20 launcher --mode formal --num-envs 64 --gpu 7>'`
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/train.log)；checkpoint/TensorBoard event: PENDING。
+- last_step: PENDING；last_epoch: PENDING；best_metric: PENDING；checkpoint: PENDING；metrics.jsonl: N/A；train.log: [入口](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/train.log)。
+- conclusion: INCONCLUSIVE（训练运行中。）
+
+**原因**
+
+前一 run 的 manifest 已写入 `STARTED`，但外层后台进程在 spawn 前结束，留下空 train log；已将其终态更正为 `FAILED / INVALID_IMPLEMENTATION`。本 retry 使用独立 tmux 会话，避免当前命令会话结束回收训练子进程。
+
+**验证**
+
+重新启动后确认 tmux session、V1.20 launcher 与 `dexplore/run.py` 均存活；GPU7 使用约 18147 MiB 且有计算利用率，日志已进入 GPU PhysX 初始化与 mesh sampling 阶段。终态由 run manifest 写入。
+
+## 2026-09-19 00:15:50 +0800 — V1.20 官方配置等价性诊断
+
+- timestamp: 2026-09-19 00:15:50 +0800
+- activity_id: ACT-20260919-001550-CMRESIDUAL-V120-CONFIG-EQUIVALENCE
+- modification_version: V1.20
+- operation_category: diagnostic
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问当前配置是否与官方完全一致。
+- skills_used: research-change-control
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- scope: 只读比较 pinned 上游 `inspire.yaml`、`train/rlg/inspire.yaml` 与 [当前 formal manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/run_manifest.json)；未修改 source、配置、运行进程、数据或 checkpoint。
+- run_id: dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015
+- run_status: RUNNING
+- output: [当前 manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/run_manifest.json)、[当前 train log](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/train.log)。
+- conclusion: INCONCLUSIVE（工程运行中；配置不是完整官方默认等价。）
+
+**原因与验证**
+
+上游默认 `numEnvs=8192`、`motion_file=./data`、`minibatch_size=16384`、`max_epochs=100000`；当前命令覆盖为单序列 reconstructed input、`num_envs=64`、`minibatch_size=256`、`max_iterations=152`、seed42。`horizon_length=64`、reward/observation/action/physics 的 YAML 默认字段仍使用上游内容。公开 producer 缺失，当前输入是明确标记的 reconstructed baseline，亦不能声称与作者私有数据流程完全等价。
+
+## 2026-09-19 00:17:40 +0800 — V1.20 四卡 8192 env 可行性诊断
+
+- timestamp: 2026-09-19 00:17:40 +0800
+- activity_id: ACT-20260919-001740-CMRESIDUAL-V120-4GPU-CAPACITY-DIAGNOSTIC
+- modification_version: V1.20
+- operation_category: diagnostic
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问是否可使用 GPU0/1/3/7 并行达到 numenvs=8192。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- scope: 只读检查 NVIDIA GPU 资源、现有进程、V1.20 runtime Horovod backend 与上游 multi-GPU 配置；未停止或修改当前 V1.20 run、GPU1 可视化服务、任何 checkpoint、source 或数据。
+- run_id: dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015
+- run_status: RUNNING
+- output: [当前 formal manifest](../../../../../outputs/Dexplore/dexplore_v120_reconstructed_formal_gpu7_153ep_retry1_20260919_0015/run_manifest.json)
+- conclusion: INCONCLUSIVE（软件支持四 rank；2048 env/rank 的物理容量和与既有服务兼容性尚未验证。）
+
+**验证**
+
+runtime 的 Horovod `0.28.1` 报告 MPI/CUDA/NCCL 均为 true；上游 train YAML `multi_gpu: false`，但 `run.py --horovod` 可覆盖。总 8192 需启动 4 rank 并为每 rank 传 `--num_envs 2048`。检查时 GPU0/3 为 2 MiB、GPU1 为 777 MiB 的 CmDecoderv2 可视化服务、GPU7 为当前 V1.20 formal 约 18.4 GiB；因此不能与当前 GPU7 单卡训练并存，也不能仅由单卡 64-env smoke 推断 2048 env/rank 一定不会 OOM。
+
+## 2026-09-19 00:25:00 +0800 — V1.20 四卡 8192 env smoke 通过并启动正式训练
+
+- timestamp: 2026-09-19 00:25:00 +0800
+- activity_id: ACT-20260919-002500-CMRESIDUAL-V120-HVD4-FORMAL-START
+- modification_version: V1.20
+- operation_category: code、experiment、operation、documentation
+- task_mode: change → run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户确认以 GPU0/1/3/7 并行切换至总 8192 env；[V1.20 最终计划](../plan/V1.20.md) 已改为 4 rank × 2048 env 容量门及正式训练。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 文档、adapter/test、V1.20 launcher 和兼容 bootstrap、隔离环境/数据与 ignored outputs；未改 tracked 上游 source、既有数据、checkpoint 或其他 Task 运行。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[4-rank smoke manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_smoke_20260919_0025/run_manifest.json)、[smoke log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_smoke_20260919_0025/train.log)、[正式 manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_formal_153ep_20260919_0027/run_manifest.json) 和 [正式 train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_formal_153ep_20260919_0027/train.log)。
+- run_id: dexplore_v120_hvd4_8192_smoke_20260919_0025
+- run_status: COMPLETED
+- output: [smoke 运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_smoke_20260919_0025/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_smoke_20260919_0025/run_manifest.json)、[checkpoint](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_smoke_20260919_0025/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB.pth)。
+- last_step: 1 PPO update；last_epoch: 2；best_metric: latest mean reward 21.15；checkpoint/event: 已生成；GPU peak MiB: GPU0/3/7=23575, GPU1=23686。
+- conclusion: SUPPORTED（总 8192 env 的四 rank PPO 容量/同步/checkpoint/event 合同通过；reward 不构成抓取结论。）
+
+- run_id: dexplore_v120_hvd4_8192_formal_153ep_20260919_0027
+- run_status: RUNNING
+- output: [正式运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_formal_153ep_20260919_0027/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_formal_153ep_20260919_0027/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_formal_153ep_20260919_0027/train.log)；checkpoint/event: PENDING。
+- last_step/last_epoch/best_metric/checkpoint: PENDING；conclusion: INCONCLUSIVE。
+
+**原因**
+
+用户确认从单卡容量探测切换为 GPU0/1/3/7 的总 8192 env 方案；为保持每 rank 的设备绑定和同步终止，bootstrap 增加仅对 V1.20 生效的 source-path 环境变量，旧默认路径不变。
+
+**验证**
+
+Horovod 0.28.1 的 MPI/CUDA/NCCL backend 可用。smoke 的 4 个 rank 均报告 2048 env、18 actions、1442 observations；rank0 记录 epoch 1/2，并在同步退出后写 checkpoint。正式 run 由 tmux `ref2dex_v120_hvd4_formal_0027` 承载，四个 rank 均已启动。GPU1 含约 777 MiB 既有服务且 smoke 仍通过；显存余量很小，运行时持续监控，任何 OOM/traceback 会写 FAILED。
+
 ## 2026-09-18 18:03:23 +0800 — V1.19 流式 exact planner 与 Stage-A bypass 实现
 
 - timestamp: 2026-09-18 18:03:23 +0800
@@ -5202,6 +5562,130 @@ reward 曲线升高不能直接证明抓起，因为当前 DExplore 日志没有
 **验证**
 
 export 日志显示 checkpoint 成功加载并导出 1 条 RL rollout；`rollout_metrics.json` 与 `object_z_lift_compare.png` 均显示 RL 物体最大相对抬升为 0.0m，所有大于 2cm 的 lift 帧数为 0。GPU0/3 上原双卡训练进程仍存活，本次可视化使用 GPU2。
+
+## 2026-09-19 00:45:46 +0800 — V1.20 按上游 max_epochs 重启四卡正式训练
+
+- timestamp: 2026-09-19 00:45:46 +0800
+- activity_id: ACT-20260919-0050-CMRESIDUAL-V120-ACCUM64-FORMAL-OFFICIAL
+- modification_version: V1.20
+- operation_category: code、experiment、operation、documentation
+- task_mode: change → run-only/operation
+- change_level: L3
+- approval: user-approved
+- approval_basis: 用户明确要求“用官方的这个 epoch 数，重新启动”；V1.20 最终计划已更新并保持 final。
+- skills_used: research-change-control、research-experiment-workflow
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅 V1.20 的版本指针、README、指导/计划、活动记录、adapter/test、启动器与 Horovod bootstrap；隔离数据、环境和 outputs 均未纳入 Git。未改上游 tracked source、既有输入、checkpoint 或其他 Task 运行。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[活动记录](activity_log.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[按请求停止的 153-epoch manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_8192_accum64_formal_153ep_20260919_0045/run_manifest.json)、[新运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)、[新 manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[新 train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789749916.server)。
+- prior_run_id: dexplore_v120_hvd4_8192_accum64_formal_153ep_20260919_0045
+- prior_run_status: FAILED（用户请求停止；`KeyboardInterrupt`，不解释为 OOM 或训练失败。）
+- run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: STARTED
+- command: `horovodrun -np 4 -H localhost:4 ... --num_envs 2048 --horizon_length 64 --minibatch_size 16384 --max_iterations 100000 --seed 42 --horovod`；物理 GPU 为 0/1/3/7，总 env 为 8192；逻辑 minibatch 16384 通过 64 × 256 microbatch 做一次同步 optimizer step。
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[config](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/config.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)、[TensorBoard event](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/summaries/events.out.tfevents.1789749916.server)；checkpoint: PENDING。
+- last_step: PENDING；last_epoch: PENDING；best_metric: PENDING；metrics.jsonl: N/A；checkpoint: PENDING。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+此前 153 epoch 是本地固定预算，不是上游训练 YAML 的默认值。上游 `inspire.yaml` 配置为 `max_epochs: 100000`，因此按用户要求停止旧运行，并让 launcher 对正式模式原样传递 100000。上游训练循环以 `epoch_num > max_epochs` 退出，所以预期会实际执行 epoch 1..100001。
+
+**验证**
+
+`dexplore_v120_train/bin/python -m py_compile` 对 launcher 和 bootstrap 通过。正式 dry-run 已解析 `--max_iterations 100000`、4 rank、每 rank 2048 env、逻辑 minibatch 16384，并核验 source commit、输入 manifest 和 `(432,598)` float32 tensor。启动后 tmux session 与 mpirun、4 个 rank 均存活；四个 rank 已完成 task/agent 初始化，运行目录已写出 config、manifest、train log 和 TensorBoard event。当前证据只支持启动与初始化，不构成训练效果结论。
+
+**回滚与终态入口**
+
+代码/计划的回滚入口是本次 V1.20 Git 差异；新旧 outputs 保留为独立证据。训练终态、最后 epoch、最佳指标和 checkpoint 由 [新 manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json) 与 [train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log) 更新。
+
+## 2026-09-19 09:18:23 +0800 — V1.20 官方 epoch 长训状态诊断
+
+- timestamp: 2026-09-19 09:18:23 +0800
+- activity_id: ACT-20260919-091823-CMRESIDUAL-V120-OFFICIAL-STATUS
+- modification_version: V1.20
+- operation_category: diagnostic、operation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问当前训练情况和 reward 表现。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- scope: 只读检查 [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[运行 manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)、tmux/Horovod rank 进程和 GPU 0/1/3/7 状态；未停止、重启或修改运行、checkpoint、数据、source、配置或代码。
+- run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)。
+- last_epoch: 1070；last_logged_mean_reward: 120.25；best_logged_mean_reward: 142.09 at epoch 844；last5_mean_reward: 122.450；last10_mean_reward: 123.664；last20_mean_reward: 124.253；checkpoint: PENDING（上游 `save_frequency=500` 的目录待后续写入确认）。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+用户看到 GPU 利用率短暂较低而询问训练是否停止。tmux、mpirun 和 4 个 Horovod rank 均仍存活；GPU 0/1/3/7 各占用约 22.9 GiB，并有 30% 左右计算利用率。训练并未停止。
+
+**验证**
+
+解析 rank0 日志中的 1070 条 epoch 记录：reward 从 epoch 1 的 17.28 上升到 epoch 844 的峰值 142.09；当前 20 个 epoch 均值为 124.253，低于峰值但在 117.67–132.83 区间波动。该 reward 是 DExplore 的训练回报，只支持优化曲线已显著提升且近期呈平台波动；没有 success、物体高度或 rollout 评估，不能据此判定抓取成功。
+
+## 2026-09-19 09:33:13 +0800 — V1.20 epoch1000 物理 rollout 抬升评估
+
+- timestamp: 2026-09-19 09:33:13 +0800
+- activity_id: ACT-20260919-093313-CMRESIDUAL-V120-EVAL-LIFT-E1000
+- modification_version: V1.20
+- operation_category: experiment、operation、diagnostic
+- task_mode: run-only/operation
+- change_level: L3
+- approval: user-requested
+- approval_basis: 用户明确要求使用空闲显存评估物体抬升程度。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- worktree_dirty: true（仅既有 V1.20 文档、adapter/test、launcher/bootstrap 与本活动记录；本次评估只写入 ignored output。训练用官方 V1.20 checkout、实时四卡训练、checkpoint、输入数据均未修改。）
+- scope: [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[活动记录](activity_log.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[父运行 checkpoint](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00001000.pth)、[评估 manifest](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/run_manifest.json)、[评估日志](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/eval.log)、[物理 rollout](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[抬升指标](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/rollout_metrics.json)。
+- run_id: dexplore_v120_eval_lift_epoch1000_20260919_0936
+- parent_run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: COMPLETED
+- command: `CUDA_VISIBLE_DEVICES=2 ... DExplore --test --checkpoint GRAB_00001000.pth --motion_file <V1.20 converted_attempt2> --num_envs 1 --export_rl`；读取 checkpoint 和输入，导出 1 条 432 帧确定性物理 rollout。
+- output: [评估目录](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/run_manifest.json)、[eval log](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/eval.log)、[rollout](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/rl_export/s1_airplane_lift/interaction_hand_inspire.pt)、[metrics](../../../../../outputs/Dexplore/dexplore_v120_eval_lift_epoch1000_20260919_0936/rollout_metrics.json)。
+- last_epoch: 1000（checkpoint）；best_metric: N/A；metrics.jsonl: N/A；checkpoint: [GRAB_00001000.pth](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train/inspire_slow_slow_energy_reset_contact_table_adjust_parameter_2/nn/GRAB_00001000.pth)。
+- rollout_metrics: RL object z start=1.337033m、max=1.337033m、end=1.335665m；max lift=0.000000m；end lift=-0.001368m；reference max lift=0.218118m；xyz RMSE=0.034694m；lift >2/5/10/15/20cm 帧数均为 0。
+- conclusion: REFUTED（仅针对 epoch1000 checkpoint 的该确定性 rollout 已使物体抬离初始高度这一命题。）
+
+**原因**
+
+训练 reward 无法直接反映物体抬升，故在未被训练占用的 GPU2 独立加载最近的 epoch1000 checkpoint，逐帧记录 Isaac Gym 中动态 object actor 的 root state。两次仅评估副本尝试分别因相对资产工作目录和导出钩子的环境层级问题停止，均在输出 rollout 前结束且未影响父训练；最终使用此前已验证的隔离 export-capable evaluator 完成导出。
+
+**验证**
+
+评估日志确认 checkpoint 成功加载且导出 1 条 rollout；`rollout_metrics.json` 由输入和导出张量的 object xyz 列（198:201）计算。物体最高点等于初始高度，没有任何帧超过 2cm 抬升；参考轨迹有 21.81cm 最大抬升。因此 epoch1000 策略尚未学会在这个确定性物理 rollout 中抬起物体。父训练的 tmux/Horovod rank 未停止。
+
+## 2026-09-19 10:24:03 +0800 — V1.20 reward 平台状态诊断
+
+- timestamp: 2026-09-19 10:24:03 +0800
+- activity_id: ACT-20260919-102403-CMRESIDUAL-V120-REWARD-PLATEAU
+- modification_version: V1.20
+- operation_category: diagnostic、operation
+- task_mode: read-only/diagnostic
+- change_level: L0
+- approval: user-requested
+- approval_basis: 用户询问训练是否进入平台期。
+- skills_used: research-experiment-workflow、research-change-control
+- branch: oyx
+- base_commit: 4b218ab5c6cf0167b716888d37c4511621064968
+- scope: 只读检查 [当前版本指针](../../../../../docs/current_versions.yaml)、[Task README](../README.md)、[V1.20 指导](../指导/V1.20.md)、[V1.20 最终计划](../plan/V1.20.md)、[adapter](../../tools/data/build_dexplore_v120_motion_input.py)、[adapter test](../../tests/test_dexplore_v120_motion_input.py)、[V1.20 launcher](../../tools/run_dexplore_v120_reconstructed.py)、[Horovod bootstrap](../../tools/dexplore_horovod_rank_bootstrap.py)、[父运行 manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json) 与 [train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)；未停止、重启或修改训练、checkpoint、数据、source、配置或代码。
+- run_id: dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050
+- run_status: RUNNING
+- output: [运行目录](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/)、[manifest](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/run_manifest.json)、[train log](../../../../../outputs/Dexplore/dexplore_v120_hvd4_accum64_formal_official100000_20260919_0050/train.log)。
+- last_epoch: 1208；last_logged_mean_reward: 114.00；best_logged_mean_reward: 142.09 at epoch 844；last10_mean_reward: 120.904；last20_mean_reward: 122.971；last50_mean_reward: 122.207；last100_mean_reward: 123.104。
+- conclusion: INCONCLUSIVE
+
+**原因**
+
+从 epoch 844 的 142.09 峰值后，reward 未建立更高的持续水平；需要用多个窗口的均值与线性趋势而非单轮波动判断平台状态。
+
+**验证**
+
+截至 epoch1208，最近 50 epoch reward 范围为 111.55–135.25，线性斜率约 +0.007 reward/epoch；最近 100 epoch 斜率约 -0.0365 reward/epoch，最近 20 epoch 为 -0.3101 reward/epoch。四个 rank 仍存活，GPU0/1/3/7 均约 22.9 GiB 且约 49–53% 利用率。证据支持“近期平台波动”，不支持对抓取能力作出新结论。
 
 ## 2026-09-18 20:28:37 +0800 — V1.17.5 DExplore reward 趋势复核
 
