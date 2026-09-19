@@ -7,6 +7,7 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.20`
+- V1.20a 四卡拓扑 smoke：用户授权跳过实际 rank-state hash 补充后，`0,1,3,6` 上的 4 rank × 64 env/rank 短 smoke 已完成，GPU PhysX、NCCL、rank-0 checkpoint/event 与有限性均通过。它仅支持四卡拓扑接线；`4×2048` 语义保持、正式训练及科研结论仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-173839-CMRESIDUAL-V120-DDP4-TOPOLOGY-SMOKE.md)。
 - V1.20c：已验证 raw GRAB 的 airplane/table `mesh.obj` 与既有可运行 DExplore mesh 逐字节一致；两项均为上游刻意忽略的运行时资产。V1.20a launcher 在执行前以固定哈希物化它们，既不提交也不软链接；计划见 [V1.20c](plan/V1.20c.md)。
 - V1.20：按用户授权建立 `s1_airplane_lift` 的隔离 DExplore 单序列 reconstructed baseline。原生 120 Hz contact、598-D schema、上游 reward/observation/action/physics 与坐标合同保持不变；公开 producer 缺失部分仅由 Task-local adapter 组装。DExplore 固定为 [vendor snapshot](../../../../third_party/DExplore/UPSTREAM.md)，多卡路径为 [V1.20a](plan/V1.20a.md) 定义的无 Horovod PyTorch/NCCL facade；vendor 迁移见 [V1.20b](plan/V1.20b.md)。`22dc69f` 的 2 rank × 64 env/rank 短 smoke 已完成，checkpoint/event finite；工程接线为 `SUPPORTED`，但未输出实际 rank 间 model-state hash，四 rank 与科研结论仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-173446-CMRESIDUAL-V120-DDP2-SMOKE.md)。
 - V1.18：主线改为 `reference-conditioned PPO + frozen Cmv2 one-step planner + planner-to-actor distillation`。actor/critic 均接收 retargeted `+1/+16` 的 1442-D DExplore-layout future reference；Cmv2 仅在 pre-action active state 上为 K=8 local candidates 生成 stop-gradient teacher，PPO 仍执行自身 sampled action。初始实现及工程 smoke 的范围见 [V1.18 最终计划](plan/V1.18.md)，终态以 [活动记录](logs/activity_log.md) 为准。
