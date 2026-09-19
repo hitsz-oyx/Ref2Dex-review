@@ -94,11 +94,11 @@ def test_smoke_arguments_fix_the_engineering_contract(tmp_path):
 def test_launcher_accepts_explicit_formal_training_batch_contract(tmp_path):
     launcher = _load_module("dexplore_v120_ddp_launcher_formal_args", LAUNCHER_PATH)
     arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
-                                             num_envs=2048, horizon_length=64, minibatch_size=16384,
+                                             num_envs=2048, horizon_length=64, minibatch_size=4096,
                                              max_iterations=4999, seed=42)
     assert arguments[arguments.index("--num_envs") + 1] == "2048"
     assert arguments[arguments.index("--horizon_length") + 1] == "64"
-    assert arguments[arguments.index("--minibatch_size") + 1] == "16384"
+    assert arguments[arguments.index("--minibatch_size") + 1] == "4096"
     assert arguments[arguments.index("--max_iterations") + 1] == "4999"
 
 
