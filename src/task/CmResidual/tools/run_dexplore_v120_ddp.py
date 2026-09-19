@@ -34,14 +34,15 @@ def parse_gpus(value: str) -> tuple[int, ...]:
     return values
 
 
-def torchrun_command(*, gpus: Sequence[int], dexplore_run: Path, dexplore_args: Sequence[str]) -> list[str]:
-    if not BOOTSTRAP.is_file():
-        raise FileNotFoundError(f"missing DDP bootstrap: {BOOTSTRAP}")
+def torchrun_command(*, gpus: Sequence[int], dexplore_run: Path, dexplore_args: Sequence[str],
+                     bootstrap: Path = BOOTSTRAP, bootstrap_args: Sequence[str] = ()) -> list[str]:
+    if not bootstrap.is_file():
+        raise FileNotFoundError(f"missing DDP bootstrap: {bootstrap}")
     if not dexplore_run.is_file():
         raise FileNotFoundError(f"missing DExplore entrypoint: {dexplore_run}")
     return [sys.executable, "-m", "torch.distributed.run", "--standalone",
-            f"--nproc_per_node={len(gpus)}", str(BOOTSTRAP),
-            "--dexplore-run", str(dexplore_run)] + list(dexplore_args)
+            f"--nproc_per_node={len(gpus)}", str(bootstrap),
+            "--dexplore-run", str(dexplore_run)] + list(bootstrap_args) + list(dexplore_args)
 
 
 def _timestamp() -> str:
@@ -118,6 +119,11 @@ def main(argv=None) -> None:
     parser.add_argument("--motion-root", type=Path, help="converted DExplore tensor root; required for --execute")
     parser.add_argument("--input-manifest", type=Path, help="motion-root provenance manifest; required for --execute")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--rank-bootstrap", type=Path, default=BOOTSTRAP,
+                        help="Task-local rank bootstrap; defaults to the V1.20 DDP facade")
+    parser.add_argument("--cm-distill-coef", type=float,
+                        help="only valid with the V1.21 Cm-off bootstrap and must be exactly zero")
+    parser.add_argument("--work-version", default="V1.20")
     parser.add_argument("--num-envs", type=int, default=64)
     parser.add_argument("--horizon-length", type=int, default=64)
     parser.add_argument("--minibatch-size", type=int, default=256)
@@ -130,6 +136,14 @@ def main(argv=None) -> None:
     if args.execute and args.dry_run:
         raise ValueError("--execute and --dry-run are mutually exclusive")
     gpus = parse_gpus(args.gpus)
+    bootstrap = args.rank_bootstrap.resolve()
+    bootstrap_args: list[str] = []
+    if args.cm_distill_coef is not None:
+        if bootstrap.name != "dexplore_cm_off_rank_bootstrap.py":
+            raise ValueError("--cm-distill-coef requires dexplore_cm_off_rank_bootstrap.py")
+        if args.cm_distill_coef != 0.0:
+            raise ValueError("this launcher only supports Cm-off --cm-distill-coef 0")
+        bootstrap_args = ["--cm-distill-coef", "0"]
     if args.execute:
         if not args.run_id or args.motion_root is None or args.input_manifest is None:
             raise ValueError("--execute requires --run-id, --motion-root, and --input-manifest")
@@ -159,7 +173,8 @@ def main(argv=None) -> None:
         input_record = None
         manifest = None
         runtime_assets = []
-    command = torchrun_command(gpus=gpus, dexplore_run=args.dexplore_run.resolve(), dexplore_args=dexplore_args)
+    command = torchrun_command(gpus=gpus, dexplore_run=args.dexplore_run.resolve(), dexplore_args=dexplore_args,
+                               bootstrap=bootstrap, bootstrap_args=bootstrap_args)
     source_root = args.dexplore_run.resolve().parents[1]
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpus))
@@ -175,13 +190,14 @@ def main(argv=None) -> None:
         config = {"command": command, "runtime": runtime, "num_envs_per_rank": args.num_envs,
                   "horizon_length": args.horizon_length, "minibatch_size": args.minibatch_size,
                   "max_iterations": args.max_iterations, "seed": args.seed,
+                  "rank_bootstrap": str(bootstrap), "cm_distill_coef": args.cm_distill_coef,
                   "motion_root": str(args.motion_root.resolve()), "input_manifest": str(manifest),
                   "runtime_assets": runtime_assets}
         _write_json(output / "config.json", config)
         manifest_path = output / "run_manifest.json"
         run_manifest = {
             "manifest_schema": "ref2dex.run.v1", "created_at": _timestamp(),
-            "task": "CmResidual", "work_version": "V1.20", "run_id": args.run_id,
+            "task": "CmResidual", "work_version": args.work_version, "run_id": args.run_id,
             "git_commit": _git_commit(REPOSITORY_ROOT), "external_source_commit": _git_commit(source_root),
             "run_status": "STARTED", "command": command, "runtime": runtime,
             "input_manifest": str(manifest), "input_classification": input_record["classification"],

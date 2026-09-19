@@ -11,6 +11,7 @@ import torch.multiprocessing as mp
 
 COMPAT_PATH = Path(__file__).resolve().parents[1] / "tools/dexplore_ddp_compat.py"
 LAUNCHER_PATH = Path(__file__).resolve().parents[1] / "tools/run_dexplore_v120_ddp.py"
+CM_OFF_BOOTSTRAP_PATH = Path(__file__).resolve().parents[1] / "tools/dexplore_cm_off_rank_bootstrap.py"
 
 
 def _load_module(name: str, path: Path):
@@ -119,3 +120,30 @@ def test_runtime_assets_are_fixed_raw_grab_meshes():
          Path("dexplore/data/assets/mjcf/objects/table/table.obj"),
          "25c6fb8b774a04f5314a13a538b9c26886716d196d46a68979e817755cf0e383"),
     ]
+
+
+def test_cm_off_bootstrap_accepts_only_explicit_zero_without_importing_cm(monkeypatch):
+    monkeypatch.syspath_prepend(str(CM_OFF_BOOTSTRAP_PATH.parent))
+    bootstrap = _load_module("dexplore_cm_off_bootstrap", CM_OFF_BOOTSTRAP_PATH)
+    with pytest.raises(ValueError, match="only accepts"):
+        bootstrap.parse_cm_off_args(["--cm-distill-coef", "0.1"])
+    args, passthrough = bootstrap.parse_cm_off_args(["--cm-distill-coef", "0", "--task", "Dexplore_Inspire"])
+    assert args.cm_distill_coef == 0.0
+    assert passthrough == ["--task", "Dexplore_Inspire"]
+    monkeypatch.setattr(bootstrap.dexplore_ddp_rank_bootstrap, "main", lambda argv: passthrough.append("called"))
+    bootstrap.main(["--cm-distill-coef", "0"])
+    assert passthrough[-1] == "called"
+
+
+def test_launcher_cm_off_contract_selects_only_task_local_cm_off_bootstrap(tmp_path):
+    launcher = _load_module("dexplore_v121_cm_off_launcher", LAUNCHER_PATH)
+    with pytest.raises(ValueError, match="requires dexplore_cm_off_rank_bootstrap"):
+        launcher.main(["--gpus", "2,5", "--dry-run", "--cm-distill-coef", "0"])
+    dexplore_run = tmp_path / "run.py"
+    dexplore_run.write_text("", encoding="utf-8")
+    command = launcher.torchrun_command(
+        gpus=(2, 5), dexplore_run=dexplore_run, dexplore_args=["--task", "Dexplore_Inspire"],
+        bootstrap=CM_OFF_BOOTSTRAP_PATH, bootstrap_args=["--cm-distill-coef", "0"],
+    )
+    assert command[5] == str(CM_OFF_BOOTSTRAP_PATH)
+    assert command[command.index("--cm-distill-coef") + 1] == "0"
