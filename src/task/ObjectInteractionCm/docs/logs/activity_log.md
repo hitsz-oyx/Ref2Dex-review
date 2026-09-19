@@ -8859,3 +8859,87 @@ OakInk2 导出已处理完全部 `472` 个 selection sequence，但 `193` 条记
 **保护与回滚**
 
 - 本次仅新增诊断记录；既有 Stage3、selection、失败 cache 和 pipeline manifest 均未改动。删除本条 activity 即可回滚记录。
+
+## 2026-09-19 03:28:10 +0000 — 复用既有 ARCTIC KNN/距离 viewer（Δ=10）
+
+- timestamp: `2026-09-19 03:28:10 +0000`
+- activity_id: `ACT-20260919-032810-OICM-REUSE-ARCTIC-VIEWER`
+- modification_version: `V1.4.24`
+- type: `operation`
+- task_mode: `run-only/operation`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户明确要求不要实现新脚本，复用先前已经能够显示 ARCTIC 的 viewer，并在开启 delta 时查看点流模长。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅本次及撤回新 viewer 的 activity 记录待提交）
+- scope: 仅启动既有 `visualize_grab.py`，读取既有 ARCTIC raw bilateral MANO viewer-only index；不修改数据、训练 cache、模型、checkpoint、坐标系或 viewer 代码。
+- run_id: `arctic_mano_knn_viewer_reuse_20260919T032810Z`
+- run_status: `RUNNING`
+- command: `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --index /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json --split train --sequence arctic/s01/box_use_01 --frame 0 --future-delta 10 --point-display both --mesh-display off --host 127.0.0.1 --port 8113 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z --modification-version V1.4.24`
+
+**启动前证据**
+
+- `--check-only` 已通过：`arctic/s01/box_use_01` 有 889 帧，raw source-frame 的 Δ=10 对应 0.333333 s；第 0→10 帧物体点流为 median `0.0231 mm`、P95 `0.0353 mm`、max `0.0397 mm`。该 viewer 原本就会在 delta 开启时在 Viser 页面显示这三个统计量。
+- [既有 viewer 实现](../../visualize_grab.py)；[既有 ARCTIC viewer-only index](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json)。
+- viewer: `http://127.0.0.1:8113`（HTTP 200；启动进程 PID `2205981`）。
+- [运行目录](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z)；[run_manifest.json](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z/run_manifest.json)；[viewer.log](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z/viewer.log)。
+
+**原因**
+
+- 该旧 viewer 已有 ARCTIC raw bilateral MANO adapter、KNN/距离着色和 delta 点流统计；新增 Cmv2 viewer 会重复实现且不符合用户本次要求，因此仅复用既有入口。
+
+**验证**
+
+- `--check-only` 退出码 0；服务运行清单为 `RUNNING`，`http://127.0.0.1:8113` 返回 HTTP 200。以上仅为可视化工程证据，未对模型或训练效果作科研结论。
+
+**保护与回滚**
+
+- 回滚为停止本次 8113 进程并保留独立运行目录；不覆盖历史 viewer 输出或任何训练产物。
+
+## 2026-09-19 03:52:20 +0000 — ARCTIC/GRAB 同 stride raw 物体点流对比
+
+- timestamp: `2026-09-19 03:52:20 +0000`
+- activity_id: `ACT-20260919-035220-OICM-ARCTIC-GRAB-SAME-STRIDE-FLOW`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户要求统计 ARCTIC 和 GRAB 在相同 stride 下的点流模长对比。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅本次及此前 viewer/retraction 的 activity 记录待提交）
+- scope: 只读遍历 raw bilateral MANO `shared.npz` 的 `obj_points_world`；不读取训练 cache，不修改数据、split、模型、checkpoint 或 viewer 代码。
+
+**原因**
+
+- 先前单条 ARCTIC viewer 的 delta 数值不能代表数据域总体分布；本次以两域相同的 30 Hz source-frame stride 汇总，避免将时间跨度差异误解为数据域差异。
+
+**方法与结果**
+
+- 输入：[GRAB raw bilateral MANO](../../../../../data/processed_data/oicm_v1_4_raw/grab_mano_30hz/)（1335 条序列）和 [ARCTIC raw bilateral MANO](../../../../../data/processed_data/oicm_v1_4_raw/arctic_mano_30hz/)（301 条序列）。对每个有效 `(t, t+s)`，先在对应的 4096 个物体点上计算 `mean(||p[t+s]-p[t]||_2)`，单位 mm；表中再对全部有效帧对取 mean / median / P95。两域均为 30 Hz。
+
+| stride（帧 / ms） | GRAB 帧对数 | GRAB mean / median / P95 (mm) | ARCTIC 帧对数 | ARCTIC mean / median / P95 (mm) | mean 比值 G/A |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 / 33.3 | 404929 | 6.92 / 1.02 / 32.83 | 217972 | 4.58 / 2.75 / 15.67 | 1.51 |
+| 2 / 66.7 | 403594 | 13.70 / 1.96 / 65.15 | 217671 | 9.03 / 5.42 / 31.09 | 1.52 |
+| 3 / 100.0 | 402259 | 20.37 / 2.91 / 96.77 | 217370 | 13.35 / 8.06 / 46.13 | 1.53 |
+| 4 / 133.3 | 400924 | 26.91 / 3.87 / 127.41 | 217069 | 17.55 / 10.66 / 60.58 | 1.53 |
+| 5 / 166.7 | 399589 | 33.30 / 4.92 / 157.00 | 216768 | 21.62 / 13.28 / 74.38 | 1.54 |
+| 6 / 200.0 | 398254 | 39.53 / 6.05 / 185.79 | 216467 | 25.56 / 15.87 / 87.40 | 1.55 |
+| 7 / 233.3 | 396919 | 45.63 / 7.28 / 213.14 | 216166 | 29.38 / 18.52 / 99.80 | 1.55 |
+| 8 / 266.7 | 395584 | 51.58 / 8.68 / 240.00 | 215865 | 33.08 / 21.13 / 111.67 | 1.56 |
+| 9 / 300.0 | 394249 | 57.39 / 10.33 / 265.60 | 215564 | 36.66 / 23.79 / 123.01 | 1.57 |
+| 10 / 333.3 | 392914 | 63.06 / 12.21 / 290.68 | 215263 | 40.14 / 26.44 / 133.58 | 1.57 |
+
+**验证**
+
+- 一次性只读计算以 4 个进程完成；每条序列只接受其自身有效 `T-s` 帧对，未做跨序列拼接或补帧。该统计说明 raw 数据的运动分布差异，不能直接推出模型预测误差、训练难度或方法优劣。
+- 结论：`INCONCLUSIVE`（数据分布事实已量化；对训练效果的影响尚未评估）。
+
+**保护与回滚**
+
+- 本次没有生成或改写数据/cache；删除本 activity 条目即可回滚记录。

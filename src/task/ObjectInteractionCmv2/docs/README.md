@@ -18,6 +18,8 @@
 - [V1.7 最终计划](plan/V1.7.md)：GRAB stride=1、ARCTIC stride=5..10 的 16-epoch 从零正式训练。
 - [V1.8 指导](指导/V1.8.md) 与 [V1.8 最终计划](plan/V1.8.md)：保留未完成 B16 run，以 B64 calibration 闸门后从随机初始化重启相同的 16-epoch 二域训练。
 - [V1.9 指导](指导/V1.9.md) 与 [V1.9 最终计划](plan/V1.9.md)：当前 ARCTIC test 缺失时，使用 V1.8 best checkpoint 做 GRAB stride=1 / ARCTIC stride=5..10 的 validation diagnostic。
+- [V1.10 指导](指导/V1.10.md) 与 [V1.10 最终计划](plan/V1.10.md)：以纯软链接导航层规范 Cmv2 数据与 cache；不迁移 NAS 实体，不改变训练配置。
+- [V1.11 指导](指导/V1.11.md) 与 [V1.11 最终计划](plan/V1.11.md)：OakInk2 MANO 全量导出与随机初始化的 GRAB/ARCTIC stride=1..3 二域正式训练。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
