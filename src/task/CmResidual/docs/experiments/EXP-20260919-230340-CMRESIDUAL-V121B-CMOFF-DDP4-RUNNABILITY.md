@@ -19,6 +19,10 @@ seed 42 和 DDP facade；运行 4 rank x 64 env、horizon 64、local minibatch 2
 运行完成 65,536 frame，日志同时报告 4-rank 原生 `(1442,)` observation 与 `(18,)` action；
 checkpoint `epoch=1` 可读，87 个递归 tensor 全 finite，manifest、event 和 log 完整。
 
-这支持精确的 Cm-off DDP 接线与 runtime 兼容性。它未使用 4 x 2048 容量、只有一个 epoch、
-没有 Cm planner，也没有独立抓取/lift 指标或多 seed 对照；因此不支持对抓取、收敛、V1.20e
-完全训练等价性或 Cm utility 的结论。
+同一合同的 4 rank x 2048 env / local-4096 容量门也已完成一实际 epoch：日志 total FPS
+`174591.6`，checkpoint 内 `epoch=1`、`frame=2097152`，87 个递归 tensor 全 finite。完整
+运行证据见 [capacity Activity](../activities/ACT-20260919-230550-CMRESIDUAL-V121B-CMOFF-DDP4-CAPACITY.md)。
+
+这支持精确的 Cm-off DDP 接线、runtime 兼容性与 4 x 2048 容量。它只有一个 epoch、没有 Cm
+planner，也没有独立抓取/lift 指标或多 seed 对照；因此不支持对抓取、收敛、V1.20e 完全训练
+等价性或 Cm utility 的结论。
