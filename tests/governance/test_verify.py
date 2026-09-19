@@ -46,6 +46,13 @@ def test_governance_change_selects_governance_tests() -> None:
     assert "tests/governance/test_verify.py" in VERIFY._select_tests({"AGENTS.md"})
 
 
+def test_base_change_selects_only_hermetic_shared_tests() -> None:
+    selected = VERIFY._select_tests({"src/base/run_manifest.py"})
+
+    assert "tests/test_run_manifest.py" in selected
+    assert "tests/test_framework_contracts.py" not in selected
+
+
 def test_unresolved_directory_path_contract_is_discoverable() -> None:
     agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     directory_skill = (ROOT / ".agents/skills/directory-and-artifacts/SKILL.md").read_text(

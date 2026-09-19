@@ -217,7 +217,7 @@ def _select_tests(paths: Iterable[str]) -> list[str]:
         if path == "AGENTS.md" or path.startswith(("docs/", ".agents/", ".github/")) or path == "tools/verify.py":
             needs_governance = True
     if needs_shared:
-        selected.update(path for path in ("tests/test_run_manifest.py", "tests/test_framework_contracts.py") if (ROOT / path).is_file())
+        selected.update(path for path in ("tests/test_run_manifest.py",) if (ROOT / path).is_file())
     if needs_governance:
         selected.update(_test_files(ROOT / "tests/governance"))
     return sorted(selected)

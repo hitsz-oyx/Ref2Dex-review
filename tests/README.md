@@ -91,6 +91,9 @@ NumPy 兼容 fixture 和 CI 收集范围，避免迁移一半时出现环境差�
 `test_checkpoint_compat.py`、`test_framework_contracts.py`、`test_metric_stat.py`、
 `test_overfit_diagnosis.py`、`test_pose_token_root_invariance.py`
 
+`test_framework_contracts.py` 需要完整运行时（包括 torch），保留为显式集成验证；它不属于
+`python tools/verify.py --changed` 的轻量 hermetic CI 自动范围。
+
 ### 治理 → `tests/governance/`
 
 `test_verify.py`、`test_work_version_migration.py`
