@@ -29,6 +29,11 @@ metadata:
 
 `oyx` 是稳定集成分支；独立任务使用 `ai/<task>/<description>`。只编辑当前任务的显式文件，不整文件格式化或顺手重构。不得 reset、覆盖或带入用户已有修改；outputs、cache、checkpoint、原始数据和大型日志不纳入提交。
 
+开始分支工作前检查现有 worktree 和 Git 状态。没有真实并行需求时复用一个干净的 AI worktree，不为每个顺序
+分支新增 worktree；只有并行、既有 worktree 有待保护修改，或用户要求长期隔离时才新增，并记录原因。已合并
+worktree 仅在干净、无未跟踪内容且用户明确授权后可移除；未知、用户拥有、含修改或临时 worktree 不得触碰。
+移除 worktree 不隐含删除分支，分支删除须单独确认。
+
 长期工作单元写入最近作用域 `docs/activities/` 的独立 Activity，索引为 `activities/README.md`。Activity 至少包含精确时间、activity_id 或 work_version、work_version、git/base commit、branch、scope、等级、审批、原因、文件、验证和回滚入口。普通命令、逐步进度和一次性 smoke 不写 Activity。科学假设、证据和结论写入 `docs/experiments/` 的 experiment card。`logs/activity_log.md` 和 `logs/experiment_log.md` 仅为历史审计，不能作为新记录目标或当前状态入口。
 
 修改后执行：
