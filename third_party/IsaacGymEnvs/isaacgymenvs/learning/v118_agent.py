@@ -120,7 +120,7 @@ class V118PlannerAgent(CommonAgent):
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             result = self.model(batch)
             action_log_probs, values, entropy, mu, sigma = (result["prev_neglogp"], result["values"], result["entropy"],
-                                                             result["mu"], result["sigma"])
+                                                             result["mus"], result["sigmas"])
             actor_info = self._actor_loss(input_dict["old_logp_actions"], action_log_probs,
                                           input_dict["advantages"], clip)
             actor_loss = actor_info["actor_loss"]
