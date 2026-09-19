@@ -126,6 +126,7 @@ def test_v119_stage_a_agent_skips_task_teacher_when_coef_zero():
     assert "self.value_mean_std = (self.central_value_net.model.value_mean_std" in source
     assert 'self.dataset.values_dict["cm_teacher_actions"] = batch_dict["cm_teacher_actions"]' in source
     assert 'self.dataset.values_dict["cm_teacher_weights"] = batch_dict["cm_teacher_weights"]' in source
+    assert 'result["prev_neglogp"], result["values"], result["entropy"]' in source
     assert "if self.cm_distill_coef > 0:" in source
     assert '"teacher_action": res_dict["mus"].detach()' in source
     assert '"teacher_weight": torch.zeros' in source
