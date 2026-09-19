@@ -128,3 +128,9 @@ def test_v119_stage_a_agent_skips_task_teacher_when_coef_zero():
     assert '"teacher_weight": torch.zeros' in source
     assert 'infos.get("terminate")' in source
     assert "terminated = self.dones" in source
+
+
+def test_v118_launcher_honors_explicit_physical_gpu():
+    source = (ROOT / "src/task/CmResidual/tools/run_v118_reference_ppo.py").read_text()
+    assert 'env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)' in source
+    assert '"physical_gpu": args.gpu' in source

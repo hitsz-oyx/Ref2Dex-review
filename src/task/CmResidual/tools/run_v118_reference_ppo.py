@@ -48,8 +48,8 @@ def _stage_settings(stage: str) -> tuple[int, int, float]:
 
 def main() -> None:
     args = parse_args()
-    if args.gpu != 5:
-        raise ValueError("V1.18 single-rank operation is pinned to physical GPU 5")
+    if args.gpu < 0:
+        raise ValueError("--gpu must be a non-negative physical CUDA device index")
     window, budget_steps, lambda_cm = _stage_settings(args.stage)
     if args.stage in ("b", "c128", "c366") and not args.checkpoint:
         raise ValueError("Stage B/C requires an explicit pinned predecessor checkpoint")
@@ -94,7 +94,7 @@ def main() -> None:
         "base_commit": _git("rev-parse", "HEAD"), "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path), "metadata_snapshot": str(REFERENCE.with_name("manifest.json")),
         "input_references": [reference, source], "initial_checkpoint": str(checkpoint) if checkpoint else None,
-        "metrics": str(metrics_path), "log": str(log_path), "cm_buffer": str(cm_buffer), "physical_gpu": 5,
+        "metrics": str(metrics_path), "log": str(log_path), "cm_buffer": str(cm_buffer), "physical_gpu": args.gpu,
         "budget": {"envs": 128, "window": window, "target_env_steps": budget_steps, "max_epochs": epochs,
                    "lambda_cm": lambda_cm}, "conclusion": "INCONCLUSIVE",
     }
@@ -105,7 +105,7 @@ def main() -> None:
         _write_json(manifest_path, manifest)
         return
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = "5"
+    env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     env["CMRESIDUAL_REFERENCE"] = str(REFERENCE)
     env["CMRESIDUAL_DEXPLORE_SOURCE"] = str(SOURCE)
     env["PYTHONPATH"] = os.pathsep.join(["/home2/wyy/isaac-gym/isaacgym/python", str(REPOSITORY_ROOT),
