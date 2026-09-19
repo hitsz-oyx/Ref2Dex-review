@@ -22,6 +22,9 @@ DEFAULT_DEXPLORE_RUN = str(Path(__file__).resolve().parents[4] / "third_party/DE
 def _patch_synchronized_shutdown() -> None:
     """Make the external rank-0 termination decision visible to every rank."""
     import learning.common_agent as common_agent
+    actual_epoch_budget = int(os.environ.get("REF2DEX_ACTUAL_EPOCH_BUDGET", "0"))
+    if actual_epoch_budget < 0:
+        raise ValueError("REF2DEX_ACTUAL_EPOCH_BUDGET must be non-negative")
 
     def train(self):
         self.init_tensors()
@@ -72,7 +75,8 @@ def _patch_synchronized_shutdown() -> None:
                     self.save(model_output_file)
                     if self._save_intermediate:
                         self.save(model_output_file + "_" + str(epoch_num).zfill(8))
-                if epoch_num > self.max_epochs:
+                if ((actual_epoch_budget and epoch_num >= actual_epoch_budget) or
+                        (not actual_epoch_budget and epoch_num > self.max_epochs)):
                     self.save(model_output_file)
                     print("MAX EPOCHS NUM!")
                     should_exit = True

@@ -100,8 +100,8 @@ def _git_commit(path: Path) -> str | None:
 def smoke_dexplore_args(*, motion_root: Path, output: Path, num_envs: int,
                         horizon_length: int, minibatch_size: int,
                         max_iterations: int, seed: int) -> list[str]:
-    if min(num_envs, horizon_length, minibatch_size) < 1 or max_iterations < 0:
-        raise ValueError("--num-envs, --horizon-length, and --minibatch-size must be positive; --max-iterations must be non-negative")
+    if min(num_envs, horizon_length, minibatch_size, max_iterations) < 1:
+        raise ValueError("--num-envs, --horizon-length, --minibatch-size, and --max-iterations must be positive")
     return ["--task", "Dexplore_Inspire", "--cfg_env", "dexplore/data/cfg/inspire.yaml",
             "--cfg_train", "dexplore/data/cfg/train/rlg/inspire.yaml",
             "--motion_file", str(motion_root), "--output_path", str(output / "train"),
@@ -123,6 +123,8 @@ def main(argv=None) -> None:
                         help="Task-local rank bootstrap; defaults to the V1.20 DDP facade")
     parser.add_argument("--cm-distill-coef", type=float,
                         help="only valid with the V1.21 Cm-off bootstrap and must be exactly zero")
+    parser.add_argument("--actual-epochs", type=int,
+                        help="exact epoch budget for the V1.21 Cm-off bootstrap")
     parser.add_argument("--work-version", default="V1.20")
     parser.add_argument("--num-envs", type=int, default=64)
     parser.add_argument("--horizon-length", type=int, default=64)
@@ -143,7 +145,11 @@ def main(argv=None) -> None:
             raise ValueError("--cm-distill-coef requires dexplore_cm_off_rank_bootstrap.py")
         if args.cm_distill_coef != 0.0:
             raise ValueError("this launcher only supports Cm-off --cm-distill-coef 0")
-        bootstrap_args = ["--cm-distill-coef", "0"]
+        if args.actual_epochs is None or args.actual_epochs < 1:
+            raise ValueError("Cm-off launcher requires positive --actual-epochs")
+        bootstrap_args = ["--cm-distill-coef", "0", "--actual-epochs", str(args.actual_epochs)]
+    elif args.actual_epochs is not None:
+        raise ValueError("--actual-epochs requires --cm-distill-coef")
     if args.execute:
         if not args.run_id or args.motion_root is None or args.input_manifest is None:
             raise ValueError("--execute requires --run-id, --motion-root, and --input-manifest")
@@ -191,6 +197,7 @@ def main(argv=None) -> None:
                   "horizon_length": args.horizon_length, "minibatch_size": args.minibatch_size,
                   "max_iterations": args.max_iterations, "seed": args.seed,
                   "rank_bootstrap": str(bootstrap), "cm_distill_coef": args.cm_distill_coef,
+                  "actual_epochs": args.actual_epochs,
                   "motion_root": str(args.motion_root.resolve()), "input_manifest": str(manifest),
                   "runtime_assets": runtime_assets}
         _write_json(output / "config.json", config)

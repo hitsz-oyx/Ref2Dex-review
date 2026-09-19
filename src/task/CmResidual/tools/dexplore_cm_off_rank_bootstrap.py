@@ -8,6 +8,7 @@ Cm-off parity branch.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 import dexplore_ddp_rank_bootstrap
@@ -16,9 +17,12 @@ import dexplore_ddp_rank_bootstrap
 def parse_cm_off_args(argv=None):
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--cm-distill-coef", type=float, required=True)
+    parser.add_argument("--actual-epochs", type=int, required=True)
     args, passthrough = parser.parse_known_args(argv)
     if args.cm_distill_coef != 0.0:
         raise ValueError("Cm-off bootstrap only accepts --cm-distill-coef 0")
+    if args.actual_epochs < 1:
+        raise ValueError("Cm-off bootstrap requires a positive --actual-epochs budget")
     return args, passthrough
 
 
@@ -29,8 +33,9 @@ def _assert_cm_not_imported() -> None:
 
 
 def main(argv=None) -> None:
-    _, passthrough = parse_cm_off_args(argv)
+    args, passthrough = parse_cm_off_args(argv)
     _assert_cm_not_imported()
+    os.environ["REF2DEX_ACTUAL_EPOCH_BUDGET"] = str(args.actual_epochs)
     dexplore_ddp_rank_bootstrap.main(passthrough)
 
 

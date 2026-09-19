@@ -92,14 +92,6 @@ def test_smoke_arguments_fix_the_engineering_contract(tmp_path):
     assert arguments[-1] == "--horovod"
 
 
-def test_smoke_arguments_map_one_actual_upstream_epoch_to_zero_max_iterations(tmp_path):
-    launcher = _load_module("dexplore_v120_ddp_launcher_one_epoch", LAUNCHER_PATH)
-    arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
-                                             num_envs=64, horizon_length=64, minibatch_size=256,
-                                             max_iterations=0, seed=42)
-    assert arguments[arguments.index("--max_iterations") + 1] == "0"
-
-
 def test_launcher_accepts_explicit_formal_training_batch_contract(tmp_path):
     launcher = _load_module("dexplore_v120_ddp_launcher_formal_args", LAUNCHER_PATH)
     arguments = launcher.smoke_dexplore_args(motion_root=tmp_path, output=tmp_path / "out",
@@ -134,12 +126,13 @@ def test_cm_off_bootstrap_accepts_only_explicit_zero_without_importing_cm(monkey
     monkeypatch.syspath_prepend(str(CM_OFF_BOOTSTRAP_PATH.parent))
     bootstrap = _load_module("dexplore_cm_off_bootstrap", CM_OFF_BOOTSTRAP_PATH)
     with pytest.raises(ValueError, match="only accepts"):
-        bootstrap.parse_cm_off_args(["--cm-distill-coef", "0.1"])
-    args, passthrough = bootstrap.parse_cm_off_args(["--cm-distill-coef", "0", "--task", "Dexplore_Inspire"])
+        bootstrap.parse_cm_off_args(["--cm-distill-coef", "0.1", "--actual-epochs", "1"])
+    args, passthrough = bootstrap.parse_cm_off_args(["--cm-distill-coef", "0", "--actual-epochs", "1", "--task", "Dexplore_Inspire"])
     assert args.cm_distill_coef == 0.0
+    assert args.actual_epochs == 1
     assert passthrough == ["--task", "Dexplore_Inspire"]
     monkeypatch.setattr(bootstrap.dexplore_ddp_rank_bootstrap, "main", lambda argv: passthrough.append("called"))
-    bootstrap.main(["--cm-distill-coef", "0"])
+    bootstrap.main(["--cm-distill-coef", "0", "--actual-epochs", "1"])
     assert passthrough[-1] == "called"
 
 
@@ -151,7 +144,7 @@ def test_launcher_cm_off_contract_selects_only_task_local_cm_off_bootstrap(tmp_p
     dexplore_run.write_text("", encoding="utf-8")
     command = launcher.torchrun_command(
         gpus=(2, 5), dexplore_run=dexplore_run, dexplore_args=["--task", "Dexplore_Inspire"],
-        bootstrap=CM_OFF_BOOTSTRAP_PATH, bootstrap_args=["--cm-distill-coef", "0"],
+        bootstrap=CM_OFF_BOOTSTRAP_PATH, bootstrap_args=["--cm-distill-coef", "0", "--actual-epochs", "1"],
     )
     assert command[5] == str(CM_OFF_BOOTSTRAP_PATH)
     assert command[command.index("--cm-distill-coef") + 1] == "0"
