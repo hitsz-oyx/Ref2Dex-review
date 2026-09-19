@@ -6,6 +6,7 @@
 
 | Date | Activity | work_version | Type | Result |
 | --- | --- | --- | --- | --- |
+| 2026-09-19 | [V1.2d tracked-source migration gate](V1.2d-tracked-source-migration-gate.md) | V1.2d | governance | completed |
 | 2026-09-19 | [V1.2c directory exception control](V1.2c-directory-exception-control.md) | V1.2c | governance | completed |
 | 2026-09-19 | [V1.2b Skill responsibility split](V1.2b-skill-responsibility-split.md) | V1.2b | governance | completed |
 | 2026-09-19 | [V1.2a work-version Skill migration](V1.2a-work-version-skill-migration.md) | V1.2a | governance | completed |
