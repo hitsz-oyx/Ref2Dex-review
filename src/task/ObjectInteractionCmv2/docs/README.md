@@ -23,6 +23,7 @@
 - [V1.11a 最终计划](plan/V1.11a.md)：恢复高分辨率 OakInk2 MANO、GRAB/ARCTIC Inspire cache，并迁移本次新 manifest 的版本字段。
 - [V1.11b 最终计划](plan/V1.11b.md)：用 V1.9 固定 validation 口径评估 V1.11 最优二域 checkpoint。
 - [V1.11c 最终计划](plan/V1.11c.md)：按 stride 1/2/3 分开统计二域 validation 的 EPE 与流模长。
+- [V1.11d 最终计划](plan/V1.11d.md)：在 OakInk2 loader 中排除跨 `frame_time` discontinuity 的短 stride transition，不重导 cache。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
