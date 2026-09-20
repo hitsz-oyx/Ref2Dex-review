@@ -20,6 +20,9 @@ if not hasattr(np, "float"):
 if not hasattr(np, "int"):
     np.int = int
 
+# Isaac Gym must be imported before anything which imports torch.
+import isaacgym  # noqa: F401
+from isaacgym import gymtorch
 import torch
 
 from src.task.CmResidual.v121c_prefix_replay import (
@@ -86,9 +89,6 @@ def _episode_from_task(task, sim_config_sha256: str) -> dict[str, object]:
 
 
 def main() -> int:
-    # These modules are available only inside the pinned DExplore/Isaac Gym
-    # runtime.  Keeping them local preserves CPU-only contract-test imports.
-    from isaacgym import gymtorch
     from utils.config import get_args, load_cfg, parse_sim_params, set_np_formatting, set_seed
     from utils.parse_task import parse_task
 

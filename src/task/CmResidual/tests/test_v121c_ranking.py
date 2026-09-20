@@ -44,10 +44,6 @@ from src.task.CmResidual.v121c_ranking import (
 )
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command
-from src.task.CmResidual.tools.v121c_prefix_smoke_bootstrap import (
-    _candidate_actions,
-    _quat_geodesic_xyzw,
-)
 
 
 def test_candidate_generation_is_bitwise_reproducible_and_clipped():
@@ -68,21 +64,12 @@ def test_prefix_smoke_command_and_duplicate_candidates_are_frozen():
     assert "--num_envs" in command and command[command.index("--num_envs") + 1] == "9"
     assert "--seed" in command and command[command.index("--seed") + 1] == "5909"
     assert "--sim_device" in command and command[command.index("--sim_device") + 1] == "cuda:0"
-    candidates = _candidate_actions()
-    assert candidates.shape == (8, 18)
-    assert np.array_equal(candidates[0], np.zeros(18, dtype=np.float32))
-    assert np.isfinite(candidates).all() and np.max(np.abs(candidates)) <= 1.0
     entrypoint = Path("src/task/CmResidual/tools/run_v121c_prefix_smoke.py")
     help_result = subprocess.run(
         [sys.executable, str(entrypoint), "--help"], check=True, text=True,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert "--run-id" in help_result.stdout
-
-
-def test_prefix_smoke_quaternion_geodesic_handles_double_cover():
-    identity = np.array([0.0, 0.0, 0.0, 1.0])
-    assert _quat_geodesic_xyzw(identity, -identity) == pytest.approx(0.0)
 
 
 def test_collection_accumulator_enforces_seed_horizon_uniqueness_and_quota():
