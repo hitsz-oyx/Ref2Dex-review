@@ -7,6 +7,12 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
+- V1.21e.2：按 [短 warm-up replay sweep 微补充计划](plan/V1.21e.2.md)，已实现独立 canonical
+  snapshot-generation 和 `L={0,1,2,4,8,full}` 的 6-state/72-arm fresh single-env 协议。generation
+  从 frozen episode initial state 完整 replay 并在 `t-L` 物化 30 个带 content hash 的只读 snapshots；
+  parity 同时 hard-gate candidate 前后状态，并仅在某个 L 至所有更长已测窗口稳定通过时报告最小 L。
+  工程合同见 [Activity](activities/ACT-20260920-231450-CMRESIDUAL-V121E2-WARMUP-SWEEP.md)；正式 GPU3
+  run 尚未执行，科学结论仍为 `INCONCLUSIVE`。
 - V1.21e.1：按 [独立单环境 parity 微补充计划](plan/V1.21e.1.md)，GPU3 上 6 states、`2/2/2`
   phase quota 的 A1/A2/B1/B2 四进程 run 已完成。每个 arm 都是 fresh subprocess、`num_envs=1`；
   setter exact-copy/provenance 全部通过。A 与 B 各自 duplicate 数值一致，object ceiling 均为 `6/6`
