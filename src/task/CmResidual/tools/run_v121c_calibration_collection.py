@@ -21,7 +21,7 @@ BOOTSTRAP = Path(__file__).resolve().with_name("v121c_collect_episode_bootstrap.
 OUTPUT_ROOT = ROOT / "outputs" / "CmResidual"
 MOTION_ROOT = ROOT / "data/processed_data/dexplore_reconstructed_v120_coordfix_v4/converted_attempt1"
 CHECKPOINT = Path("/home2/wyy/oyx_ws/dexplore/checkpoint/inspire.pth")
-PHYSICAL_GPU = 0
+DEFAULT_PHYSICAL_GPU = 0
 GPU_CAPACITY_GATE_MIB = 1024
 CALIBRATION_QUOTAS = {0: 24, 1: 24, 2: 16}
 MAX_EPISODES = 64
@@ -51,13 +51,15 @@ def _git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
 
-def _gpu_used_mib() -> int:
+def _gpu_used_mib(gpu: int) -> int:
     output = subprocess.check_output(
         ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
         text=True,
     )
     values = {int(row.split(",")[0]): int(row.split(",")[1]) for row in output.splitlines()}
-    return values[PHYSICAL_GPU]
+    if gpu not in values:
+        raise RuntimeError(f"nvidia-smi did not report GPU{gpu}")
+    return values[gpu]
 
 
 def _command(seed: int, episode_output: Path) -> list[str]:
@@ -168,21 +170,25 @@ def _save_selection(path: Path, rows: list[dict[str, object]], batch_id: str) ->
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--gpu", type=int, default=DEFAULT_PHYSICAL_GPU)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     output = (OUTPUT_ROOT / args.run_id).resolve()
     if output.exists():
         raise FileExistsError(f"refusing to overwrite output: {output}")
     inputs = _input_identity()
-    used_mib = _gpu_used_mib()
+    if args.gpu < 0:
+        raise ValueError("--gpu must be non-negative")
+    used_mib = _gpu_used_mib(args.gpu)
     if used_mib > GPU_CAPACITY_GATE_MIB:
-        raise RuntimeError(f"GPU0 capacity gate failed: {used_mib} MiB used")
+        raise RuntimeError(f"GPU{args.gpu} capacity gate failed: {used_mib} MiB used")
     batch_id = f"{args.run_id}:calibration"
     if args.dry_run:
         print(json.dumps({
             "preflight": "passed",
             "git_commit": _git("rev-parse", "HEAD"),
-            "gpu0_used_mib": used_mib,
+            "physical_gpu": args.gpu,
+            "gpu_used_mib": used_mib,
             "collection_batch_id": batch_id,
             "episode0_command": _command(5909, output / "episodes/0000"),
             "inputs": inputs,
@@ -206,7 +212,12 @@ def main() -> int:
         "control_hz": 30,
         "physics_substeps_per_action": 2,
         "policy_actions": "official Gaussian sample; epsilon-greedy disabled by checkpoint config",
-        "physical_gpu": PHYSICAL_GPU,
+        "physical_gpu": args.gpu,
+        "logical_gpu": 0,
+        "resource_override": (
+            "user-approved GPU3 override on 2026-09-20" if args.gpu == 3
+            else "plan-default GPU0" if args.gpu == 0 else "non-default GPU requires recorded approval"
+        ),
         "dexplore_surface_seed": 2024,
         "active_contract": {
             "contact_force_inf_threshold_n": 0.1,
@@ -245,7 +256,7 @@ def main() -> int:
     }
     _write_json(manifest_path, manifest)
     environment = os.environ.copy()
-    environment["CUDA_VISIBLE_DEVICES"] = str(PHYSICAL_GPU)
+    environment["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
     environment["PYTHONPATH"] = os.pathsep.join((
         str((DEXPLORE_ROOT / "dexplore").resolve()),
         str(ISAAC_GYM_PYTHON.resolve()),

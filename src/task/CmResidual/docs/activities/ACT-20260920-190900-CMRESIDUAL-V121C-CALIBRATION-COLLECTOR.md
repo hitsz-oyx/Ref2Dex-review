@@ -3,7 +3,7 @@
 - timestamp: 2026-09-20T19:09:00+08:00
 - activity_id: ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR
 - work_version: V1.21
-- git_commit: pending at record creation
+- git_commit: `ff738719390d55697e306a21f52faea49a54c59e`
 - base_commit: `10b0147115ff45908a6d461c5b8bba8051201c1f`
 - branch: `ai/cmresidual/v121-cm-actor`
 - mode: change
@@ -46,3 +46,6 @@ cache、checkpoint 或旧 outputs。
 下一步需要 GPU0 释放，或由用户明确批准改变计划中的默认 collector GPU。资源确认后先运行 collection，
 检查 `24/24/16` 配额，再实现/执行 9-env duplicate calibration。回滚本 Activity 对应提交即可移除
 collector 工具和测试，不影响已通过的 Gate 0 或 30 Hz 修复。
+
+用户随后于 2026-09-20 明确批准本次使用 GPU3；该批准仅改变 physical device allocation，
+logical device 仍为 `cuda:0`，不改变任何研究变量。GPU 参数化与 manifest 审计由后续提交记录。

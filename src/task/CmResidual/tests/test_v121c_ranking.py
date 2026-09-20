@@ -48,6 +48,7 @@ from src.task.CmResidual.v121c_ranking import (
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
 from src.task.CmResidual.tools.run_v121c_calibration_collection import _select as select_calibration
+from src.task.CmResidual.tools.run_v121c_calibration_collection import _gpu_used_mib
 
 
 def test_candidate_generation_is_bitwise_reproducible_and_clipped():
@@ -395,6 +396,16 @@ def test_calibration_selection_is_phase_balanced_and_state_id_deterministic():
         f"0-{index:03d}" for index in range(24)
     }
     assert select_calibration([row for row in rows if row["phase_id"] != 2]) is None
+
+
+def test_calibration_gpu_lookup_rejects_unreported_device(monkeypatch):
+    monkeypatch.setattr(
+        "subprocess.check_output",
+        lambda *args, **kwargs: "0, 12\n3, 7\n",
+    )
+    assert _gpu_used_mib(3) == 7
+    with pytest.raises(RuntimeError, match="GPU9"):
+        _gpu_used_mib(9)
 
 
 def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():

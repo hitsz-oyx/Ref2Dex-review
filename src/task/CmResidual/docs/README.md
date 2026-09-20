@@ -28,7 +28,8 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   为 `1.60e-6 m / 5.95e-7 rad`，通过 hard ceiling；numeric parity 仍失败但只作诊断。详见
   [Gate 0 Activity](activities/ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0.md)。正式 collector、
   64-state calibration collection 接线及 `24/24/16` deterministic selection 已实现并通过合同测试，
-  但计划固定的 GPU0 当前占用 `22119 MiB`，capacity gate 阻止实际运行且未自动换卡；详见
+  计划固定的 GPU0 占用 `22119 MiB` 后，用户已明确批准本次改用 physical GPU3；该资源变更不改变
+  logical device 或研究变量，collection 尚待以固定提交启动。详见
   [collector Activity](activities/ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)。
   64-state duplicate replay、PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学
   结论仍为 `INCONCLUSIVE`。
