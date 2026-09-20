@@ -3,7 +3,7 @@
 - timestamp: 2026-09-20T18:53:00+08:00
 - activity_id: ACT-20260920-185300-CMRESIDUAL-V121C-NOISE-ALLOCATION
 - work_version: V1.21
-- git_commit: pending at record creation
+- git_commit: `c80b0a4350a2e3c257b6784d4c0709eb49552d5e`（核心合同）；`8e738999cc11515d33c5e1d33ef1e1b950abd966`（runner hard-gate 对齐）
 - base_commit: `8cacd303f6f6c8f6cfeb473c6caa5dc11df13e00`
 - branch: `ai/cmresidual/v121-cm-actor`
 - mode: change
