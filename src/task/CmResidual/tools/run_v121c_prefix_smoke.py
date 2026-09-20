@@ -19,6 +19,9 @@ from src.task.CmResidual.v121c_artifacts import build_manifest, sha256_file, wri
 
 
 DEXPLORE_ROOT = ROOT / "third_party" / "DExplore"
+ISAAC_GYM_PYTHON = Path(
+    os.environ.get("ISAAC_GYM_PYTHON", "/home2/wyy/isaac-gym/isaacgym/python")
+)
 BOOTSTRAP = Path(__file__).resolve().with_name("v121c_prefix_smoke_bootstrap.py")
 OUTPUT_ROOT = ROOT / "outputs" / "CmResidual"
 MOTION_ROOT = (
@@ -74,6 +77,8 @@ def resolve_inputs() -> dict[str, dict[str, str]]:
     if manifest.get("classification") != "reconstructed_baseline":
         raise ValueError("V1.21c requires the reconstructed_baseline input manifest")
     tensor = MOTION_ROOT / "s1_airplane_lift" / "interaction_hand_inspire.pt"
+    if not (ISAAC_GYM_PYTHON / "isaacgym/__init__.py").is_file():
+        raise FileNotFoundError(f"missing Isaac Gym Python binding: {ISAAC_GYM_PYTHON}")
     assets = DEXPLORE_ROOT / "dexplore/data/assets"
     inputs = {
         "dexplore_checkpoint": _checked_input(
@@ -92,6 +97,10 @@ def resolve_inputs() -> dict[str, dict[str, str]]:
         ),
         "table_mesh": _checked_input(assets / "mjcf/objects/table/table.obj"),
         "dexplore_run": _checked_input(DEXPLORE_ROOT / "dexplore/run.py"),
+        "isaac_gym_python": {
+            "path": str(ISAAC_GYM_PYTHON.resolve()),
+            "sha256": sha256_file(ISAAC_GYM_PYTHON / "isaacgym/__init__.py"),
+        },
     }
     return inputs
 
@@ -212,6 +221,7 @@ def main() -> int:
     environment["PYTHONPATH"] = os.pathsep.join(
         (
             str((DEXPLORE_ROOT / "dexplore").resolve()),
+            str(ISAAC_GYM_PYTHON.resolve()),
             str(ROOT),
             environment.get("PYTHONPATH", ""),
         )
