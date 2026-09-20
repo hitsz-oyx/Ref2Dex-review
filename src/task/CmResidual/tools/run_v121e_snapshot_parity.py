@@ -21,7 +21,7 @@ def _now(): return datetime.now(timezone.utc).isoformat(timespec="seconds")
 def _git(*args): return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
 
 def _parity_command(seed: int) -> list[str]:
-    return [str(DEXPLORE_PYTHON), str(BOOTSTRAP), "--test", "--task", "Dexplore_Inspire",
+    return [str(DEXPLORE_PYTHON), str(BOOTSTRAP.resolve()), "--test", "--task", "Dexplore_Inspire",
             "--cfg_env", "dexplore/data/cfg/inspire.yaml", "--cfg_train", "dexplore/data/cfg/train/rlg/inspire.yaml",
             "--motion_file", str(MOTION_ROOT), "--num_envs", "2", "--seed", str(seed), "--headless",
             "--sim_device", "cuda:0", "--rl_device", "cuda:0", "--graphics_device_id", "0"]
