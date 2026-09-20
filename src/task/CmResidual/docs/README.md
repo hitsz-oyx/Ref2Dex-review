@@ -14,10 +14,14 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   q/dq 跨 env 分叉（position `0.01112 rad`、velocity `0.55352 rad/s`），超过固定 `1e-5` parity，
   因而 run 为 `FAILED`、protocol 为 `INVALID_IMPLEMENTATION`，未执行 candidate step。正式 collector、
   PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学结论仍为 `INCONCLUSIVE`。
-  当前 blocker 是先形成并批准满足公开 q/dq parity 的 branch-replay 方案，不能放宽阈值绕过。实现与验证见
+  后续 V1.21d fresh-sim 路线已按用户要求整体回退并从当前树删除；不再把多环境 exact parity 当作
+  需要解决的 PPO 问题，也不继续当前 Cm ranking validation。审计同时确认旧 replay adapter 把一个
+  30 Hz native action 错误执行成一个而非两个 `1/60 s` PhysX substeps；现已改为调用官方
+  `_physics_step()`，固定 one pre / two simulate / one post，reference 只推进一次。实现与验证见
   [ranking core Activity](activities/ACT-20260920-151656-CMRESIDUAL-V121C-RANKING-CORE.md) 和
   [prefix replay Activity](activities/ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY.md)，真实运行终态见
-  [parity failure Activity](activities/ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED.md)。
+  [parity failure Activity](activities/ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED.md)，回退与
+  physics 修复见 [Activity](activities/ACT-20260920-172652-CMRESIDUAL-V121-ROLLBACK-PHYSICS-STEP.md)。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。
 - V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。

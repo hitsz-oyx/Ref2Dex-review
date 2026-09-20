@@ -21,6 +21,7 @@ ACTION_DIM = 18
 CANDIDATE_COUNT = 8
 BRANCH_COUNT = CANDIDATE_COUNT + 1
 PARITY_TOLERANCE = 1e-5
+PHYSICS_SUBSTEPS = 2
 
 
 @dataclass(frozen=True)
@@ -126,9 +127,13 @@ class DExploreTaskPrefixRuntime:
     def step(self, envs: Any, actions: np.ndarray) -> None:
         if envs is not self.task:
             raise ValueError("adapter may only step its constructed task")
+        if int(getattr(self.task, "control_freq_inv", 0)) != PHYSICS_SUBSTEPS:
+            raise ValueError("DExplore native action requires control_freq_inv=2 (30 Hz)")
         native = torch.as_tensor(_validate_candidates_or_branches(actions), device=self.task.device)
         self.task.pre_physics_step(native)
-        self.task.gym.simulate(self.task.sim)
+        # Match DExplore BaseTask.step exactly: one action/control step owns two
+        # 1/60 s PhysX substeps, followed by one reference/progress update.
+        self.task._physics_step()
         if self.task.device == "cpu":
             self.task.gym.fetch_results(self.task.sim, True)
         self.task.post_physics_step()

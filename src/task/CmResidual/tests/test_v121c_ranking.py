@@ -15,6 +15,8 @@ from src.task.CmResidual.v121c_artifacts import (
 from src.task.CmResidual.v121c_collection import CollectionAccumulator, CollectionConfig
 from src.task.CmResidual.v121c_prefix_replay import (
     BRANCH_COUNT,
+    DExploreTaskPrefixRuntime,
+    PHYSICS_SUBSTEPS,
     PublicBranchState,
     replay_prefix_branches,
 )
@@ -70,6 +72,62 @@ def test_prefix_smoke_command_and_duplicate_candidates_are_frozen():
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert "--run-id" in help_result.stdout
+
+
+class _FakePhysicsGym:
+    def __init__(self):
+        self.simulate_count = 0
+        self.fetch_count = 0
+
+    def simulate(self, sim):
+        assert sim == "sim"
+        self.simulate_count += 1
+
+    def fetch_results(self, sim, wait):
+        assert sim == "sim" and wait is True
+        self.fetch_count += 1
+
+
+class _FakeDExploreStepTask:
+    def __init__(self, control_freq_inv=PHYSICS_SUBSTEPS):
+        self.num_envs = BRANCH_COUNT
+        self.control_freq_inv = control_freq_inv
+        self.device = "cpu"
+        self.sim = "sim"
+        self.gym = _FakePhysicsGym()
+        self.pre_count = 0
+        self.physics_count = 0
+        self.post_count = 0
+
+    def pre_physics_step(self, actions):
+        assert tuple(actions.shape) == (BRANCH_COUNT, 18)
+        self.pre_count += 1
+
+    def _physics_step(self):
+        self.physics_count += 1
+        for _ in range(self.control_freq_inv):
+            self.gym.simulate(self.sim)
+
+    def post_physics_step(self):
+        self.post_count += 1
+
+
+def test_dexplore_runtime_matches_one_30hz_control_step():
+    task = _FakeDExploreStepTask()
+    runtime = DExploreTaskPrefixRuntime(task, gymtorch_module=None)
+    runtime.step(task, np.zeros((BRANCH_COUNT, 18), dtype=np.float32))
+    assert task.pre_count == 1
+    assert task.physics_count == 1
+    assert task.gym.simulate_count == 2
+    assert task.gym.fetch_count == 1
+    assert task.post_count == 1
+
+    invalid = _FakeDExploreStepTask(control_freq_inv=1)
+    with pytest.raises(ValueError, match="control_freq_inv=2"):
+        DExploreTaskPrefixRuntime(invalid, gymtorch_module=None).step(
+            invalid, np.zeros((BRANCH_COUNT, 18), dtype=np.float32)
+        )
+    assert invalid.pre_count == 0 and invalid.gym.simulate_count == 0
 
 
 def test_collection_accumulator_enforces_seed_horizon_uniqueness_and_quota():
