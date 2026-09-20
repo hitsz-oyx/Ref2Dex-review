@@ -7,10 +7,17 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
+- V1.21e.1：已按 [独立单环境 parity 微补充计划](plan/V1.21e.1.md) 将 A1/A2/B1/B2 改为四个
+  完全独立的 fresh subprocess（每进程 `num_envs=1`），固定 6 states、`2/2/2` phase quota；initial
+  restore 与 direct snapshot restore 均删除 GPU setter 后、下一次 simulate 前的 refresh/observation
+  重算，并记录 setter input hash、exact-copy error、返回状态和 canonical snapshot identity。实现与
+  hermetic tests 已通过，正式 GPU3 run 尚待固定 implementation commit 后执行；scientific conclusion
+  仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260920-222008-CMRESIDUAL-V121E1-INDEPENDENT-PARITY.md)。
 - V1.21e：按 [snapshot-restore parity 最终计划](plan/V1.21e.md) 在 GPU3 完成 16-state
   `6 moving / 6 contact / 4 precontact` 对照，但 prefix duplicate `16/16`、fresh direct-restore duplicate
   `14/16` 超过 object hard ceiling，完整 gate 为 `0/16`。协议终态是 `INVALID_IMPLEMENTATION`，公开
-  snapshot 是否足够近似 Markov state 仍为 `INCONCLUSIVE`；不得切换 64-state calibration、512-state
+  snapshot 是否足够近似 Markov state 仍为 `INCONCLUSIVE`。该 run 还混入同一 simulator 的 two-env
+  duplicate 与 setter 后 pre-simulate refresh 两个 confound，不能解释为 snapshot 方法失败；不得切换 64-state calibration、512-state
   ranking 或 PPO。详见 [Activity](activities/ACT-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY-INVALID.md)
   与 [experiment](experiments/EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY.md)。
 - V1.21c：已按 [V1.21c 最终计划](plan/V1.21c.md) 实现 frozen Cmv2 的 P=1 native-action

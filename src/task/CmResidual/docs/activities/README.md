@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260920-222008-CMRESIDUAL-V121E1-INDEPENDENT-PARITY](ACT-20260920-222008-CMRESIDUAL-V121E1-INDEPENDENT-PARITY.md)：V1.21e.1 将 parity 修为四个独立 single-env fresh process，并移除 GPU setter 后的 pre-simulate refresh。
 - [ACT-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY-INVALID](ACT-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY-INVALID.md)：16-state prefix/direct-restore parity 因两臂 duplicate repeatability 超 hard ceiling 而为 `INVALID_IMPLEMENTATION`。
 - [ACT-20260920-211908-CMRESIDUAL-V121E-SNAPSHOT-PARITY](ACT-20260920-211908-CMRESIDUAL-V121E-SNAPSHOT-PARITY.md)：实现 16-state fresh-simulator snapshot-restore 与 prefix duplicate parity producer/gate。
 - [ACT-20260920-205542-CMRESIDUAL-V121D-CALIBRATION-FAILED](ACT-20260920-205542-CMRESIDUAL-V121D-CALIBRATION-FAILED.md)：corrected 64-state calibration 在首个 episode 的 11/11 duplicate 上超过 hard ceiling，按计划停止为 `INVALID_IMPLEMENTATION`。

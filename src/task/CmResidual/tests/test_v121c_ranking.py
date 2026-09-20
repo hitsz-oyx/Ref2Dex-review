@@ -455,6 +455,44 @@ def test_prefix_replay_uses_executed_history_then_candidates_and_duplicate_ancho
     assert result.post_candidate_state is not None
 
 
+def test_dexplore_initial_restore_does_not_refresh_before_simulate():
+    class Gym:
+        def __init__(self): self.calls = []
+        def set_actor_root_state_tensor(self, sim, tensor): self.calls.append("root"); return True
+        def set_dof_state_tensor(self, sim, tensor): self.calls.append("dof"); return True
+    class Gymtorch:
+        @staticmethod
+        def unwrap_tensor(tensor): return tensor
+    class Task:
+        num_envs = BRANCH_COUNT
+        device = torch.device("cpu")
+        sim = object()
+        def __init__(self):
+            self.gym = Gym()
+            self._dof_state = torch.zeros(BRANCH_COUNT * 18, 2)
+            self._root_states = torch.zeros(BRANCH_COUNT * 2, 13)
+            self.data_id = torch.zeros(BRANCH_COUNT, dtype=torch.long)
+            self.ref_index = torch.zeros(BRANCH_COUNT, dtype=torch.long)
+            self.start_times = torch.zeros(BRANCH_COUNT, dtype=torch.long)
+            self.progress_buf = torch.zeros(BRANCH_COUNT, dtype=torch.long)
+            self.refreshes = 0
+            self.observations = 0
+        def _refresh_sim_tensors(self): self.refreshes += 1
+        def _compute_observations(self, ids): self.observations += 1
+    episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
+               "initial_dof_state": np.zeros((18, 2), dtype=np.float32),
+               "initial_actor_root_state": np.zeros((2, 13), dtype=np.float32),
+               "initial_task_indices": np.array([7, 11, 3, 5]),
+               "executed_action_history": np.zeros((1, 18), dtype=np.float32),
+               "done_history": np.array([False]), "reference_index": np.array([11]),
+               "data_id": np.array([7]), "start_time": np.array([3]),
+               "progress_history": np.array([5]), "resolved_sim_config_sha256": np.array(["d" * 64])}
+    task = Task()
+    DExploreTaskPrefixRuntime(task, Gymtorch()).restore_initial(task, episode)
+    assert task.gym.calls == ["root", "dof"]
+    assert task.refreshes == 0 and task.observations == 0
+
+
 def test_candidate_environment_assignment_is_reproducible_and_balanced():
     first = candidate_env_assignment(5909)
     second = candidate_env_assignment(5909)

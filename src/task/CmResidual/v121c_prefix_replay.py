@@ -123,8 +123,6 @@ class DExploreTaskPrefixRuntime:
         task.progress_buf.fill_(scalar("progress_history"))
         task.gym.set_actor_root_state_tensor(task.sim, self.gymtorch.unwrap_tensor(task._root_states))
         task.gym.set_dof_state_tensor(task.sim, self.gymtorch.unwrap_tensor(task._dof_state))
-        task._refresh_sim_tensors()
-        task._compute_observations(torch.arange(BRANCH_COUNT, device=task.device, dtype=torch.long))
 
     def step(self, envs: Any, actions: np.ndarray) -> None:
         if envs is not self.task:
