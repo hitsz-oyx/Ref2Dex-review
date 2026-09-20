@@ -1,5 +1,6 @@
 # CmResidual Experiments
 
+- [EXP-20260920-234054-CMRESIDUAL-V121E2-WARMUP-PARITY](EXP-20260920-234054-CMRESIDUAL-V121E2-WARMUP-PARITY.md)：`L=0/1/2/4/8` short warm-up 在有效的 6-state/72-arm 协议下均未恢复 full-prefix parity，有界结论为 `REFUTED`。
 - [EXP-20260920-223639-CMRESIDUAL-V121E1-SNAPSHOT-PARITY](EXP-20260920-223639-CMRESIDUAL-V121E1-SNAPSHOT-PARITY.md)：独立 single-env duplicates 可重复，但 public snapshot direct restore 与 prefix replay 的 one-step parity 在 6/6 states 上被反驳。
 - [EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY](EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY.md)：public snapshot 与 prefix replay 的 one-step parity；duplicate repeatability 失败，科学结论仍为 `INCONCLUSIVE`。
 - [EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT](EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)：官方 Inspire checkpoint 在当前 V1.20 reconstructed baseline 上的单环境 rollout 诊断。
