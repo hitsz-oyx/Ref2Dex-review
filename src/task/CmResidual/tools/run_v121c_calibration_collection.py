@@ -14,9 +14,12 @@ import traceback
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[4]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.task.CmResidual.v121c_ranking import candidate_seed
 
-ROOT = Path(__file__).resolve().parents[4]
 DEXPLORE_ROOT = ROOT / "third_party" / "DExplore"
 ISAAC_GYM_PYTHON = Path(os.environ.get("ISAAC_GYM_PYTHON", "/home2/wyy/isaac-gym/isaacgym/python"))
 DEXPLORE_PYTHON = Path(os.environ.get(

@@ -419,6 +419,12 @@ def test_calibration_collection_uses_pinned_dexplore_runtime(tmp_path):
     assert command[1].endswith("v121c_collect_episode_bootstrap.py")
     assert command[command.index("--num_envs") + 1] == "1"
     assert command[command.index("--seed") + 1] == "5909"
+    entrypoint = Path("src/task/CmResidual/tools/run_v121c_calibration_collection.py").resolve()
+    help_result = subprocess.run(
+        [sys.executable, str(entrypoint), "--help"], cwd=tmp_path, check=True,
+        text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    assert "--gpu" in help_result.stdout
 
 
 def test_calibration_collection_preserves_full_uint64_candidate_seed(tmp_path):
