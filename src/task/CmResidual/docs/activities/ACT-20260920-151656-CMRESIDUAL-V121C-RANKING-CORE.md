@@ -9,7 +9,7 @@
 - approval_basis: 用户在 V1.21c 计划定稿后明确要求“你实现吧”。
 - branch: ai/cmresidual/v121-cm-actor
 - base_commit: a530ad4
-- git_commit: 3abc6a74e65fa587ac9fb503927d1005509c5913
+- git_commit: 1a1f13a1d97d52fa10e67aa05bf7f2dd29fa3a3a
 
 ## Scope
 
@@ -62,5 +62,6 @@ calibration 与 run manifest 后，再申请独立的 V1.21c ranking run。
 
 ## Rollback
 
-回退提交 `3abc6a74e65fa587ac9fb503927d1005509c591` 即可移除本次 Task-local 实现和计划；
-不删除、不覆盖用户指导、vendor、数据、cache、checkpoint、既有 outputs 或历史记录。
+回退本 Activity 相关实现/文档提交（`3abc6a7`、`1a1f13a` 以及配套的
+`b751ca6`、`d3a0c11`、`42ec51a`）即可移除本次 Task-local 实现和计划；不删除、不覆盖
+用户指导、vendor、数据、cache、checkpoint、既有 outputs 或历史记录。
