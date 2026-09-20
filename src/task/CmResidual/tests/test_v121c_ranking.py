@@ -29,6 +29,7 @@ from src.task.CmResidual.v121c_ranking import (
     active_phase,
     branch_state_parity,
     calibrate_duplicate_anchor,
+    candidate_seed,
     canonical_ig,
     canonical_ig_from_body_positions,
     canonical_state_id,
@@ -47,6 +48,10 @@ from src.task.CmResidual.v121c_ranking import (
 )
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
+from src.task.CmResidual.tools.run_v121c_duplicate_calibration import (
+    _command as duplicate_calibration_command,
+    _validate_collection as validate_calibration_collection,
+)
 from src.task.CmResidual.tools.run_v121c_calibration_collection import (
     DEXPLORE_PYTHON,
     _command as calibration_collection_command,
@@ -428,8 +433,6 @@ def test_calibration_collection_uses_pinned_dexplore_runtime(tmp_path):
 
 
 def test_calibration_collection_preserves_full_uint64_candidate_seed(tmp_path):
-    from src.task.CmResidual.v121c_ranking import candidate_seed
-
     batch_id = "batch-with-high-seed"
     state_id = "state-a"
     seed = candidate_seed(batch_id, state_id)
@@ -456,6 +459,39 @@ def test_calibration_collection_preserves_full_uint64_candidate_seed(tmp_path):
     np.savez_compressed(path, **broken)
     with pytest.raises(ValueError, match="must be uint64"):
         load_calibration_rows(path, episode_id=0, seed=5909, collection_batch_id=batch_id)
+
+
+def test_duplicate_calibration_requires_exact_frozen_collection(tmp_path):
+    batch_id = "batch"
+    state_ids = np.asarray([f"state-{index}" for index in range(64)])
+    seeds = np.asarray([candidate_seed(batch_id, state) for state in state_ids], dtype=np.uint64)
+    (tmp_path / "run_manifest.json").write_text(
+        '{"run_status":"COMPLETED","selected_state_count":64,"run_id":"collection","git_commit":"abc"}\n',
+        encoding="utf-8",
+    )
+    np.savez_compressed(
+        tmp_path / "selected_states.npz",
+        state_id=state_ids,
+        collection_batch_id=np.asarray([batch_id] * 64),
+        episode_id=np.zeros(64, dtype=np.int64),
+        seed=np.full(64, 5909, dtype=np.int64),
+        frame_id=np.arange(64),
+        progress=np.arange(64),
+        phase_id=np.zeros(64, dtype=np.uint8),
+        candidate_seed=seeds,
+        policy_mu=np.zeros((64, 18), dtype=np.float32),
+        policy_sigma=np.ones((64, 18), dtype=np.float32),
+    )
+    manifest, episodes = validate_calibration_collection(tmp_path)
+    assert manifest["run_id"] == "collection" and episodes.tolist() == [0]
+    command = duplicate_calibration_command(5909)
+    assert command[command.index("--num_envs") + 1] == "9"
+    broken = dict(np.load(tmp_path / "selected_states.npz"))
+    broken["candidate_seed"] = broken["candidate_seed"].copy()
+    broken["candidate_seed"][0] += np.uint64(1)
+    np.savez_compressed(tmp_path / "selected_states.npz", **broken)
+    with pytest.raises(ValueError, match="candidate_seed mismatch"):
+        validate_calibration_collection(tmp_path)
 
 
 def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():
