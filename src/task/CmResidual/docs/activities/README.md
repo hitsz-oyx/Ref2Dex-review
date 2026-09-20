@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260920-185300-CMRESIDUAL-V121C-NOISE-ALLOCATION](ACT-20260920-185300-CMRESIDUAL-V121C-NOISE-ALLOCATION.md)：V1.21c 将跨 env 数值 parity 降为诊断，并以 deterministic candidate-env permutation + duplicate anchor 处理 simulator noise。
 - [ACT-20260920-172652-CMRESIDUAL-V121-ROLLBACK-PHYSICS-STEP](ACT-20260920-172652-CMRESIDUAL-V121-ROLLBACK-PHYSICS-STEP.md)：整体撤销 V1.21d 路线，并把 replay action 修正为官方 30 Hz / 两个 PhysX substeps。
 - [ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED](ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED.md)：GPU3 真实 1-state/9-env prefix smoke 的 q/dq parity 失败与运行终态。
 - [ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY](ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY.md)：V1.21c episode-prefix replay/9-env branch runtime-neutral 接口与 parity smoke。

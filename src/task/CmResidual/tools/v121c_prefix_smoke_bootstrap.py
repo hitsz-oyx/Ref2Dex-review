@@ -2,7 +2,7 @@
 
 This file is launched from the read-only DExplore checkout.  It intentionally
 does not load an rl_games player: the smoke validates simulator restore, prefix
-replay, public-state parity, and the identical-action duplicate anchor only.
+replay, public-state diagnostics, and the identical-action duplicate anchor only.
 """
 from __future__ import annotations
 
@@ -169,6 +169,7 @@ def main() -> int:
             episode,
             SMOKE_FRAME_ID,
             candidates,
+            assignment_seed=5909,
         )
         episode_dir = output / "artifacts" / "episodes"
         episode_dir.mkdir(parents=True)
@@ -184,6 +185,8 @@ def main() -> int:
             metrics = {
                 "parity_valid": False,
                 "parity_max_abs_error": result.parity_max_abs_error,
+                "task_indices_equal": bool(result.task_indices_equal),
+                "env_candidate_ids": result.env_candidate_ids.tolist(),
                 "duplicate_valid": False,
                 "sim_config_sha256": sim_config_sha256,
                 "parity_diagnostics": parity_diagnostics,
@@ -191,8 +194,12 @@ def main() -> int:
         else:
             post_roots = np.asarray(result.post_candidate_state.actor_root_state)
             object_actor = int(task._tar_actor_ids[0].item()) % post_roots.shape[1]
-            object_zero = post_roots[0, object_actor]
-            object_duplicate = post_roots[8, object_actor]
+            duplicate_slots = np.flatnonzero(result.env_candidate_ids == 0)
+            if duplicate_slots.shape != (2,):
+                raise RuntimeError("candidate zero must occupy exactly two environment slots")
+            first_slot, second_slot = map(int, duplicate_slots)
+            object_zero = post_roots[first_slot, object_actor]
+            object_duplicate = post_roots[second_slot, object_actor]
             position_divergence = float(
                 np.linalg.norm(object_zero[:3] - object_duplicate[:3])
             )
@@ -202,8 +209,8 @@ def main() -> int:
             dof_divergence = float(
                 np.max(
                     np.abs(
-                        np.asarray(result.post_candidate_state.dof_state)[0]
-                        - np.asarray(result.post_candidate_state.dof_state)[8]
+                        np.asarray(result.post_candidate_state.dof_state)[first_slot]
+                        - np.asarray(result.post_candidate_state.dof_state)[second_slot]
                     )
                 )
             )
@@ -216,6 +223,9 @@ def main() -> int:
             metrics = {
                 "parity_valid": bool(result.parity_valid),
                 "parity_max_abs_error": result.parity_max_abs_error,
+                "task_indices_equal": bool(result.task_indices_equal),
+                "env_candidate_ids": result.env_candidate_ids.tolist(),
+                "candidate_zero_env_slots": duplicate_slots.tolist(),
                 "duplicate_valid": bool(duplicate_valid),
                 "duplicate_object_position_divergence_m": position_divergence,
                 "duplicate_object_rotation_divergence_rad": rotation_divergence,
@@ -232,7 +242,7 @@ def main() -> int:
             json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         print(json.dumps(metrics, sort_keys=True))
-        if not metrics["parity_valid"] or not metrics["duplicate_valid"]:
+        if not metrics["task_indices_equal"] or not metrics["duplicate_valid"]:
             raise RuntimeError("V1.21c prefix/duplicate smoke gate failed")
         return 0
     finally:

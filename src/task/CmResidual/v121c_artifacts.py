@@ -38,6 +38,7 @@ _STATE_SHAPES = {
     "cm_score": (8,),
 }
 _PHYSICS_SHAPES = {
+    "env_candidate_ids": (9,),
     "physics_candidate_valid": (8,),
     "physics_score": (8,),
     "physics_next_object_pose": (8, 7),
@@ -135,6 +136,12 @@ def validate_physics_records(records: Mapping[str, Any], count: int | None = Non
                 raise ValueError("finite physics_next_IG required for valid candidates")
         elif name != "physics_candidate_valid" and not np.isfinite(array).all():
             raise ValueError(f"{name} contains non-finite values")
+    assignments = np.asarray(records["env_candidate_ids"])
+    if assignments.dtype.kind not in "iu":
+        raise ValueError("env_candidate_ids must be integer")
+    expected_assignment = np.asarray([0, 0, 1, 2, 3, 4, 5, 6, 7])
+    if not np.all(np.sort(assignments, axis=1) == expected_assignment[None]):
+        raise ValueError("each env_candidate_ids row must contain [0,0,1,2,3,4,5,6,7]")
     if np.asarray(records["physics_candidate_valid"]).dtype != np.bool_:
         raise ValueError("physics_candidate_valid must be boolean")
     for name in ("duplicate_delta_object_pose", "duplicate_delta_IG", "duplicate_delta_score"):

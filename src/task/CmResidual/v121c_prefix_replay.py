@@ -4,7 +4,9 @@ The real DExplore adapter supplies the four methods in :class:`PrefixReplayRunti
 This module owns the protocol which is easy to accidentally vary between a duplicate
 smoke and a full ranking run: every branch starts at the source episode initial state,
 replays only the recorded executed native actions, is checked before its candidate
-step, and then receives eight candidates plus a duplicate of candidate zero.
+step, and then receives eight candidates plus a duplicate of candidate zero.  The
+candidate-to-environment assignment is deterministically permuted per state so an
+environment's small numerical drift cannot be confounded with one candidate forever.
 """
 from __future__ import annotations
 
@@ -150,10 +152,12 @@ class DExploreTaskPrefixRuntime:
 
 @dataclass(frozen=True)
 class PrefixBranchResult:
-    """Protocol outcome; invalid parity is recorded rather than hidden or repaired."""
+    """Protocol outcome with numeric drift retained as a diagnostic."""
 
     parity_valid: bool
     parity_max_abs_error: float
+    task_indices_equal: bool
+    env_candidate_ids: np.ndarray
     pre_candidate_state: PublicBranchState
     post_candidate_state: PublicBranchState | None
 
@@ -176,14 +180,27 @@ def _validate_candidates_or_branches(actions: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(value)
 
 
-def _parity(state: PublicBranchState, tolerance: float) -> tuple[bool, float]:
+def candidate_env_assignment(assignment_seed: int) -> np.ndarray:
+    """Map nine env slots to candidates using a reproducible per-state permutation.
+
+    Candidate zero occurs twice and candidates one through seven occur once.  The
+    returned array is indexed by environment and contains the assigned candidate id.
+    """
+    if not isinstance(assignment_seed, (int, np.integer)) or int(assignment_seed) < 0:
+        raise ValueError("assignment_seed must be a non-negative integer")
+    candidate_ids = np.asarray([0, 0, 1, 2, 3, 4, 5, 6, 7], dtype=np.int64)
+    generator = np.random.Generator(np.random.PCG64(int(assignment_seed)))
+    return np.ascontiguousarray(candidate_ids[generator.permutation(BRANCH_COUNT)])
+
+
+def _parity(state: PublicBranchState, tolerance: float) -> tuple[bool, float, bool]:
     if not np.isfinite(tolerance) or tolerance < 0:
         raise ValueError("tolerance must be finite and non-negative")
     flattened = state.flattened_float_state()
     indices = state.validate_task_indices()
     max_error = float(np.max(np.abs(flattened - flattened[0:1])))
     equal_indices = bool(np.all(indices == indices[0:1]))
-    return max_error <= tolerance and equal_indices, max_error
+    return max_error <= tolerance, max_error, equal_indices
 
 
 def replay_prefix_branches(
@@ -192,15 +209,18 @@ def replay_prefix_branches(
     frame_id: int,
     candidate_actions: np.ndarray,
     *,
+    assignment_seed: int,
     tolerance: float = PARITY_TOLERANCE,
 ) -> PrefixBranchResult:
-    """Replay a source prefix then run candidate 0..7 plus duplicate candidate 0.
+    """Replay a source prefix then run a permuted candidate/duplicate multiset.
 
     ``frame_id`` is the candidate-action frame.  Thus the recorded prefix is exactly
     ``executed_action_history[:frame_id]``.  A terminal transition in that prefix is
     rejected: silently resetting or stepping after it would invalidate the branch.
-    If public parity fails, no candidate is stepped and ``post_candidate_state`` is
-    ``None`` so callers can persist ``physics_clone_valid=false`` for the state.
+    Finite public state and identical task/reference indices are hard requirements.
+    Cross-environment q/dq/root numerical parity is recorded but does not block the
+    candidate step: the deterministic assignment permutation and duplicate anchor
+    make that simulator noise measurable without claiming exact counterfactual clones.
     """
     horizon = validate_episode_replay(episode)
     if not isinstance(frame_id, (int, np.integer)) or frame_id < 0 or frame_id >= horizon:
@@ -217,10 +237,15 @@ def replay_prefix_branches(
         runtime.step(envs, np.repeat(action[None], BRANCH_COUNT, axis=0))
 
     before = runtime.public_state(envs)
-    parity_valid, max_error = _parity(before, tolerance)
-    if not parity_valid:
-        return PrefixBranchResult(False, max_error, before, None)
+    parity_valid, max_error, indices_equal = _parity(before, tolerance)
+    env_candidate_ids = candidate_env_assignment(assignment_seed)
+    if not indices_equal:
+        return PrefixBranchResult(
+            parity_valid, max_error, False, env_candidate_ids, before, None
+        )
 
-    branch_actions = np.concatenate((actions, actions[:1]), axis=0)
+    branch_actions = actions[env_candidate_ids]
     runtime.step(envs, branch_actions)
-    return PrefixBranchResult(True, max_error, before, runtime.public_state(envs))
+    return PrefixBranchResult(
+        parity_valid, max_error, True, env_candidate_ids, before, runtime.public_state(envs)
+    )

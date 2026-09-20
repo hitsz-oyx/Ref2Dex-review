@@ -70,7 +70,7 @@ def _state_and_physics(payload: np.lib.npyio.NpzFile) -> tuple[dict, dict]:
         "phase_id", "candidate_seed",
     }
     physics_names = {
-        "physics_clone_valid", "physics_candidate_valid", "physics_score",
+        "physics_clone_valid", "env_candidate_ids", "physics_candidate_valid", "physics_score",
         "physics_next_object_pose", "physics_next_IG", "duplicate_delta_object_pose",
         "duplicate_delta_IG", "duplicate_delta_score",
     }

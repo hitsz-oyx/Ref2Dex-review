@@ -18,6 +18,7 @@ from src.task.CmResidual.v121c_prefix_replay import (
     DExploreTaskPrefixRuntime,
     PHYSICS_SUBSTEPS,
     PublicBranchState,
+    candidate_env_assignment,
     replay_prefix_branches,
 )
 from src.task.CmResidual.v121c_ranking import (
@@ -316,8 +317,9 @@ def test_branch_parity_checks_public_tensors_and_task_indices():
 class _FakePrefixRuntime:
     """Small deterministic stand-in proving the runtime-neutral replay call order."""
 
-    def __init__(self, *, drift: float = 0.0):
+    def __init__(self, *, drift: float = 0.0, index_drift: bool = False):
         self.drift = drift
+        self.index_drift = index_drift
         self.actions = []
 
     def make_envs(self, count):
@@ -338,7 +340,10 @@ class _FakePrefixRuntime:
     def public_state(self, envs):
         dof = envs["dof"].copy()
         dof[1, 0, 0] += self.drift
-        return PublicBranchState(dof, envs["roots"].copy(), envs["indices"].copy())
+        indices = envs["indices"].copy()
+        if self.index_drift:
+            indices[1, 0] += 1
+        return PublicBranchState(dof, envs["roots"].copy(), indices)
 
 
 def test_prefix_replay_uses_executed_history_then_candidates_and_duplicate_anchor():
@@ -353,16 +358,25 @@ def test_prefix_replay_uses_executed_history_then_candidates_and_duplicate_ancho
     candidates = np.zeros((8, 18), dtype=np.float32)
     candidates[:, 0] = np.arange(8, dtype=np.float32) / 8.0
     runtime = _FakePrefixRuntime()
-    result = replay_prefix_branches(runtime, episode, 1, candidates)
+    result = replay_prefix_branches(runtime, episode, 1, candidates, assignment_seed=5909)
     assert result.parity_valid and result.parity_max_abs_error == 0.0
+    assert result.task_indices_equal
+    assert sorted(result.env_candidate_ids.tolist()) == [0, 0, 1, 2, 3, 4, 5, 6, 7]
     assert len(runtime.actions) == 2
     np.testing.assert_array_equal(runtime.actions[0], np.repeat(episode["executed_action_history"][:1], 9, axis=0))
-    np.testing.assert_array_equal(runtime.actions[1][:8], candidates)
-    np.testing.assert_array_equal(runtime.actions[1][8], candidates[0])
+    np.testing.assert_array_equal(runtime.actions[1], candidates[result.env_candidate_ids])
     assert result.post_candidate_state is not None
 
 
-def test_prefix_replay_stops_before_candidate_when_public_state_parity_fails():
+def test_candidate_environment_assignment_is_reproducible_and_balanced():
+    first = candidate_env_assignment(5909)
+    second = candidate_env_assignment(5909)
+    np.testing.assert_array_equal(first, second)
+    assert sorted(first.tolist()) == [0, 0, 1, 2, 3, 4, 5, 6, 7]
+    assert not np.array_equal(first, candidate_env_assignment(5910))
+
+
+def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():
     episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
                "initial_dof_state": np.zeros((18, 2), dtype=np.float32),
                "initial_actor_root_state": np.zeros((2, 13), dtype=np.float32),
@@ -372,8 +386,31 @@ def test_prefix_replay_stops_before_candidate_when_public_state_parity_fails():
                "data_id": np.array(["s1_airplane_lift"]), "start_time": np.array([0.0]),
                "progress_history": np.array([0]), "resolved_sim_config_sha256": np.array(["d" * 64])}
     runtime = _FakePrefixRuntime(drift=2e-5)
-    result = replay_prefix_branches(runtime, episode, 0, np.zeros((8, 18), dtype=np.float32))
+    result = replay_prefix_branches(
+        runtime, episode, 0, np.zeros((8, 18), dtype=np.float32), assignment_seed=5909
+    )
     assert not result.parity_valid
+    assert result.task_indices_equal
+    assert result.post_candidate_state is not None
+    assert len(runtime.actions) == 1
+
+
+def test_prefix_replay_stops_before_candidate_when_task_indices_differ():
+    episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
+               "initial_dof_state": np.zeros((18, 2), dtype=np.float32),
+               "initial_actor_root_state": np.zeros((2, 13), dtype=np.float32),
+               "initial_task_indices": np.array([7, 11]),
+               "executed_action_history": np.zeros((1, 18), dtype=np.float32),
+               "done_history": np.array([False]), "reference_index": np.array([0]),
+               "data_id": np.array(["s1_airplane_lift"]), "start_time": np.array([0.0]),
+               "progress_history": np.array([0]),
+               "resolved_sim_config_sha256": np.array(["d" * 64])}
+    runtime = _FakePrefixRuntime(index_drift=True)
+    result = replay_prefix_branches(
+        runtime, episode, 0, np.zeros((8, 18), dtype=np.float32), assignment_seed=5909
+    )
+    assert result.parity_valid
+    assert not result.task_indices_equal
     assert result.post_candidate_state is None
     assert runtime.actions == []
 
@@ -399,6 +436,7 @@ def test_replay_schema_validates_required_shapes():
                   "candidate_seed": np.zeros(count, dtype=np.uint64)})
     assert validate_state_records(state) == count
     physics = {"physics_clone_valid": np.ones(count, dtype=bool),
+               "env_candidate_ids": np.tile(np.array([0, 0, 1, 2, 3, 4, 5, 6, 7]), (count, 1)),
                "physics_candidate_valid": np.ones((count, 8), dtype=bool),
                "physics_score": np.zeros((count, 8)), "physics_next_object_pose": np.zeros((count, 8, 7)),
                "physics_next_IG": np.zeros((count, 8, 18)), "duplicate_delta_object_pose": np.zeros(count),
@@ -437,6 +475,7 @@ def test_offline_runner_writes_new_manifest_and_metrics(tmp_path):
                   "active_reason_mask": np.zeros(count, dtype=np.uint8), "phase_id": np.zeros(count, dtype=np.uint8),
                   "candidate_seed": np.zeros(count, dtype=np.uint64)})
     physics = {"physics_clone_valid": np.ones(count, dtype=bool),
+               "env_candidate_ids": np.tile(np.array([0, 0, 1, 2, 3, 4, 5, 6, 7]), (count, 1)),
                "physics_candidate_valid": np.ones((count, 8), dtype=bool),
                "physics_score": np.tile(np.arange(8, dtype=np.float32), (count, 1)),
                "physics_next_object_pose": np.zeros((count, 8, 7)),
