@@ -24,7 +24,7 @@ input、bookkeeping 与 action identity，并 hard-gate setter input 的 exact c
 
 ## Verification and rollback
 
-- DExplore runtime：`41 passed`（`test_v121e_snapshot.py` + `test_v121c_ranking.py`）；
+- DExplore runtime：`42 passed`（`test_v121e_snapshot.py` + `test_v121c_ranking.py`）；
 - `python3 -m py_compile`：四个修改模块通过；
 - `python3 tools/verify.py --changed`：`VERIFY PASS`；
 - `git diff --check`：通过。

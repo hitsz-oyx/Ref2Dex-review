@@ -1,5 +1,6 @@
 # CmResidual Experiments
 
+- [EXP-20260920-223639-CMRESIDUAL-V121E1-SNAPSHOT-PARITY](EXP-20260920-223639-CMRESIDUAL-V121E1-SNAPSHOT-PARITY.md)：独立 single-env duplicates 可重复，但 public snapshot direct restore 与 prefix replay 的 one-step parity 在 6/6 states 上被反驳。
 - [EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY](EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY.md)：public snapshot 与 prefix replay 的 one-step parity；duplicate repeatability 失败，科学结论仍为 `INCONCLUSIVE`。
 - [EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT](EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)：官方 Inspire checkpoint 在当前 V1.20 reconstructed baseline 上的单环境 rollout 诊断。
 - [EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT](EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)：四卡自训 epoch-500 checkpoint 的单环境 lift 评估。

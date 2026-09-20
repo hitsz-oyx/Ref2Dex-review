@@ -7,12 +7,14 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
-- V1.21e.1：已按 [独立单环境 parity 微补充计划](plan/V1.21e.1.md) 将 A1/A2/B1/B2 改为四个
-  完全独立的 fresh subprocess（每进程 `num_envs=1`），固定 6 states、`2/2/2` phase quota；initial
-  restore 与 direct snapshot restore 均删除 GPU setter 后、下一次 simulate 前的 refresh/observation
-  重算，并记录 setter input hash、exact-copy error、返回状态和 canonical snapshot identity。实现与
-  hermetic tests 已通过，正式 GPU3 run 尚待固定 implementation commit 后执行；scientific conclusion
-  仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260920-222008-CMRESIDUAL-V121E1-INDEPENDENT-PARITY.md)。
+- V1.21e.1：按 [独立单环境 parity 微补充计划](plan/V1.21e.1.md)，GPU3 上 6 states、`2/2/2`
+  phase quota 的 A1/A2/B1/B2 四进程 run 已完成。每个 arm 都是 fresh subprocess、`num_envs=1`；
+  setter exact-copy/provenance 全部通过。A 与 B 各自 duplicate 数值一致，object ceiling 均为 `6/6`
+  通过；但 prefix/direct-restore cross-method object ceiling 为 `0/6`，position 差异
+  `0.040614–0.278021 m`、rotation `0.379410–2.379353 rad`。因此当前 public snapshot one-step
+  parity 在该窄协议下为 `REFUTED`，不自动扩大到 16 states 或切换后续 ranking。详见
+  [Activity](activities/ACT-20260920-223639-CMRESIDUAL-V121E1-PARITY-REFUTED.md) 与
+  [experiment](experiments/EXP-20260920-223639-CMRESIDUAL-V121E1-SNAPSHOT-PARITY.md)。
 - V1.21e：按 [snapshot-restore parity 最终计划](plan/V1.21e.md) 在 GPU3 完成 16-state
   `6 moving / 6 contact / 4 precontact` 对照，但 prefix duplicate `16/16`、fresh direct-restore duplicate
   `14/16` 超过 object hard ceiling，完整 gate 为 `0/16`。协议终态是 `INVALID_IMPLEMENTATION`，公开
