@@ -11,14 +11,14 @@ def _write(path, value):
 def _sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def _load(path):
     cfg=yaml.safe_load(Path(path).read_text())
-    expected={'object_interaction_cmv2_two_domain_articulated_v1_7_formal':('V1.7.1',16),'object_interaction_cmv2_two_domain_articulated_v1_8_formal':('V1.8.1',64)}
+    expected={'object_interaction_cmv2_two_domain_articulated_v1_7_formal':('V1.7.1',16,{'grab':[1],'arctic':[5,6,7,8,9,10]}),'object_interaction_cmv2_two_domain_articulated_v1_8_formal':('V1.8.1',64,{'grab':[1],'arctic':[5,6,7,8,9,10]}),'object_interaction_cmv2_two_domain_articulated_v1_11_formal':('V1.11.1',64,{'grab':[1,2,3],'arctic':[1,2,3]})}
     if cfg.get('schema_name') not in expected: raise ValueError('invalid articulated formal config')
     for key in ('source_index','source_manifest'): cfg[key]=str(Path(cfg[key]).resolve())
     cfg['articulation_metadata']=str((Path(path).resolve().parents[5]/cfg['articulation_metadata']).resolve())
     if any(not Path(cfg[k]).is_file() for k in ('source_index','source_manifest','articulation_metadata')): raise FileNotFoundError('V1.7 input missing')
-    version,batch_size=expected[cfg['schema_name']]
+    version,batch_size,strides=expected[cfg['schema_name']]
     if cfg['modification_version']!=version or cfg['training']['device']!='cuda:1' or cfg['training']['batch_size']!=batch_size or cfg['training']['epochs']!=16: raise ValueError('unapproved formal budget')
-    if cfg['data']['train_stride_values']!={'grab':[1],'arctic':[5,6,7,8,9,10]}: raise ValueError('V1.7 stride contract mismatch')
+    if cfg['data']['train_stride_values']!=strides: raise ValueError('formal stride contract mismatch')
     return cfg
 def _datasets(cfg, split, *, validation=False):
     entries=json.loads(Path(cfg['source_index']).read_text())['sequences'][split]; art=json.loads(Path(cfg['articulation_metadata']).read_text())['articulation']; out={}

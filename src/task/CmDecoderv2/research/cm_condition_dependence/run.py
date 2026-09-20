@@ -104,7 +104,7 @@ def run(args):
             raise MemoryError("8 GiB GPU allocation budget exceeded")
 
     manifest = dict(schema_name="ref2dex.cm_condition_dependence.v1", task="CmDecoderv2",
-                    modification_version=VERSION, operation_category=["diagnostic", "experiment", "operation"],
+                    work_version=VERSION, operation_category=["diagnostic", "experiment", "operation"],
                     run_id=args.run_id, activity_id=args.activity_id, run_status="STARTED",
                     base_commit=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
                     worktree_dirty=bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)),

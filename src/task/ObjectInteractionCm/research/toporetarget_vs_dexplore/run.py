@@ -113,7 +113,7 @@ def execute(args, manifest):
     object_samples = sample_mesh_surface(source_mesh.vertices_local, source_mesh.faces,
                                          load_surface_profile("paper_strict_area_uniform"), mesh_id=obj.object_id)
     object_samples.save(args.output / "object_samples.npz")
-    result = {"modification_version": VERSION, "source_frame_ids": data["source_frame_id"].tolist(),
+    result = {"work_version": VERSION, "source_frame_ids": data["source_frame_id"].tolist(),
               "dataset": "GRAB", "sides": {}, "conclusion": "INCONCLUSIVE"}
     for side in sides:
         model = load_hand(args.assets, side)
@@ -198,7 +198,7 @@ def main():
     torch.set_num_threads(1)
     torch.manual_seed(42)
     repo = Path(__file__).resolve().parents[5]
-    manifest = {"Task": "ObjectInteractionCm", "modification_version": VERSION, "run_id": args.output.name,
+    manifest = {"Task": "ObjectInteractionCm", "work_version": VERSION, "run_id": args.output.name,
                 "run_status": "RUNNING", "started_at": now(), "seed": 42, "checkpoint": None,
                 "base_commit": subprocess.check_output(["git","rev-parse","HEAD"],cwd=repo,text=True).strip(),
                 "command": shlex.join([sys.executable]+sys.argv), "config": "config.json",

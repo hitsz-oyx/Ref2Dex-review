@@ -1,5 +1,15 @@
 # ObjectInteractionCmv2 文档入口
 
+## 当前五组训练状态
+
+- work_version：`V1.11.1`；问题：既有best权重初始化的MANO/Inspire三域混合训练。
+- [V1.11g FINAL](plan/V1.11g.md)：五组、GPU1+3、每卡64、stride1..3、16epochs、15组验证，ARCTIC Inspire不等待也不动态纳入；资源切换见 [V1.11i FINAL](plan/V1.11i.md)。
+- **当前阶段**：用户已确认OakInk2按真实刚性部件训练；GPU0+GPU2 smoke 已通过，正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 正在 NAS 上运行。
+- 当前架构仍为 `v1_5_articulated_fk`；原始坐标/单位、cache、best与ARCTIC导出受保护。部件级语义、验证聚合与回滚见 [V1.11h FINAL](plan/V1.11h.md)。
+- 入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
+
+## 指导与历史方案入口
+
 - [V1.0 指导](指导/V1.0.md)：用户确认的研究目标、边界与禁止事项；
 - [V1.0 架构](architecture/V1.0.md)：当前版本冻结的输入、结构化交互路径、输出与不变量；
 - [V1.0 计划](plan/V1.0.md)：实现边界、阶段、验证与回滚；当前为 `final`，已作为 V1.0 实现与小规模 pilot 的审批闸门；
@@ -18,9 +28,19 @@
 - [V1.7 最终计划](plan/V1.7.md)：GRAB stride=1、ARCTIC stride=5..10 的 16-epoch 从零正式训练。
 - [V1.8 指导](指导/V1.8.md) 与 [V1.8 最终计划](plan/V1.8.md)：保留未完成 B16 run，以 B64 calibration 闸门后从随机初始化重启相同的 16-epoch 二域训练。
 - [V1.9 指导](指导/V1.9.md) 与 [V1.9 最终计划](plan/V1.9.md)：当前 ARCTIC test 缺失时，使用 V1.8 best checkpoint 做 GRAB stride=1 / ARCTIC stride=5..10 的 validation diagnostic。
+- [V1.10 指导](指导/V1.10.md) 与 [V1.10 最终计划](plan/V1.10.md)：以纯软链接导航层规范 Cmv2 数据与 cache；不迁移 NAS 实体，不改变训练配置。
+- [V1.11 指导](指导/V1.11.md) 与 [V1.11 最终计划](plan/V1.11.md)：OakInk2 MANO 全量导出与随机初始化的 GRAB/ARCTIC stride=1..3 二域正式训练。
+- [V1.11a 最终计划](plan/V1.11a.md)：恢复高分辨率 OakInk2 MANO、GRAB/ARCTIC Inspire cache，并迁移本次新 manifest 的版本字段。
+- [V1.11e 最终计划](plan/V1.11e.md)：隔离空 `.partial` 残留并以 user systemd 托管 GRAB/ARCTIC Inspire 续跑。
+- [V1.11f 最终计划](plan/V1.11f.md)：在 GPU2/GPU1 独立服务上并行调度 GRAB/ARCTIC Inspire，避免同一输出根双写。
+- [V1.11i 最终计划补充](plan/V1.11i.md)：按用户要求将本轮混合训练资源切换为 GPU0+GPU2，其他研究变量不变。
+- [V1.11b 最终计划](plan/V1.11b.md)：用 V1.9 固定 validation 口径评估 V1.11 最优二域 checkpoint。
+- [V1.11c 最终计划](plan/V1.11c.md)：按 stride 1/2/3 分开统计二域 validation 的 EPE 与流模长。
+- [V1.11d 最终计划](plan/V1.11d.md)：在 OakInk2 loader 中排除跨 `frame_time` discontinuity 的短 stride transition，不重导 cache。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
 - [Task 活动记录](logs/activity_log.md)：本 Task 的治理、文档、实现和运行时间线。
+- [当前 Activities](activities/README.md)：合并后治理合同下的长期运行与诊断记录。
 
 本 Task 与旧 `ObjectInteractionCm` 独立。旧 Task 的代码、数据、cache、checkpoint、输出和未提交改动均不在本 Task 范围内。

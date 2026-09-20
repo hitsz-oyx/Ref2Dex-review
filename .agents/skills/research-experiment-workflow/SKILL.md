@@ -1,55 +1,43 @@
 ---
 name: research-experiment-workflow
-description: 运行并记录可复现的科研实验、评估、数据处理和长时任务，分离状态、证据与生成产物。
+description: 设计并记录可复现的训练、评估、benchmark 和数据处理实验，分离运行状态与科研证据。
 metadata:
-  short-description: 让实验可复现且可追溯
+  short-description: 让运行可复现且结论可审计
 ---
 
 # 科研实验工作流
 
-训练、评估、benchmark、数据处理、可视化、模型下载、编译、仿真，或预计超过短命令的任务，都使用本 Skill。
+本 Skill 用于 run 模式。它不修改研究代码或变量；需要修改时先切换到 change 并经过相应审批。长任务的启动、等待、停止与恢复使用 `long-running-tasks`。
 
-## 运行前
+## 运行前固定合同
 
-- 阅读项目当前状态、架构、记忆，以及相关 experiment/decision 记录。遵循项目路径和 schema，不用机器私有假设替代它们。
-- 明确假设、变量、数据划分、checkpoint 初始值、指标、预算和停止条件。如果其中任何一项改变科研语义，先请用户确认。
-- 将正式实验证据与当前状态、实现历史分开记录。
+读取 AGENTS、current_versions、Task README、完整指导谱系、适用最终 plan、实验定义和必要输入 manifest。确认 work_version、可复现 git_commit、Task、hypothesis、变量、对照、数据 split、GT、坐标/单位、初始 checkpoint、metric、预算、资源和停止条件。任何研究语义变化先停止并请求用户确认。
 
-## 运行中与运行后
+同一数值基线必须读取无后缀指导和全部已确认 `a`–`z` 补充指导；跨文件冲突以后字母覆盖，同一文件冲突则停止并按 plan 草案/用户确认流程处理。计划补充只在后续指导改变已执行计划的实施合同时存在，不与每个指导补充一一对应。
 
-- 新实验使用明确的新输出目录；不要覆盖基线，也不要静默选择“最新 checkpoint”。
-- 缓存、checkpoint、原始数据和大型生成结果不纳入版本控制。
-- 记录确切命令、配置快照、代码版本、输入/缓存标识和定量结果。运行清单至少包含 Task、`modification_version`、配置、数据、seed、checkpoint 和输出入口。活动记录还应登记精确到秒的时间戳、`activity_id`、可选 `run_id`、`run_status` 和 `base_commit`。结论标记为 `SUPPORTED`、`REFUTED`、`INCONCLUSIVE` 或 `INVALID_IMPLEMENTATION`。
-- smoke test 只能证明 wiring 正常，不能作为科研结果。
+## 身份、产物与证据
 
-## 默认产物位置与 Run Manifest
+work_version 是唯一版本术语；git_commit 与 run_id 分别标识实现和运行。正式训练、评估、benchmark 和数据处理生成小型 run_manifest.json，至少记录 task、work_version、git_commit、run_id、配置快照、输入/cache manifest、schema、坐标/单位、split、seed、初始 checkpoint 和输出目录。旧 modification_version 只在读取历史产物时兼容；新产物不得写它。
 
-- 训练或评估运行使用新的 `outputs/<Task>/<run_id>/`（遵循仓库 Runner）；只读诊断使用
-  项目目录规范声明的 Task-local research output path。Skill 不硬编码具体仓库路径。除非用户明确指定，不覆盖已有运行。
-- 每次正式训练、评估、benchmark 或数据处理运行都生成一个小型
-  `run_manifest.json`，记录 Task、`modification_version`、Git 提交、配置快照、输入数据或
-  cache manifest 及其文件基本信息、schema、坐标系、seed、初始 checkpoint 和输出入口；数据合同
-  通过 `metadata_snapshot` 引用，不能把完整 `metadata` 再内嵌一份；指导/plan 通过 activity 和
-  Markdown 路径链接关联，不在 JSON 中重复建立版本关联。
-- BaseRunner 不再自动生成标准 `summary.json`。运行终态必须写入最近作用域的 activity：至少包含
-  `run_status`、最后 step/epoch（可得时）、best metric、最佳/最近 checkpoint（存在时）、运行产生的
-  `metrics.jsonl`/`train.log` 入口和失败/停止原因；历史或 Task 专属 summary 可继续保留。
-- 重要实验在 `experiment.yaml` 用 `importance: primary|reference|exploratory`、`pinned: true`
-  和 `tags` 标记导航优先级；该标记不等同于科学结论，结论仍须在 experiment log 中由证据支持。
-- 数据 cache 的 manifest、训练运行的 run manifest 和实验日志职责不同：前者描述输入数据，
-  中者锁定一次运行，后者记录科研假设与证据；不要用其中一个冒充另外两个。
-- manifest、config 和 metadata 可以提交到外部实验存档，但大型 cache、checkpoint 和生成结果
-  仍按仓库规则忽略，不纳入 Git。
+路径、manifest 与测试归属使用 `directory-and-artifacts`。不得覆盖旧运行、静默选择“最新 checkpoint”，或提交 cache、checkpoint、原始数据和大型生成结果。
 
-## 运行状态与长时任务等待规则
+重要运行生命周期终态和人工检查写入最近作用域 `docs/activities/` 的独立 Activity；科学证据写入 `docs/experiments/` 的 experiment card。Activity 回答“做了什么”，experiment 回答“知道了什么”。`logs/activity_log.md` 与 `logs/experiment_log.md` 仅是历史审计，不能作为当前状态入口或新写入位置。
 
-- 不要求单独的实时状态 JSON 或 heartbeat；运行启动、停止、完成、失败和人工检查结果写入最近作用域的 activity log。
-- `run_status`（`STARTED`、`RUNNING`、`COMPLETED`、`FAILED`、`STOPPED`、`UNKNOWN`）与科研 `conclusion`（`SUPPORTED`、`REFUTED`、`INCONCLUSIVE`、`INVALID_IMPLEMENTATION`）分开记录。
-- `base_commit` 必须是活动发生时可见的最近一次已提交 HEAD 哈希；未提交工作区用独立的 dirty 标记说明，不把“未提交”写成 commit 值。
-- 运行产物、activity、manifest、实际生成的 metrics/train log 和关键 checkpoint 的路径必须在 Agent 回复中以可点击 Markdown 链接给出。
+使用：
 
-完整规则见 [long-running-tasks.md](references/long-running-tasks.md)。核心要求是：让执行工具等待，不要让模型每几秒重新推理一次来查询状态。
+    run_status: STARTED | RUNNING | COMPLETED | FAILED | STOPPED | UNKNOWN
+    conclusion: SUPPORTED | REFUTED | INCONCLUSIVE | INVALID_IMPLEMENTATION | N/A
 
-- 启动长任务后按分钟级等待；只有中间输出会改变下一步决策时才提前检查。
-- 出现错误、资源冲突或未批准的范围变化时安全停止。
-- 空的状态查询与实际交互输入必须区分：前者长等待，后者立即发送。
+run_status 只说明进程状态；conclusion 由 hypothesis、metric 和证据决定。终态 Activity 至少链接运行目录、manifest、config、实际生成的 metrics.jsonl/train.log、最后 step/epoch、best metric、最佳/最近 checkpoint（存在时）和失败/停止原因。
+
+## 交接
+
+实际启动、等待、监控、停止和恢复遵循 `long-running-tasks`。本 Skill 负责在运行前固定
+科学变量，并在运行后按 hypothesis、metric 和证据给出独立 conclusion；运行状态本身不构成
+科学结论。
+
+统一机器门禁为：
+
+    python tools/verify.py --changed
+
+最终回复给出 Task、work_version、git_commit、run_id、run_status、输出目录、manifest、metrics/log、checkpoint（存在时）、工程验证和独立 scientific conclusion。smoke 只能证明 wiring 或可运行性，不能证明研究效果。

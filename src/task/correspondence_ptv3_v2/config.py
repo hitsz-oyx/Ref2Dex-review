@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 class Config(TaskConfig):
     name = "correspondence_ptv3_v2"
     runner_class = "src.task.correspondence_ptv3_v2.runner.CorrespondencePTV3V2Runner"
-    modification_version = "V1.2.16"
+    work_version = "V1.2.16"
     operation_category = ["experiment"]
 
     class meta(TaskConfig.meta):

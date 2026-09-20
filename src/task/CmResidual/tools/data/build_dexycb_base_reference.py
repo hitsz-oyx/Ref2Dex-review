@@ -362,7 +362,7 @@ def build(args: argparse.Namespace) -> Path:
     np.save(output / "valid_rsi_mask.npy", np.ones(frame_count, dtype=bool))
     manifest = {
         "schema_name": "ref2dex_cmresidual_dexycb_base_reference_v1",
-        "modification_version": "V1.11.1",
+        "work_version": "V1.11.1",
         "task": "CmResidual",
         "sequence_id": SEQUENCE,
         "side": "right",
@@ -420,7 +420,7 @@ def build(args: argparse.Namespace) -> Path:
         "run_status": "COMPLETED",
         "task": "CmResidual",
         "mode": "build_dexycb_base_reference",
-        "modification_version": "V1.11.1",
+        "work_version": "V1.11.1",
         "operation_category": ["data", "operation"],
         "created_at": now(),
         "base_commit": base_commit,

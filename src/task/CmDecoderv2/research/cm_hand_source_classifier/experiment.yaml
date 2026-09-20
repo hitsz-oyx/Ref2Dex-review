@@ -1,6 +1,6 @@
 name: cm_hand_source_classifier
 task: CmDecoderv2
-modification_version: V1.1.6
+work_version: V1.1.6
 importance: exploratory
 pinned: false
 tags: [mano, inspire, cm, classifier, representation-diagnostic]

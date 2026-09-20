@@ -1,5 +1,5 @@
 name: trajectory_quality_gate
-modification_version: V1.1.12
+work_version: V1.1.12
 importance: primary
 pinned: true
 tags: [cm, cross-hand, quality-flags, data-triage, no-training]

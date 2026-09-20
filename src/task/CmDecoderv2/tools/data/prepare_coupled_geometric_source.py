@@ -132,7 +132,7 @@ def main() -> None:
     run_manifest = {
         "schema_name": "ref2dex_run_manifest_v1", "task": "CmDecoderv2",
         "operation": "prepare_coupled_geometric_source", "run_id": args.output_root.name,
-        "run_status": "COMPLETED", "modification_version": "V1.1.13",
+        "run_status": "COMPLETED", "work_version": "V1.1.13",
         "operation_category": ["data", "operation"], "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "base_commit": commit,
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT)),

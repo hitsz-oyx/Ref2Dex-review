@@ -79,7 +79,7 @@ def main():
         raise ValueError("Existing object asset link has a different target")
     assets = {name: sha256(asset_link / name) for name in ["airplane.urdf", "table.urdf", "objects/airplane/airplane.obj", "objects/table/table.obj"]}
     manifest = {
-        "schema_name": "ref2dex_cm_online_source_v1", "modification_version": "V1.1.15",
+        "schema_name": "ref2dex_cm_online_source_v1", "work_version": "V1.1.15",
         "sequence_id": entry["id"], "split": "train", "seed": 42,
         "checkpoint_sha256": args.checkpoint_sha256, "checkpoint": args.checkpoint,
         "oicm_checkpoint_sha256": model.oicm_checkpoint_sha256,
@@ -97,7 +97,7 @@ def main():
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     run = {
         "manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2", "mode": "prepare_online_source",
-        "run_id": args.output.name, "modification_version": "V1.1.15", "operation_category": ["data", "operation"],
+        "run_id": args.output.name, "work_version": "V1.1.15", "operation_category": ["data", "operation"],
         "created_at": datetime.now(timezone.utc).isoformat(), "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], text=True)),
         "config_snapshot": "config.json", "metadata_snapshot": "manifest.json", "seed": 42,

@@ -746,7 +746,7 @@ def main() -> int:
     parser.add_argument("--surface-seed", type=int, default=2024)
     parser.add_argument("--resume", action="store_true", help="Resume a partially generated full output directory")
     parser.add_argument("--refresh-rl-candidates", action="store_true", help="Refresh RL masks using generated geometry and the 5 cm rule")
-    parser.add_argument("--modification-version", default="V1.2.5")
+    parser.add_argument("--work-version", default="V1.2.5")
     args = parser.parse_args()
     repo_root = Path(__file__).resolve().parents[5]
     output_root = Path(args.output).resolve()
@@ -818,7 +818,7 @@ def main() -> int:
     run_manifest = {
         "schema_name": "ref2dex_run_manifest_v1",
         "task": "ObjectInteractionCm",
-        "modification_version": str(args.modification_version),
+        "work_version": str(args.work_version),
         "operation": "dexplore_rl_right_hand_cache_conversion",
         "run_id": f"oicm-dexplore-rl-{args.mode}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         "run_status": "COMPLETED",

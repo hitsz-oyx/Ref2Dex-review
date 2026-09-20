@@ -39,7 +39,7 @@ def main() -> None:
     torch.set_num_threads(4)
     manifest = {
         "manifest_schema": "ref2dex.run.v1", "task": "CmDecoderv2",
-        "modification_version": "V1.1.16", "operation_category": ["diagnostic", "operation"],
+        "work_version": "V1.1.16", "operation_category": ["diagnostic", "operation"],
         "run_id": args.output.name, "run_status": "RUNNING", "seed": seed,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

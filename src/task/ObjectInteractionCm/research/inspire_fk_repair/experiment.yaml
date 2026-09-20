@@ -1,6 +1,6 @@
 name: inspire_fk_repair
 task: ObjectInteractionCm
-modification_version: V1.4.6
+work_version: V1.4.6
 importance: reference
 pinned: true
 tags: [data-quality, inspire, fk, visualization]

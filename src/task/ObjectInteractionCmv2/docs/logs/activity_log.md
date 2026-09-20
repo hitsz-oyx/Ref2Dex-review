@@ -3482,3 +3482,284 @@ V1.8 的启动闸门是实际二域 B64 step，而不是按 B16 显存线性外�
 **回滚**
 
 评估已完成；忽略/保留独立 V1.9.2 output 即可。若需移除实现增量，删除 V1.9 evaluator/config/docs 并恢复 pointer；不得删除 V1.8 checkpoint、训练 output、cache、GT 或 split。
+
+## 2026-09-18 15:16:21 +0000 — V1.9.2 ARCTIC GT flow magnitude 与 raw viewer 口径核对
+
+- timestamp: `2026-09-18 15:16:21 +0000`
+- activity_id: `ACT-20260918-151621-CMV2-V192-ARCTIC-FLOW-VIEWER-DIAGNOSTIC`
+- modification_version: `V1.9.2`
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 用户询问 ARCTIC 各 stride 的平均点流移动量与 raw trajectory 可视化差异；只读核对 V1.9 metrics、articulated loader 与既有 raw viewer 的采样/坐标/时间合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `be27e5f6d2ab561066a77ea6b99f719107672470`
+- worktree_dirty: `false`（核对开始时；本次只追加本活动记录。）
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `COMPLETED`
+- scope: 只读读取 V1.9 summary；检查 articulated loader 的 `obj_flow_gt` 构造和既有 `ObjectInteractionCm.visualize_grab` 的 raw trajectory viewer。未修改模型、cache、GT、split、checkpoint、训练或评估产物。
+- evidence: ARCTIC GT point-micro magnitude（全 validation、1024 uniform sampled points/transition）按 actual stride `5..10` 为 `22.6057/26.3443/29.5176/33.5507/37.6468/39.7068 mm`，pooled 为 `31.5577 mm`。loader 用同一 current root frame 表达 future/current world points 再相减；这是刚体旋转坐标变换，保持同一对应点的位移范数。raw viewer 则显示一条 raw bilateral trajectory 的 world-frame `4096` point cloud，future delta 可由 GUI 在 `0..30` cache frames 选择。
+- conclusion: `INCONCLUSIVE`（数值与可视化不是同一统计对象：不同 split/sequence/frame、future delta、4096 vs 1024 point pool 以及“全点微平均”与单帧点云叠加都会改变直观感受；尚无证据表明 GT flow 计算或坐标变换错误。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — articulated loader、V1.9 evaluator、配置、实验与活动记录；本次未改实现。
+- [V1.9 summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[V1.9 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json) — stride-wise GT magnitude 证据。
+- [raw viewer implementation](../../../ObjectInteractionCm/visualize_grab.py)、[viewer launch activity](../../../ObjectInteractionCm/docs/logs/activity_log.md) — raw world-frame point cloud、可调 future-delta 与既有查看器启动合同。
+
+**原因**
+
+视觉查看器适合检查一条轨迹上的局部时序和接触；它不显示全 validation 的 point-micro average。若要逐值复现，应锁定同一 sequence、source frame 与 future delta，并在同一 `4096` pool 或同一 `1024` deterministic selection 上计算 `mean(||p_{t+Δ}-p_t||)`；不能比较不同 split 的总体均值与单帧屏幕重叠。
+
+**验证**
+
+- `metrics_summary.json` 的 six group GT magnitudes 与 pooled summary/experiment log 一致。
+- `articulated.py` 明确以 `_world_to_frame(future_world, root) - _world_to_frame(object_world, root)` 构造 GT，且同一 rotation 的欧氏范数不变。
+- `visualize_grab.py` 读取 `obj_points_world`、显示 full 4096 pool、`future_delta_cache_frames` 为 GUI `0..30`；其原启动 activity 记录初始 `future-delta=10`，但用户可在界面改变。
+
+**回滚**
+
+本条为只读诊断，唯一修改是活动记录；删除该条文档增量即可，不涉及数据、模型或运行产物。
+
+## 2026-09-19 03:15:25 +0000 — V1.10.1 Cmv2 几何序列 KNN/距离 Viser 查看器启动
+
+- timestamp: `2026-09-19 03:15:25 +0000`
+- activity_id: `ACT-20260919-031525-CMV2-V110-VISER-START`
+- modification_version: `V1.10.1`
+- type: `code / diagnostic / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求可视化当前训练用的预处理数据，并在 delta 开启时将点流模长显示在 Viser；要求报告启动命令。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（V1.10 viewer/docs/pointer 尚未提交；未覆盖模型、cache、GT、split、checkpoint 或训练 output。）
+- run_id: `cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- run_status: `STARTED`
+- command: `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.visualize_articulated --index data/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json --split val --sequence arctic/s01/mixer_grab_01 --frame 0 --delta 10 --knn 32 --threshold-mm 20 --host 127.0.0.1 --port 8114 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- scope: 新增 Task-local viewer，只读当前 two-domain MANO index 与 indexed Cmv2 geometry；初始 ARCTIC val trajectory 为 `arctic/s01/mixer_grab_01`、frame=0、delta=10。GUI 可改变 frame/delta/KNN/距离阈值；delta>0 时 status 展示对应点物体 flow `mean/median/P95/max` mm。旧 ObjectInteractionCm viewer、训练、cache、GT、split 与 checkpoint 不改。
+- conclusion: `INCONCLUSIVE`（viewer 为可视化诊断，不能单独构成模型效果或数据质量结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.10 Task-local viewer、用户指导、final plan、入口和既有实现；仅新增可视化诊断能力。
+- [src/task/ObjectInteractionCmv2/visualize_articulated.py](../../visualize_articulated.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.10.md](../指导/V1.10.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.10.md](../plan/V1.10.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Cmv2 schema adapter、冻结 viewer 合同、入口和 `V1.10.1` pointer。
+- [two-domain index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json)、[geometry manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/sequences/train/mano/arctic/s01/mixer_grab_01/geometry/manifest.json) — 只读输入；index 将该物理路径归属为 `val`。
+- Viser [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/config.json)、[viewer log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/viewer.log) 为 `PENDING`。
+
+**原因**
+
+旧 ObjectInteractionCm viewer 不接受当前 Cmv2 two-domain index schema/geometry manifest。隔离的新 viewer 保持 4096-point current/future world correspondence，直接显示单段 `||p_{t+Δ}-p_t||` 分布，避免将旧 raw viewer 与当前训练数据混用。
+
+**验证**
+
+- `py_compile src/task/ObjectInteractionCmv2/visualize_articulated.py` 通过。
+- `--check-only` 在指定 sequence/frame/delta 完成：object points=`4096`、hand points=`3076`、KNN=32 着色手点=`90`；object flow mean/median/P95/max=`0.0378/0.0367/0.0610/0.0767 mm`。这是该单一静止近似帧段，不能与 pooled validation 均值直接比较。
+
+**回滚**
+
+停止 Viser PID 并将 manifest/activity 更新为 `STOPPED`；保留独立 output。删除 V1.10 viewer/docs/pointer 增量即可，不删除或改写任何输入数据、训练或 checkpoint。
+
+## 2026-09-19 03:26:12 +0000 — V1.10 新 viewer 已按用户要求撤回
+
+- timestamp: `2026-09-19 03:26:12 +0000`
+- activity_id: `ACT-20260919-032612-CMV2-V110-VISER-RETRACTED`
+- modification_version: `V1.9.2`
+- type: `code / diagnostic / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-directed-retraction`
+- approval_basis: 用户明确指出不应实现新脚本，应复用已有 ARCTIC KNN/距离 viewer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅活动记录待提交；V1.10 viewer、guidance/plan、README/pointer 增量已撤回。）
+- stopped_run_id: `cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- stopped_run_status: `STOPPED`
+- scope: 精确停止 PID `2198259`，V1.10 output manifest 写 `STOPPED/INVALID_IMPLEMENTATION`；删除未提交 `visualize_articulated.py`、V1.10 guidance/plan，并恢复 Cmv2 pointer 为 `V1.9.2`。未修改训练、cache、GT、split、checkpoint 或旧 `ObjectInteractionCm.visualize_grab`。
+- conclusion: `INVALID_IMPLEMENTATION`（新 viewer 是不必要的范围扩张；后续应直接复用既有 raw bilateral ARCTIC KNN/距离 viewer。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.10 实现/计划增量已撤回；仅保留本 retraction activity。
+- [retracted viewer manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/run_manifest.json)、[viewer log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/viewer.log) — 停止证据；不删除 output。
+- [existing raw ARCTIC viewer](../../../ObjectInteractionCm/visualize_grab.py)、[existing viewer index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json) — 后续复用的既有实现与 raw bilateral 输入索引。
+
+**原因**
+
+旧 viewer 已具有用户需要的 KNN、距离着色、future delta 和点流分位数显示，并已经为 ARCTIC raw bilateral MANO 做过兼容。新建 Cmv2 viewer既不必要，也与用户指定的“不读取 cache”不一致。
+
+**验证**
+
+- `kill -0 2198259` 在 `SIGTERM` 后确认进程退出。
+- V1.10 manifest 已为 `STOPPED`，原因明确为用户拒绝新脚本；`git status` 不再包含 V1.10 script/guidance/plan。
+- 既有 viewer-only index schema 为 `ref2dex_object_interaction_cm_index_v1_2`，`arctic/s01/box_use_01` entry 的 variant 为 `mano_bilateral_raw`，可由 `visualize_grab.py` 直接读取。
+
+**回滚**
+
+无进一步回滚：新实现已移除，旧 viewer 未被改动。若需恢复 V1.10，只能经新的用户指导和 final plan，不能从此次撤回静默恢复。
+
+## 2026-09-19 04:26:03 +0000 — V1.10.1 Cmv2 数据/cache 软链接导航层
+
+- timestamp: `2026-09-19 04:26:03 +0000`
+- activity_id: `ACT-20260919-042603-CMV2-DATA-NAVIGATION`
+- modification_version: `V1.10.1`
+- type: `governance / data / documentation`
+- task_mode: `governance`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认按所提布局整理 Cmv2 部分，数据和 cache 分开且全部使用软链接。
+- skills_used: `research-change-control`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（本次 V1.10.1 文档/指针与此前 activity 记录待提交；外部 data 入口按仓库忽略规则不入 Git。）
+- scope: 新建 `data/processed_data/oicmv2/` 纯导航层，分离 `data/` 和 `cache/`；不移动、重命名、删除或写入任何 NAS target，不修改训练配置、index、split、schema、模型、checkpoint 或运行。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 冻结命名、范围、验证与回滚合同，并将 Task 指针更新为 `V1.10.1`。
+- [Cmv2 导航 README](../../../../../data/processed_data/oicmv2/README.md) — 说明 data/cache 的职责与 OakInk2 partial cache 禁止项。
+- `data/processed_data/oicmv2/data/{grab,arctic}/{mano,inspire_f1}`、`data/processed_data/oicmv2/data/oakink2/selection`、`data/processed_data/oicmv2/cache/{mano,inspire_f1}/*` — 新建的 8 条绝对 NAS 软链接，均不复制数据。
+
+**原因**
+
+- 旧 `processed_data` 根同时包含 producer、raw 输入、cache、失败中间产物和历史运行，难以从目录名判断 Cmv2 的实际输入。导航层以 domain/hand-variant/scope 命名，保留原路径兼容性。
+- OakInk2 只链接完成态 selection 输入；失败的 `oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z` 不建立正式 `inspire_f1` cache 入口，防止 partial cache 被训练误用。
+
+**验证**
+
+- 逐条用 `readlink -f` 验证 8 个链接与计划中的绝对 target 完全相同，所有 destination 均为软链接且 target 在创建前已存在。
+- 当前 V1.7/V1.8/V1.9 配置仍显式引用原 `oicm_v1_4_4/two_domain_mano_split_seed42/{index,cache_manifest}.json`，未改为导航路径。
+- 工程结论：`SUPPORTED`（导航层和保护边界成立）；科研结论：`INCONCLUSIVE`（目录治理不构成训练效果结论）。
+
+**回滚**
+
+- 仅删除 [data/processed_data/oicmv2/](../../../../../data/processed_data/oicmv2/) 的本次目录树及本条文档/指针增量；禁止删除任一软链接 target 或既有 `processed_data` 内容。
+
+## 2026-09-19 04:30:34 +0000 — ARCTIC raw MANO 与派生几何 cache 路径辨析
+
+- timestamp: `2026-09-19 04:30:34 +0000`
+- activity_id: `ACT-20260919-043034-CMV2-ARCTIC-RAW-CACHE-DIAGNOSTIC`
+- modification_version: `V1.10.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问新数据入口的 `data/arctic/mano` 与旧 GRAB+ARCTIC MANO geometric cache 是否内容一致。
+- skills_used: `research-change-control`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅当前治理/诊断文档记录待提交）
+- scope: 只读比较链接 target、顶层合同和 `arctic/s01/box_use_01` 对应序列；未修改数据、cache、索引或配置。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 本次诊断未改动；它们是同一未提交 V1.10.1 导航层变更，完整影响和验证见上一条 activity。
+
+**原因**
+
+- 导航层的 `data/` 与 `cache/` 旨在显式分开 raw 输入和派生训练几何，避免将同源序列误解为相同目录内容。
+
+**验证**
+
+- [data/arctic/mano](../../../../../data/processed_data/oicmv2/data/arctic/mano/) 解析至 `oicm_v1_4_raw/arctic_mano_30hz`，而 [cache/mano/grab_arctic_v1_4](../../../../../data/processed_data/oicmv2/cache/mano/grab_arctic_v1_4/) 解析至 `object_interaction_cm_grab_arctic_mano_geometric_v1_4`，不是同一 inode/目录。
+- `s01/box_use_01` raw `shared.npz` 含 `(889,4096,3)` 的 `obj_points_world`；cache 同序列另含采样 hand points/normals、KNN indices、距离与监督 masks、candidate masks、part ID、articulation、root pose、frame time 和 manifest。cache 是以 raw 为上游输入之一的派生物，不是 raw 数据的内容复制。
+- 对同一 `s01/box_use_01` 的逐数组只读比对：raw `obj_points_world` 与 cache `obj_points_pool_world` 的 point ID 完全相同、最大绝对差为 `0`；raw 左右 `1538+1538` hand points 按 left-then-right 拼接后与 cache `hand_points_world [889,3076,3]` 也逐元素相同。该结果证明这一序列的核心 world geometry 可直接对齐，但不把单序列等同性泛化为所有 cache 字段或所有序列。
+- `1538` 仅是 cache 保留的 legacy decoder compatibility stream 的每手点数；当前 V1.8/V1.9 articulated training 在 `articulated.py` 读取的是 `knn_hand_points_world`，即 MANO 每手 `2048`、双手 `4096` 点。配置中的 `num_obj_points=1024` 是物体下采样数，不是手点数。
+- cache 的历史 producer 不是本次新增的 `oicmv2/data` 导航层；完成态 manifest 记录其命令为 `build_bilateral_mano_v1_4_cache.py finalize`，物理输入为 `oicm_v1_4_raw/grab_mano_30hz`、`oicm_v1_4_raw/arctic_mano_30hz` 与 Inspire cache 的 index（仅用于 split），输出为 `object_interaction_cm_grab_arctic_mano_geometric_v1_4`。新导航 `data/{grab,arctic}/mano` 只是前两项物理输入根的后建软链接别名。
+- raw MANO 根由 `process/GRAB/stage4_cm.py` / `process/ARCTIC/stage4_cm.py` 从官方 GRAB / ARCTIC 根生成；ARCTIC raw meta 记录 source root 为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/arctic/data/arctic_data/data`，GRAB raw meta 记录 source root 为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/data/GRAB`。cache builder 从 raw 读取 1538-point legacy stream，同时依据 MANO model 的固定 triangle/barycentric correspondence 重采样为训练用 2048-point-per-side KNN stream，并生成 KNN/mask/articulation 字段。
+- 既有 `visualize_grab.py` 同时有 raw bilateral 和 bilateral geometry cache 读取分支，却只接受旧 `ref2dex_object_interaction_cm_index_v1_1/v1_2`；当前 Cmv2 two-domain index 为另一 schema，因此不能只替换 index 后“天然”读取，仍需使用相应旧 cache index 或经批准的 schema adapter。
+- 结论：`SUPPORTED`（路径与 schema 差异已验证）；无科研效果结论。
+
+## 2026-09-19 07:44:02 +0000 — OakInk2 高分辨率 Inspire cache 完成态复核
+
+- timestamp: `2026-09-19 07:44:02 +0000`
+- activity_id: `ACT-20260919-074402-CMV2-OAKINK2-HIGHRES-STATUS`
+- modification_version: `V1.10.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 数据是否成功导出。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（此前 V1.10.1 治理文档/指针待提交；本诊断未改动 data 或 cache。）
+- scope: 只读核对 OakInk2 selection、highres Inspire index/cache manifest、resume manifest 与首末 geometry；未运行导出、训练或评估。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 本诊断未改动；前一导航计划关于 OakInk2 完成态 cache 的判断需要在用户确认后修订，不应静默改写。
+- [OakInk2 highres cache 根](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/)；[completed resume manifest](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json)；[index](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/index.json)。
+
+**原因**
+
+- 初始 `cmv2_highres_full_20260917T134300Z` manifest 为 `STOPPED`，但其后存在独立 resume manifest；只看初始状态会错误地把完整 cache 判为 partial。
+
+**验证**
+
+- resume run `cmv2_highres_resume_batch8_full_20260917T142300Z` 为 `COMPLETED/SUPPORTED`、无 failures；index 和 cache manifest 一致为 train `1849` 条、`379591` 帧；实际 geometry 目录计数也为 `1849`。
+- 首末条 geometry 均含物体 `[T,4096,3]` 与 Inspire KNN 手 `[T,20270,3]`，例如首条 `T=1246`、末条 `T=123`。
+- OakInk2 MANO 是另一条 exporter 链：只找到 `cmv2_v145_oakink2_mano_smoke_20260918T021800Z` 的 `COMPLETED/SUPPORTED` smoke（1/1 段、1246 帧）；没有全量 `sequences/train/mano/oakink2` cache 或正在运行的 MANO export。因此 OakInk2 完整 Inspire 已存在，但完整 MANO 尚未导出，不能建立正式 MANO cache 软链接。
+- 结论：`SUPPORTED`（OakInk2 Inspire highres cache 已完整导出）；不等于它已经进入当前二域训练或已证明训练收益。
+
+**回滚**
+
+- 本次仅新增诊断记录；不改写任何 OakInk2 manifest、cache 或导航软链接。
+
+## 2026-09-19 07:53:00 +0000 — V1.11 OakInk2 MANO 全量导出与 stride=1..3 二域训练启动
+
+- timestamp: `2026-09-19 07:53:00 +0000`
+- activity_id: `ACT-20260919-075300-CMV2-OAKINK2-MANO-AND-TWO-DOMAIN-START`
+- modification_version: `V1.11.1`
+- type: `code / data / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求现在启动 OakInk2 MANO 全量导出，并以 GRAB/ARCTIC stride `1..3` 并行二域训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（V1.10.1 未提交治理/诊断记录与本次 V1.11 代码、配置、文档待提交；不覆盖既有运行。）
+- oakink2_run_id: `cmv2_v111_oakink2_mano_full_20260919T075300Z`
+- oakink2_run_status: `STARTED`
+- train_run_id: `cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z`
+- train_run_status: `STARTED`
+- scope: GPU2 以既有 smoke-through OakInk2 MANO producer 导出 1849 selected segments；GPU1 以随机初始化运行 16 epoch GRAB/ARCTIC 二域训练。两域训练 stride 都为 `{1,2,3}`，其余 V1.8 合同不变。
+
+**文件**
+
+- [V1.11 指导](../指导/V1.11.md)、[V1.11 final plan](../plan/V1.11.md)、[V1.11 训练配置](../../configs/active/two_domain_articulated_v1_11_formal.yaml)、[formal trainer](../../train_articulated_formal.py)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 新 stride 合同的最小配置/whitelist 扩展与执行边界。
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md) — 本次未改动，保留数据导航层的既有合同。
+- [OakInk2 MANO 输出目录](../../../../../data/processed_data/oicm_v1_4_5_highres_full/oakink2_mano_20260919T075300Z/) 与 [二域训练输出目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z/) — `PENDING`，启动后写入 manifest/log。
+
+**原因**
+
+- OakInk2 Inspire highres cache 已完成，但 MANO 仅有 smoke；用户要求补齐 4096-point MANO variant。此前二域正式训练使用不对称 stride（GRAB=1、ARCTIC=5..10）；本次只将两域训练采样统一为短 stride `1..3`。
+
+**验证**
+
+- GPU1/GPU2 均为 48 GiB 空闲、无 compute process；selection、annotation、Stage3、MANO asset、二域 index/manifest 均存在，两个唯一 output destination 均不存在。
+- `py_compile train_articulated_formal.py` 通过；V1.8 与 V1.11 config parser 分别验证旧 stride 合同与新 `{1,2,3}` 合同。
+
+**保护与回滚**
+
+- 停止各自 PID 即可；保留独立 manifest/log/已原子完成的 OakInk2 segment 和训练 checkpoint，不删除任何旧 cache、queue、输出或用户进程。
+
+**进度检查（2026-09-19 08:51:41 +0000）**
+
+- OakInk2 exporter PID `2393755` 存活：`69/1849` 段、`30446` 帧，manifest 仍为 `STARTED`（该既有 producer 仅在终态写 `COMPLETED/FAILED`），无 failures。
+- 二域训练 PID `2394527` 存活且 manifest 为 `RUNNING`：train transitions 为 GRAB `324586`、ARCTIC `191603`，validation 为 `40628` / `25802`，每 epoch `8066` steps；尚未完成首个 epoch，故 `metrics.jsonl`/`train.log` 暂无 epoch 行。
+- GPU1 训练显存约 `9396 MiB`、利用率 `58%`；GPU2 exporter 在本次瞬时检查为约 `532 MiB`、`0%`，符合逐段 CPU/I/O 与 GPU KNN 交替阶段。两条 run 均无 error 字段，保持 `INCONCLUSIVE`。
+
+**KNN batch 调整（2026-09-19 08:58:07 +0000）**
+
+- 用户要求提高 GPU2 KNN batch。旧 OakInk2 run 在 `101/1849` 段、`40085` 帧、`failures=[]` 时已发送 `SIGTERM` 并确认 PID 退出；其 manifest 改为 `STOPPED`，保留所有原子完成段。
+- 新 run_id：`cmv2_v111_oakink2_mano_resume_knnfb16_20260919T085807Z`，相同 output root、`--resume`、`knn_frame_batch=16`（原为 `2`）；KNN=32、2048 点/手、4096 点双手、坐标、selection、MANO correspondence 和其余参数不变。恢复初期需逐段验证旧 geometry 后跳过，GPU 仍可暂时空闲；不能将验证阶段的 0% 采样解释为调整失败。
+
+**训练进度检查（2026-09-19 09:03:00 +0000）**
+
+- 二域训练 PID `2394527` 存活、manifest `RUNNING`，GPU1 约 `9398 MiB`、利用率 `100%`。第 1/16 epoch 已完成：step `8066`，`val_grab_loss=0.0786536`、`val_arctic_loss=0.1197243`、等权 `selection_metric=0.0991889`，已写 `best.pt` / `latest.pt` 与 [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z/metrics.jsonl)。这是早期 validation 优化状态，不构成跨域效果结论。

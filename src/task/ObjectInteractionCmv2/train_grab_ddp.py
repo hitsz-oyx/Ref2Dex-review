@@ -55,7 +55,7 @@ def _save_checkpoint(path, model, optimizer, step, epoch, position, cfg, index_s
         "model": model.module.state_dict(),
         "optimizer": optimizer.state_dict(),
         "architecture_version": model.module.architecture_version,
-        "modification_version": cfg["modification_version"],
+        "work_version": cfg["work_version"],
         "seed": cfg["training"]["seed"],
         "index_sha256": index_sha256,
         "world_size": world_size,
@@ -302,7 +302,7 @@ def main(argv=None):
     dist.barrier()
     manifest = {
         "task": "ObjectInteractionCmv2",
-        "modification_version": cfg["modification_version"],
+        "work_version": cfg["work_version"],
         "run_id": args.run_id, "run_status": "STARTED",
         "created_at": utc_now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

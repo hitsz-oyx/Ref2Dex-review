@@ -5,7 +5,7 @@ from src.task.CmDecoder.current_object_interaction_cm_v1_2_config import Config 
 
 
 class Config(CmConfig):
-    modification_version = "V1.2.13"
+    work_version = "V1.2.13"
     operation_category = ["architecture", "code", "data", "experiment", "operation"]
 
     class meta(CmConfig.meta):

@@ -34,7 +34,7 @@ def main(argv=None):
     output = Path(cfg["output_root"]) / args.run_id
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "config.json", cfg)
-    manifest = {"task": "ObjectInteractionCmv2", "modification_version": cfg.get("modification_version", "V1.3.2") if v13 else "V1.2.1",
+    manifest = {"task": "ObjectInteractionCmv2", "work_version": cfg.get("work_version", "V1.3.2") if v13 else "V1.2.1",
                 "run_id": args.run_id, "run_status": "STARTED", "created_at": utc_now(),
                 "architecture_version": architecture,
                 "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

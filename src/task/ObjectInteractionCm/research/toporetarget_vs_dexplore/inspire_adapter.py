@@ -41,7 +41,7 @@ def prepare_assets(source_root, destination, sides=("left", "right"), left_asset
     destination.mkdir(parents=True, exist_ok=False)
     configs = destination / "configs"
     (configs / "anchors").mkdir(parents=True)
-    provenance = {"modification_version": VERSION, "mimic_policy": "dexplore_ignore_mimic_true",
+    provenance = {"work_version": VERSION, "mimic_policy": "dexplore_ignore_mimic_true",
                   "source_files": [], "changes": {}, "native_joint_names": NATIVE_ORDER}
     for side, suffix in (("left", "lh"), ("right", "rh")):
         if side not in sides:

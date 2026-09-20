@@ -1,5 +1,5 @@
 schema_name: object_interaction_cmv2_grab_v1_3
-modification_version: V1.3.4
+work_version: V1.3.4
 source:
   name: grab
   hand_source: mano

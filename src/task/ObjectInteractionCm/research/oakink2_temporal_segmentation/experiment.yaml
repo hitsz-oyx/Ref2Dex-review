@@ -1,6 +1,6 @@
 name: oakink2_temporal_segmentation
 task: ObjectInteractionCm
-modification_version: V1.4.22
+work_version: V1.4.22
 importance: exploratory
 pinned: false
 tags: [oakink2, temporal, segmentation, motion-first, contact]

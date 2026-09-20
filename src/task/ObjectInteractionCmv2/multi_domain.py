@@ -346,11 +346,16 @@ class ThreeDomainTransitions(Dataset):
             self.sequence_entries.append(entry)
         self.rows: list[tuple[int, int]] = []
         self.dropped_transitions = 0
+        self.dropped_timeline_transitions = 0
         for sequence_index, sequence in enumerate(self.sequences):
             max_stride = max(self._stride_values(sequence.domain))
             for frame in range(max(0, sequence.frame_count - max_stride)):
                 if self.active_only and not sequence.has_contact(frame):
                     self.dropped_transitions += 1
+                    continue
+                stride = self._selected_stride(sequence, frame)
+                if sequence.domain == "oakink2" and not self._timeline_is_continuous(sequence, frame, stride):
+                    self.dropped_timeline_transitions += 1
                     continue
                 self.rows.append((sequence_index, frame))
         if not self.rows:
@@ -363,6 +368,19 @@ class ThreeDomainTransitions(Dataset):
             return (self.fixed_stride,)
         return self.stride_values.get(str(domain), tuple(range(1, 11)))
 
+    def _selected_stride(self, sequence: InspireSequenceView, current: int) -> int:
+        raw_current = int(np.asarray(sequence.arrays["source_frame_id"])[current])
+        values = self._stride_values(sequence.domain)
+        seed = _stable_seed(self.base_seed, sequence.path, raw_current, self.split)
+        return int(values[seed % len(values)])
+
+    @staticmethod
+    def _timeline_is_continuous(sequence: InspireSequenceView, current: int, stride: int) -> bool:
+        frame_time = np.asarray(sequence.arrays["frame_time"], dtype=np.float64)
+        delta_time = float(frame_time[current + stride] - frame_time[current])
+        expected = float(stride) / sequence.effective_fps
+        return bool(np.isfinite(delta_time) and np.isclose(delta_time, expected, rtol=0.0, atol=1e-4))
+
     def __len__(self) -> int:
         return len(self.rows)
 
@@ -373,8 +391,7 @@ class ThreeDomainTransitions(Dataset):
         sequence = self.sequences[sequence_index]
         raw_current = int(np.asarray(sequence.arrays["source_frame_id"])[current])
         seed = _stable_seed(self.base_seed, sequence.path, raw_current, self.split)
-        values = self._stride_values(sequence.domain)
-        stride = int(values[seed % len(values)])
+        stride = self._selected_stride(sequence, current)
         future = current + stride
         if future >= sequence.frame_count:
             raise IndexError(f"stride {stride} exceeds {sequence.path} at frame {current}")
@@ -383,6 +400,8 @@ class ThreeDomainTransitions(Dataset):
         source_ids = np.asarray(sequence.arrays["source_frame_id"])
         if source_ids[future] <= source_ids[current] or not np.isfinite(delta_time) or delta_time <= 0:
             raise ValueError(f"invalid transition timeline: {sequence.path} frame {current}->{future}")
+        if sequence.domain == "oakink2" and not self._timeline_is_continuous(sequence, current, stride):
+            raise ValueError(f"non-continuous OakInk2 transition: {sequence.path} frame {current}->{future}")
         pose = np.asarray(sequence.arrays["obj_pose_world"][current], dtype=np.float32)
         next_pose = np.asarray(sequence.arrays["obj_pose_world"][future], dtype=np.float32)
         if not _is_se3(pose) or not _is_se3(next_pose):

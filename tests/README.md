@@ -27,7 +27,7 @@
 - 根目录 legacy 测试在迁移完成前不作为新测试的放置位置；需要完整回归时仍可运行 `pytest`。
 
 当前阶段不修改 `pytest.ini` 或 `tests/conftest.py`。未来开始物理迁移时，再统一处理测试发现路径、
-NumPy 兼容 fixture 和 CI 收集范围，避免迁移一半时出现环境差异。
+NumPy 兼容 fixture 和测试收集范围，避免迁移一半时出现环境差异。
 
 ## 三、当前根目录 legacy 分类
 
@@ -91,12 +91,15 @@ NumPy 兼容 fixture 和 CI 收集范围，避免迁移一半时出现环境差�
 `test_checkpoint_compat.py`、`test_framework_contracts.py`、`test_metric_stat.py`、
 `test_overfit_diagnosis.py`、`test_pose_token_root_invariance.py`
 
+`test_framework_contracts.py` 需要完整运行时（包括 torch），保留为显式集成验证；它不属于
+`python tools/verify.py --changed` 的轻量自动范围。
+
 ### 治理 → `tests/governance/`
 
-`test_audit_diff.py`
+`test_verify.py`、`test_work_version_migration.py`
 
 ## 四、迁移边界
 
-未来物理迁移某个文件时，应先确认它不再被根目录路径、CI、外部脚本或用户命令依赖；同步更新
+未来物理迁移某个文件时，应先确认它不再被根目录路径、外部脚本或用户命令依赖；同步更新
 `pytest.ini`、相关 import 路径和 activity。迁移本身是 documentation/governance 变更，不代表
 测试所覆盖的科研结论发生变化。

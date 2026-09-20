@@ -104,6 +104,22 @@ def test_collate_pads_mano_and_inspire_streams(tmp_path):
     assert torch_is_zero(batch["hand_points"][0, 4096:])
 
 
+@pytest.mark.parametrize("stride", (1, 2, 3))
+def test_oakink2_timeline_gap_excludes_only_crossing_actual_stride(tmp_path, stride):
+    sequence, index, manifest = _make_domain(tmp_path, "oakink2", "mano")
+    geometry = sequence / "geometry"
+    frame_time = np.load(geometry / "frame_time.npy")
+    frame_time[6:] += 0.5
+    np.save(geometry / "frame_time.npy", frame_time)
+    dataset = ThreeDomainTransitions(
+        [{"name": "oakink2", "hand_variant": "mano", "index": str(index), "manifest": str(manifest)}],
+        "train", fixed_stride=stride, active_only=False,
+    )
+    assert len(dataset) == 12 - 2 * stride
+    assert dataset.dropped_timeline_transitions == stride
+    assert all(frame not in range(6 - stride, 6) for _, frame in dataset.rows)
+
+
 def torch_is_zero(value):
     return bool(np.allclose(value.numpy(), 0.0))
 

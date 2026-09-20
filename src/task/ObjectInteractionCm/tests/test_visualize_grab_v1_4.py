@@ -70,6 +70,58 @@ def test_v1_4_bilateral_cache_is_loaded_without_rewriting_source_schema(tmp_path
     assert not loaded.active_5cm(1)
 
 
+def test_oakink2_mano_cache_uses_knn_hand_contract(tmp_path):
+    sequence_id = "oakink2/scene_02/1009"
+    sequence = tmp_path / "oakink2" / "1009"
+    geometry = sequence / "geometry"
+    geometry.mkdir(parents=True)
+    manifest = {
+        "schema_name": "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4",
+        "sequence_id": sequence_id,
+        "source": "mano",
+        "source_dataset": "oakink2",
+        "coordinate_frame": "object_pose_t",
+        "hand_side": "bilateral_merged_left_then_right",
+        "merged_hand_sides": True,
+        "knn_hand_points": 4096,
+        "effective_fps": 30.0,
+    }
+    (geometry / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    frames = 3
+    _save(geometry / "obj_points_pool_world.npy", np.zeros((frames, 4096, 3), np.float32))
+    _save(geometry / "obj_normals_pool_world.npy", np.zeros((frames, 4096, 3), np.float32))
+    _save(geometry / "obj_pose_world.npy", np.tile(np.eye(4, dtype=np.float32), (frames, 1, 1)))
+    _save(geometry / "source_frame_id.npy", np.arange(frames, dtype=np.int32))
+    _save(geometry / "knn_hand_points_world.npy", np.zeros((frames, 4096, 3), np.float32))
+    _save(geometry / "knn_hand_normals_world.npy", np.zeros((frames, 4096, 3), np.float32))
+    _save(geometry / "obj_candidate_mask_5cm.npy", np.zeros((frames, 4096), dtype=bool))
+    index = {
+        "schema_name": "ref2dex_object_interaction_cm_oakink2_index_v1_4",
+        "sequences": {
+            "train": [{
+                "id": sequence_id,
+                "path": str(sequence),
+                "source": "mano",
+                "dataset": "oakink2",
+                "split": "train",
+                "frame_count": frames,
+            }],
+            "val": [],
+            "test": [],
+        },
+    }
+    index_path = tmp_path / "index.json"
+    index_path.write_text(json.dumps(index), encoding="utf-8")
+
+    payload, records = discover_sequences(index_path)
+    assert payload["schema_name"] == "ref2dex_object_interaction_cm_oakink2_index_v1_4"
+    assert records[0].variant == "mano"
+    loaded = TrainingSequence(records[0])
+    assert loaded.hand_points_count == 4096
+    assert loaded.hand_points_all.shape == (frames, 4096, 3)
+    assert loaded.world_frame == "oakink2_native_world"
+
+
 def test_flow_summary_reports_corresponding_point_displacement_mm():
     current = np.asarray([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]], dtype=np.float32)
     future = np.asarray([[0.001, 0.0, 0.0], [0.003, 0.0, 0.0]], dtype=np.float32)

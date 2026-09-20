@@ -26,7 +26,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", default=f"cmresidual_v1142_reftrack_w64_{datetime.now():%Y%m%d_%H%M%S}")
     parser.add_argument("--activity-id", required=True)
-    parser.add_argument("--modification-version", default="V1.14.4")
+    parser.add_argument("--work-version", default="V1.14.4")
     parser.add_argument("--window-length", type=int, choices=(64, 128, 366), default=64)
     parser.add_argument("--gpu", type=int, default=5)
     parser.add_argument("--cm-buffer", action="store_true",
@@ -102,7 +102,7 @@ def main():
                 "mode": ("v116_cmv2_actor_transition_only_ppo" if args.v116 else
                          "v115_cmv2_actor_reference_transition_ppo" if args.cmv2_actor else
                          "v114_reference_transition_ppo"), "run_id": args.run_id, "activity_id": args.activity_id,
-                "run_status": "STARTED", "modification_version": args.modification_version, "operation_category": ["experiment", "operation"],
+                "run_status": "STARTED", "work_version": args.work_version, "operation_category": ["experiment", "operation"],
                 "output_dir": str(output), "seed": 42, "base_commit": _git("rev-parse", "HEAD"),
                 "worktree_dirty": bool(_git("status", "--porcelain")), "config_snapshot": str(config),
                 "metadata_snapshot": str(metadata), "input_references": [reference, source], "initial_checkpoint": None,

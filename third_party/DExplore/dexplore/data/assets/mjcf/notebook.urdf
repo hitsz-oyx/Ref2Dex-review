@@ -1,0 +1,11 @@
+<?xml version="1.0" ?>
+<robot name="notebook.urdf">
+  <link name="baseLink">
+    <visual><origin xyz="0 0 0" rpy="0 0 0"/><geometry>
+      <mesh filename="objects/notebook/notebook.obj" scale="1 1 1"/>
+    </geometry><material name="mat"><color rgba="0.7 0.8 0.9 1"/></material></visual>
+    <collision><origin xyz="0 0 0" rpy="0 0 0"/><geometry>
+      <mesh filename="objects/notebook/notebook.obj" scale="1 1 1"/>
+    </geometry></collision>
+  </link>
+</robot>

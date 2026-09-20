@@ -1,6 +1,6 @@
 name: mano_rollout_effect
 task: CmDecoderv2
-modification_version: V1.1.5
+work_version: V1.1.5
 importance: exploratory
 pinned: false
 tags: [mano, rollout, object-effect, oicm, diagnostic]

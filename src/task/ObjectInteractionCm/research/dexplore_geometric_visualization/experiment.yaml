@@ -1,6 +1,6 @@
 name: dexplore_geometric_visualization
 task: ObjectInteractionCm
-modification_version: V1.4.10
+work_version: V1.4.10
 importance: reference
 pinned: false
 tags: [grab, dexplore, geometric, visualization]

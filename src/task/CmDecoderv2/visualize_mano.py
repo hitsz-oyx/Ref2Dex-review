@@ -512,7 +512,7 @@ def main() -> None:
         "run_status": "RUNNING",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "qualitative Viser only; no paired Inspire test GT or quantitative test metric",
-        "modification_version": str(cfg.modification_version),
+        "work_version": str(cfg.work_version),
         "operation_category": ["code", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

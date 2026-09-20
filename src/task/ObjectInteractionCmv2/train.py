@@ -57,7 +57,7 @@ def main():
             break
     torch.save({"model": model.state_dict(), "seed": args.seed}, args.output / "latest.pt")
     (args.output / "metrics.jsonl").write_text("".join(json.dumps(x) + "\n" for x in metrics))
-    manifest = {"task": "ObjectInteractionCmv2", "modification_version": "V1.0.2", "run_id": args.output.name,
+    manifest = {"task": "ObjectInteractionCmv2", "work_version": "V1.0.2", "run_id": args.output.name,
                 "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "seed": args.seed,
                 "source": source, "epochs": args.epochs, "last_step": step, "checkpoint": "latest.pt",
                 "metrics": "metrics.jsonl", "conclusion": "INCONCLUSIVE"}

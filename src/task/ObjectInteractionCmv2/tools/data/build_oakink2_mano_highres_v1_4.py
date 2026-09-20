@@ -24,7 +24,7 @@ from src.task.ObjectInteractionCm.tools.data import export_oakink2_inspire_v1_4 
 from src.task.ObjectInteractionCmv2.tools.data.backfill_oakink2_inspire_v1_4 import RawAnnotationGeometryStore
 
 
-MODIFICATION_VERSION = "V1.4.5"
+WORK_VERSION = "V1.11.1"
 OBJECT_POINTS = 4096
 MANO_PER_SIDE = 2048
 MANO_POINTS = 4096
@@ -108,7 +108,7 @@ def _process(row: Mapping[str, Any], annotation: Mapping[str, Any], stage3: RawA
                             ("knn_hand_points_world", high), ("knn_hand_normals_world", high_normals_value), ("hand_points_world", decoder), ("hand_normals_world", decoder_normals),
                             ("obj_candidate_mask_5cm", np.ones((len(frame_ids), OBJECT_POINTS), dtype=bool))): np.save(geometry / f"{name}.npy", value)
         mano_cache._build_knn(geometry, device=device, frame_batch_size=args.knn_frame_batch, object_chunk=args.knn_object_chunk)
-        _write_json(geometry / "manifest.json", {"schema_name": "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4", "schema_version": "1.0.0", "modification_version": MODIFICATION_VERSION,
+        _write_json(geometry / "manifest.json", {"schema_name": "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4", "schema_version": "1.0.0", "work_version": WORK_VERSION,
             "sequence_id": str(row["id"]), "dataset": "oakink2", "source_dataset": "oakink2", "source": "mano", "hand_variant": "mano", "split": "train", "coordinate_frame": "object_pose_t",
             "object_representation": "single_root_articulated_world_points_with_reference_pose", "hand_side": "bilateral_merged_left_then_right", "frame_count": len(frame_ids), "object_pool_points": OBJECT_POINTS,
             "decoder_hand_points": DECODER_POINTS, "decoder_points_per_side": DECODER_PER_SIDE, "knn_hand_points": MANO_POINTS, "knn_points_per_side": MANO_PER_SIDE, "knn_k": KNN_K, "knn_index_dtype": "uint16",
@@ -129,7 +129,7 @@ def run(args: argparse.Namespace) -> int:
     output = args.output_root.resolve(); output.mkdir(parents=True, exist_ok=True); device = torch.device(args.device)
     if device.type != "cuda" or not torch.cuda.is_available(): raise RuntimeError(f"CUDA is required, got {device}")
     torch.cuda.set_device(device); commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip()
-    manifest_path = output / f"run_manifest_{args.run_id}.json"; manifest = {"schema_name": "ref2dex_data_run_manifest_v1", "task": "ObjectInteractionCmv2", "operation": "oakink2_mano_highres_export", "run_id": args.run_id, "run_status": "STARTED", "started_at": _now(), "modification_version": MODIFICATION_VERSION, "base_commit": commit, "device": str(device), "expected_segments": len(rows), "completed_segments": 0, "completed_frames": 0, "failures": [], "inputs": {"selection_index": str(selection_path), "annotation_root": str(args.annotation_root.resolve()), "stage3_root": str(args.stage3_root.resolve())}, "outputs": {"root": str(output)}, "conclusion": "INCONCLUSIVE"}; _write_json(manifest_path, manifest)
+    manifest_path = output / f"run_manifest_{args.run_id}.json"; manifest = {"schema_name": "ref2dex_data_run_manifest_v1", "task": "ObjectInteractionCmv2", "operation": "oakink2_mano_highres_export", "run_id": args.run_id, "run_status": "STARTED", "started_at": _now(), "work_version": WORK_VERSION, "base_commit": commit, "device": str(device), "expected_segments": len(rows), "completed_segments": 0, "completed_frames": 0, "failures": [], "inputs": {"selection_index": str(selection_path), "annotation_root": str(args.annotation_root.resolve()), "stage3_root": str(args.stage3_root.resolve())}, "outputs": {"root": str(output)}, "conclusion": "INCONCLUSIVE"}; _write_json(manifest_path, manifest)
     stage3_map = legacy._load_stage3_map(args.stage3_root.resolve()); reconstructor = legacy._ManoReconstructor(args.mano_root.resolve(), device, args.mano_batch_size); correspondences = mano_cache._correspondences(args.mano_root.resolve()); records = []
     for ordinal, row in enumerate(rows, 1):
         try:
@@ -142,8 +142,8 @@ def run(args: argparse.Namespace) -> int:
             manifest["failures"].append({"selection_id": row.get("id"), "error": f"{type(exc).__name__}: {exc}"}); _write_json(manifest_path, manifest); traceback.print_exc()
     if manifest["failures"]:
         manifest.update({"run_status": "FAILED", "finished_at": _now(), "conclusion": "INVALID_IMPLEMENTATION"}); _write_json(manifest_path, manifest); return 1
-    index = {"schema_name": "ref2dex_object_interaction_cm_oakink2_index_v1_4", "schema_version": "1.1.0", "created_at": _now(), "modification_version": MODIFICATION_VERSION, "object_pool_points": OBJECT_POINTS, "model_object_points": 1024, "decoder_hand_points_per_stream": DECODER_POINTS, "knn_hand_points_per_stream": {"mano": MANO_POINTS}, "max_knn_hand_points": MANO_POINTS, "knn_k": KNN_K, "split_policy": {"oakink2": "existing selected train segments"}, "sequences": {"train": records, "val": [], "test": []}, "counts": {"train": len(records), "val": 0, "test": 0, "frames": sum(int(row["frame_count"]) for row in records)}, "selection_index": str(selection_path)}
-    _write_json(output / "index.json", index); _write_json(output / "cache_manifest.json", {"schema_name": "ref2dex_cmv2_highres_cache_manifest_v1", "modification_version": MODIFICATION_VERSION, "dataset": "oakink2", "variant": "mano", "total_sequences": len(records), "total_frames": manifest["completed_frames"], "hand_contract": "decoder bilateral 3076 compatibility points; MANO KNN bilateral 4096 points", "effective_fps": 30.0, "knn_k": KNN_K, "validation": {"bad_count": 0, "bad_examples": []}})
+    index = {"schema_name": "ref2dex_object_interaction_cm_oakink2_index_v1_4", "schema_version": "1.1.0", "created_at": _now(), "work_version": WORK_VERSION, "object_pool_points": OBJECT_POINTS, "model_object_points": 1024, "decoder_hand_points_per_stream": DECODER_POINTS, "knn_hand_points_per_stream": {"mano": MANO_POINTS}, "max_knn_hand_points": MANO_POINTS, "knn_k": KNN_K, "split_policy": {"oakink2": "existing selected train segments"}, "sequences": {"train": records, "val": [], "test": []}, "counts": {"train": len(records), "val": 0, "test": 0, "frames": sum(int(row["frame_count"]) for row in records)}, "selection_index": str(selection_path)}
+    _write_json(output / "index.json", index); _write_json(output / "cache_manifest.json", {"schema_name": "ref2dex_cmv2_highres_cache_manifest_v1", "work_version": WORK_VERSION, "dataset": "oakink2", "variant": "mano", "total_sequences": len(records), "total_frames": manifest["completed_frames"], "hand_contract": "decoder bilateral 3076 compatibility points; MANO KNN bilateral 4096 points", "effective_fps": 30.0, "knn_k": KNN_K, "validation": {"bad_count": 0, "bad_examples": []}})
     manifest.update({"run_status": "COMPLETED", "finished_at": _now(), "outputs": {"root": str(output), "index": str((output / "index.json").resolve()), "cache_manifest": str((output / "cache_manifest.json").resolve())}, "conclusion": "SUPPORTED"}); _write_json(manifest_path, manifest); print(json.dumps({"status": "COMPLETED", "segments": len(records), "frames": manifest["completed_frames"]}), flush=True); return 0
 
 

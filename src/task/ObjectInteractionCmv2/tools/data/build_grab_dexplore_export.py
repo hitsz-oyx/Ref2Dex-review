@@ -192,7 +192,7 @@ def command_select(args: argparse.Namespace) -> None:
     payload = {
         "schema_name": SCHEMA_NAME,
         "created_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "seed": args.seed,
         "raw_root": str(raw_root),
         "smplx_model_root": str(args.smplx_model_root.resolve()),
@@ -368,7 +368,7 @@ def command_init(args: argparse.Namespace) -> None:
     repo_root = Path(__file__).resolve().parents[5]
     run_manifest = {
         "task": "ObjectInteractionCmv2",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "run_id": args.run_id,
         "run_status": "STARTED",
         "started_at": _now(),
@@ -761,7 +761,7 @@ def command_validate(args: argparse.Namespace) -> None:
     summary = {
         "schema_name": SCHEMA_NAME,
         "created_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": MODIFICATION_VERSION,
         "selection_manifest": os.path.relpath(selection_path, run_root),
         "selection_sha256": _sha256(selection_path),
         "filter_counts": selection["counts"],
@@ -821,7 +821,7 @@ def command_validate(args: argparse.Namespace) -> None:
     run_manifest.update(
         {
             "task": "ObjectInteractionCmv2",
-            "modification_version": MODIFICATION_VERSION,
+            "work_version": MODIFICATION_VERSION,
             "run_id": args.run_id,
             "run_status": "COMPLETED",
             "completed_at": summary["created_at"],
