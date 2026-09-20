@@ -414,7 +414,7 @@ def test_calibration_gpu_lookup_rejects_unreported_device(monkeypatch):
 
 def test_calibration_collection_uses_pinned_dexplore_runtime(tmp_path):
     command = calibration_collection_command(5909, tmp_path / "episode")
-    assert Path(command[0]).resolve() == DEXPLORE_PYTHON.resolve()
+    assert command[0] == str(DEXPLORE_PYTHON)
     assert command[1].endswith("v121c_collect_episode_bootstrap.py")
     assert command[command.index("--num_envs") + 1] == "1"
     assert command[command.index("--seed") + 1] == "5909"

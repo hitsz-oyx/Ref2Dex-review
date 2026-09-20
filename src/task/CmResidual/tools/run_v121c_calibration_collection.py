@@ -68,7 +68,7 @@ def _gpu_used_mib(gpu: int) -> int:
 
 def _command(seed: int, episode_output: Path) -> list[str]:
     return [
-        str(DEXPLORE_PYTHON.resolve()),
+        str(DEXPLORE_PYTHON),
         str(BOOTSTRAP),
         "--test",
         "--checkpoint", str(CHECKPOINT),
