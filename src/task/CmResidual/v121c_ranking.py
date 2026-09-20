@@ -359,6 +359,110 @@ def object_distance(pose: torch.Tensor, goal_pose: torch.Tensor) -> torch.Tensor
     return translation + rotation.square() / (OBJECT_ROTATION_SIGMA_RAD ** 2)
 
 
+def pose_xyzw_to_matrix(pose: torch.Tensor) -> torch.Tensor:
+    """Convert world ``xyz + xyzw`` poses to homogeneous matrices."""
+    if not isinstance(pose, torch.Tensor) or pose.ndim < 1 or pose.shape[-1] != 7:
+        raise ValueError("pose must have shape [...,7] in xyz+xyzw order")
+    _finite("pose", pose)
+    quaternion = pose[..., 3:7]
+    norm = quaternion.norm(dim=-1, keepdim=True)
+    if (norm <= 0).any():
+        raise ValueError("pose quaternion must have non-zero norm")
+    x, y, z, w = (quaternion / norm).unbind(-1)
+    rotation = torch.stack((
+        1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+        2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+        2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+    ), dim=-1).reshape(*pose.shape[:-1], 3, 3)
+    result = torch.eye(4, dtype=pose.dtype, device=pose.device).expand(
+        *pose.shape[:-1], 4, 4
+    ).clone()
+    result[..., :3, :3] = rotation
+    result[..., :3, 3] = pose[..., :3]
+    return result
+
+
+def next_state_cost(
+    goal_pose_t6: torch.Tensor,
+    reference_ig_t1: torch.Tensor,
+    next_pose: torch.Tensor,
+    next_ig: torch.Tensor,
+) -> torch.Tensor:
+    """Return the V1.21c next-state cost with explicit ``t+6``/``t+1`` clocks.
+
+    The next-state tensors are ``[B,K,...]``.  This primitive deliberately has
+    no current-state input, so duplicate calibration cannot accidentally use a
+    branch-local pre-candidate baseline.
+    """
+    if goal_pose_t6.ndim != 3 or goal_pose_t6.shape[-2:] != (4, 4):
+        raise ValueError("goal_pose_t6 must be [B,4,4]")
+    if reference_ig_t1.ndim != 2 or reference_ig_t1.shape[-1] != ACTION_DIM:
+        raise ValueError("reference_ig_t1 must be [B,18]")
+    if next_pose.ndim != 4 or next_pose.shape[-2:] != (4, 4):
+        raise ValueError("next_pose must be [B,K,4,4]")
+    if next_ig.ndim != 3 or next_ig.shape[-1] != ACTION_DIM:
+        raise ValueError("next_ig must be [B,K,18]")
+    if (goal_pose_t6.shape[0] != next_pose.shape[0] or
+            reference_ig_t1.shape[0] != next_pose.shape[0] or
+            next_ig.shape[:2] != next_pose.shape[:2]):
+        raise ValueError("next-state cost batch/candidate shapes do not match")
+    goal = goal_pose_t6[:, None].expand_as(next_pose)
+    reference_ig = reference_ig_t1[:, None].expand_as(next_ig)
+    return object_distance(next_pose, goal) + 0.5 * ig_error(next_ig, reference_ig)
+
+
+def physics_scores(
+    canonical_current_pose: torch.Tensor,
+    goal_pose_t6: torch.Tensor,
+    canonical_current_ig: torch.Tensor,
+    reference_ig_t1: torch.Tensor,
+    next_pose: torch.Tensor,
+    next_ig: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """Score PhysX candidates against one shared collected pre-action state.
+
+    ``canonical_current_pose`` and ``canonical_current_ig`` have no candidate
+    dimension by construction.  Replay-env-local pre-candidate states cannot be
+    passed without violating the shape contract.
+    """
+    if canonical_current_pose.ndim != 3 or canonical_current_pose.shape[-2:] != (4, 4):
+        raise ValueError("canonical_current_pose must be shared [B,4,4]")
+    if canonical_current_ig.ndim != 2 or canonical_current_ig.shape[-1] != ACTION_DIM:
+        raise ValueError("canonical_current_ig must be shared [B,18]")
+    if (canonical_current_pose.shape[0] != goal_pose_t6.shape[0] or
+            canonical_current_ig.shape[0] != goal_pose_t6.shape[0]):
+        raise ValueError("shared baseline batch does not match goal batch")
+    baseline = object_distance(canonical_current_pose, goal_pose_t6)
+    baseline = baseline + 0.5 * ig_error(canonical_current_ig, reference_ig_t1)
+    next_cost = next_state_cost(goal_pose_t6, reference_ig_t1, next_pose, next_ig)
+    return {"baseline_cost": baseline, "next_cost": next_cost,
+            "score": baseline[:, None] - next_cost}
+
+
+def calibration_reference_targets(
+    hoi_data: torch.Tensor,
+    data_ids: torch.Tensor,
+    progress: int,
+    key_body_count: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Select the calibration target clocks: object ``t+6`` and IG ``t+1``."""
+    if hoi_data.ndim != 3 or data_ids.ndim != 1:
+        raise ValueError("hoi_data and data_ids must be [D,T,F] and [B]")
+    if key_body_count <= max(IG_KEY_INDICES):
+        raise ValueError("key_body_count must include all canonical IG indices")
+    if progress < 0 or progress + H_REF >= hoi_data.shape[1]:
+        raise ValueError("progress does not admit the fixed t+6 goal")
+    data_ids = data_ids.to(device=hoi_data.device, dtype=torch.long)
+    goal_pose_xyzw = hoi_data[data_ids, progress + H_REF, 106:113]
+    reference_t1 = hoi_data[data_ids, progress + 1]
+    reference_ig_start = 119 + key_body_count * 3 + 1 + 16
+    reference_ig = reference_t1[
+        ..., reference_ig_start:reference_ig_start + key_body_count * 3
+    ].view(-1, key_body_count, 3)
+    selector = torch.tensor(IG_KEY_INDICES, device=hoi_data.device, dtype=torch.long)
+    return pose_xyzw_to_matrix(goal_pose_xyzw), reference_ig[:, selector].reshape(-1, ACTION_DIM)
+
+
 def cm_scores(
     current_pose: torch.Tensor,
     goal_pose: torch.Tensor,
@@ -371,18 +475,18 @@ def cm_scores(
     if predicted_delta_xi.ndim != 3 or predicted_delta_xi.shape[-1] != 6:
         raise ValueError("predicted_delta_xi must be [B,K,6]")
     next_pose = compose_current_local_delta(current_pose, predicted_delta_xi)
-    initial_object = object_distance(current_pose, goal_pose)
+    scored = physics_scores(
+        current_pose, goal_pose, current_ig, reference_ig_next, next_pose, predicted_ig
+    )
     predicted_object = object_distance(next_pose, goal_pose[:, None].expand_as(next_pose))
-    initial_ig_error = ig_error(current_ig, reference_ig_next)
     predicted_ig_error = ig_error(predicted_ig, reference_ig_next[:, None].expand_as(predicted_ig))
-    object_progress = initial_object[:, None] - predicted_object
-    ig_progress = initial_ig_error[:, None] - predicted_ig_error
-    score = object_progress + 0.5 * ig_progress
+    object_progress = object_distance(current_pose, goal_pose)[:, None] - predicted_object
+    ig_progress = ig_error(current_ig, reference_ig_next)[:, None] - predicted_ig_error
     return {
         "next_pose": next_pose,
         "object_progress": object_progress,
         "ig_progress": ig_progress,
-        "score": score,
+        "score": scored["score"],
     }
 
 

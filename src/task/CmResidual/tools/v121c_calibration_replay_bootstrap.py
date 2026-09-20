@@ -20,7 +20,12 @@ from src.task.CmResidual.v121c_prefix_replay import (
     DExploreTaskPrefixRuntime,
     replay_prefix_branches,
 )
-from src.task.CmResidual.v121c_ranking import generate_candidate_actions
+from src.task.CmResidual.v121c_ranking import (
+    calibration_reference_targets,
+    generate_candidate_actions,
+    next_state_cost,
+    pose_xyzw_to_matrix,
+)
 
 
 POSITION_CEILING_M = 5e-4
@@ -53,23 +58,21 @@ def _canonical_ig(task) -> torch.Tensor:
     return quat_rotate(heading, displacement).view(task.num_envs, -1)
 
 
-def _loss(task, env_slots: np.ndarray, progress: int) -> torch.Tensor:
+def _duplicate_next_cost(task, env_slots: np.ndarray, progress: int) -> torch.Tensor:
+    """Score duplicate next states without any replay-env current baseline."""
     slots = torch.as_tensor(env_slots, device=task.device, dtype=torch.long)
-    post_pose = task._target_states[slots, :7]
+    post_pose = pose_xyzw_to_matrix(task._target_states[slots, :7]).unsqueeze(0)
     data_ids = task.data_id[slots]
-    reference = task.hoi_data[data_ids, progress + 1]
-    goal_position = reference[:, 106:109]
-    goal_rotation = reference[:, 109:113]
-    object_error = (post_pose[:, :3] - goal_position).square().sum(-1) / (0.02 ** 2)
-    object_error = object_error + _quat_geodesic(post_pose[:, 3:7], goal_rotation).square() / (0.05 ** 2)
     key_count = len(task._key_body_ids)
-    reference_ig_start = 119 + key_count * 3 + 1 + 16
-    selector = torch.tensor(KEY_INDICES, device=task.device, dtype=torch.long)
-    reference_ig = reference[:, reference_ig_start:reference_ig_start + key_count * 3]
-    reference_ig = reference_ig.view(-1, key_count, 3)[:, selector].reshape(-1, 18)
-    actual_ig = _canonical_ig(task)[slots]
-    ig_error = (actual_ig - reference_ig).view(-1, 6, 3).square().sum(-1).mean(-1) / (0.02 ** 2)
-    return object_error + 0.5 * ig_error
+    # The duplicate slots belong to the same collected state.  Their data id must
+    # agree, and one canonical t+6/t+1 target is shared across both next states.
+    if not torch.equal(data_ids, data_ids[:1].expand_as(data_ids)):
+        raise RuntimeError("duplicate slots do not share one reference data id")
+    goal_pose_t6, reference_ig_t1 = calibration_reference_targets(
+        task.hoi_data, data_ids[:1], progress, key_count
+    )
+    actual_ig = _canonical_ig(task)[slots].unsqueeze(0)
+    return next_state_cost(goal_pose_t6, reference_ig_t1, post_pose, actual_ig)[0]
 
 
 def main() -> int:
@@ -138,8 +141,12 @@ def main() -> int:
             second_object = post_roots[second_slot, object_actor]
             position = float(torch.linalg.vector_norm(first_object[:3] - second_object[:3]).item())
             rotation = float(_quat_geodesic(first_object[3:7][None], second_object[3:7][None])[0].item())
-            losses = _loss(task, duplicate_slots, int(states["progress"][index]))
-            score_delta = float((-(losses[1] - losses[0])).item())
+            next_costs = _duplicate_next_cost(
+                task, duplicate_slots, int(states["progress"][index])
+            )
+            # S_B-S_A = -(C_next_B-C_next_A); the shared collected baseline is
+            # intentionally absent and therefore cannot become branch-local.
+            score_delta = float((-(next_costs[1] - next_costs[0])).item())
             dof = np.asarray(result.post_candidate_state.dof_state)
             rows.append({
                 "state_id": state_id,
@@ -156,6 +163,10 @@ def main() -> int:
                 "duplicate_rotation_rad": rotation,
                 "duplicate_dof_max_abs": float(np.max(np.abs(dof[first_slot] - dof[second_slot]))),
                 "duplicate_score_delta": score_delta,
+                "score_producer": "v121c_duplicate_calibration_next_cost.v1",
+                "object_goal_offset": 6,
+                "ig_reference_offset": 1,
+                "score_baseline": "shared_canonical_collected_pre_action_cancelled",
                 "duplicate_valid": bool(
                     np.isfinite(position) and np.isfinite(rotation)
                     and np.isfinite(score_delta)

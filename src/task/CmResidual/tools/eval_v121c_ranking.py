@@ -72,7 +72,9 @@ def _state_and_physics(payload: np.lib.npyio.NpzFile) -> tuple[dict, dict]:
     physics_names = {
         "physics_clone_valid", "env_candidate_ids", "physics_candidate_valid", "physics_score",
         "physics_next_object_pose", "physics_next_IG", "duplicate_delta_object_pose",
-        "duplicate_delta_IG", "duplicate_delta_score",
+        "duplicate_delta_IG", "duplicate_delta_score", "physics_score_producer",
+        "physics_score_object_goal_offset", "physics_score_ig_reference_offset",
+        "physics_score_shared_baseline",
     }
     state = {name: payload[name] for name in state_names if name in payload.files}
     physics = {name: payload[name] for name in physics_names if name in payload.files}
@@ -94,6 +96,9 @@ def main() -> int:
 
     cm_score = torch.from_numpy(np.asarray(state["cm_score"], dtype=np.float32))
     physics_score = torch.from_numpy(np.asarray(physics["physics_score"], dtype=np.float32))
+    # physics_score is producer-owned.  validate_physics_records has already
+    # checked its t+6/t+1 clock metadata and shared collected baseline; this
+    # offline evaluator only consumes it for statistics and never recomputes it.
     cm_valid = torch.from_numpy(np.asarray(state["cm_valid"], dtype=np.bool_))
     physics_valid = torch.from_numpy(np.asarray(physics["physics_candidate_valid"], dtype=np.bool_))
     physics_clone_valid = torch.from_numpy(np.asarray(physics["physics_clone_valid"], dtype=np.bool_))

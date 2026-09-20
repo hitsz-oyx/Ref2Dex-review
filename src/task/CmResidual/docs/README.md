@@ -12,7 +12,7 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   initial state 进行 9-env prefix replay、numeric parity diagnostic 和 duplicate-anchor 的 runtime-neutral
   adapter。GPU3 的历史 1-state/9-env PhysX prefix smoke 在执行一个相同 prefix step 后出现
   q/dq 跨 env 分叉（position `0.01112 rad`、velocity `0.55352 rad/s`），超过固定 `1e-5` parity，
-  因而旧 run 在旧协议下为 `FAILED` / `INVALID_IMPLEMENTATION`。后续 V1.21d fresh-sim 路线已整体
+  因而旧 run 在旧协议下为 `FAILED` / `INVALID_IMPLEMENTATION`。早先同名的 V1.21d fresh-sim 尝试已整体
   回退并删除；当前 V1.21c 经用户明确授权直接修订：跨 env q/dq/root 数值差异只作诊断，finite 和
   task/reference indices 仍是 hard gate，candidate multiset `[0,0,1..7]` 按 state 做确定性 env 置换，
   duplicate hard ceiling 与 64-state noise calibration 保留。审计同时确认旧 replay adapter 把一个
@@ -27,12 +27,17 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   indices 一致，candidate 0 的 randomized duplicate 位于 env 1/7，object position/rotation divergence
   为 `1.60e-6 m / 5.95e-7 rad`，通过 hard ceiling；numeric parity 仍失败但只作诊断。详见
   [Gate 0 Activity](activities/ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0.md)。正式 collector、
-  64-state calibration collection 接线及 `24/24/16` deterministic selection 已实现并通过合同测试，
-  计划固定的 GPU0 占用 `22119 MiB` 后，用户已明确批准本次改用 physical GPU3；该资源变更不改变
-  logical device 或研究变量，collection 尚待以固定提交启动。详见
-  [collector Activity](activities/ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)。
-  64-state duplicate replay、PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学
-  结论仍为 `INCONCLUSIVE`。
+  64-state calibration collection 接线及 `24/24/16` deterministic selection 已实现并通过合同测试；
+  经用户批准改用 physical GPU3 后，seed 5909–5914 的 6 个 episode 共收集 2074 个 active states，
+  frozen selection 为 `24/24/16`。详见
+  [collector Activity](activities/ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)。首次
+  long-prefix duplicate calibration 在旧实现上处理首个 episode 的 11 个 state 后全部超过 hard ceiling，
+  保留为 `FAILED / INVALID_IMPLEMENTATION`，不归因于任一尚未隔离的单一因素。当前
+  [V1.21d 最终计划](plan/V1.21d.md) 已统一 shared canonical pre-action baseline、`t+6` object / `t+1`
+  IG score、pinned DExplore runtime 和 frozen collection provenance hard gates；实现与验证见
+  [Activity](activities/ACT-20260920-203050-CMRESIDUAL-V121D-CALIBRATION-CONTRACT.md)。corrected 64-state
+  calibration 尚未运行，512-state PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm
+  科学结论仍为 `INCONCLUSIVE`。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。
 - V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。

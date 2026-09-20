@@ -1,4 +1,6 @@
 """Pure-contract tests for the V1.21c native-action ranking gate."""
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -8,6 +10,7 @@ import pytest
 import torch
 
 from src.task.CmResidual.v121c_artifacts import (
+    PHYSICS_SCORE_PRODUCER,
     validate_episode_replay,
     validate_physics_records,
     validate_state_records,
@@ -28,6 +31,7 @@ from src.task.CmResidual.v121c_ranking import (
     PHASE_PRECONTACT,
     active_phase,
     branch_state_parity,
+    calibration_reference_targets,
     calibrate_duplicate_anchor,
     candidate_seed,
     canonical_ig,
@@ -41,6 +45,9 @@ from src.task.CmResidual.v121c_ranking import (
     freeze_physx_epsilon,
     generate_candidate_actions,
     pairwise_metrics,
+    physics_scores,
+    pose_xyzw_to_matrix,
+    next_state_cost,
     ranking_eligible,
     select_phase_quota,
     top1_metrics,
@@ -49,7 +56,9 @@ from src.task.CmResidual.v121c_ranking import (
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
 from src.task.CmResidual.tools.run_v121c_duplicate_calibration import (
+    DEXPLORE_PYTHON as DUPLICATE_DEXPLORE_PYTHON,
     _command as duplicate_calibration_command,
+    _document_identity as duplicate_document_identity,
     _validate_collection as validate_calibration_collection,
 )
 from src.task.CmResidual.tools.run_v121c_calibration_collection import (
@@ -273,6 +282,66 @@ def test_cm_score_uses_object_and_ig_progress():
     assert scores["score"][0, 1:].abs().max() < 1e-6
 
 
+def test_duplicate_score_uses_t6_object_goal_and_t1_ig_reference():
+    key_count = 16
+    feature_count = 119 + key_count * 3 + 1 + 16 + key_count * 3
+    hoi = torch.zeros(1, 10, feature_count)
+    # t+1 deliberately disagrees with t+6 for the object target.
+    hoi[0, 1, 106:113] = torch.tensor([9.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    hoi[0, 6, 106:113] = torch.tensor([0.02, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+    ig_start = 119 + key_count * 3 + 1 + 16
+    reference_full = torch.arange(key_count * 3, dtype=torch.float32).reshape(key_count, 3)
+    hoi[0, 1, ig_start:ig_start + key_count * 3] = reference_full.reshape(-1)
+    goal, reference_ig = calibration_reference_targets(hoi, torch.tensor([0]), 0, key_count)
+    assert goal[0, 0, 3].item() == pytest.approx(0.02)
+    expected_ig = reference_full[[0, 3, 6, 9, 12, 15]].reshape(1, 18)
+    torch.testing.assert_close(reference_ig, expected_ig)
+
+    next_pose = goal[:, None].expand(1, 2, 4, 4).clone()
+    next_ig = reference_ig[:, None].expand(1, 2, 18).clone()
+    assert torch.equal(next_state_cost(goal, reference_ig, next_pose, next_ig), torch.zeros(1, 2))
+
+
+def test_physics_score_uses_one_shared_canonical_collected_baseline():
+    current_pose = torch.eye(4).unsqueeze(0)
+    goal_pose = current_pose.clone()
+    goal_pose[:, 0, 3] = 0.02
+    current_ig = torch.zeros(1, 18)
+    reference_ig = torch.zeros(1, 18)
+    next_pose = current_pose[:, None].expand(1, 2, 4, 4).clone()
+    next_pose[0, 0, 0, 3] = 0.01
+    next_pose[0, 1, 0, 3] = 0.02
+    next_ig = torch.zeros(1, 2, 18)
+    result = physics_scores(
+        current_pose, goal_pose, current_ig, reference_ig, next_pose, next_ig
+    )
+    assert result["score"].shape == (1, 2)
+    assert result["score"][0, 1] > result["score"][0, 0]
+
+    shifted_current = current_pose.clone()
+    shifted_current[:, 1, 3] = 0.01
+    shifted = physics_scores(
+        shifted_current, goal_pose, current_ig, reference_ig, next_pose, next_ig
+    )
+    # Changing the one canonical baseline shifts every candidate equally.
+    torch.testing.assert_close(
+        shifted["score"] - result["score"],
+        (shifted["baseline_cost"] - result["baseline_cost"])[:, None].expand(1, 2),
+    )
+    with pytest.raises(ValueError, match="shared"):
+        physics_scores(
+            current_pose[:, None].expand(1, 2, 4, 4), goal_pose,
+            current_ig, reference_ig, next_pose, next_ig,
+        )
+
+
+def test_pose_xyzw_to_matrix_uses_xyzw_order():
+    pose = torch.tensor([[1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0]])
+    matrix = pose_xyzw_to_matrix(pose)
+    torch.testing.assert_close(matrix[0, :3, :3], torch.eye(3))
+    torch.testing.assert_close(matrix[0, :3, 3], pose[0, :3])
+
+
 def test_cm_validity_requires_support_mass_and_finite_effect():
     candidate = torch.ones(1, 8, dtype=torch.bool)
     delta = torch.zeros(1, 8, 6)
@@ -461,13 +530,47 @@ def test_calibration_collection_preserves_full_uint64_candidate_seed(tmp_path):
         load_calibration_rows(path, episode_id=0, seed=5909, collection_batch_id=batch_id)
 
 
-def test_duplicate_calibration_requires_exact_frozen_collection(tmp_path):
+def _write_valid_frozen_calibration(tmp_path, phases=None):
     batch_id = "batch"
     state_ids = np.asarray([f"state-{index}" for index in range(64)])
     seeds = np.asarray([candidate_seed(batch_id, state) for state in state_ids], dtype=np.uint64)
+    phases = np.asarray(
+        [0] * 24 + [1] * 24 + [2] * 16 if phases is None else phases, dtype=np.uint8
+    )
+    actions = np.zeros((64, 18), dtype=np.float32)
+    prefix_hashes = np.asarray([
+        hashlib.sha256(np.asarray(actions[:frame], dtype="<f4").tobytes()).hexdigest()
+        for frame in range(64)
+    ])
+    episodes = tmp_path / "episodes/0000"
+    episodes.mkdir(parents=True)
+    np.savez_compressed(
+        episodes / "episode.npz",
+        episode_id=np.asarray(0, dtype=np.int64),
+        seed=np.asarray(5909, dtype=np.int64),
+        initial_dof_state=np.zeros((18, 2), dtype=np.float32),
+        initial_actor_root_state=np.zeros((2, 13), dtype=np.float32),
+        initial_task_indices=np.asarray([0, 0, 0, 0], dtype=np.int64),
+        executed_action_history=actions,
+        done_history=np.zeros(64, dtype=np.bool_),
+        reference_index=np.zeros(64, dtype=np.int64),
+        data_id=np.asarray(0, dtype=np.int64),
+        start_time=np.asarray(0, dtype=np.int64),
+        progress_history=np.arange(64, dtype=np.int64),
+        resolved_sim_config_sha256=np.asarray("d" * 64),
+    )
+    config = {"collection_batch_id": batch_id}
+    (tmp_path / "config.json").write_text(json.dumps(config) + "\n", encoding="utf-8")
+    phase_counts = {str(phase): int(np.count_nonzero(phases == phase)) for phase in (0, 1, 2)}
+    manifest = {
+        "run_status": "COMPLETED", "selected_state_count": 64,
+        "selected_phase_counts": phase_counts, "run_id": "collection", "git_commit": "abc",
+        "config": str((tmp_path / "config.json").resolve()),
+        "selected_states": str((tmp_path / "selected_states.npz").resolve()),
+        "protocol": {"collection_batch_id": batch_id},
+    }
     (tmp_path / "run_manifest.json").write_text(
-        '{"run_status":"COMPLETED","selected_state_count":64,"run_id":"collection","git_commit":"abc"}\n',
-        encoding="utf-8",
+        json.dumps(manifest) + "\n", encoding="utf-8",
     )
     np.savez_compressed(
         tmp_path / "selected_states.npz",
@@ -476,21 +579,63 @@ def test_duplicate_calibration_requires_exact_frozen_collection(tmp_path):
         episode_id=np.zeros(64, dtype=np.int64),
         seed=np.full(64, 5909, dtype=np.int64),
         frame_id=np.arange(64),
+        reference_index=np.zeros(64, dtype=np.int64),
         progress=np.arange(64),
-        phase_id=np.zeros(64, dtype=np.uint8),
+        phase_id=phases,
         candidate_seed=seeds,
+        executed_action_prefix_sha256=prefix_hashes,
+        raw_obs=np.zeros((64, 1442), dtype=np.float32),
         policy_mu=np.zeros((64, 18), dtype=np.float32),
         policy_sigma=np.ones((64, 18), dtype=np.float32),
     )
+    return manifest
+
+
+def test_duplicate_calibration_requires_exact_frozen_collection(tmp_path):
+    _write_valid_frozen_calibration(tmp_path)
     manifest, episodes = validate_calibration_collection(tmp_path)
     assert manifest["run_id"] == "collection" and episodes.tolist() == [0]
     command = duplicate_calibration_command(5909)
+    assert command[0] == str(DUPLICATE_DEXPLORE_PYTHON)
     assert command[command.index("--num_envs") + 1] == "9"
+    documents = duplicate_document_identity()
+    assert set(documents) == {
+        "guidance_v121", "guidance_v121a", "guidance_v121c", "guidance_v121d",
+        "plan_v121c", "plan_v121d",
+    }
+    assert all(len(identity["sha256"]) == 64 for identity in documents.values())
     broken = dict(np.load(tmp_path / "selected_states.npz"))
     broken["candidate_seed"] = broken["candidate_seed"].copy()
     broken["candidate_seed"][0] += np.uint64(1)
     np.savez_compressed(tmp_path / "selected_states.npz", **broken)
     with pytest.raises(ValueError, match="candidate_seed mismatch"):
+        validate_calibration_collection(tmp_path)
+
+
+@pytest.mark.parametrize("counts", ((64, 0, 0), (23, 25, 16)))
+def test_duplicate_calibration_rejects_wrong_phase_composition(tmp_path, counts):
+    phases = [0] * counts[0] + [1] * counts[1] + [2] * counts[2]
+    _write_valid_frozen_calibration(tmp_path, phases)
+    with pytest.raises(ValueError, match="phase composition"):
+        validate_calibration_collection(tmp_path)
+
+
+@pytest.mark.parametrize("defect", ("duplicate_state", "multiple_batch", "missing_episode", "frame_oob"))
+def test_duplicate_calibration_rejects_provenance_drift(tmp_path, defect):
+    _write_valid_frozen_calibration(tmp_path)
+    selected_path = tmp_path / "selected_states.npz"
+    with np.load(selected_path, allow_pickle=False) as payload:
+        selected = {name: payload[name].copy() for name in payload.files}
+    if defect == "duplicate_state":
+        selected["state_id"][1] = selected["state_id"][0]
+    elif defect == "multiple_batch":
+        selected["collection_batch_id"][1] = "other"
+    elif defect == "missing_episode":
+        (tmp_path / "episodes/0000/episode.npz").unlink()
+    elif defect == "frame_oob":
+        selected["frame_id"][0] = 64
+    np.savez_compressed(selected_path, **selected)
+    with pytest.raises(ValueError):
         validate_calibration_collection(tmp_path)
 
 
@@ -558,8 +703,20 @@ def test_replay_schema_validates_required_shapes():
                "physics_candidate_valid": np.ones((count, 8), dtype=bool),
                "physics_score": np.zeros((count, 8)), "physics_next_object_pose": np.zeros((count, 8, 7)),
                "physics_next_IG": np.zeros((count, 8, 18)), "duplicate_delta_object_pose": np.zeros(count),
-               "duplicate_delta_IG": np.zeros(count), "duplicate_delta_score": np.zeros(count)}
+               "duplicate_delta_IG": np.zeros(count), "duplicate_delta_score": np.zeros(count),
+               "physics_score_producer": np.asarray([PHYSICS_SCORE_PRODUCER] * count),
+               "physics_score_object_goal_offset": np.full(count, 6, dtype=np.int64),
+               "physics_score_ig_reference_offset": np.full(count, 1, dtype=np.int64),
+               "physics_score_shared_baseline": np.ones(count, dtype=np.bool_)}
     assert validate_physics_records(physics, count) == count
+    wrong_clock = dict(physics)
+    wrong_clock["physics_score_object_goal_offset"] = np.ones(count, dtype=np.int64)
+    with pytest.raises(ValueError, match=r"t\+6"):
+        validate_physics_records(wrong_clock, count)
+    branch_local = dict(physics)
+    branch_local["physics_score_shared_baseline"] = np.zeros(count, dtype=np.bool_)
+    with pytest.raises(ValueError, match="shared canonical"):
+        validate_physics_records(branch_local, count)
 
     episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
                "initial_dof_state": np.zeros((18, 2)), "initial_actor_root_state": np.zeros((2, 13)),
@@ -570,7 +727,7 @@ def test_replay_schema_validates_required_shapes():
     assert validate_episode_replay(episode) == 3
 
 
-def test_offline_runner_writes_new_manifest_and_metrics(tmp_path):
+def test_offline_runner_consumes_producer_score_without_recomputing(tmp_path):
     count = 2
     state = {name: np.zeros((count, *shape), dtype=np.float32) for name, shape in {
         "raw_obs": (1442,), "native_q": (18,), "native_dq": (18,), "object_pose": (7,),
@@ -596,11 +753,18 @@ def test_offline_runner_writes_new_manifest_and_metrics(tmp_path):
                "env_candidate_ids": np.tile(np.array([0, 0, 1, 2, 3, 4, 5, 6, 7]), (count, 1)),
                "physics_candidate_valid": np.ones((count, 8), dtype=bool),
                "physics_score": np.tile(np.arange(8, dtype=np.float32), (count, 1)),
+               # Zero quaternions are deliberately not scoreable poses.  The
+               # evaluator must still succeed because the producer-owned finite
+               # physics_score is authoritative and poses are audit evidence only.
                "physics_next_object_pose": np.zeros((count, 8, 7)),
                "physics_next_IG": np.zeros((count, 8, 18)),
                "duplicate_delta_object_pose": np.zeros(count),
                "duplicate_delta_IG": np.zeros(count),
-               "duplicate_delta_score": np.zeros(count)}
+               "duplicate_delta_score": np.zeros(count),
+               "physics_score_producer": np.asarray([PHYSICS_SCORE_PRODUCER] * count),
+               "physics_score_object_goal_offset": np.full(count, 6, dtype=np.int64),
+               "physics_score_ig_reference_offset": np.full(count, 1, dtype=np.int64),
+               "physics_score_shared_baseline": np.ones(count, dtype=np.bool_)}
     input_path = tmp_path / "records.npz"
     np.savez_compressed(input_path, **state, **physics)
     output = tmp_path / "run"

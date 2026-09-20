@@ -19,6 +19,9 @@ STATE_SCHEMA = "cmv2_native_action_state_v121c"
 PHYSICS_SCHEMA = "cmv2_native_action_physics_v121c"
 EPISODE_SCHEMA = "cmv2_native_action_episode_v121c"
 MANIFEST_SCHEMA = "ref2dex.cmresidual.v121c.run.v1"
+PHYSICS_SCORE_PRODUCER = "v121c_physx_replay_producer.v1"
+PHYSICS_OBJECT_GOAL_OFFSET = 6
+PHYSICS_IG_REFERENCE_OFFSET = 1
 
 _STATE_SHAPES = {
     "raw_obs": (1442,),
@@ -110,7 +113,9 @@ def validate_physics_records(records: Mapping[str, Any], count: int | None = Non
     """Validate a batched ``physics_records`` mapping and return its row count."""
     missing = set(_PHYSICS_SHAPES) - set(records)
     missing |= ({"physics_clone_valid", "duplicate_delta_object_pose", "duplicate_delta_IG",
-                 "duplicate_delta_score"} - set(records))
+                 "duplicate_delta_score", "physics_score_producer",
+                 "physics_score_object_goal_offset", "physics_score_ig_reference_offset",
+                 "physics_score_shared_baseline"} - set(records))
     if missing:
         raise ValueError(f"physics_records missing fields: {sorted(missing)}")
     clone_valid = np.asarray(records["physics_clone_valid"]).reshape(-1)
@@ -144,6 +149,24 @@ def validate_physics_records(records: Mapping[str, Any], count: int | None = Non
         raise ValueError("each env_candidate_ids row must contain [0,0,1,2,3,4,5,6,7]")
     if np.asarray(records["physics_candidate_valid"]).dtype != np.bool_:
         raise ValueError("physics_candidate_valid must be boolean")
+    producers = np.asarray(records["physics_score_producer"]).reshape(-1)
+    if producers.shape != (row_count,) or any(
+        str(value) != PHYSICS_SCORE_PRODUCER for value in producers.tolist()
+    ):
+        raise ValueError("physics_score must come from the canonical PhysX replay producer")
+    object_offsets = np.asarray(records["physics_score_object_goal_offset"])
+    ig_offsets = np.asarray(records["physics_score_ig_reference_offset"])
+    shared_baseline = np.asarray(records["physics_score_shared_baseline"])
+    if object_offsets.shape != (row_count,) or not np.all(
+        object_offsets == PHYSICS_OBJECT_GOAL_OFFSET
+    ):
+        raise ValueError("physics_score object goal must use t+6")
+    if ig_offsets.shape != (row_count,) or not np.all(
+        ig_offsets == PHYSICS_IG_REFERENCE_OFFSET
+    ):
+        raise ValueError("physics_score IG reference must use t+1")
+    if shared_baseline.shape != (row_count,) or shared_baseline.dtype != np.bool_ or not shared_baseline.all():
+        raise ValueError("physics_score must use one shared canonical collected baseline")
     for name in ("duplicate_delta_object_pose", "duplicate_delta_IG", "duplicate_delta_score"):
         array = np.asarray(records[name])
         if array.shape[0] != row_count or not np.isfinite(array).all():
