@@ -10,10 +10,14 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - V1.21c：已按 [V1.21c 最终计划](plan/V1.21c.md) 实现 frozen Cmv2 的 P=1 native-action
   ranking core、state/physics/episode replay schema、只读 replay metrics runner，以及从 episode
   initial state 进行 9-env prefix replay、branch parity 和 duplicate-anchor 的 runtime-neutral adapter；
-  合同测试通过。尚未启动正式 collector、PhysX ranking、PPO、P=3、异步 worker 或 Cmv2 更新，Cm
-  科学结论仍为 `INCONCLUSIVE`。实现与验证见
+  合同测试通过。GPU3 的 1-state/9-env 真实 PhysX prefix smoke 在执行一个相同 prefix step 后出现
+  q/dq 跨 env 分叉（position `0.01112 rad`、velocity `0.55352 rad/s`），超过固定 `1e-5` parity，
+  因而 run 为 `FAILED`、protocol 为 `INVALID_IMPLEMENTATION`，未执行 candidate step。正式 collector、
+  PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学结论仍为 `INCONCLUSIVE`。
+  当前 blocker 是先形成并批准满足公开 q/dq parity 的 branch-replay 方案，不能放宽阈值绕过。实现与验证见
   [ranking core Activity](activities/ACT-20260920-151656-CMRESIDUAL-V121C-RANKING-CORE.md) 和
-  [prefix replay Activity](activities/ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY.md)。
+  [prefix replay Activity](activities/ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY.md)，真实运行终态见
+  [parity failure Activity](activities/ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED.md)。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。
 - V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。
