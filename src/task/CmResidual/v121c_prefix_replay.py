@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
 import numpy as np
+import torch
 
 from src.task.CmResidual.v121c_artifacts import validate_episode_replay
 
@@ -70,6 +71,77 @@ class PrefixReplayRuntime(Protocol):
     def public_state(self, envs: Any) -> PublicBranchState:
         """Return q/dq, actor roots and task/reference indices for every branch."""
 
+class DExploreTaskPrefixRuntime:
+    """Thin adapter for an already-created nine-env DExplore task.
+
+    ``gymtorch_module`` is injected by the caller after importing Isaac Gym.  This
+    keeps this Task-local module importable in ordinary CPU contract tests.  The
+    adapter deliberately does not construct, reset, or destroy a simulator: caller
+    setup is responsible for the pinned config and input identities.
+    """
+
+    def __init__(self, task: Any, gymtorch_module: Any) -> None:
+        self.task = task
+        self.gymtorch = gymtorch_module
+
+    def make_envs(self, count: int) -> Any:
+        if count != BRANCH_COUNT or int(self.task.num_envs) != BRANCH_COUNT:
+            raise ValueError("V1.21c prefix replay requires an already-created 9-env task")
+        return self.task
+
+    @staticmethod
+    def _tensor(value: Any, *, device: torch.device, shape: tuple[int, ...], name: str) -> torch.Tensor:
+        tensor = torch.as_tensor(value, device=device)
+        if tuple(tensor.shape) != shape or not torch.isfinite(tensor).all():
+            raise ValueError(f"{name} must be finite with shape {shape}")
+        return tensor
+
+    def restore_initial(self, envs: Any, episode: Mapping[str, Any]) -> None:
+        if envs is not self.task:
+            raise ValueError("adapter may only restore its constructed task")
+        validate_episode_replay(episode)
+        task = self.task
+        dof = task._dof_state.view(BRANCH_COUNT, -1, 2)
+        roots = task._root_states.view(BRANCH_COUNT, -1, 13)
+        source_dof = self._tensor(episode["initial_dof_state"], device=dof.device,
+                                  shape=tuple(dof.shape[1:]), name="initial_dof_state")
+        source_roots = self._tensor(episode["initial_actor_root_state"], device=roots.device,
+                                    shape=tuple(roots.shape[1:]), name="initial_actor_root_state")
+        dof.copy_(source_dof.unsqueeze(0).expand_as(dof))
+        roots.copy_(source_roots.unsqueeze(0).expand_as(roots))
+
+        def scalar(name: str) -> int:
+            value = np.asarray(episode[name]).reshape(-1)[0]
+            return int(value)
+
+        task.data_id.fill_(scalar("data_id"))
+        task.ref_index.fill_(scalar("reference_index"))
+        task.start_times.fill_(scalar("start_time"))
+        task.progress_buf.fill_(scalar("progress_history"))
+        task.gym.set_actor_root_state_tensor(task.sim, self.gymtorch.unwrap_tensor(task._root_states))
+        task.gym.set_dof_state_tensor(task.sim, self.gymtorch.unwrap_tensor(task._dof_state))
+        task._refresh_sim_tensors()
+        task._compute_observations(torch.arange(BRANCH_COUNT, device=task.device, dtype=torch.long))
+
+    def step(self, envs: Any, actions: np.ndarray) -> None:
+        if envs is not self.task:
+            raise ValueError("adapter may only step its constructed task")
+        native = torch.as_tensor(_validate_candidates_or_branches(actions), device=self.task.device)
+        self.task.pre_physics_step(native)
+        self.task.gym.simulate(self.task.sim)
+        if self.task.device == "cpu":
+            self.task.gym.fetch_results(self.task.sim, True)
+        self.task.post_physics_step()
+
+    def public_state(self, envs: Any) -> PublicBranchState:
+        if envs is not self.task:
+            raise ValueError("adapter may only snapshot its constructed task")
+        task = self.task
+        indices = torch.stack((task.data_id, task.ref_index, task.start_times, task.progress_buf), dim=-1)
+        return PublicBranchState(task._dof_state.view(BRANCH_COUNT, -1, 2).detach().cpu().numpy().copy(),
+                                 task._root_states.view(BRANCH_COUNT, -1, 13).detach().cpu().numpy().copy(),
+                                 indices.detach().cpu().numpy().copy())
+
 
 @dataclass(frozen=True)
 class PrefixBranchResult:
@@ -88,6 +160,15 @@ def _validate_candidates(candidate_actions: np.ndarray) -> np.ndarray:
     if not np.isfinite(actions).all() or (actions < -1.0).any() or (actions > 1.0).any():
         raise ValueError("candidate_actions must be finite native actions in [-1,1]")
     return np.ascontiguousarray(actions)
+
+
+def _validate_candidates_or_branches(actions: np.ndarray) -> np.ndarray:
+    value = np.asarray(actions, dtype=np.float32)
+    if value.shape != (BRANCH_COUNT, ACTION_DIM):
+        raise ValueError("actions must be [9,18]")
+    if not np.isfinite(value).all() or (value < -1.0).any() or (value > 1.0).any():
+        raise ValueError("actions must be finite native actions in [-1,1]")
+    return np.ascontiguousarray(value)
 
 
 def _parity(state: PublicBranchState, tolerance: float) -> tuple[bool, float]:
