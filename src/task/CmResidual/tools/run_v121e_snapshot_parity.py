@@ -91,7 +91,8 @@ def main() -> int:
         valid=sum(r["valid"] for r in results); duplicate_ok=all(r["gates"]["prefix_duplicate_object_ceiling"] and r["gates"]["restore_duplicate_object_ceiling"] for r in results)
         conclusion="SUPPORTED" if valid==16 else "REFUTED" if duplicate_ok else "INVALID_IMPLEMENTATION"
         summary={"state_count":16,"valid_count":valid,"phase_counts":{str(p):sum(int(r["phase_id"])==p for r in results) for p in PHASE_QUOTAS},"conclusion":conclusion,"results":results}; _write_json(output/"summary.json",summary)
-        manifest.update({"run_status":"COMPLETED","completed_at":_now(),"selected_states":str(selected_path),"summary":str(output/"summary.json"),"conclusion":conclusion,"scientific_conclusion":conclusion}); _write_json(manifest_path,manifest,overwrite=True)
+        scientific = conclusion if conclusion in {"SUPPORTED", "REFUTED"} else "INCONCLUSIVE"
+        manifest.update({"run_status":"COMPLETED","completed_at":_now(),"selected_states":str(selected_path),"summary":str(output/"summary.json"),"conclusion":conclusion,"scientific_conclusion":scientific}); _write_json(manifest_path,manifest,overwrite=True)
         print(json.dumps({"run_id":args.run_id,"run_status":"COMPLETED","valid_count":valid,"conclusion":conclusion},sort_keys=True)); return 0
     except BaseException as error:
         manifest.update({"run_status":"FAILED","completed_at":_now(),"failure_reason":f"{type(error).__name__}: {error}","traceback":traceback.format_exc(),"conclusion":"INVALID_IMPLEMENTATION","scientific_conclusion":"INCONCLUSIVE"}); _write_json(manifest_path,manifest,overwrite=True); raise

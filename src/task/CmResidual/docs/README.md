@@ -7,10 +7,12 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
-- V1.21e：已确认 [snapshot-restore parity 最终计划](plan/V1.21e.md)，在独立分支实现 16-state
-  `6 moving / 6 contact / 4 precontact` 的 prefix duplicate 与 fresh-simulator direct-restore duplicate
-  对照。该实验只判断公开 state 是否足以支持 one-step branching；尚未产生 GPU 证据，不自动进入
-  64-state calibration、512-state ranking 或 PPO。
+- V1.21e：按 [snapshot-restore parity 最终计划](plan/V1.21e.md) 在 GPU3 完成 16-state
+  `6 moving / 6 contact / 4 precontact` 对照，但 prefix duplicate `16/16`、fresh direct-restore duplicate
+  `14/16` 超过 object hard ceiling，完整 gate 为 `0/16`。协议终态是 `INVALID_IMPLEMENTATION`，公开
+  snapshot 是否足够近似 Markov state 仍为 `INCONCLUSIVE`；不得切换 64-state calibration、512-state
+  ranking 或 PPO。详见 [Activity](activities/ACT-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY-INVALID.md)
+  与 [experiment](experiments/EXP-20260920-214406-CMRESIDUAL-V121E-SNAPSHOT-PARITY.md)。
 - V1.21c：已按 [V1.21c 最终计划](plan/V1.21c.md) 实现 frozen Cmv2 的 P=1 native-action
   ranking core、state/physics/episode replay schema、只读 replay metrics runner，以及从 episode
   initial state 进行 9-env prefix replay、numeric parity diagnostic 和 duplicate-anchor 的 runtime-neutral
