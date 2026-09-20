@@ -101,6 +101,8 @@ def main() -> int:
     set_np_formatting()
     args = get_args()
     cfg, cfg_train, _ = load_cfg(args)
+    if args.motion_file:
+        cfg["env"]["motion_file"] = args.motion_file
     if int(cfg["env"]["numEnvs"]) != BRANCH_COUNT:
         raise ValueError("V1.21c duplicate smoke requires exactly 9 environments")
     cfg["env"]["stateInit"] = "Start"
