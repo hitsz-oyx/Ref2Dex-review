@@ -194,6 +194,11 @@ def _collect_run(player) -> None:
             name: np.asarray([record[name] for record in records])
             for name in records[0]
         }
+        # Mixed Python integers above/below int64 otherwise promote to float64
+        # and silently destroy the low bits of the SHA-derived seed.
+        pool["candidate_seed"] = np.asarray(
+            [record["candidate_seed"] for record in records], dtype=np.uint64
+        )
     else:
         pool = {
             "state_id": np.asarray([], dtype="<U64"),

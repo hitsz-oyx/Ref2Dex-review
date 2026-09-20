@@ -51,6 +51,7 @@ from src.task.CmResidual.tools.run_v121c_calibration_collection import (
     DEXPLORE_PYTHON,
     _command as calibration_collection_command,
     _gpu_used_mib,
+    _load_rows as load_calibration_rows,
     _select as select_calibration,
 )
 
@@ -418,6 +419,37 @@ def test_calibration_collection_uses_pinned_dexplore_runtime(tmp_path):
     assert command[1].endswith("v121c_collect_episode_bootstrap.py")
     assert command[command.index("--num_envs") + 1] == "1"
     assert command[command.index("--seed") + 1] == "5909"
+
+
+def test_calibration_collection_preserves_full_uint64_candidate_seed(tmp_path):
+    from src.task.CmResidual.v121c_ranking import candidate_seed
+
+    batch_id = "batch-with-high-seed"
+    state_id = "state-a"
+    seed = candidate_seed(batch_id, state_id)
+    path = tmp_path / "active.npz"
+    np.savez_compressed(
+        path,
+        state_id=np.asarray([state_id]),
+        frame_id=np.asarray([3]),
+        reference_index=np.asarray([0]),
+        progress=np.asarray([3]),
+        phase_id=np.asarray([1]),
+        active_reason_mask=np.asarray([2]),
+        candidate_seed=np.asarray([seed], dtype=np.uint64),
+        executed_action_prefix_sha256=np.asarray(["a" * 64]),
+        raw_obs=np.zeros((1, 1442), dtype=np.float32),
+        policy_mu=np.zeros((1, 18), dtype=np.float32),
+        policy_sigma=np.ones((1, 18), dtype=np.float32),
+    )
+    rows = load_calibration_rows(path, episode_id=0, seed=5909, collection_batch_id=batch_id)
+    assert rows[0]["candidate_seed"] == seed
+    with np.load(path) as payload:
+        broken = {name: payload[name] for name in payload.files}
+    broken["candidate_seed"] = broken["candidate_seed"].astype(np.float64)
+    np.savez_compressed(path, **broken)
+    with pytest.raises(ValueError, match="must be uint64"):
+        load_calibration_rows(path, episode_id=0, seed=5909, collection_batch_id=batch_id)
 
 
 def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():

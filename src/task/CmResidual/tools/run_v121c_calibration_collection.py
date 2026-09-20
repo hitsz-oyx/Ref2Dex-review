@@ -14,6 +14,8 @@ import traceback
 
 import numpy as np
 
+from src.task.CmResidual.v121c_ranking import candidate_seed
+
 ROOT = Path(__file__).resolve().parents[4]
 DEXPLORE_ROOT = ROOT / "third_party" / "DExplore"
 ISAAC_GYM_PYTHON = Path(os.environ.get("ISAAC_GYM_PYTHON", "/home2/wyy/isaac-gym/isaacgym/python"))
@@ -116,13 +118,25 @@ def _input_identity() -> dict[str, dict[str, object]]:
     return result
 
 
-def _load_rows(path: Path, episode_id: int, seed: int) -> list[dict[str, object]]:
+def _load_rows(
+    path: Path, episode_id: int, seed: int, collection_batch_id: str
+) -> list[dict[str, object]]:
     with np.load(path, allow_pickle=False) as payload:
+        if payload["candidate_seed"].dtype != np.uint64:
+            raise ValueError("candidate_seed artifact must be uint64")
         count = int(payload["state_id"].shape[0])
         rows = []
         for index in range(count):
+            state_id = str(payload["state_id"][index])
+            stored_candidate_seed = int(payload["candidate_seed"][index])
+            expected_candidate_seed = candidate_seed(collection_batch_id, state_id)
+            if stored_candidate_seed != expected_candidate_seed:
+                raise ValueError(
+                    f"candidate_seed mismatch for {state_id}: "
+                    f"{stored_candidate_seed} != {expected_candidate_seed}"
+                )
             rows.append({
-                "state_id": str(payload["state_id"][index]),
+                "state_id": state_id,
                 "episode_id": episode_id,
                 "seed": seed,
                 "frame_id": int(payload["frame_id"][index]),
@@ -130,7 +144,7 @@ def _load_rows(path: Path, episode_id: int, seed: int) -> list[dict[str, object]
                 "progress": int(payload["progress"][index]),
                 "phase_id": int(payload["phase_id"][index]),
                 "active_reason_mask": int(payload["active_reason_mask"][index]),
-                "candidate_seed": int(payload["candidate_seed"][index]),
+                "candidate_seed": stored_candidate_seed,
                 "executed_action_prefix_sha256": str(payload["executed_action_prefix_sha256"][index]),
                 "raw_obs": payload["raw_obs"][index].astype(np.float32, copy=True),
                 "policy_mu": payload["policy_mu"][index].astype(np.float32, copy=True),
@@ -301,7 +315,9 @@ def main() -> int:
                     stderr=subprocess.STDOUT,
                 )
                 summary = json.loads((episode_output / "summary.json").read_text(encoding="utf-8"))
-                rows.extend(_load_rows(episode_output / "active_states.npz", episode_id, seed))
+                rows.extend(_load_rows(
+                    episode_output / "active_states.npz", episode_id, seed, batch_id
+                ))
                 phase_counts = {
                     str(phase): sum(int(row["phase_id"]) == phase for row in rows)
                     for phase in CALIBRATION_QUOTAS
