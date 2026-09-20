@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import socket
+import sys
 
 import pytest
 import torch
@@ -131,6 +132,9 @@ def test_cm_off_bootstrap_accepts_only_explicit_zero_without_importing_cm(monkey
     assert args.cm_distill_coef == 0.0
     assert args.actual_epochs == 1
     assert passthrough == ["--task", "Dexplore_Inspire"]
+    for name in tuple(sys.modules):
+        if "cmv2" in name.lower() or "cm_residual" in name.lower():
+            monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setattr(bootstrap.dexplore_ddp_rank_bootstrap, "main", lambda argv: passthrough.append("called"))
     bootstrap.main(["--cm-distill-coef", "0", "--actual-epochs", "1"])
     assert passthrough[-1] == "called"
