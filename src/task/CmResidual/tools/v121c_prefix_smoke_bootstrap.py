@@ -50,12 +50,20 @@ def _quat_geodesic_xyzw(left: np.ndarray, right: np.ndarray) -> float:
     return float(2.0 * np.arccos(np.clip(abs(float(np.dot(left, right))), 0.0, 1.0)))
 
 
-def _candidate_actions() -> np.ndarray:
-    actions = np.zeros((8, 18), dtype=np.float32)
+def _neutral_action(task) -> np.ndarray:
+    current_q = task._dof_pos[0].detach()
+    scale = task._pd_action_scale.detach()
+    action = torch.zeros(18, dtype=torch.float32, device=current_q.device)
+    action[6:] = 2.0 * current_q[6:] / scale[6:] - 1.0
+    return action.clamp(-1.0, 1.0).cpu().numpy()
+
+
+def _candidate_actions(neutral: np.ndarray) -> np.ndarray:
+    actions = np.repeat(np.asarray(neutral, dtype=np.float32)[None], 8, axis=0)
     for index in range(1, 8):
-        actions[index, (index - 1) % 6] = np.float32(0.02 * index)
-        actions[index, 6 + (index - 1) % 12] = np.float32(-0.05 + 0.01 * index)
-    return actions
+        actions[index, (index - 1) % 6] += np.float32(0.01 * index)
+        actions[index, 6 + (index - 1) % 12] += np.float32(0.01)
+    return np.clip(actions, -1.0, 1.0)
 
 
 def _parity_diagnostics(state) -> dict[str, object]:
@@ -83,7 +91,7 @@ def _parity_diagnostics(state) -> dict[str, object]:
     }
 
 
-def _episode_from_task(task, sim_config_sha256: str) -> dict[str, object]:
+def _episode_from_task(task, sim_config_sha256: str, neutral: np.ndarray) -> dict[str, object]:
     dof = task._dof_state.view(BRANCH_COUNT, -1, 2).detach().cpu().numpy()
     roots = task._root_states.view(BRANCH_COUNT, -1, 13).detach().cpu().numpy()
     indices = torch.stack(
@@ -91,8 +99,7 @@ def _episode_from_task(task, sim_config_sha256: str) -> dict[str, object]:
     ).detach().cpu().numpy()
     initial_progress = int(task.progress_buf[0].item())
     initial_reference = int(task.ref_index[0].item())
-    prefix = np.zeros((2, 18), dtype=np.float32)
-    prefix[0, :6] = np.float32(0.01)
+    prefix = np.repeat(np.asarray(neutral, dtype=np.float32)[None], 2, axis=0)
     return {
         "episode_id": np.asarray(0, dtype=np.int64),
         "seed": np.asarray(5909, dtype=np.int64),
@@ -154,8 +161,9 @@ def main() -> int:
     try:
         task, env = parse_task(args, cfg, cfg_train, sim_params, distill=False)
         env.reset()
-        episode = _episode_from_task(task, sim_config_sha256)
-        candidates = _candidate_actions()
+        neutral = _neutral_action(task)
+        episode = _episode_from_task(task, sim_config_sha256, neutral)
+        candidates = _candidate_actions(neutral)
         result = replay_prefix_branches(
             DExploreTaskPrefixRuntime(task, gymtorch),
             episode,
