@@ -18,11 +18,9 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   [ranking core Activity](activities/ACT-20260920-151656-CMRESIDUAL-V121C-RANKING-CORE.md) 和
   [prefix replay Activity](activities/ACT-20260920-153600-CMRESIDUAL-V121C-PREFIX-REPLAY.md)，真实运行终态见
   [parity failure Activity](activities/ACT-20260920-161139-CMRESIDUAL-V121C-PREFIX-PARITY-FAILED.md)。
-  基于该失败的 [V1.21d 重设计计划](plan/V1.21d.md) 已定稿并完成 Task-local 实现：改为每个 state 新建 simulator、
+  基于该失败的 [V1.21d 重设计计划](plan/V1.21d.md) 当前为 `draft`：拟改为每个 state 新建 simulator、
   使用 DExplore 原生初态并重放 prefix，以 12-state parity、64-state all-duplicate calibration 和
-  512-state ranking 逐级证伪；25 项定向合同测试通过，旧 tensor-restore records 会被新 schema 拒绝。
-  尚未授权或执行真实 GPU/PhysX Gate 0，native-init 能否消除 q/dq 分叉和 Cm 科学结论均仍为
-  `INCONCLUSIVE`。实现见 [Activity](activities/ACT-20260920-163931-CMRESIDUAL-V121D-FRESH-SIM-BACKEND.md)。
+  512-state ranking 逐级证伪；草案尚未授权实现或运行。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。
 - V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。
@@ -131,7 +129,7 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 - [V1.21a 用户指导补充](指导/V1.21a.md)
 - [V1.21c 用户指导补充](指导/V1.21c.md)
 - [V1.21c 最终执行计划](plan/V1.21c.md)
-- [V1.21d 最终执行计划](plan/V1.21d.md)
+- [V1.21d 重设计计划草案](plan/V1.21d.md)
 - [活动记录](logs/activity_log.md)
 - [实验记录](logs/experiment_log.md)
 
