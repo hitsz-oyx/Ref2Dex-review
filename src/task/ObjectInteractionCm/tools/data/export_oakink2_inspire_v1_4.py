@@ -70,7 +70,7 @@ from src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool import ( 
 )
 
 
-MODIFICATION_VERSION = "V1.4.23"
+WORK_VERSION = "V1.4.23"
 SELECTION_SCHEMA = "ref2dex_oakink2_inspire_selection_v1_4"
 CACHE_SCHEMA = "ref2dex_object_interaction_cm_oakink2_inspire_v1_4"
 INDEX_SCHEMA = "ref2dex_object_interaction_cm_oakink2_index_v1_4"
@@ -348,7 +348,7 @@ def build_selection(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": "1.0.0",
         "source": "OakInk2 single-object primitive index + official 30 Hz frame_id_list + Stage3 distances",
         "created_at": started,
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "source_index": _snapshot(source_index),
         "annotation_root": str(args.annotation_root.resolve()),
         "stage3_root": str(args.stage3_root.resolve()),
@@ -391,7 +391,7 @@ def build_selection(args: argparse.Namespace) -> dict[str, Any]:
         "run_status": "COMPLETED" if not failures else "FAILED",
         "started_at": started,
         "completed_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
@@ -806,7 +806,7 @@ def _export_one(
     manifest = {
         "schema_name": CACHE_SCHEMA,
         "schema_version": "1.0.0",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "sequence_id": sequence_id,
         "dataset": "oakink2",
         "source": "inspire_f1",
@@ -874,7 +874,7 @@ def export_cache(args: argparse.Namespace) -> dict[str, Any]:
         "run_id": run_id,
         "run_status": "STARTED",
         "started_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],
@@ -939,7 +939,7 @@ def export_cache(args: argparse.Namespace) -> dict[str, Any]:
         "schema_name": INDEX_SCHEMA,
         "schema_version": "1.0.0",
         "created_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "source": "OakInk2 V1.4 independent Inspire cache",
         "source_probability": {"inspire_f1": 1.0},
         "object_pool_points": OBJECT_POINTS,
@@ -956,7 +956,7 @@ def export_cache(args: argparse.Namespace) -> dict[str, Any]:
     cache_manifest = {
         "schema_name": "ref2dex_object_interaction_cm_oakink2_inspire_cache_manifest",
         "schema_version": "1.0.0",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "created_at": _now(),
         "storage": "NAS" if "/mnt/ugreen_nas/" in str(output_root) else "unknown",
         "roots": [str(output_root.resolve())],

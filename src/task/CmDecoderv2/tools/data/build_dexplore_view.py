@@ -30,7 +30,7 @@ from src.task.CmDecoderv2.kinematics import (
 
 
 SCHEMA_NAME = "ref2dex_cm_decoder_v2_dexplore_view_v1"
-DEFAULT_MODIFICATION_VERSION = "V1.1.1"
+DEFAULT_WORK_VERSION = "V1.1.1"
 
 
 def _now() -> str:
@@ -319,7 +319,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-sequences", type=int, default=None)
     parser.add_argument("--window-size", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument("--work-version", default=DEFAULT_MODIFICATION_VERSION)
+    parser.add_argument("--work-version", default=DEFAULT_WORK_VERSION)
     parser.add_argument("--activity-id", required=True)
     return parser.parse_args()
 

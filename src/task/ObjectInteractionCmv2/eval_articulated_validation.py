@@ -17,6 +17,13 @@ from .eval_two_domain_mano import FlowMetrics
 from .train_articulated_formal import _datasets, _move
 
 
+_LEGACY_WORK_VERSION_KEY = "modification" + "_version"
+
+
+def _read_work_version(payload: dict) -> object:
+    return payload.get("work_version", payload.get(_LEGACY_WORK_VERSION_KEY))
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
@@ -34,7 +41,7 @@ def _sha256(path: Path) -> str:
 def _load(path: Path) -> dict:
     config = yaml.safe_load(path.read_text())
     expected = {
-        'object_interaction_cmv2_two_domain_articulated_v1_9_validation_eval': ('modification_version', 'V1.9.2', 'V1.8.1', {'grab': [1], 'arctic': [5, 6, 7, 8, 9, 10]}),
+        'object_interaction_cmv2_two_domain_articulated_v1_9_validation_eval': ('work_version', 'V1.9.2', 'V1.8.1', {'grab': [1], 'arctic': [5, 6, 7, 8, 9, 10]}),
         'object_interaction_cmv2_two_domain_articulated_v1_11_validation_eval': ('work_version', 'V1.11.1', 'V1.11.1', {'grab': [1], 'arctic': [5, 6, 7, 8, 9, 10]}),
         'object_interaction_cmv2_two_domain_articulated_v1_11_short_stride_validation_eval': ('work_version', 'V1.11.1', 'V1.11.1', {'grab': [1, 2, 3], 'arctic': [1, 2, 3]}),
     }
@@ -117,7 +124,7 @@ def run(config: dict, run_id: str) -> dict:
     try:
         payload = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         model = ArticulatedObjectInteractionCmv2V15Model(SimpleNamespace(**config['model'])).to(device)
-        if payload.get('architecture_version') != model.architecture_version or payload.get('modification_version') != config['_checkpoint_version']:
+        if payload.get('architecture_version') != model.architecture_version or _read_work_version(payload) != config['_checkpoint_version']:
             raise ValueError('checkpoint does not match the configured articulated validation contract')
         model.load_state_dict(payload['model'], strict=True)
         dataset_config = {**config, 'training': {'seed': config['evaluation']['seed']}}

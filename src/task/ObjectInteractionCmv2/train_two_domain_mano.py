@@ -46,7 +46,7 @@ def _atomic_checkpoint(path: Path, *, model, optimizer, step: int, epoch: int,
     torch.save({
         "model": model.state_dict(), "optimizer": optimizer.state_dict(),
         "architecture_version": model.architecture_version,
-        "modification_version": cfg["modification_version"], "step": int(step), "epoch": int(epoch),
+        "work_version": cfg["work_version"], "step": int(step), "epoch": int(epoch),
         "seed": int(cfg["training"]["seed"]), "initial_checkpoint": str(initial_checkpoint),
         "best_metric": best_metric, "metadata": dict(metadata),
     }, temporary)
@@ -100,7 +100,7 @@ def run(cfg: dict[str, Any], run_id: str, initial_checkpoint: Path) -> dict[str,
     manifest: dict[str, Any] = {
         "schema_name": "ref2dex_run_manifest_v1", "task": "ObjectInteractionCmv2",
         "operation": "v1_4_4_two_domain_mano_weight_initialization_train", "run_id": run_id,
-        "run_status": "STARTED", "created_at": utc_now(), "modification_version": cfg["modification_version"],
+        "run_status": "STARTED", "created_at": utc_now(), "work_version": cfg["work_version"],
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "config": "config.json", "architecture_version": ObjectInteractionCmv2V13Model.architecture_version,
         "initial_checkpoint": str(initial_checkpoint), "initial_checkpoint_sha256": sha256_file(initial_checkpoint),

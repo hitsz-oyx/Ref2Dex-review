@@ -32,7 +32,7 @@ from scipy.spatial.transform import Rotation
 
 SCHEMA_NAME = "ref2dex_object_interaction_cmv2_grab_dexplore_export_v1"
 MOTION_FILENAME = "interaction_hand_inspire.pt"
-MODIFICATION_VERSION = "V1.0.3"
+WORK_VERSION = "V1.0.3"
 HISTORIC_FILTERED_COUNT = 660
 LEFT_TARGET_JOINTS = tuple(range(17, 33))
 OUTPUT_WIDTH = 598
@@ -192,7 +192,7 @@ def command_select(args: argparse.Namespace) -> None:
     payload = {
         "schema_name": SCHEMA_NAME,
         "created_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "seed": args.seed,
         "raw_root": str(raw_root),
         "smplx_model_root": str(args.smplx_model_root.resolve()),
@@ -368,7 +368,7 @@ def command_init(args: argparse.Namespace) -> None:
     repo_root = Path(__file__).resolve().parents[5]
     run_manifest = {
         "task": "ObjectInteractionCmv2",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "run_id": args.run_id,
         "run_status": "STARTED",
         "started_at": _now(),
@@ -761,7 +761,7 @@ def command_validate(args: argparse.Namespace) -> None:
     summary = {
         "schema_name": SCHEMA_NAME,
         "created_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "selection_manifest": os.path.relpath(selection_path, run_root),
         "selection_sha256": _sha256(selection_path),
         "filter_counts": selection["counts"],
@@ -821,7 +821,7 @@ def command_validate(args: argparse.Namespace) -> None:
     run_manifest.update(
         {
             "task": "ObjectInteractionCmv2",
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "run_id": args.run_id,
             "run_status": "COMPLETED",
             "completed_at": summary["created_at"],

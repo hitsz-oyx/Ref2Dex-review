@@ -37,20 +37,20 @@ V19_VARIANTS = {
     "control": "CmResidualSafeCriticControlPPO",
     "critic_cm": "CmResidualSafeCriticCmPPO",
 }
-LEGACY_MODIFICATION_VERSIONS = {
+LEGACY_WORK_VERSIONS = {
     "v18_no_cm": "V1.8",
     "control": "V1.9.2",
     "critic_cm": "V1.9.2",
 }
-V110_MODIFICATION_VERSION = "V1.10.1"
+V110_WORK_VERSION = "V1.10.1"
 
 
 def _resolve_work_version(variant: str, requested: str = "") -> str:
-    legacy = LEGACY_MODIFICATION_VERSIONS[variant]
+    legacy = LEGACY_WORK_VERSIONS[variant]
     work_version = requested or legacy
     allowed = {legacy}
     if variant in V19_VARIANTS:
-        allowed.add(V110_MODIFICATION_VERSION)
+        allowed.add(V110_WORK_VERSION)
     if work_version not in allowed:
         raise ValueError(
             f"Unsupported work version {work_version!r} for {variant}; "

@@ -34,7 +34,7 @@ REPO = Path(__file__).resolve().parents[5]
 DEFAULT_INDEX = Path("data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1_1/index.json")
 DEFAULT_PREVIOUS_INDEX = Path("data/processed_data/oicm_v1_4_raw/oakink2_active_tool_segments_v1/index.json")
 DEFAULT_SELECTED_IDS = ("selected:1344", "selected:1772", "selected:1726")
-MODIFICATION_VERSION = "V1.4.22"
+WORK_VERSION = "V1.4.22"
 SOURCE_MOCAP_FPS = 120
 TARGET_FPS = 30
 
@@ -189,7 +189,7 @@ def run(args: argparse.Namespace) -> dict:
         "schema_name": "ref2dex_oakink2_temporal_segmentation_pilot_v1",
         "schema_version": "1.1.0",
         "created_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "source_index": _snapshot(args.index),
         "previous_index": _snapshot(args.previous_index),
         "parameters": rows[0]["temporal"]["config"] if rows else {},
@@ -217,7 +217,7 @@ def run(args: argparse.Namespace) -> dict:
         "run_status": "COMPLETED",
         "started_at": report["created_at"],
         "completed_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],

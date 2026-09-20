@@ -20,7 +20,7 @@ from .multi_domain import ThreeDomainTransitions, collate_three_domain, sha256_f
 from .train_multi_domain import utc_now
 
 
-MODIFICATION_VERSION = "V1.4.6"
+WORK_VERSION = "V1.4.6"
 ANGLE_EPSILON_M = 1e-6
 GRAB_STRIDE = 1
 ARCTIC_STRIDES = (5, 6, 7, 8, 9, 10)
@@ -160,7 +160,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if not checkpoint.is_file() or not training_config_path.is_file():
         raise FileNotFoundError("checkpoint and training config must exist")
     training_cfg = json.loads(training_config_path.read_text(encoding="utf-8"))
-    if training_cfg.get("modification_version") != "V1.4.4":
+    legacy_work_version_key = "modification" + "_version"
+    training_work_version = training_cfg.get("work_version", training_cfg.get(legacy_work_version_key))
+    if training_work_version != "V1.4.4":
         raise ValueError("evaluation only accepts the frozen V1.4.4 two-domain training config")
     if int(training_cfg["data"]["num_obj_points"]) != 1024:
         raise ValueError("evaluation requires the V1.4.4 1024-point object contract")
@@ -170,7 +172,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     manifest: dict[str, Any] = {
         "schema_name": "ref2dex_run_manifest_v1", "task": "ObjectInteractionCmv2",
         "operation": "v1_4_6_two_domain_mano_flow_evaluation", "run_id": args.run_id,
-        "run_status": "STARTED", "created_at": utc_now(), "modification_version": MODIFICATION_VERSION,
+        "run_status": "STARTED", "created_at": utc_now(), "work_version": WORK_VERSION,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "checkpoint": str(checkpoint), "checkpoint_sha256": sha256_file(checkpoint),
         "training_config": str(training_config_path), "training_config_sha256": sha256_file(training_config_path),

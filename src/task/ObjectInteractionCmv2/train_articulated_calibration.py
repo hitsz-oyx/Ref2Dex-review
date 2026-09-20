@@ -63,7 +63,7 @@ def run(cfg: dict, run_id: str) -> dict:
     torch.manual_seed(cfg['training']['seed']); torch.cuda.manual_seed_all(cfg['training']['seed'])
     output=Path(cfg['output_root'])/run_id; output.mkdir(parents=True, exist_ok=False)
     _write(output/'config.json', cfg)
-    manifest={'schema_name':'ref2dex_run_manifest_v1','task':'ObjectInteractionCmv2','operation':'v1_6_v15_random_init_batch_calibration','run_id':run_id,'run_status':'STARTED','modification_version':cfg['modification_version'],'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'architecture_version':'v1_5_articulated_fk','initial_checkpoint':None,'config':'config.json','input':{'index':cfg['source_index'],'index_sha256':_sha(Path(cfg['source_index'])),'manifest':cfg['source_manifest'],'manifest_sha256':_sha(Path(cfg['source_manifest'])),'articulation_metadata':cfg['articulation_metadata'],'articulation_metadata_sha256':_sha(Path(cfg['articulation_metadata']))},'outputs':{'metrics':'metrics.jsonl','train_log':'train.log','latest_checkpoint':'latest.pt'},'conclusion':'INCONCLUSIVE'}
+    manifest={'schema_name':'ref2dex_run_manifest_v1','task':'ObjectInteractionCmv2','operation':'v1_6_v15_random_init_batch_calibration','run_id':run_id,'run_status':'STARTED','work_version':cfg['work_version'],'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'architecture_version':'v1_5_articulated_fk','initial_checkpoint':None,'config':'config.json','input':{'index':cfg['source_index'],'index_sha256':_sha(Path(cfg['source_index'])),'manifest':cfg['source_manifest'],'manifest_sha256':_sha(Path(cfg['source_manifest'])),'articulation_metadata':cfg['articulation_metadata'],'articulation_metadata_sha256':_sha(Path(cfg['articulation_metadata']))},'outputs':{'metrics':'metrics.jsonl','train_log':'train.log','latest_checkpoint':'latest.pt'},'conclusion':'INCONCLUSIVE'}
     _write(output/'run_manifest.json',manifest)
     try:
         datasets=_datasets(cfg); successes=[]
@@ -86,7 +86,7 @@ def run(cfg: dict, run_id: str) -> dict:
                 losses['total'].backward(); opt.step()
                 record={'phase':'smoke','step':step,'batch_size':selected,'loss':float(losses['total'].detach().cpu()),'flow_loss':float(losses['flow'].detach().cpu()),'source_counts':{'grab':selected//2,'arctic':selected//2}}
                 line=json.dumps(record); metrics.write(line+'\n'); log.write(line+'\n'); metrics.flush(); log.flush()
-        torch.save({'model':model.state_dict(),'optimizer':opt.state_dict(),'architecture_version':model.architecture_version,'modification_version':cfg['modification_version'],'step':cfg['training']['smoke_steps'],'seed':cfg['training']['seed'],'calibrated_batch_size':selected},output/'latest.pt')
+        torch.save({'model':model.state_dict(),'optimizer':opt.state_dict(),'architecture_version':model.architecture_version,'work_version':cfg['work_version'],'step':cfg['training']['smoke_steps'],'seed':cfg['training']['seed'],'calibrated_batch_size':selected},output/'latest.pt')
         manifest.update({'run_status':'COMPLETED','last_step':cfg['training']['smoke_steps'],'last_epoch':1,'best_metric':None,'calibrated_batch_size':selected,'conclusion':'SUPPORTED'}); _write(output/'run_manifest.json',manifest); return manifest
     except Exception as error:
         manifest.update({'run_status':'FAILED','error':repr(error),'conclusion':'INVALID_IMPLEMENTATION'}); _write(output/'run_manifest.json',manifest); raise

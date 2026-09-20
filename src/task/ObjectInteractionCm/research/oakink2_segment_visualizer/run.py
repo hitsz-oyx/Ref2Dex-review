@@ -38,7 +38,7 @@ from src.task.ObjectInteractionCm.tools.data.split_oakink2_active_tool import (
 
 
 REPO = Path(__file__).resolve().parents[5]
-MODIFICATION_VERSION = "V1.4.4"
+WORK_VERSION = "V1.4.4"
 INDEX_SCHEMA = "ref2dex_oakink2_active_tool_frame_selection_v1"
 INDEX_VERSION = "1.1.0"
 
@@ -510,7 +510,7 @@ def _prepare_run(args: argparse.Namespace, index: dict, groups: Mapping[str, Seq
         "run_id": output.name,
         "run_status": "RUNNING",
         "started_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": shlex.join([sys.executable, *sys.argv]),

@@ -1,7 +1,7 @@
 {
   "schema_name": "object_interaction_cmv2_arctic_articulation_v1_5",
   "schema_version": "1.0.0",
-  "modification_version": "V1.5.2",
+  "work_version": "V1.5.2",
   "source": {
     "dataset": "arctic",
     "producer": "process/ARCTIC/raw.py:transform_object_points_batch",

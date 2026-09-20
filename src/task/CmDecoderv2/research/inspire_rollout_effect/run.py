@@ -40,7 +40,7 @@ from ...visualize_inspire_test import (
 )
 
 
-MODIFICATION_VERSION = "V1.1.7"
+WORK_VERSION = "V1.1.7"
 
 
 def _now() -> str:
@@ -1206,7 +1206,7 @@ def main() -> None:
         "run_status": "STARTED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "rollout/teacher-forced Inspire hand flow forwarded through frozen OICM; GT object flow is display-only",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

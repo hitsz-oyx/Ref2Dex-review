@@ -50,7 +50,7 @@ def run(config: dict, run_id: str) -> dict:
     manifest = {
         'schema_name': 'ref2dex_run_manifest_v1', 'task': 'ObjectInteractionCmv2',
         'operation': 'v1_8_v15_random_init_batch64_calibration', 'run_id': run_id,
-        'run_status': 'STARTED', 'modification_version': config['modification_version'],
+        'run_status': 'STARTED', 'work_version': config['work_version'],
         'base_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'architecture_version': 'v1_5_articulated_fk', 'initial_checkpoint': None,
         'config': 'config.json', 'outputs': {'metrics': 'metrics.jsonl', 'train_log': 'train.log', 'latest_checkpoint': 'latest.pt'},
@@ -80,7 +80,7 @@ def run(config: dict, run_id: str) -> dict:
         (output / 'metrics.jsonl').write_text(line + '\n')
         (output / 'train.log').write_text(line + '\n')
         torch.save({'model': model.state_dict(), 'optimizer': optimizer.state_dict(), 'architecture_version': model.architecture_version,
-                    'modification_version': config['modification_version'], 'step': 1, 'seed': config['training']['seed'],
+                    'work_version': config['work_version'], 'step': 1, 'seed': config['training']['seed'],
                     'calibrated_batch_size': 64}, output / 'latest.pt')
         manifest.update({'run_status': 'COMPLETED', 'last_step': 1, 'last_epoch': 1, 'best_metric': None,
                          'calibrated_batch_size': 64, 'source_counts': record['source_counts'], 'conclusion': 'SUPPORTED'})

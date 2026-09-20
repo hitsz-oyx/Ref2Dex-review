@@ -49,7 +49,7 @@ MERGED_KNN_POINTS = KNN_POINTS_PER_SIDE * 2
 KNN_K = 32
 RADIUS_M = 0.02
 SURFACE_SEED = 2024
-MODIFICATION_VERSION = "V1.4.21"
+WORK_VERSION = "V1.4.21"
 
 
 @dataclass(frozen=True)
@@ -503,7 +503,7 @@ def _process_entry(
         manifest = {
             "schema_name": CACHE_SCHEMA,
             "schema_version": "1.0.0",
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "sequence_id": entry.sequence_id,
             "dataset": entry.dataset,
             "source": "mano",
@@ -654,7 +654,7 @@ def _worker(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_cache_worker_report_v1",
         "run_id": args.run_id,
         "run_status": "STARTED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "started_at": started_at,
         "base_commit": commit,
         "worktree_dirty": dirty,
@@ -673,7 +673,7 @@ def _worker(args: argparse.Namespace) -> int:
             "schema_name": "ref2dex_data_run_manifest_v1",
             "run_id": args.run_id,
             "run_status": "STARTED",
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "operation_category": ["code", "data", "operation"],
             "started_at": started_at,
             "base_commit": commit,
@@ -714,7 +714,7 @@ def _worker(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_cache_worker_report_v1",
         "run_id": args.run_id,
         "run_status": "COMPLETED" if not failures else "FAILED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "started_at": started_at,
         "finished_at": _now(),
         "base_commit": commit,
@@ -788,7 +788,7 @@ def _finalize(args: argparse.Namespace) -> int:
     index = {
         "schema_name": INDEX_SCHEMA,
         "schema_version": "1.4.0",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "created_at": _now(),
         "object_pool_points": OBJECT_POINTS,
         "model_object_points": 1024,
@@ -822,7 +822,7 @@ def _finalize(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_data_run_manifest_v1",
         "run_id": args.run_id,
         "run_status": "COMPLETED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "operation_category": ["code", "data", "operation"],
         "created_at": _now(),
         "base_commit": commit,

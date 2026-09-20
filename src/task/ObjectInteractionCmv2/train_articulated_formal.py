@@ -17,7 +17,7 @@ def _load(path):
     cfg['articulation_metadata']=str((Path(path).resolve().parents[5]/cfg['articulation_metadata']).resolve())
     if any(not Path(cfg[k]).is_file() for k in ('source_index','source_manifest','articulation_metadata')): raise FileNotFoundError('V1.7 input missing')
     version,batch_size,strides=expected[cfg['schema_name']]
-    if cfg['modification_version']!=version or cfg['training']['device']!='cuda:1' or cfg['training']['batch_size']!=batch_size or cfg['training']['epochs']!=16: raise ValueError('unapproved formal budget')
+    if cfg['work_version']!=version or cfg['training']['device']!='cuda:1' or cfg['training']['batch_size']!=batch_size or cfg['training']['epochs']!=16: raise ValueError('unapproved formal budget')
     if cfg['data']['train_stride_values']!=strides: raise ValueError('formal stride contract mismatch')
     return cfg
 def _datasets(cfg, split, *, validation=False):
@@ -33,7 +33,7 @@ def _batch(ds, size, gen):
     for domain in ('grab','arctic'):
         picks=torch.randint(len(ds[domain]),(half,),generator=gen).tolist(); samples += [ds[domain][i] for i in picks]
     return collate_articulated(samples)
-def _checkpoint(path, model,opt,cfg,step,epoch,best,meta): torch.save({'model':model.state_dict(),'optimizer':opt.state_dict(),'architecture_version':model.architecture_version,'modification_version':cfg['modification_version'],'step':step,'epoch':epoch,'seed':cfg['training']['seed'],'best_metric':best,'metadata':meta},path)
+def _checkpoint(path, model,opt,cfg,step,epoch,best,meta): torch.save({'model':model.state_dict(),'optimizer':opt.state_dict(),'architecture_version':model.architecture_version,'work_version':cfg['work_version'],'step':step,'epoch':epoch,'seed':cfg['training']['seed'],'best_metric':best,'metadata':meta},path)
 @torch.inference_mode()
 def _evaluate(model, datasets, cfg, device):
     result={}; model.eval()
@@ -48,7 +48,7 @@ def run(cfg,run_id):
     device=torch.device('cuda:1'); torch.cuda.set_device(device)
     if not torch.cuda.is_available() or torch.cuda.mem_get_info(device)[0]<cfg['training']['minimum_free_memory_gib']*2**30: raise RuntimeError('GPU1 unavailable')
     torch.manual_seed(cfg['training']['seed']); torch.cuda.manual_seed_all(cfg['training']['seed']); out=Path(cfg['output_root'])/run_id; out.mkdir(parents=True,exist_ok=False); _write(out/'config.json',cfg)
-    manifest={'schema_name':'ref2dex_run_manifest_v1','task':'ObjectInteractionCmv2','operation':f"{cfg['modification_version'].lower().replace('.', '_')}_v15_random_init_formal_train",'run_id':run_id,'run_status':'STARTED','modification_version':cfg['modification_version'],'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'architecture_version':'v1_5_articulated_fk','initial_checkpoint':None,'config':'config.json','input':{k:cfg[k] for k in ('source_index','source_manifest','articulation_metadata')},'outputs':{'metrics':'metrics.jsonl','train_log':'train.log','latest_checkpoint':'latest.pt','best_checkpoint':'best.pt'},'conclusion':'INCONCLUSIVE'}; _write(out/'run_manifest.json',manifest)
+    manifest={'schema_name':'ref2dex_run_manifest_v1','task':'ObjectInteractionCmv2','operation':f"{cfg['work_version'].lower().replace('.', '_')}_v15_random_init_formal_train",'run_id':run_id,'run_status':'STARTED','work_version':cfg['work_version'],'base_commit':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'architecture_version':'v1_5_articulated_fk','initial_checkpoint':None,'config':'config.json','input':{k:cfg[k] for k in ('source_index','source_manifest','articulation_metadata')},'outputs':{'metrics':'metrics.jsonl','train_log':'train.log','latest_checkpoint':'latest.pt','best_checkpoint':'best.pt'},'conclusion':'INCONCLUSIVE'}; _write(out/'run_manifest.json',manifest)
     try:
       train=_datasets(cfg,'train'); val=_datasets(cfg,'val',validation=True); steps=math.ceil((len(train['grab'])+len(train['arctic']))/cfg['training']['batch_size']); model=ArticulatedObjectInteractionCmv2V15Model(SimpleNamespace(**cfg['model'])).to(device); opt=torch.optim.Adam(model.parameters(),lr=cfg['training']['learning_rate']); gen=torch.Generator().manual_seed(cfg['training']['seed']); best=None; step=0
       manifest.update({'run_status':'RUNNING','train_rows_by_source':{k:len(v) for k,v in train.items()},'val_rows_by_source':{k:len(v) for k,v in val.items()},'steps_per_epoch':steps});_write(out/'run_manifest.json',manifest)

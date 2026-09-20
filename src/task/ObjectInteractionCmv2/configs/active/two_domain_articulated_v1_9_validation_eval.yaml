@@ -1,5 +1,5 @@
 schema_name: object_interaction_cmv2_two_domain_articulated_v1_9_validation_eval
-modification_version: V1.9.2
+work_version: V1.9.2
 checkpoint: /mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt
 source_index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json
 source_manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/cache_manifest.json

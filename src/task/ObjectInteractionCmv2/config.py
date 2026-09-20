@@ -88,7 +88,7 @@ def load_three_domain_config(path: str | Path) -> dict:
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, dict) or cfg.get("schema_name") != "object_interaction_cmv2_three_domain_v1_4":
         raise ValueError("Expected ObjectInteractionCmv2 V1.4 three-domain configuration")
-    if cfg.get("modification_version") != "V1.4.2":
+    if cfg.get("work_version") != "V1.4.2":
         raise ValueError("Unsupported V1.4 three-domain run version")
     model = cfg.get("model", {})
     expected_model = {
@@ -164,7 +164,7 @@ def load_two_domain_mano_config(path: str | Path) -> dict:
     cfg = yaml.safe_load(path.read_text())
     if not isinstance(cfg, dict) or cfg.get("schema_name") != "object_interaction_cmv2_two_domain_mano_v1_4":
         raise ValueError("Expected ObjectInteractionCmv2 V1.4.4 two-domain MANO configuration")
-    if cfg.get("modification_version") != "V1.4.4":
+    if cfg.get("work_version") != "V1.4.4":
         raise ValueError("Unsupported V1.4.4 two-domain MANO run version")
     model = cfg.get("model", {})
     expected_model = {

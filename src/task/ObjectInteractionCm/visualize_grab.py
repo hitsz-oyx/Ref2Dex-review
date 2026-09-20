@@ -65,7 +65,7 @@ except ImportError:  # Allow direct execution from the repository root.
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-MODIFICATION_VERSION = "V1.4.22"
+WORK_VERSION = "V1.4.22"
 INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_1"
 OAKINK2_INDEX_SCHEMA = "ref2dex_object_interaction_cm_oakink2_index_v1_4"
 INDEX_SCHEMAS = {INDEX_SCHEMA, "ref2dex_object_interaction_cm_index_v1_2", OAKINK2_INDEX_SCHEMA}
@@ -1536,7 +1536,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional independent diagnostic run directory for config, manifest, and viewer log.",
     )
     parser.add_argument(
-        "--work-version", default=MODIFICATION_VERSION,
+        "--work-version", default=WORK_VERSION,
         help="Work version recorded in this visualization run's manifest.",
     )
     parser.add_argument("--check-only", action="store_true")

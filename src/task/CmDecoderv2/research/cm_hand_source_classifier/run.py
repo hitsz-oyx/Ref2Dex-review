@@ -19,7 +19,7 @@ from src.base import load_config
 from src.task.ObjectInteractionCm.model import ObjectInteractionCmModel
 
 
-MODIFICATION_VERSION = "V1.1.6"
+WORK_VERSION = "V1.1.6"
 LABELS = {"mano": 0, "inspire_rl": 1}
 LEGACY_INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_1"
 V13_INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_2"
@@ -608,7 +608,7 @@ def main() -> None:
 
     metrics = {
         "run_id": run_id,
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "label_map": LABELS,
         "index_schema": index_schema,
         "held_out_split": "val-held-out",
@@ -631,7 +631,7 @@ def main() -> None:
         "run_status": "COMPLETED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "small classifier diagnostic of source/embodiment information in frozen OICM cm_tokens; not a hand-shape disentanglement proof",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

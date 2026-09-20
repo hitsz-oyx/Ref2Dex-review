@@ -26,7 +26,7 @@ import torch
 from src.task.ObjectInteractionCm.tools.data import export_oakink2_inspire_v1_4 as legacy
 
 
-MODIFICATION_VERSION = "V1.4.3"
+WORK_VERSION = "V1.4.3"
 INSPIRE_POINTS_PER_SIDE = 10135
 INSPIRE_HAND_POINTS = INSPIRE_POINTS_PER_SIDE * 2
 DECODER_POINTS_PER_SIDE = 1538
@@ -254,7 +254,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "run_id": args.run_id or output_root.name,
         "run_status": "STARTED",
         "created_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "selection_index": str(selection_path),
         "existing_root": str(existing_root),
@@ -321,7 +321,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
                 _write_decoder_compatibility_stream(destination)
                 geometry_manifest_path = destination / "geometry" / "manifest.json"
                 geometry_manifest = json.loads(geometry_manifest_path.read_text(encoding="utf-8"))
-                geometry_manifest["modification_version"] = MODIFICATION_VERSION
+                geometry_manifest["work_version"] = WORK_VERSION
                 geometry_manifest["producer_task"] = "ObjectInteractionCmv2"
                 geometry_manifest["hand_variant"] = "inspire_f1"
                 geometry_manifest["hand_points"] = DECODER_HAND_POINTS
@@ -367,7 +367,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "schema_name": "ref2dex_object_interaction_cm_oakink2_index_v1_4",
         "schema_version": "1.1.0",
         "created_at": _now(),
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "source": "OakInk2 V1.4 independent Inspire cache with raw annotation backfill",
         "source_probability": {"oakink2": 1.0},
         "object_pool_points": legacy.OBJECT_POINTS,
@@ -387,7 +387,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
     cache_manifest = {
         "schema_name": "ref2dex_object_interaction_cm_oakink2_inspire_cache_manifest",
         "schema_version": "1.1.0",
-        "modification_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "created_at": _now(),
         "storage": "NAS" if "/mnt/ugreen_nas/" in str(output_root) else "unknown",
         "roots": [str(existing_root), str(output_root)],

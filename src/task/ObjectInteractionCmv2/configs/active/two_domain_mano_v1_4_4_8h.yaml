@@ -1,5 +1,5 @@
 schema_name: object_interaction_cmv2_two_domain_mano_v1_4
-modification_version: V1.4.4
+work_version: V1.4.4
 sources:
   - name: grab
     hand_variant: mano

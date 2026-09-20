@@ -1,5 +1,5 @@
 schema_name: object_interaction_cmv2_two_domain_articulated_v1_8_batch64_calibration
-modification_version: V1.8.1
+work_version: V1.8.1
 source_index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json
 source_manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/cache_manifest.json
 articulation_metadata: src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json
