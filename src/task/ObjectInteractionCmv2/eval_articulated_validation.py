@@ -33,20 +33,27 @@ def _sha256(path: Path) -> str:
 
 def _load(path: Path) -> dict:
     config = yaml.safe_load(path.read_text())
-    if config.get('schema_name') != 'object_interaction_cmv2_two_domain_articulated_v1_9_validation_eval':
+    expected = {
+        'object_interaction_cmv2_two_domain_articulated_v1_9_validation_eval': ('modification_version', 'V1.9.2', 'V1.8.1'),
+        'object_interaction_cmv2_two_domain_articulated_v1_11_validation_eval': ('work_version', 'V1.11.1', 'V1.11.1'),
+    }
+    if config.get('schema_name') not in expected:
         raise ValueError('invalid V1.9 validation-evaluation config')
     for key in ('checkpoint', 'source_index', 'source_manifest'):
         config[key] = str(Path(config[key]).resolve())
     config['articulation_metadata'] = str((path.resolve().parents[5] / config['articulation_metadata']).resolve())
     if any(not Path(config[key]).is_file() for key in ('checkpoint', 'source_index', 'source_manifest', 'articulation_metadata')):
         raise FileNotFoundError('V1.9 validation-evaluation input missing')
-    if config.get('modification_version') != 'V1.9.2':
-        raise ValueError('V1.9 modification version mismatch')
+    version_key, version_value, checkpoint_version = expected[config['schema_name']]
+    if config.get(version_key) != version_value:
+        raise ValueError('validation-evaluation work version mismatch')
     if config['data']['train_stride_values'] != {'grab': [1], 'arctic': [5, 6, 7, 8, 9, 10]}:
         raise ValueError('V1.9 stride contract mismatch')
     evaluation = config['evaluation']
     if evaluation['device'] != 'cuda:1' or evaluation['batch_size'] != 64 or evaluation['seed'] != 42:
         raise ValueError('unapproved V1.9 validation-evaluation budget')
+    config['_checkpoint_version'] = checkpoint_version
+    config['_work_version'] = version_value
     return config
 
 
@@ -97,7 +104,7 @@ def run(config: dict, run_id: str) -> dict:
     manifest = {
         'schema_name': 'ref2dex_run_manifest_v1', 'task': 'ObjectInteractionCmv2',
         'operation': 'v1_9_v15_articulated_validation_evaluation', 'run_id': run_id,
-        'run_status': 'STARTED', 'created_at': _utc_now(), 'modification_version': config['modification_version'],
+        'run_status': 'STARTED', 'created_at': _utc_now(), 'work_version': config['_work_version'],
         'base_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
         'checkpoint': str(checkpoint_path), 'checkpoint_sha256': _sha256(checkpoint_path),
         'initial_checkpoint': None, 'split': 'val', 'architecture_version': 'v1_5_articulated_fk',
@@ -109,8 +116,8 @@ def run(config: dict, run_id: str) -> dict:
     try:
         payload = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         model = ArticulatedObjectInteractionCmv2V15Model(SimpleNamespace(**config['model'])).to(device)
-        if payload.get('architecture_version') != model.architecture_version or payload.get('modification_version') != 'V1.8.1':
-            raise ValueError('checkpoint is not the frozen V1.8 articulated best checkpoint')
+        if payload.get('architecture_version') != model.architecture_version or payload.get('modification_version') != config['_checkpoint_version']:
+            raise ValueError('checkpoint does not match the configured articulated validation contract')
         model.load_state_dict(payload['model'], strict=True)
         dataset_config = {**config, 'training': {'seed': config['evaluation']['seed']}}
         datasets = _datasets(dataset_config, 'val')
