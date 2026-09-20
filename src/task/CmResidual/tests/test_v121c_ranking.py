@@ -13,6 +13,11 @@ from src.task.CmResidual.v121c_artifacts import (
     validate_state_records,
 )
 from src.task.CmResidual.v121c_collection import CollectionAccumulator, CollectionConfig
+from src.task.CmResidual.v121c_prefix_replay import (
+    BRANCH_COUNT,
+    PublicBranchState,
+    replay_prefix_branches,
+)
 from src.task.CmResidual.v121c_ranking import (
     CANDIDATE_COUNT,
     PHASE_CONTACT,
@@ -234,6 +239,71 @@ def test_branch_parity_checks_public_tensors_and_task_indices():
     branch_indices = torch.tensor([[1, 2], [1, 3]])
     branches[1, 0] = 2e-5
     assert branch_state_parity(reference, branches, indices, branch_indices).tolist() == [True, False]
+
+
+class _FakePrefixRuntime:
+    """Small deterministic stand-in proving the runtime-neutral replay call order."""
+
+    def __init__(self, *, drift: float = 0.0):
+        self.drift = drift
+        self.actions = []
+
+    def make_envs(self, count):
+        assert count == BRANCH_COUNT
+        return {"dof": np.zeros((count, 18, 2), dtype=np.float32),
+                "roots": np.zeros((count, 2, 13), dtype=np.float32),
+                "indices": np.tile(np.array([7, 11]), (count, 1))}
+
+    def restore_initial(self, envs, episode):
+        envs["dof"][:] = episode["initial_dof_state"]
+        envs["roots"][:] = episode["initial_actor_root_state"]
+        envs["indices"][:] = episode["initial_task_indices"]
+
+    def step(self, envs, actions):
+        self.actions.append(actions.copy())
+        envs["dof"][:, 0, 0] += actions[:, 0]
+
+    def public_state(self, envs):
+        dof = envs["dof"].copy()
+        dof[1, 0, 0] += self.drift
+        return PublicBranchState(dof, envs["roots"].copy(), envs["indices"].copy())
+
+
+def test_prefix_replay_uses_executed_history_then_candidates_and_duplicate_anchor():
+    episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
+               "initial_dof_state": np.zeros((18, 2), dtype=np.float32),
+               "initial_actor_root_state": np.zeros((2, 13), dtype=np.float32),
+               "initial_task_indices": np.array([7, 11]),
+               "executed_action_history": np.array([[0.1] + [0.0] * 17, [0.2] + [0.0] * 17], dtype=np.float32),
+               "done_history": np.array([False, False]), "reference_index": np.array([0, 1]),
+               "data_id": np.array(["s1_airplane_lift"]), "start_time": np.array([0.0]),
+               "progress_history": np.array([0, 1]), "resolved_sim_config_sha256": np.array(["d" * 64])}
+    candidates = np.zeros((8, 18), dtype=np.float32)
+    candidates[:, 0] = np.arange(8, dtype=np.float32) / 8.0
+    runtime = _FakePrefixRuntime()
+    result = replay_prefix_branches(runtime, episode, 1, candidates)
+    assert result.parity_valid and result.parity_max_abs_error == 0.0
+    assert len(runtime.actions) == 2
+    np.testing.assert_array_equal(runtime.actions[0], np.repeat(episode["executed_action_history"][:1], 9, axis=0))
+    np.testing.assert_array_equal(runtime.actions[1][:8], candidates)
+    np.testing.assert_array_equal(runtime.actions[1][8], candidates[0])
+    assert result.post_candidate_state is not None
+
+
+def test_prefix_replay_stops_before_candidate_when_public_state_parity_fails():
+    episode = {"episode_id": np.array([0]), "seed": np.array([5909]),
+               "initial_dof_state": np.zeros((18, 2), dtype=np.float32),
+               "initial_actor_root_state": np.zeros((2, 13), dtype=np.float32),
+               "initial_task_indices": np.array([7, 11]),
+               "executed_action_history": np.zeros((1, 18), dtype=np.float32),
+               "done_history": np.array([False]), "reference_index": np.array([0]),
+               "data_id": np.array(["s1_airplane_lift"]), "start_time": np.array([0.0]),
+               "progress_history": np.array([0]), "resolved_sim_config_sha256": np.array(["d" * 64])}
+    runtime = _FakePrefixRuntime(drift=2e-5)
+    result = replay_prefix_branches(runtime, episode, 0, np.zeros((8, 18), dtype=np.float32))
+    assert not result.parity_valid
+    assert result.post_candidate_state is None
+    assert runtime.actions == []
 
 
 def test_replay_schema_validates_required_shapes():
