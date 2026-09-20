@@ -73,7 +73,7 @@ def main() -> int:
             for episode_id in range(MAX_EPISODES):
                 seed=5909+episode_id; ep=output/f"episodes/{episode_id:04d}"; command=collection_command(seed,ep)
                 sim_sha=hashlib.sha256(json.dumps({"seed":seed,"num_envs":1,"control_hz":30,"motion":str(MOTION_ROOT)},sort_keys=True).encode()).hexdigest()
-                ep_env=env|{"REF2DEX_V121C_EPISODE_OUTPUT":str(ep),"REF2DEX_V121C_COLLECTION_BATCH_ID":batch,"REF2DEX_V121C_EPISODE_ID":str(episode_id),"REF2DEX_V121C_EPISODE_SEED":str(seed),"REF2DEX_V121C_SIM_CONFIG_SHA256":sim_sha}
+                ep_env=env.copy(); ep_env.update({"REF2DEX_V121C_EPISODE_OUTPUT":str(ep),"REF2DEX_V121C_COLLECTION_BATCH_ID":batch,"REF2DEX_V121C_EPISODE_ID":str(episode_id),"REF2DEX_V121C_EPISODE_SEED":str(seed),"REF2DEX_V121C_SIM_CONFIG_SHA256":sim_sha})
                 log.write(f"collect episode={episode_id} command={shlex.join(command)}\n"); subprocess.run(command,cwd=DEXPLORE_ROOT,env=ep_env,check=True,stdout=log,stderr=subprocess.STDOUT)
                 rows += _rows(ep/"active_states.npz",episode_id,seed,batch); selected=_select(rows)
                 if selected is not None: break
@@ -84,7 +84,7 @@ def main() -> int:
                 records={}
                 for mode in ("prefix","restore"):
                     arm_out=output/f"arms/{index:02d}_{mode}.json"; command=_parity_command(int(state["seed"]))
-                    arm_env=env|{"REF2DEX_V121E_SELECTED":str(selected_path),"REF2DEX_V121E_EPISODE":str(output/f'episodes/{int(state["episode_id"]):04d}/episode.npz'),"REF2DEX_V121E_STATE_INDEX":str(index),"REF2DEX_V121E_MODE":mode,"REF2DEX_V121E_OUTPUT":str(arm_out)}
+                    arm_env=env.copy(); arm_env.update({"REF2DEX_V121E_SELECTED":str(selected_path),"REF2DEX_V121E_EPISODE":str(output/f'episodes/{int(state["episode_id"]):04d}/episode.npz'),"REF2DEX_V121E_STATE_INDEX":str(index),"REF2DEX_V121E_MODE":mode,"REF2DEX_V121E_OUTPUT":str(arm_out)})
                     log.write(f"state={index} mode={mode} command={shlex.join(command)}\n"); subprocess.run(command,cwd=DEXPLORE_ROOT,env=arm_env,check=True,stdout=log,stderr=subprocess.STDOUT)
                     records[mode]=json.loads(arm_out.read_text())
                 result=evaluate_state(records["prefix"],records["restore"]); result["phase_id"]=int(state["phase_id"]); results.append(result); metrics.write(json.dumps(result,sort_keys=True)+"\n"); metrics.flush()
