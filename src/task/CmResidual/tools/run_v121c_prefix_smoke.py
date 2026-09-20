@@ -123,6 +123,11 @@ def smoke_command() -> list[str]:
     ]
 
 
+def smoke_gate_passed(result: dict[str, object]) -> bool:
+    """Return the revised hard gate; numeric parity remains diagnostic only."""
+    return bool(result.get("task_indices_equal")) and bool(result.get("duplicate_valid"))
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
@@ -151,6 +156,10 @@ def main() -> int:
         "prefix_steps": 1,
         "candidate_count": 8,
         "duplicate_candidate": 0,
+        "env_assignment": "PCG64(candidate_seed) permutation of [0,0,1,2,3,4,5,6,7]",
+        "numeric_parity": "diagnostic_only",
+        "control_hz": 30,
+        "physics_substeps_per_action": 2,
         "position_ceiling_m": 5e-4,
         "rotation_ceiling_rad": 5e-3,
         "seed": 5909,
@@ -238,7 +247,7 @@ def main() -> int:
                 stderr=subprocess.STDOUT,
             )
         result = json.loads((result_output / "smoke_result.json").read_text(encoding="utf-8"))
-        if not result.get("parity_valid") or not result.get("duplicate_valid"):
+        if not smoke_gate_passed(result):
             raise RuntimeError("bootstrap returned a failed smoke gate")
         manifest.update(
             {

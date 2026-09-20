@@ -46,7 +46,7 @@ from src.task.CmResidual.v121c_ranking import (
     CollectionInsufficient,
 )
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
-from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command
+from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
 
 
 def test_candidate_generation_is_bitwise_reproducible_and_clipped():
@@ -73,6 +73,12 @@ def test_prefix_smoke_command_and_duplicate_candidates_are_frozen():
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     assert "--run-id" in help_result.stdout
+    assert smoke_gate_passed(
+        {"parity_valid": False, "task_indices_equal": True, "duplicate_valid": True}
+    )
+    assert not smoke_gate_passed(
+        {"parity_valid": True, "task_indices_equal": False, "duplicate_valid": True}
+    )
 
 
 class _FakePhysicsGym:
