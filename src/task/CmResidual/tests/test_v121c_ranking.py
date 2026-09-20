@@ -47,6 +47,7 @@ from src.task.CmResidual.v121c_ranking import (
 )
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
+from src.task.CmResidual.tools.run_v121c_calibration_collection import _select as select_calibration
 
 
 def test_candidate_generation_is_bitwise_reproducible_and_clipped():
@@ -380,6 +381,20 @@ def test_candidate_environment_assignment_is_reproducible_and_balanced():
     np.testing.assert_array_equal(first, second)
     assert sorted(first.tolist()) == [0, 0, 1, 2, 3, 4, 5, 6, 7]
     assert not np.array_equal(first, candidate_env_assignment(5910))
+
+
+def test_calibration_selection_is_phase_balanced_and_state_id_deterministic():
+    rows = []
+    for phase, count in ((0, 26), (1, 25), (2, 18)):
+        for index in reversed(range(count)):
+            rows.append({"phase_id": phase, "state_id": f"{phase}-{index:03d}"})
+    selected = select_calibration(rows)
+    assert selected is not None and len(selected) == 64
+    assert [sum(row["phase_id"] == phase for row in selected) for phase in (0, 1, 2)] == [24, 24, 16]
+    assert {row["state_id"] for row in selected if row["phase_id"] == 0} == {
+        f"0-{index:03d}" for index in range(24)
+    }
+    assert select_calibration([row for row in rows if row["phase_id"] != 2]) is None
 
 
 def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():

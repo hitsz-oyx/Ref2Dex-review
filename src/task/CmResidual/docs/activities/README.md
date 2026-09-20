@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR](ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)：实现 official-policy calibration collector 与 24/24/16 deterministic selection；GPU0 容量门阻止实际运行。
 - [ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0](ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0.md)：修订后的 30 Hz 1-state/9-env Gate 0 完成，indices 与 randomized duplicate hard ceiling 通过，numeric parity 仅作诊断。
 - [ACT-20260920-185300-CMRESIDUAL-V121C-NOISE-ALLOCATION](ACT-20260920-185300-CMRESIDUAL-V121C-NOISE-ALLOCATION.md)：V1.21c 将跨 env 数值 parity 降为诊断，并以 deterministic candidate-env permutation + duplicate anchor 处理 simulator noise。
 - [ACT-20260920-172652-CMRESIDUAL-V121-ROLLBACK-PHYSICS-STEP](ACT-20260920-172652-CMRESIDUAL-V121-ROLLBACK-PHYSICS-STEP.md)：整体撤销 V1.21d 路线，并把 replay action 修正为官方 30 Hz / 两个 PhysX substeps。

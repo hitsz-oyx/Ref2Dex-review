@@ -27,8 +27,11 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   indices 一致，candidate 0 的 randomized duplicate 位于 env 1/7，object position/rotation divergence
   为 `1.60e-6 m / 5.95e-7 rad`，通过 hard ceiling；numeric parity 仍失败但只作诊断。详见
   [Gate 0 Activity](activities/ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0.md)。正式 collector、
-  64-state calibration、PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学结论
-  仍为 `INCONCLUSIVE`。
+  64-state calibration collection 接线及 `24/24/16` deterministic selection 已实现并通过合同测试，
+  但计划固定的 GPU0 当前占用 `22119 MiB`，capacity gate 阻止实际运行且未自动换卡；详见
+  [collector Activity](activities/ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)。
+  64-state duplicate replay、PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm 科学
+  结论仍为 `INCONCLUSIVE`。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。
 - V1.20 官方 checkpoint 单环境诊断：当前 vendor/runtime、`coordfix_v4` reconstructed baseline、GPU 0、1 env、seed 5909 的 rollout 成功加载官方 `inspire.pth` 并出现 `0.272567 m` 最大瞬时抬升；末帧回到初始高度附近。它支持这个精确组合的官方 policy 评估入口，不是稳定抓取/放置、泛化、作者 producer 等价性或正式训练结论。详见 [Activity](activities/ACT-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md) 与 [experiment](experiments/EXP-20260919-175215-CMRESIDUAL-V120-OFFICIAL-SINGLE-LIFT.md)。
