@@ -14,6 +14,7 @@
 - [`research/inspire_fk_repair/README.md`](../research/inspire_fk_repair/README.md)：V1.4.6 Inspire surface 双重 FK 修复、双数据集 pilot 与人工复核入口；
 - [`logs/activity_log.md`](logs/activity_log.md)：Task 活动时间线（产生实际实现、诊断或运行事件后维护）；
 - [`logs/experiment_log.md`](logs/experiment_log.md)：正式训练、评估结果与科研结论。
+- [`activities/README.md`](activities/README.md)：Task 活动记录索引。
 - [`logs/repo_memory.md`](logs/repo_memory.md)：可迁移的 Task 事实与用户固定工具偏好。
 - [`research/paired_grab_visualization/README.md`](../research/paired_grab_visualization/README.md)：同序列 GRAB MANO / Inspire 只读配对可视化。
 - [`research/geometric_q_surface_preview/README.md`](../research/geometric_q_surface_preview/README.md)：复用 DExplore geometric native q 的右手 MANO 2048 / Inspire 10135 点配对预览。

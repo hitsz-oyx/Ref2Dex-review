@@ -1,0 +1,3 @@
+# ObjectInteractionCm Activities
+
+- [ACT-20260920-CM-OAKINK2-MANO-VIEWER](ACT-20260920-CM-OAKINK2-MANO-VIEWER.md)：OakInk2 MANO 4096 点流查看器兼容与最大位移帧查看。

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Mouse-driven Viser viewer for the ObjectInteractionCm training cache.
+"""Mouse-driven Viser viewer for ObjectInteractionCm-compatible caches.
 
 The default index is the same Dexplore-RL cache used by the recent
-ObjectInteractionCm training configuration.  Every trajectory is loaded from
-its index entry, so the displayed split, source, variant, point clouds, object
-pose, and optional mesh all refer to the same training sample provenance.
+ObjectInteractionCm training configuration.  OakInk2 Cmv2 MANO indices are
+also supported and use their bilateral 4096-point KNN hand stream.  Every
+trajectory is loaded from its index entry, so the displayed split, source,
+variant, point clouds, object pose, and optional mesh all refer to the same
+training sample provenance.
 
 All interaction is exposed as Viser GUI controls.  The distance threshold is
 cumulative: for example, ``3 cm`` colors every hand point whose nearest object
@@ -65,9 +67,11 @@ except ImportError:  # Allow direct execution from the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 MODIFICATION_VERSION = "V1.4.22"
 INDEX_SCHEMA = "ref2dex_object_interaction_cm_index_v1_1"
-INDEX_SCHEMAS = {INDEX_SCHEMA, "ref2dex_object_interaction_cm_index_v1_2"}
+OAKINK2_INDEX_SCHEMA = "ref2dex_object_interaction_cm_oakink2_index_v1_4"
+INDEX_SCHEMAS = {INDEX_SCHEMA, "ref2dex_object_interaction_cm_index_v1_2", OAKINK2_INDEX_SCHEMA}
 SEQUENCE_SCHEMA = "ref2dex_object_interaction_cm_dexplore_rl_v1"
 BILATERAL_SEQUENCE_SCHEMA = "ref2dex_object_interaction_cm_bilateral_geometry_v1"
+OAKINK2_SEQUENCE_SCHEMA = "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4"
 EXPECTED_OBJECT_POINTS = 4096
 DEFAULT_HAND_POINTS = 1538
 MODEL_RUNTIME_OBJECT_POINTS = 1024
@@ -247,6 +251,8 @@ class TrainingSequence:
 
         manifest_path = self.metadata_path
         manifest_hand_points = self.manifest.get("hand_points")
+        if manifest_hand_points is None:
+            manifest_hand_points = self.manifest.get("knn_hand_points")
         if manifest_hand_points is None:
             manifest_hand_points = DEFAULT_HAND_POINTS
         try:
@@ -432,21 +438,26 @@ class TrainingSequence:
                 "hand_side": "right",
             }
             self.world_frame = str(self.manifest["world_frame"])
-        elif manifest_schema == BILATERAL_SEQUENCE_SCHEMA:
+        elif manifest_schema in {BILATERAL_SEQUENCE_SCHEMA, OAKINK2_SEQUENCE_SCHEMA}:
             native_id = (
                 self.record.sequence_id[len(self.record.dataset) + 1:]
                 if self.record.sequence_id.startswith(self.record.dataset + "/")
                 else self.record.sequence_id
             )
             expected = {
-                "schema_name": BILATERAL_SEQUENCE_SCHEMA,
-                "sequence_id": native_id,
+                "schema_name": manifest_schema,
+                "sequence_id": (
+                    self.record.sequence_id
+                    if manifest_schema == OAKINK2_SEQUENCE_SCHEMA
+                    else native_id
+                ),
                 "source": self.record.source,
                 "source_dataset": self.record.dataset,
                 "coordinate_frame": "object_pose_t",
                 "hand_side": "bilateral_merged_left_then_right",
-                "merged_hand_sides": True,
             }
+            if manifest_schema == BILATERAL_SEQUENCE_SCHEMA:
+                expected["merged_hand_sides"] = True
             self.world_frame = str(
                 self.manifest.get("world_frame") or f"{self.record.dataset}_native_world"
             )
@@ -466,8 +477,18 @@ class TrainingSequence:
         self.object_pose_all = self._load("obj_pose_world.npy")
         self.object_pose_available = True
         self.source_frame_all = self._load("source_frame_id.npy")
-        self.hand_points_all = self._load("hand_points_world.npy")
-        self.hand_normals_all = self._load("hand_normals_world.npy")
+        hand_points_field = (
+            "knn_hand_points_world.npy"
+            if manifest_schema == OAKINK2_SEQUENCE_SCHEMA
+            else "hand_points_world.npy"
+        )
+        hand_normals_field = (
+            "knn_hand_normals_world.npy"
+            if manifest_schema == OAKINK2_SEQUENCE_SCHEMA
+            else "hand_normals_world.npy"
+        )
+        self.hand_points_all = self._load(hand_points_field)
+        self.hand_normals_all = self._load(hand_normals_field)
         candidate_path = self.geometry / "obj_candidate_mask_5cm.npy"
         if not candidate_path.is_file():
             candidate_path = self.geometry / "obj_candidate_mask_2cm.npy"
@@ -1478,7 +1499,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--index",
         type=Path,
         default=Path("data/processed_data/object_interaction_cm_dexplore_rl_v1/index.json"),
-        help="Recent ObjectInteractionCm training index.",
+        help="Recent ObjectInteractionCm or OakInk2 training index.",
     )
     parser.add_argument("--split", choices=("all", "train", "val", "test"), default="all")
     parser.add_argument("--sequence", help="Exact sequence id from the selected split.")

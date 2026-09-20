@@ -1,0 +1,31 @@
+schema_name: object_interaction_cmv2_mixed_ddp_v1_11i
+work_version: V1.11.1
+checkpoint: /mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z/best.pt
+articulation_metadata: src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json
+sources:
+  grab/mano:
+    index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json
+    manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/cache_manifest.json
+  arctic/mano:
+    index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json
+    manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/cache_manifest.json
+  oakink2/mano:
+    index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/oakink2_mano_20260919T075300Z/index.json
+    manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/oakink2_mano_20260919T075300Z/cache_manifest.json
+  grab/inspire_f1:
+    index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/index.json
+    manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/cache_manifest.json
+  oakink2/inspire_f1:
+    index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/index.json
+    manifest: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/cache_manifest.json
+oakink2_parts:
+  adapter_root: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_oakink2_parts/v1/cmv2_v111h_oakink2_parts_20260920T091403Z
+  selection_index: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/index.json
+  annotation_root: /mnt/ugreen_nas/storage/Ref2Dex_storage/OakInk2/downloads/hf/OakInk-v2/anno_preview
+  stage3_root: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/stage3/oakink2_object_centered_v1
+model: {architecture_version: v1_5_articulated_fk, hidden_width: 128, knn_k: 32, interaction_radius_m: 0.02, feature_scale_m: 0.02, frame_dt_s: 0.03333333333333333}
+data: {num_obj_points: 1024, train_strides: [1, 2, 3], validation_strides: [1, 2, 3], oakink2_val_fraction: 0.1}
+training: {batch_size_per_rank: 64, world_size: 2, epochs: 16, learning_rate: 0.001, seed: 42, checkpoint_interval: 200, log_interval: 20, minimum_free_memory_gib: 20, cpu_threads_per_rank: 8}
+resources: {physical_gpus: [0, 2], nofile_limit: 262144}
+split_root: /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_mixed_training/v1/cmv2_v111g_split_20260920
+output_root: /mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2
