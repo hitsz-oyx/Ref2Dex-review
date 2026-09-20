@@ -43,7 +43,9 @@ ranking 合同。没有启动正式 PhysX collection/ranking run、PPO、P=3、�
 - `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py`: 13 passed。
 - `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py src/task/CmResidual/tests/test_dexplore_cm_geometry.py src/task/CmResidual/tests/test_cmv2_adapter.py`: 19 passed。
 - `python3 -m py_compile`：新增 4 个 Python 文件通过。
-- `python3 tools/verify.py --changed`: `VERIFY PASS`（统一入口的 Python 3 执行）。
+- `python3 tools/verify.py --changed`: verifier 能运行，但按当前仓库规则报告 4 个链接目标
+  `指导/V1.21a.md`、`指导/V1.21c.md` 未被 Git 跟踪；这两个文件是用户本轮保留的 untracked
+  指导修改，本 Activity 未代为提交，也不将该结果声称为 `VERIFY PASS`。
 - `python tools/verify.py --changed`: 环境 `python` 指向 Python 2，因 `tools/verify.py`
   未声明 UTF-8 而在非 ASCII 注释处 SyntaxError；不将此结果声称为通过。
 - 计划相对链接、trailing-whitespace 和 untracked 新代码审计通过。
