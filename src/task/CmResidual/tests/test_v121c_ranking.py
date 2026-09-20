@@ -12,6 +12,7 @@ from src.task.CmResidual.v121c_artifacts import (
     validate_physics_records,
     validate_state_records,
 )
+from src.task.CmResidual.v121c_collection import CollectionAccumulator, CollectionConfig
 from src.task.CmResidual.v121c_ranking import (
     CANDIDATE_COUNT,
     PHASE_CONTACT,
@@ -50,6 +51,29 @@ def test_candidate_generation_is_bitwise_reproducible_and_clipped():
     assert torch.equal(first[0, 0], mu[0].clamp(-1, 1))
     assert torch.all(first.abs() <= 1)
     assert first_seeds[0].item() != first_seeds[1].item()
+
+
+def test_collection_accumulator_enforces_seed_horizon_uniqueness_and_quota():
+    config = CollectionConfig("batch", target_unique=3, max_collection_episodes=2,
+                              phase_quotas={PHASE_MOVING: 1, PHASE_CONTACT: 1, PHASE_PRECONTACT: 1})
+    accumulator = CollectionAccumulator(config)
+    base = {"state_id": "a"}
+    assert not accumulator.add(state_id="too-late", episode_id=0, seed=5909, frame_id=4,
+                               sequence_length=10, active=True, phase_id=PHASE_MOVING, record=base)
+    assert accumulator.add(state_id="c", episode_id=0, seed=5909, frame_id=0,
+                           sequence_length=10, active=True, phase_id=PHASE_PRECONTACT,
+                           record={"state_id": "c"})
+    assert accumulator.add(state_id="a", episode_id=0, seed=5909, frame_id=1,
+                           sequence_length=10, active=True, phase_id=PHASE_MOVING,
+                           record={"state_id": "a"})
+    assert accumulator.add(state_id="b", episode_id=1, seed=5910, frame_id=0,
+                           sequence_length=10, active=True, phase_id=PHASE_CONTACT,
+                           record={"state_id": "b"})
+    assert accumulator.complete
+    assert [row["state_id"] for row in accumulator.finalize()] == ["a", "b", "c"]
+    assert not accumulator.add(state_id="extra", episode_id=1, seed=5910, frame_id=1,
+                               sequence_length=10, active=True, phase_id=PHASE_MOVING,
+                               record={"state_id": "extra"})
 
 
 def test_state_id_uses_canonical_float32_bytes():

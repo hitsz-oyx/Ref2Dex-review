@@ -25,9 +25,12 @@ ranking 合同。没有启动正式 PhysX collection/ranking run、PPO、P=3、�
   episode-block bootstrap。
 - 新增 [v121c_artifacts.py](../../v121c_artifacts.py)：state/physics/episode replay
   schema 校验、非覆盖 JSON manifest 写入和输入文件 SHA256。
+- 新增 [v121c_collection.py](../../v121c_collection.py)：不依赖 simulator 的 collection
+  accumulator，固定 `5909 + episode_id`、64 episode 上限、512 unique 和三 phase quota；
+  不伪造官方 DExplore runtime state。
 - 新增 [eval_v121c_ranking.py](../../tools/eval_v121c_ranking.py)：只读 validated replay
   `.npz` 的离线 metrics runner，写入新 run 目录、manifest、metrics 和 replay snapshots。
-- 新增 [test_v121c_ranking.py](../../tests/test_v121c_ranking.py)：13 项纯合同测试，覆盖
+- 新增 [test_v121c_ranking.py](../../tests/test_v121c_ranking.py)：14 项纯合同测试，覆盖
   candidate 可复现性、native mapping、IG/pose、validity、quota、parity、bootstrap、
   schema 和 runner smoke。
 - 将已确认的 [plan/V1.21c.md](../plan/V1.21c.md) 定稿为 FINAL；旧计划和用户指导保持只读。
@@ -40,9 +43,9 @@ ranking 合同。没有启动正式 PhysX collection/ranking run、PPO、P=3、�
 
 ## Verification
 
-- `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py`: 13 passed。
-- `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py src/task/CmResidual/tests/test_dexplore_cm_geometry.py src/task/CmResidual/tests/test_cmv2_adapter.py`: 19 passed。
-- `python3 -m py_compile`：新增 4 个 Python 文件通过。
+- `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py`: 14 passed。
+- `python3 -m pytest -q src/task/CmResidual/tests/test_v121c_ranking.py src/task/CmResidual/tests/test_dexplore_cm_geometry.py src/task/CmResidual/tests/test_cmv2_adapter.py`: 20 passed。
+- `python3 -m py_compile`：新增 5 个 Python 文件通过。
 - `python3 tools/verify.py --changed`: verifier 能运行，但按当前仓库规则报告 4 个链接目标
   `指导/V1.21a.md`、`指导/V1.21c.md` 未被 Git 跟踪；这两个文件是用户本轮保留的 untracked
   指导修改，本 Activity 未代为提交，也不将该结果声称为 `VERIFY PASS`。
