@@ -58,6 +58,31 @@ def _candidate_actions() -> np.ndarray:
     return actions
 
 
+def _parity_diagnostics(state) -> dict[str, object]:
+    dof = np.asarray(state.dof_state)
+    roots = np.asarray(state.actor_root_state)
+    indices = np.asarray(state.task_indices)
+
+    def maximum(value: np.ndarray) -> float:
+        return float(np.max(np.abs(value - value[0:1])))
+
+    return {
+        "dof_position_max_abs_error": maximum(dof[..., 0]),
+        "dof_velocity_max_abs_error": maximum(dof[..., 1]),
+        "root_position_max_abs_error_by_actor": [
+            maximum(roots[:, actor, :3]) for actor in range(roots.shape[1])
+        ],
+        "root_quaternion_max_abs_error_by_actor": [
+            maximum(roots[:, actor, 3:7]) for actor in range(roots.shape[1])
+        ],
+        "root_twist_max_abs_error_by_actor": [
+            maximum(roots[:, actor, 7:13]) for actor in range(roots.shape[1])
+        ],
+        "task_indices_equal": bool(np.all(indices == indices[0:1])),
+        "task_indices": indices.tolist(),
+    }
+
+
 def _episode_from_task(task, sim_config_sha256: str) -> dict[str, object]:
     dof = task._dof_state.view(BRANCH_COUNT, -1, 2).detach().cpu().numpy()
     roots = task._root_states.view(BRANCH_COUNT, -1, 13).detach().cpu().numpy()
@@ -140,12 +165,20 @@ def main() -> int:
         episode_dir = output / "artifacts" / "episodes"
         episode_dir.mkdir(parents=True)
         np.savez_compressed(episode_dir / "0.npz", **episode)
+        np.savez_compressed(
+            output / "pre_candidate_state.npz",
+            dof_state=result.pre_candidate_state.dof_state,
+            actor_root_state=result.pre_candidate_state.actor_root_state,
+            task_indices=result.pre_candidate_state.task_indices,
+        )
+        parity_diagnostics = _parity_diagnostics(result.pre_candidate_state)
         if result.post_candidate_state is None:
             metrics = {
                 "parity_valid": False,
                 "parity_max_abs_error": result.parity_max_abs_error,
                 "duplicate_valid": False,
                 "sim_config_sha256": sim_config_sha256,
+                "parity_diagnostics": parity_diagnostics,
             }
         else:
             post_roots = np.asarray(result.post_candidate_state.actor_root_state)
@@ -185,6 +218,7 @@ def main() -> int:
                 "candidate_steps": 1,
                 "branch_count": BRANCH_COUNT,
                 "sim_config_sha256": sim_config_sha256,
+                "parity_diagnostics": parity_diagnostics,
             }
         (output / "smoke_result.json").write_text(
             json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
