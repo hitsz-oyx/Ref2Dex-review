@@ -23,6 +23,7 @@ if not hasattr(np, "int"):
 
 import isaacgym  # noqa: F401  # must precede torch
 import torch
+from isaacgym.torch_utils import quat_rotate
 
 from src.task.CmResidual.v121c_ranking import (
     H_REF,
@@ -34,6 +35,7 @@ from src.task.CmResidual.v121c_ranking import (
 
 CHECKPOINT_SHA256 = "8f6823db752288f1bddd6d042981d33514e29dac5a68e58726e76215fea6d553"
 TIP_KEY_INDICES = torch.tensor([3, 6, 9, 12, 15], dtype=torch.long)
+IG_KEY_INDICES = torch.tensor([0, 3, 6, 9, 12, 15], dtype=torch.long)
 
 
 def _prefix_sha256(actions: list[np.ndarray]) -> str:
@@ -80,6 +82,21 @@ def _active_record(task, frame_id: int) -> tuple[bool, int, int]:
     return bool(active[0].item()), int(reason[0].item()), int(phase[0].item())
 
 
+def _canonical_ig(task) -> np.ndarray:
+    from env.tasks.base_dexplore_task import compute_sdf
+    from utils import torch_utils
+    selector = IG_KEY_INDICES.to(task.device)
+    key_positions = task._rigid_body_pos[:, task._key_body_ids[selector], :]
+    local_points = task.object_points[task.object_id[task.data_id]] * task.ball_size
+    rotations = task._target_states[:, None, 3:7].expand(-1, local_points.shape[1], -1).reshape(-1, 4)
+    world_points = torch_utils.quat_rotate(rotations, local_points.reshape(-1, 3)).view_as(local_points)
+    world_points = world_points + task._target_states[:, None, :3]
+    displacement = compute_sdf(key_positions, world_points).view(-1, 3)
+    heading = torch_utils.calc_heading_quat_inv(task._rigid_body_rot[:, 7, :])
+    heading = heading[:, None].expand(-1, len(IG_KEY_INDICES), -1).reshape(-1, 4)
+    return quat_rotate(heading, displacement).view(1, -1)[0].cpu().numpy().astype(np.float32, copy=True)
+
+
 @torch.no_grad()
 def _collect_run(player) -> None:
     output = Path(os.environ["REF2DEX_V121C_EPISODE_OUTPUT"]).resolve()
@@ -120,6 +137,7 @@ def _collect_run(player) -> None:
     reference_history: list[int] = []
     progress_history: list[int] = []
     records: list[dict[str, object]] = []
+    capture_snapshot = os.environ.get("REF2DEX_V121E_CAPTURE_SNAPSHOT") == "1"
     max_actions = sequence_length - start_time
     for frame_id in range(max_actions):
         progress = int(task.progress_buf[0].item())
@@ -149,7 +167,7 @@ def _collect_run(player) -> None:
             state_id = canonical_state_id(
                 CHECKPOINT_SHA256, seed, episode_id, frame_id, raw_np, prefix_sha
             )
-            records.append({
+            record = {
                 "state_id": state_id,
                 "frame_id": frame_id,
                 "reference_index": int(task.ref_index[0].item()),
@@ -161,7 +179,18 @@ def _collect_run(player) -> None:
                 "raw_obs": raw_np,
                 "policy_mu": mu[0].cpu().numpy().astype(np.float32, copy=True),
                 "policy_sigma": sigma[0].cpu().numpy().astype(np.float32, copy=True),
-            })
+            }
+            if capture_snapshot:
+                record.update({
+                    "snapshot_dof_state": task._dof_state.view(1, -1, 2)[0].cpu().numpy().copy(),
+                    "snapshot_actor_root_state": task._root_states.view(1, -1, 13)[0].cpu().numpy().copy(),
+                    "snapshot_task_indices": torch.stack((task.data_id, task.ref_index, task.start_times, task.progress_buf), dim=-1)[0].cpu().numpy().copy(),
+                    "snapshot_reset_buf": int(task.reset_buf[0].item()),
+                    "snapshot_terminate_buf": int(task._terminate_buf[0].item()),
+                    "snapshot_contact_reset": task.contact_reset[0].cpu().numpy().copy(),
+                    "canonical_current_ig": _canonical_ig(task),
+                })
+            records.append(record)
 
         executed = action[0].cpu().numpy().astype(np.float32, copy=True)
         next_obs, _, done, _ = player.env_step(player.env, action)

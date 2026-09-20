@@ -7,6 +7,10 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
+- V1.21e：已确认 [snapshot-restore parity 最终计划](plan/V1.21e.md)，在独立分支实现 16-state
+  `6 moving / 6 contact / 4 precontact` 的 prefix duplicate 与 fresh-simulator direct-restore duplicate
+  对照。该实验只判断公开 state 是否足以支持 one-step branching；尚未产生 GPU 证据，不自动进入
+  64-state calibration、512-state ranking 或 PPO。
 - V1.21c：已按 [V1.21c 最终计划](plan/V1.21c.md) 实现 frozen Cmv2 的 P=1 native-action
   ranking core、state/physics/episode replay schema、只读 replay metrics runner，以及从 episode
   initial state 进行 9-env prefix replay、numeric parity diagnostic 和 duplicate-anchor 的 runtime-neutral
