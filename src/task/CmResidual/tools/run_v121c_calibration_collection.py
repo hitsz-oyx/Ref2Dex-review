@@ -17,6 +17,10 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[4]
 DEXPLORE_ROOT = ROOT / "third_party" / "DExplore"
 ISAAC_GYM_PYTHON = Path(os.environ.get("ISAAC_GYM_PYTHON", "/home2/wyy/isaac-gym/isaacgym/python"))
+DEXPLORE_PYTHON = Path(os.environ.get(
+    "REF2DEX_DEXPLORE_PYTHON",
+    "/home2/wyy/oyx_ws/.runtime_envs/dexplore_v117/bin/python",
+))
 BOOTSTRAP = Path(__file__).resolve().with_name("v121c_collect_episode_bootstrap.py")
 OUTPUT_ROOT = ROOT / "outputs" / "CmResidual"
 MOTION_ROOT = ROOT / "data/processed_data/dexplore_reconstructed_v120_coordfix_v4/converted_attempt1"
@@ -64,7 +68,7 @@ def _gpu_used_mib(gpu: int) -> int:
 
 def _command(seed: int, episode_output: Path) -> list[str]:
     return [
-        sys.executable,
+        str(DEXPLORE_PYTHON.resolve()),
         str(BOOTSTRAP),
         "--test",
         "--checkpoint", str(CHECKPOINT),
@@ -93,6 +97,7 @@ def _input_identity() -> dict[str, dict[str, object]]:
         "motion_tensor": tensor,
         "bootstrap": BOOTSTRAP,
         "vendor_run": DEXPLORE_ROOT / "dexplore/run.py",
+        "dexplore_python": DEXPLORE_PYTHON,
         "inspire_urdf": DEXPLORE_ROOT / "dexplore/data/assets/inspire_hand_new/inspire_hand_right.urdf",
         "airplane_mesh": DEXPLORE_ROOT / "dexplore/data/assets/mjcf/objects/airplane/airplane.obj",
         "table_mesh": DEXPLORE_ROOT / "dexplore/data/assets/mjcf/objects/table/table.obj",

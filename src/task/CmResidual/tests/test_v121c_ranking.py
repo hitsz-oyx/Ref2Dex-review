@@ -47,8 +47,12 @@ from src.task.CmResidual.v121c_ranking import (
 )
 from src.task.CmResidual.dexplore_cm_geometry import dexplore_action_to_native_targets
 from src.task.CmResidual.tools.run_v121c_prefix_smoke import smoke_command, smoke_gate_passed
-from src.task.CmResidual.tools.run_v121c_calibration_collection import _select as select_calibration
-from src.task.CmResidual.tools.run_v121c_calibration_collection import _gpu_used_mib
+from src.task.CmResidual.tools.run_v121c_calibration_collection import (
+    DEXPLORE_PYTHON,
+    _command as calibration_collection_command,
+    _gpu_used_mib,
+    _select as select_calibration,
+)
 
 
 def test_candidate_generation_is_bitwise_reproducible_and_clipped():
@@ -406,6 +410,14 @@ def test_calibration_gpu_lookup_rejects_unreported_device(monkeypatch):
     assert _gpu_used_mib(3) == 7
     with pytest.raises(RuntimeError, match="GPU9"):
         _gpu_used_mib(9)
+
+
+def test_calibration_collection_uses_pinned_dexplore_runtime(tmp_path):
+    command = calibration_collection_command(5909, tmp_path / "episode")
+    assert Path(command[0]).resolve() == DEXPLORE_PYTHON.resolve()
+    assert command[1].endswith("v121c_collect_episode_bootstrap.py")
+    assert command[command.index("--num_envs") + 1] == "1"
+    assert command[command.index("--seed") + 1] == "5909"
 
 
 def test_prefix_replay_records_numeric_drift_but_still_steps_candidates():
