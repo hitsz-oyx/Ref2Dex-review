@@ -35,8 +35,12 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
   保留为 `FAILED / INVALID_IMPLEMENTATION`，不归因于任一尚未隔离的单一因素。当前
   [V1.21d 最终计划](plan/V1.21d.md) 已统一 shared canonical pre-action baseline、`t+6` object / `t+1`
   IG score、pinned DExplore runtime 和 frozen collection provenance hard gates；实现与验证见
-  [Activity](activities/ACT-20260920-203050-CMRESIDUAL-V121D-CALIBRATION-CONTRACT.md)。corrected 64-state
-  calibration 尚未运行，512-state PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动，Cm
+  [Activity](activities/ACT-20260920-203050-CMRESIDUAL-V121D-CALIBRATION-CONTRACT.md)。corrected calibration
+  已在提交 `5369ffc`、GPU3 上正式执行：首个 episode 的 11/11 duplicate 全部超过 hard ceiling，object
+  position/rotation divergence 最小已为 `0.002374 m / 0.047226 rad`、最大为
+  `6.480091 m / 3.134687 rad`，run 按计划停止为 `FAILED / INVALID_IMPLEMENTATION`。详见
+  [终态 Activity](activities/ACT-20260920-205542-CMRESIDUAL-V121D-CALIBRATION-FAILED.md)。未冻结
+  `epsilon_PhysX`，512-state PhysX ranking、PPO、P=3、异步 worker 和 Cmv2 更新均未启动；Cm ranking
   科学结论仍为 `INCONCLUSIVE`。
 - V1.21：Phase 0 Cm-on engineering smoke、从零初始化的 10-epoch `cm_distill_coef=0` reference-PPO Phase A 和从其 checkpoint 出发的 Phase B 均已结束；V1.21b 已切换到 V1.20e DExplore 训练合同，Cm-off parity bootstrap、四 rank x 64 env smoke 及四 rank x 2048 env / global-minibatch 16384 容量门均已完成一实际 epoch（finite checkpoint）。DExplore–Cmv2 geometry/action bridge 已通过独立合同测试；下一步是 nonzero-Cm 的 Task-local agent hook。Cm-on、长 horizon、online planner、Cmv2 fine-tune 与抓取结论仍未授权。
 - V1.20e：已完成 `4×2048`、local minibatch `4096` / global `16384` 的四卡容量 smoke；从零正式训练在用户请求下于 epoch 638 停止，未遇 OOM/NCCL/non-finite。epoch-500 checkpoint 的固定 seed 单环境 rollout 最大 lift 为 `0.0 m`，该窄行为假设为 `REFUTED`；训练未完成 5000 epoch，收敛和泛化仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260919-204049-CMRESIDUAL-V120E-TRAIN-STOPPED.md) 与 [experiment](experiments/EXP-20260919-204049-CMRESIDUAL-V120E-E500-LIFT.md)。

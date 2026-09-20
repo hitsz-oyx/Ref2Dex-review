@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260920-205542-CMRESIDUAL-V121D-CALIBRATION-FAILED](ACT-20260920-205542-CMRESIDUAL-V121D-CALIBRATION-FAILED.md)：corrected 64-state calibration 在首个 episode 的 11/11 duplicate 上超过 hard ceiling，按计划停止为 `INVALID_IMPLEMENTATION`。
 - [ACT-20260920-203050-CMRESIDUAL-V121D-CALIBRATION-CONTRACT](ACT-20260920-203050-CMRESIDUAL-V121D-CALIBRATION-CONTRACT.md)：统一 shared-baseline PhysX score、修正 t+6/t+1 calibration 时钟、固定 runtime 并强化 frozen collection provenance hard gates。
 - [ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR](ACT-20260920-190900-CMRESIDUAL-V121C-CALIBRATION-COLLECTOR.md)：实现 official-policy calibration collector 与 24/24/16 deterministic selection；GPU0 容量门阻止实际运行。
 - [ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0](ACT-20260920-185500-CMRESIDUAL-V121C-NOISE-GATE0.md)：修订后的 30 Hz 1-state/9-env Gate 0 完成，indices 与 randomized duplicate hard ceiling 通过，numeric parity 仅作诊断。
