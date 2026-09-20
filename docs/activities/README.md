@@ -6,6 +6,7 @@
 
 | Date | Activity | work_version | Type | Result |
 | --- | --- | --- | --- | --- |
+| 2026-09-20 | [V1.2h.1 plan micro supplements](V1.2h.1-plan-micro-supplements.md) | V1.2h | governance | completed |
 | 2026-09-19 | [V1.2h plan finalization rule](V1.2h-plan-finalization-rule.md) | V1.2h | governance | completed |
 | 2026-09-19 | [V1.2g retire remote CI and retain worktree lifecycle](V1.2g-retire-remote-ci-worktree-lifecycle.md) | V1.2g | governance | completed |
 | 2026-09-19 | [V1.2e hermetic CI test selection](V1.2e-hermetic-ci-test-selection.md) | V1.2e | governance | completed |

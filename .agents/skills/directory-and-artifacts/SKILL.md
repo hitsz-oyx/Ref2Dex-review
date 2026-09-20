@@ -60,14 +60,14 @@ src/task/<Task>/research/<experiment>/
 src/task/<Task>/docs/
 ├── README.md
 ├── 指导/V<n>.md
-├── plan/V<n>.md
+├── plan/V<n>.md、V<n><letter>.md、V<n><letter>.<k>.md
 ├── activities/README.md
 ├── experiments/README.md
 └── architecture/V<n>.md
 ```
 
 research 根目录不放散脚本、结果或 checkpoint；实验目录使用稳定 lower_snake_case。Task
-目录只保留代码、配置、研究文档和索引。指导谱系和 plan 补充的读取、命名与冲突规则以
+目录只保留代码、配置、研究文档和索引。指导谱系、字母 plan 与点数字 plan 微补充的读取、命名和冲突规则以
 根 `AGENTS.md` 为准。
 
 ## 数据、运行与 manifest

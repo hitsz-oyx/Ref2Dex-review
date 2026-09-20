@@ -23,7 +23,9 @@ metadata:
 
 `work_version` 是唯一版本术语；git_commit 和 run_id 是独立身份。新记录和新 manifest 只写 work_version，旧的 modification_version/research_version/governance_version 只作为历史读取兼容，不能回写为新规范。
 
-只有新 work_version 边界或 L2/L3 方案需要最终 plan。指导补充不自动建立 plan，也不要求一一对应：已有 `a`、`b`、`c` 指导后才协商的计划仍为 `plan/V<n>.md`。状态不是 `FINAL` 的 plan 可原地修订；一旦 `FINAL`，后续任何改变实施合同的修改都不得静默覆盖，必须建立 `plan/V<n><letter>.md`。由同基线指导补充触发时使用该指导字母；没有对应指导时使用 plan 谱系下一个未使用字母。开始实施前读取基线 plan 及适用补充。
+只有新 work_version 边界或 L2/L3 方案需要最终 plan。指导补充不自动建立 plan，也不要求一一对应：已有 `a`、`b`、`c` 指导后才协商的计划仍为 `plan/V<n>.md`。状态不是 `FINAL` 的 plan 可原地修订；一旦 `FINAL`，后续任何改变实施合同的修改都不得静默覆盖，通常必须建立 `plan/V<n><letter>.md`。由同基线指导补充触发时使用该指导字母；没有对应指导时使用 plan 谱系下一个未使用字母。
+
+已执行的字母 plan 若在同一分支、同一研究问题和保护边界内进行有界纠偏或探索重试，且用户明确选择不新建分支，可建立 `plan/V<n><letter>.<k>.md` 点数字微补充。`k` 从 1 开始、无前导零、在同一父 plan 下连续递增；它不推进 work_version、不用于指导命名，也不替代独立问题所需的下一字母 plan。按基线、字母顺序以及每个字母后的整数 `.1`、`.2` 顺序读取；后项只覆盖明确冲突。微补充须写明复用分支理由、改变与保持项、风险、验证、回滚和真实审批，且不降低 L2/L3 或 run 门禁。开始实施前读取基线 plan 及全部适用补充。
 
 ## 分支、记录和验证
 

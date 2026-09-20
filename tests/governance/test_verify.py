@@ -86,6 +86,12 @@ def test_final_plan_append_rule_is_discoverable() -> None:
     assert "状态不是 `FINAL` 的 plan 可在原文件原地修订" in agents
     assert "一旦 `FINAL`" in agents
     assert "必须建立 `plan/V<n><letter>.md`" in agents
+    assert "plan/V<n><letter>.<k>.md" in agents
+    assert "不用于指导文件命名" in agents
+    assert "数字按整数而非文件名字典序排序" in agents
     assert "状态不是 `FINAL` 的 plan 可原地修订" in change_control
     assert "一旦 `FINAL`" in change_control
     assert "必须建立 `plan/V<n><letter>.md`" in change_control
+    assert "plan/V<n><letter>.<k>.md" in change_control
+    assert "不用于指导命名" in change_control
+    assert "同一分支、同一研究问题和保护边界" in change_control
