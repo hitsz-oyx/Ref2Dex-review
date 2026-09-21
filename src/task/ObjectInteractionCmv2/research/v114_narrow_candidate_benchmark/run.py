@@ -143,6 +143,8 @@ def run(args) -> Path:
         "edges": 32,
         "parts": 3,
         "endpoint_hand_points": args.hand_points,
+        "object_chunk": args.object_chunk,
+        "hand_chunk": args.hand_chunk,
         "interaction_dims": list(WIDTHS),
         "warmup": args.warmup,
         "iterations": args.iterations,
@@ -181,6 +183,8 @@ def run(args) -> Path:
         log(f"START run_id={args.run_id} commit={commit} widths={WIDTHS}")
         object_batch, candidate, reference_hand, reference_flow = _inputs(
             device, args.seed, args.hand_points)
+        candidate["interaction_object_chunk"] = args.object_chunk
+        candidate["interaction_hand_chunk"] = args.hand_chunk
         results = {}
         with torch.inference_mode(), (output / "metrics.jsonl").open("w", encoding="utf-8") as stream:
             for width in WIDTHS:
@@ -192,7 +196,8 @@ def run(args) -> Path:
                     "static_encode": _cuda_times(
                         lambda: model.encode_object(object_batch), args.warmup, args.iterations),
                     "local_interaction": _cuda_times(
-                        lambda: model.local_interaction.forward_candidates(context, candidate),
+                        lambda: model.local_interaction.forward_candidates(
+                            context, candidate, args.object_chunk, args.hand_chunk),
                         args.warmup, args.iterations),
                     "candidate_forward": _cuda_times(
                         lambda: model.forward_candidates(context, candidate),
@@ -221,7 +226,7 @@ def run(args) -> Path:
             endpoint = _cuda_times(
                 lambda: endpoint_union_topk(
                     flat_points, flat_hand, flat_flow, valid, k=32,
-                    object_chunk=128, hand_chunk=256),
+                    object_chunk=args.object_chunk, hand_chunk=args.hand_chunk),
                 args.endpoint_warmup, args.endpoint_iterations)
             stream.write(json.dumps({"type": "endpoint", **endpoint}, allow_nan=False) + "\n")
 
@@ -295,9 +300,12 @@ def main() -> None:
     parser.add_argument("--hand-points", type=int, default=4096)
     parser.add_argument("--endpoint-warmup", type=int, default=3)
     parser.add_argument("--endpoint-iterations", type=int, default=10)
+    parser.add_argument("--object-chunk", type=int, default=128)
+    parser.add_argument("--hand-chunk", type=int, default=256)
     args = parser.parse_args()
     if min(args.warmup, args.iterations, args.hand_points,
-           args.endpoint_warmup, args.endpoint_iterations) <= 0:
+           args.endpoint_warmup, args.endpoint_iterations,
+           args.object_chunk, args.hand_chunk) <= 0:
         raise ValueError("benchmark budgets must be positive")
     output = run(args)
     print(json.dumps({"output": str(output)}))

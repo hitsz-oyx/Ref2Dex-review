@@ -15,3 +15,4 @@ interaction_dims: [128, 64, 32]
 warmup: 30
 iterations: 100
 endpoint_hand_points: 4096
+default_chunks: {object: 128, hand: 256}

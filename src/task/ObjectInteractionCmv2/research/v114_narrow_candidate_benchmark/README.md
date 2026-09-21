@@ -7,10 +7,13 @@ encode、local interaction、共享后的完整 candidate forward 和 encode+for
 endpoint 构建以相同对象和 `H=4096` 手点单独计时；`endpoint + encode + forward` 是顺序执行时间之和，
 不是隐藏 KNN 成本的“纯模型”数字。输出写入 `output/<run_id>/`，拒绝覆盖旧运行。
 
+`--object-chunk` 和 `--hand-chunk` 同时进入模型与 endpoint 计时，可用于比较当前默认 `128/256` 与
+不改变数学语义的 planner-oriented chunk。所有 run 必须在 manifest/config 中保留实际值。
+
 ```bash
 CUDA_VISIBLE_DEVICES=3 PYTHONPATH=. python3 \
   -m src.task.ObjectInteractionCmv2.research.v114_narrow_candidate_benchmark.run \
-  --run-id <unique_run_id>
+  --run-id <unique_run_id> --object-chunk 1024 --hand-chunk 1024
 ```
 
 运行不加载 checkpoint、不训练模型、不读取或修改 cache。随机初始化仅用于结构等价的性能比较。
