@@ -5,8 +5,9 @@
 - V1.14b 已补齐 portable bilateral 路线：本地 GRAB 可显式启用 `mano + inspire_f1`，服务器配置可启用
   `GRAB/ARCTIC/OakInk2 × MANO/Inspire` 六组；模型输入继续固定左/右各 2048 点。OakInk2 raw bundle 已校验后迁入
   `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。
-  Task 测试与本机左右 Inspire retarget 初始化通过；真实 OakInk2 producer smoke 因本机缺 `manotorch` 尚未通过，
-  因而没有生成正式 cache 或启动训练。入口：[V1.14b FINAL 计划](plan/V1.14b.md)、
+  Task 测试、本机左右 Inspire retarget 初始化和真实 OakInk2 双手 8-frame producer smoke 均通过；固定
+  `manotorch v0.0.2` 仅安装在专用 `graspenv`，没有生成正式 cache 或启动训练。入口：
+  [V1.14b FINAL 计划](plan/V1.14b.md)、[依赖微补充](plan/V1.14b.1.md)、
   [Activity](activities/ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)、
   [本地两组配置](../configs/active/mixed_part_se3_v1_14b_local.yaml)与
   [服务器六组模板](../configs/active/mixed_part_se3_v1_14b_six_source.yaml)。
@@ -57,6 +58,7 @@
 - [V1.14 指导](指导/V1.14.md) 与 [V1.14 最终计划](plan/V1.14.md)：32D 稠密交互、128D token/part reasoning、静态物体编码与 candidate-axis 共享。
 - [V1.14a 指导](指导/V1.14a.md) 与 [V1.14a 最终计划](plan/V1.14a.md)：每手固定 2048 点、共享 start KNN 与独立 candidate end KNN。
 - [V1.14b 最终计划](plan/V1.14b.md)：双手 portable raw 数据入口、可配置 active groups 与跨机器 V1.14a 训练 runner。
+- [V1.14b.1 最终计划](plan/V1.14b.1.md)：在专用 `graspenv` 固定安装 OakInk2 MANO 运行依赖并执行真实双手 smoke。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。

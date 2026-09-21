@@ -1,6 +1,6 @@
 # ObjectInteractionCmv2 Activities
 
-- [ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL](ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)：双手 portable raw 入口、六组动态 split 与 V1.14a DDP runner；真实 OakInk2 smoke 当前受本机缺少 `manotorch` 阻断。
+- [ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL](ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)：双手 portable raw 入口、六组动态 split 与 V1.14a DDP runner；固定 `manotorch` 后真实 OakInk2 双手 smoke 通过。
 
 - [ACT-20260921-CMV2-V114A-SHARED-START](ACT-20260921-CMV2-V114A-SHARED-START.md)：每手 2048 点与 candidate 共享 start KNN 实现、接口 parity 和未完成的真实 cache/GPU 门禁。
 

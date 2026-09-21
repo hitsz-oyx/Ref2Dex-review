@@ -126,16 +126,17 @@ def test_oakink2_portable_stage3_record_matches_existing_consumer_contract(tmp_p
     output = tmp_path / "stage3"
     output.mkdir()
     rows, skipped = build_sequence(
-        annotation_path, object_root, output, FakeReconstructor(), sequence_ordinal=0)
+        annotation_path, object_root, output, FakeReconstructor(), sequence_ordinal=0,
+        frame_offset=1)
     assert not skipped
     assert {row["side"] for row in rows} == {"left", "right"}
     for row in rows:
         with np.load(row["file"], allow_pickle=False) as record:
             assert record["obj_points"].shape == record["obj_normals"].shape == (4096, 3)
-            assert record["raw_frame_id"].tolist() == [10, 11]
-            assert record["obj_root_pose_world"].shape == (2, 4, 4)
-            assert record["hand_to_obj_min_dist"].shape == (2, 1)
-            assert record["hand_normals"].shape == (2, 1, 3)
+            assert record["raw_frame_id"].tolist() == [11]
+            assert record["obj_root_pose_world"].shape == (1, 4, 4)
+            assert record["hand_to_obj_min_dist"].shape == (1, 1)
+            assert record["hand_normals"].shape == (1, 1, 3)
             assert str(record["coordinate_frame"]) == "object"
 
 

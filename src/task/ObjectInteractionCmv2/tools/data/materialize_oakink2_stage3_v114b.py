@@ -113,6 +113,7 @@ def build_sequence(
     reconstructor: _ManoReconstructor,
     *,
     sequence_ordinal: int,
+    frame_offset: int = 0,
     max_frames: int = 0,
     overwrite: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
@@ -121,6 +122,7 @@ def build_sequence(
     raw_mano = annotation.get("raw_mano", {})
     official = set(int(value) for value in annotation.get("mocap_frame_id_list", raw_mano))
     frame_ids = sorted(official & {int(value) for value in raw_mano})
+    frame_ids = frame_ids[int(frame_offset):]
     if max_frames:
         frame_ids = frame_ids[: int(max_frames)]
     if not frame_ids:
@@ -183,6 +185,8 @@ def build_sequence(
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.offset < 0 or args.frame_offset < 0 or args.limit < 0 or args.max_frames < 0:
+        raise ValueError("offset, frame-offset, limit, and max-frames must be non-negative")
     annotation_root = args.annotation_root.resolve()
     object_root = args.object_root.resolve()
     output_root = args.output_root.resolve()
@@ -204,7 +208,8 @@ def run(args: argparse.Namespace) -> int:
         try:
             produced, omitted = build_sequence(
                 path, object_root, output_root, reconstructor,
-                sequence_ordinal=ordinal, max_frames=args.max_frames, overwrite=args.overwrite)
+                sequence_ordinal=ordinal, frame_offset=args.frame_offset,
+                max_frames=args.max_frames, overwrite=args.overwrite)
             rows.extend(produced); skipped.extend(omitted)
             counts.update(row["side"] for row in produced)
         except Exception as error:
@@ -224,7 +229,7 @@ def run(args: argparse.Namespace) -> int:
                 "inputs": {"annotation_root": str(annotation_root), "object_root": str(object_root),
                            "mano_root": str(args.mano_root.resolve())},
                 "parameters": {"object_points": OBJECT_POINTS, "contact_keep_m": CONTACT_KEEP_M,
-                               "max_frames": int(args.max_frames)},
+                               "frame_offset": int(args.frame_offset), "max_frames": int(args.max_frames)},
                 "outputs": {"stage3_root": str(output_root), "stats": str(stats_path)},
                 "conclusion": "INVALID_IMPLEMENTATION" if failures else "N/A"}
     _write_json(output_root / f"run_manifest_{args.run_id}.json", manifest)
@@ -242,6 +247,7 @@ def main() -> None:
     parser.add_argument("--mano-batch-size", type=int, default=128)
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--frame-offset", type=int, default=0)
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--overwrite", action="store_true")
     raise SystemExit(run(parser.parse_args()))
