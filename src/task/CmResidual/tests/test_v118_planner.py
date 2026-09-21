@@ -68,6 +68,8 @@ def test_v118b_runner_pins_v118a_identity_and_cumulative_variants():
     assert 'EXPECTED_CANDIDATE_SHA = "0c3723c7' in runner
     assert '["baseline", "merge", "link_aabb", "link_sparse"]' in runner
     assert '"candidate_count": 8' in runner
+    profiler = (ROOT / "src/task/CmResidual/v118_latency_profile.py").read_text()
+    assert '"measurement_schedule": "cyclic_interleaved_after_all_variant_warmup"' in profiler
 
 
 def test_v119_config_uses_streaming_memory_contract():

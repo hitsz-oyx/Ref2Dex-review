@@ -239,8 +239,9 @@ def profile_interaction_variants(planner, kwargs: dict[str, object], *, warmup: 
 
     torch.cuda.set_rng_state(fixed_rng, mu.device)
     candidates = planner._candidates(state["mu"])
-    results: dict[str, object] = {}
-    for variant in ("baseline", "merge", "link_aabb", "link_sparse"):
+    variants = ("baseline", "merge", "link_aabb", "link_sparse")
+    parity_by_variant = {}
+    for variant in variants:
         torch.cuda.set_rng_state(fixed_rng, mu.device)
         candidate_output = planner.teacher(**state, _interaction_variant=variant)
         parity = _max_output_error(baseline, candidate_output)
@@ -250,13 +251,17 @@ def profile_interaction_variants(planner, kwargs: dict[str, object], *, warmup: 
                 f"{variant} changed behavioral planner output: {violations}; "
                 f"production_duplicate={duplicate_error}"
             )
+        parity_by_variant[variant] = parity
         for _ in range(warmup):
             torch.cuda.set_rng_state(fixed_rng, mu.device)
             planner.teacher(**state, _interaction_variant=variant)
-        torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats(mu.device)
-        samples = []
-        for _ in range(repeats):
+    torch.cuda.synchronize()
+
+    samples_by_variant: dict[str, list[dict[str, float]]] = {name: [] for name in variants}
+    for repeat in range(repeats):
+        offset = repeat % len(variants)
+        order = variants[offset:] + variants[:offset]
+        for variant in order:
             torch.cuda.set_rng_state(fixed_rng, mu.device)
             profiler = CudaEventProfiler()
             with profiler.stage("end_to_end"):
@@ -264,12 +269,19 @@ def profile_interaction_variants(planner, kwargs: dict[str, object], *, warmup: 
                     **state, _latency_profiler=profiler,
                     _interaction_variant=variant,
                 )
-            samples.append(profiler.resolve_ms())
+            samples_by_variant[variant].append(profiler.resolve_ms())
+
+    results: dict[str, object] = {}
+    for variant in variants:
+        torch.cuda.reset_peak_memory_stats(mu.device)
+        torch.cuda.set_rng_state(fixed_rng, mu.device)
+        planner.teacher(**state, _interaction_variant=variant)
+        torch.cuda.synchronize()
         results[variant] = {
-            "latency": summarize(samples),
+            "latency": summarize(samples_by_variant[variant]),
             "peak_memory_allocated_bytes": torch.cuda.max_memory_allocated(mu.device),
             "peak_memory_reserved_bytes": torch.cuda.max_memory_reserved(mu.device),
-            "behavioral_parity_max_abs": parity,
+            "behavioral_parity_max_abs": parity_by_variant[variant],
         }
 
     link_counts = None
@@ -282,6 +294,7 @@ def profile_interaction_variants(planner, kwargs: dict[str, object], *, warmup: 
         "warmup_iterations": warmup,
         "measured_iterations": repeats,
         "candidate_count": 8,
+        "measurement_schedule": "cyclic_interleaved_after_all_variant_warmup",
         "candidate_order": ["mu", "zero", "+eps0", "+eps1", "+eps2", "-eps0", "-eps1", "-eps2"],
         "state_sha256": _tensor_sha256(state),
         "candidate_actions_sha256": _tensor_sha256({"candidate_actions": candidates}),
