@@ -42,6 +42,8 @@ def test_compact_record_removes_full_hand_stream_and_preserves_endpoint_model_pa
     assert record["unique_hand_points"] <= record["source_hand_points"]
     assert not any(key in compact for key in ("hand_points", "hand_normals", "hand_flow"))
     assert compact["edge_hand_points"].shape == (64, 32, 3)
+    assert record["tensors"]["edge_lookup"].dtype == torch.int16
+    assert compact["edge_source_id"].dtype == torch.int16
     assert torch.equal(compact["obj_point_id"], sample["obj_point_id"])
 
     model = _model().eval()

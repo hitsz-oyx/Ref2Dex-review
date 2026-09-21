@@ -63,7 +63,9 @@ def pack_compact_endpoint(sample: Mapping[str, Any], *, radius_m: float = 0.02) 
     valid = (distance[0].cpu() < float(radius_m)) & hand_valid.cpu()[source_id]
     unique_source_id, edge_lookup = torch.unique(
         source_id.reshape(-1), sorted=True, return_inverse=True)
-    edge_lookup = edge_lookup.reshape_as(source_id).to(torch.int32)
+    if int(source_id.max()) >= 2**15 or int(unique_source_id.numel()) >= 2**15:
+        raise ValueError("compact endpoint int16 index range exceeded")
+    edge_lookup = edge_lookup.reshape_as(source_id).to(torch.int16)
     unique_source_id = unique_source_id.long()
 
     tensors = {
@@ -76,7 +78,7 @@ def pack_compact_endpoint(sample: Mapping[str, Any], *, radius_m: float = 0.02) 
         "unique_hand_normals": sample["hand_normals"].to(torch.float32).cpu()[unique_source_id].contiguous(),
         "unique_hand_flow": hand_flow.cpu()[unique_source_id].contiguous(),
         "edge_lookup": edge_lookup.contiguous(),
-        "edge_source_id": source_id.to(torch.int32).contiguous(),
+        "edge_source_id": source_id.to(torch.int16).contiguous(),
         "edge_valid_mask": valid.contiguous(),
     })
     return {
@@ -250,7 +252,7 @@ class CompactEndpointShardWriter:
             "git_commit": self.git_commit,
             "created_at": utc_now(),
             "coordinates": "V1.12 current object/root reference; metres; seconds; radians",
-            "dtype": "float32 tensors; int32 edge lookup/source IDs; bool edge mask",
+            "dtype": "float32 tensors; int16 edge lookup/source IDs; bool edge mask",
             "record_count": self.count,
             "index_dtype": INDEX_DTYPE.descr,
             "index_bytes": index_path.stat().st_size,
@@ -278,6 +280,12 @@ class CompactEndpointShardWriter:
             self.index_handle.close()
         if self.shard_handle is not None and not self.shard_handle.closed:
             self.shard_handle.close()
+
+    def mark_incomplete(self, status: str, **extra: Any) -> None:
+        if status not in ("FAILED", "STOPPED"):
+            raise ValueError("incomplete compact cache status must be FAILED or STOPPED")
+        self.close_incomplete()
+        self._write_run_manifest(status, finished_at=utc_now(), **extra)
 
 
 class CompactEndpointDataset(Dataset):

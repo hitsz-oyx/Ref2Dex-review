@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import subprocess
 import traceback
 from pathlib import Path
@@ -12,11 +13,17 @@ from src.task.ObjectInteractionCmv2.compact_endpoint import (
     CompactEndpointShardWriter,
     sha256_file,
 )
-from src.task.ObjectInteractionCmv2.mixed_training import GROUPS, REPO_ROOT, utc_now
+from src.task.ObjectInteractionCmv2.mixed_training import GROUPS, REPO_ROOT
 from src.task.ObjectInteractionCmv2.part_se3_training import (
     build_part_se3_dataset,
     load_part_se3_training_config,
 )
+
+
+class StopRequested(BaseException):
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"received signal {signum}")
+        self.signum = int(signum)
 
 
 def input_identity(config: dict) -> dict[str, str]:
@@ -61,6 +68,10 @@ def build(config_path: str | Path, output: str | Path, run_id: str, *, mode: str
         output, run_id=run_id, git_commit=commit, source_sha256=source_sha256,
         shard_target_bytes=int(float(shard_target_gib) * (1 << 30)))
     sequence_limit = 1 if mode == "pilot" else None
+    def stop(signum, frame):
+        raise StopRequested(signum)
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     try:
         for split in ("train", "val"):
             strides = (None,) if split == "train" else tuple(config["data"]["validation_strides"])
@@ -75,16 +86,11 @@ def build(config_path: str | Path, output: str | Path, run_id: str, *, mode: str
                     for index in range(limit):
                         writer.add(dataset[index], group=group, split=split)
         return writer.finalize(validation_bad_count=0)
+    except StopRequested as error:
+        writer.mark_incomplete("STOPPED", stop_signal=error.signum, stop_reason=str(error))
+        raise SystemExit(128 + error.signum)
     except BaseException as error:
-        writer.close_incomplete()
-        partial = Path(output).resolve().with_name(Path(output).name + ".partial")
-        if partial.is_dir():
-            (partial / "run_manifest.json").write_text(json.dumps({
-                "task": "ObjectInteractionCmv2", "work_version": "V1.13",
-                "run_id": run_id, "run_status": "FAILED", "operation": "compact_endpoint_cache_build",
-                "git_commit": commit, "finished_at": utc_now(), "error": repr(error),
-                "traceback": traceback.format_exc(), "conclusion": "N/A",
-            }, ensure_ascii=False, indent=2) + "\n")
+        writer.mark_incomplete("FAILED", error=repr(error), traceback=traceback.format_exc())
         raise
 
 
