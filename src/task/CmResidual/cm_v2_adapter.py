@@ -127,7 +127,8 @@ class FrozenCmv2Adapter:
                 hand_flow: torch.Tensor, delta_time_s: float,
                 hand_valid_mask: torch.Tensor | None = None,
                 include_context: bool = True,
-                interaction_object_chunk: int | None = None) -> dict[str, torch.Tensor]:
+                interaction_object_chunk: int | None = None,
+                latency_profiler=None) -> dict[str, torch.Tensor]:
         """Return frozen structured Cmv2 outputs for one-step effect evaluation."""
         hand_valid_mask = self._validate_inputs(
             object_points, object_normals, hand_points, hand_normals, hand_flow,
@@ -139,7 +140,8 @@ class FrozenCmv2Adapter:
                              "hand_valid_mask": hand_valid_mask,
                              "delta_time_s": torch.full((batch,), delta_time_s, device=self.device,
                                                         dtype=object_points.dtype),
-                             "interaction_object_chunk": interaction_object_chunk})
+                             "interaction_object_chunk": interaction_object_chunk,
+                             "_latency_profiler": latency_profiler})
         output = dict(output)
         if include_context:
             output["cm_context"] = encode_context(output, object_points)
@@ -152,12 +154,14 @@ class FrozenCmv2Adapter:
                             hand_points: torch.Tensor, hand_normals: torch.Tensor,
                             hand_flow: torch.Tensor, delta_time_s: float,
                             hand_valid_mask: torch.Tensor | None = None,
-                            interaction_object_chunk: int | None = None) -> dict[str, torch.Tensor]:
+                            interaction_object_chunk: int | None = None,
+                            latency_profiler=None) -> dict[str, torch.Tensor]:
         """Return the planner's minimal frozen effect contract without context encoding."""
         output = self.predict(object_points, object_normals, hand_points, hand_normals,
                               hand_flow, delta_time_s, hand_valid_mask,
                               include_context=False,
-                              interaction_object_chunk=interaction_object_chunk)
+                              interaction_object_chunk=interaction_object_chunk,
+                              latency_profiler=latency_profiler)
         return {key: output[key] for key in ("delta_xi_root", "token_mask", "token_mass")}
 
     @torch.inference_mode()

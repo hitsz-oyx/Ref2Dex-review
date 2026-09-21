@@ -7,6 +7,7 @@ out of the actor, critic, reward, and executed rollout action.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -15,6 +16,10 @@ import numpy as np
 import torch
 
 ACTION_DIM = 18
+
+
+def _profile_stage(profiler, name: str):
+    return profiler.stage(name) if profiler is not None else nullcontext()
 
 
 QUERY_LINKS = (
@@ -225,20 +230,26 @@ class FrozenCmv2Planner:
     def teacher(self, *, mu: torch.Tensor, current_native: torch.Tensor, base_target: torch.Tensor,
                 native_lower: torch.Tensor, native_upper: torch.Tensor, mimic_scales: tuple[float, ...],
                 current_links: torch.Tensor, object_pose: torch.Tensor, reference_transport: torch.Tensor,
-                desired_delta_xi: torch.Tensor) -> dict[str, torch.Tensor]:
+                desired_delta_xi: torch.Tensor, _latency_profiler=None,
+                _diagnostic_candidate_count: int | None = None) -> dict[str, torch.Tensor]:
         """Return detached action/weight.  All inputs are pre-action simulator state."""
         batch = mu.shape[0]
+        candidate_count = self.config.candidates if _diagnostic_candidate_count is None else _diagnostic_candidate_count
+        if candidate_count not in (1, 2, 4, 8):
+            raise ValueError("diagnostic candidate count must be one of 1, 2, 4, 8")
         fallback = {"teacher_action": mu.detach(), "teacher_weight": torch.zeros(batch, device=mu.device),
                     "activation": torch.zeros(batch, device=mu.device), "valid_fraction": torch.zeros(batch, device=mu.device),
                     "predicted_cost_improvement": torch.zeros(batch, device=mu.device)}
-        candidate_actions = self._candidates(mu)
+        with _profile_stage(_latency_profiler, "candidate_generation"):
+            candidate_actions = self._candidates(mu)[:, :candidate_count]
         with torch.no_grad():
             # Delayed imports avoid making this task-local module initialize the
             # global IsaacGym task registry during FK-only tests.
             from isaacgymenvs.tasks.cm_residual.action_mapping import compose_reference_residual
             from isaacgymenvs.tasks.cm_residual.dexplore_observation import calc_heading_quat_inv, quat_rotate
-            object_points, object_normals = self.geometry.object(object_pose)
-            active = self._activation(current_links, object_points, reference_transport, desired_delta_xi)
+            with _profile_stage(_latency_profiler, "state_geometry"):
+                object_points, object_normals = self.geometry.object(object_pose)
+                active = self._activation(current_links, object_points, reference_transport, desired_delta_xi)
             if not bool(active.any()):
                 return fallback
             active_ids = active.nonzero(as_tuple=False).flatten()
@@ -247,7 +258,7 @@ class FrozenCmv2Planner:
             for ids in active_ids.split(self.config.planner_env_microbatch):
                 actions = candidate_actions.index_select(0, ids)
                 count = len(ids)
-                expanded_base = base_target.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1).reshape(-1, ACTION_DIM)
+                expanded_base = base_target.index_select(0, ids)[:, None].expand(-1, candidate_count, -1).reshape(-1, ACTION_DIM)
                 expanded_actions = actions.reshape(-1, ACTION_DIM)
                 lower = native_lower[None].expand_as(expanded_base)
                 upper = native_upper[None].expand_as(expanded_base)
@@ -255,68 +266,74 @@ class FrozenCmv2Planner:
                     expanded_base, expanded_actions, lower, upper,
                     translation_scale_m=0.015, rotation_scale_rad=0.20, finger_scale_rad=0.08,
                     mimic_scales=mimic_scales)
-                targets = targets.view(count, self.config.candidates, ACTION_DIM)
-                applied_delta = details["applied_delta"].view(count, self.config.candidates, ACTION_DIM)
+                targets = targets.view(count, candidate_count, ACTION_DIM)
+                applied_delta = details["applied_delta"].view(count, candidate_count, ACTION_DIM)
                 feasible = torch.isfinite(targets).all(dim=-1) & torch.isfinite(applied_delta).all(dim=-1)
-                next_links = self.kinematics.forward(targets)
-                current_points, current_normals = self.geometry.hand(current_links.index_select(0, ids))
-                next_points, next_normals = self.geometry.hand(next_links.reshape(-1, len(QUERY_LINKS), 4, 4))
-                next_points = next_points.view(count, self.config.candidates, -1, 3)
-                next_normals = next_normals.view(count, self.config.candidates, -1, 3)
+                with _profile_stage(_latency_profiler, "fk"):
+                    next_links = self.kinematics.forward(targets)
+                with _profile_stage(_latency_profiler, "hand_surface"):
+                    current_points, current_normals = self.geometry.hand(current_links.index_select(0, ids))
+                    next_points, next_normals = self.geometry.hand(next_links.reshape(-1, len(QUERY_LINKS), 4, 4))
+                    next_points = next_points.view(count, candidate_count, -1, 3)
+                    next_normals = next_normals.view(count, candidate_count, -1, 3)
                 hand_count = next_points.shape[2]
-                obj_points = object_points.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_points.shape[1], 3)
-                obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, object_normals.shape[1], 3)
-                current_batch = current_points[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
-                current_normal_batch = current_normals[:, None].expand(-1, self.config.candidates, -1, -1).reshape(-1, hand_count, 3)
+                obj_points = object_points.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_points.shape[1], 3)
+                obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_normals.shape[1], 3)
+                current_batch = current_points[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
+                current_normal_batch = current_normals[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
+                adapter_kwargs = {"interaction_object_chunk": self.config.interaction_object_chunk}
+                if _latency_profiler is not None:
+                    adapter_kwargs["latency_profiler"] = _latency_profiler
                 output = self.adapter.predict_effect_only(
                     obj_points, obj_normals, current_batch, current_normal_batch,
                     next_points.reshape(-1, hand_count, 3) - current_batch,
                     1.0 / 30.0,
-                    torch.ones((count * self.config.candidates, hand_count),
+                    torch.ones((count * candidate_count, hand_count),
                                dtype=torch.bool, device=mu.device),
-                    interaction_object_chunk=self.config.interaction_object_chunk)
-                predicted = output["delta_xi_root"].view(count, self.config.candidates, 6)
-                token_mask = output["token_mask"].view(count, self.config.candidates, -1)
-                token_mass = output["token_mass"].view(count, self.config.candidates, -1)
-                valid = feasible & token_mask.any(dim=-1) & (token_mass.sum(dim=-1) > 0) & torch.isfinite(predicted).all(dim=-1)
-                desired = desired_delta_xi.index_select(0, ids)[:, None]
-                translation_cost = (predicted[..., :3] - desired[..., :3]).square().sum(dim=-1) / self.config.translation_scale_m ** 2
-                rotation_cost = (predicted[..., 3:] - desired[..., 3:]).square().sum(dim=-1) / self.config.rotation_scale_rad ** 2
-                next_object = _pose_from_delta(object_pose.index_select(0, ids), predicted)
+                    **adapter_kwargs)
+                with _profile_stage(_latency_profiler, "scoring"):
+                    predicted = output["delta_xi_root"].view(count, candidate_count, 6)
+                    token_mask = output["token_mask"].view(count, candidate_count, -1)
+                    token_mass = output["token_mass"].view(count, candidate_count, -1)
+                    valid = feasible & token_mask.any(dim=-1) & (token_mass.sum(dim=-1) > 0) & torch.isfinite(predicted).all(dim=-1)
+                    desired = desired_delta_xi.index_select(0, ids)[:, None]
+                    translation_cost = (predicted[..., :3] - desired[..., :3]).square().sum(dim=-1) / self.config.translation_scale_m ** 2
+                    rotation_cost = (predicted[..., 3:] - desired[..., 3:]).square().sum(dim=-1) / self.config.rotation_scale_rad ** 2
+                    next_object = _pose_from_delta(object_pose.index_select(0, ids), predicted)
                 # object_points_world only needs position/quaternion; use transformed sampled points directly for stable costs.
-                local_obj = torch.as_tensor(self.geometry.object_local, device=mu.device, dtype=mu.dtype)
-                predicted_points = torch.matmul(local_obj[None, None, :, None, :], next_object[:, :, None, :3, :3].transpose(-1, -2)).squeeze(-2) + next_object[:, :, None, :3, 3]
-                key_pos = next_links.index_select(2, self.key_query_indices)[:, :, list(IG_KEY_INDICES), :3, 3]
-                root_quat = torch.zeros((count, self.config.candidates, 4), dtype=mu.dtype, device=mu.device)
+                    local_obj = torch.as_tensor(self.geometry.object_local, device=mu.device, dtype=mu.dtype)
+                    predicted_points = torch.matmul(local_obj[None, None, :, None, :], next_object[:, :, None, :3, :3].transpose(-1, -2)).squeeze(-2) + next_object[:, :, None, :3, 3]
+                    key_pos = next_links.index_select(2, self.key_query_indices)[:, :, list(IG_KEY_INDICES), :3, 3]
+                    root_quat = torch.zeros((count, candidate_count, 4), dtype=mu.dtype, device=mu.device)
                 # Heading only needs a unit quaternion; derive it from the root transform via a stable trace conversion.
-                root_rot = next_links[:, :, 0, :3, :3]
-                trace = root_rot.diagonal(dim1=-2, dim2=-1).sum(-1)
-                root_quat[..., 3] = torch.sqrt((1.0 + trace).clamp_min(1e-8)) * 0.5
-                root_quat[..., 0] = (root_rot[..., 2, 1] - root_rot[..., 1, 2]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-                root_quat[..., 1] = (root_rot[..., 0, 2] - root_rot[..., 2, 0]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-                root_quat[..., 2] = (root_rot[..., 1, 0] - root_rot[..., 0, 1]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
-                displacement = key_pos[:, :, :, None, :] - predicted_points[:, :, None, :, :]
-                nearest = displacement.norm(dim=-1).argmin(dim=-1)
-                gather = nearest[..., None, None].expand(-1, -1, -1, 1, 3)
-                candidate_ig = displacement.gather(3, gather).squeeze(3)
-                heading = calc_heading_quat_inv(root_quat.reshape(-1, 4)).view(count, self.config.candidates, 4)
-                candidate_ig = quat_rotate(heading[:, :, None].expand(-1, -1, 6, -1).reshape(-1, 4),
-                                           candidate_ig.reshape(-1, 3)).view(count, self.config.candidates, -1)
-                reference_ig = reference_transport.index_select(0, ids)[:, 184:232].view(count, 16, 3)[:, list(IG_KEY_INDICES)].reshape(count, 1, -1)
-                ig_cost = (candidate_ig - reference_ig).square().mean(dim=-1) / self.config.translation_scale_m ** 2
-                trust_cost = (actions - mu.index_select(0, ids)[:, None]).square().mean(dim=-1)
-                costs = self.config.effect_weight * (translation_cost + rotation_cost) + self.config.ig_weight * ig_cost + self.config.trust_weight * trust_cost
-                costs = costs.masked_fill(~valid, float("inf"))
-                has_valid = valid.any(dim=-1)
-                weights = torch.softmax((-costs / self.config.temperature).masked_fill(~valid, -float("inf")), dim=-1)
-                weights = torch.where(has_valid[:, None], weights, torch.zeros_like(weights))
-                teacher = (weights[..., None] * actions).sum(dim=1)
-                fallback["teacher_action"].index_copy_(0, ids, torch.where(has_valid[:, None], teacher, mu.index_select(0, ids)))
-                fallback["teacher_weight"].index_copy_(0, ids, has_valid.to(mu.dtype))
-                fallback["activation"].index_copy_(0, ids, torch.ones(count, device=mu.device))
-                fallback["valid_fraction"].index_copy_(0, ids, valid.to(mu.dtype).mean(dim=-1))
-                baseline = costs[:, 0]
-                selected = (weights * costs.masked_fill(~valid, 0.0)).sum(dim=-1)
-                improvement = torch.where(has_valid & torch.isfinite(baseline), baseline - selected, torch.zeros_like(selected))
-                fallback["predicted_cost_improvement"].index_copy_(0, ids, improvement)
+                    root_rot = next_links[:, :, 0, :3, :3]
+                    trace = root_rot.diagonal(dim1=-2, dim2=-1).sum(-1)
+                    root_quat[..., 3] = torch.sqrt((1.0 + trace).clamp_min(1e-8)) * 0.5
+                    root_quat[..., 0] = (root_rot[..., 2, 1] - root_rot[..., 1, 2]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                    root_quat[..., 1] = (root_rot[..., 0, 2] - root_rot[..., 2, 0]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                    root_quat[..., 2] = (root_rot[..., 1, 0] - root_rot[..., 0, 1]) / (4.0 * root_quat[..., 3]).clamp_min(1e-8)
+                    displacement = key_pos[:, :, :, None, :] - predicted_points[:, :, None, :, :]
+                    nearest = displacement.norm(dim=-1).argmin(dim=-1)
+                    gather = nearest[..., None, None].expand(-1, -1, -1, 1, 3)
+                    candidate_ig = displacement.gather(3, gather).squeeze(3)
+                    heading = calc_heading_quat_inv(root_quat.reshape(-1, 4)).view(count, candidate_count, 4)
+                    candidate_ig = quat_rotate(heading[:, :, None].expand(-1, -1, 6, -1).reshape(-1, 4),
+                                               candidate_ig.reshape(-1, 3)).view(count, candidate_count, -1)
+                    reference_ig = reference_transport.index_select(0, ids)[:, 184:232].view(count, 16, 3)[:, list(IG_KEY_INDICES)].reshape(count, 1, -1)
+                    ig_cost = (candidate_ig - reference_ig).square().mean(dim=-1) / self.config.translation_scale_m ** 2
+                    trust_cost = (actions - mu.index_select(0, ids)[:, None]).square().mean(dim=-1)
+                    costs = self.config.effect_weight * (translation_cost + rotation_cost) + self.config.ig_weight * ig_cost + self.config.trust_weight * trust_cost
+                    costs = costs.masked_fill(~valid, float("inf"))
+                    has_valid = valid.any(dim=-1)
+                    weights = torch.softmax((-costs / self.config.temperature).masked_fill(~valid, -float("inf")), dim=-1)
+                    weights = torch.where(has_valid[:, None], weights, torch.zeros_like(weights))
+                    teacher = (weights[..., None] * actions).sum(dim=1)
+                    fallback["teacher_action"].index_copy_(0, ids, torch.where(has_valid[:, None], teacher, mu.index_select(0, ids)))
+                    fallback["teacher_weight"].index_copy_(0, ids, has_valid.to(mu.dtype))
+                    fallback["activation"].index_copy_(0, ids, torch.ones(count, device=mu.device))
+                    fallback["valid_fraction"].index_copy_(0, ids, valid.to(mu.dtype).mean(dim=-1))
+                    baseline = costs[:, 0]
+                    selected = (weights * costs.masked_fill(~valid, 0.0)).sum(dim=-1)
+                    improvement = torch.where(has_valid & torch.isfinite(baseline), baseline - selected, torch.zeros_like(selected))
+                    fallback["predicted_cost_improvement"].index_copy_(0, ids, improvement)
         return fallback

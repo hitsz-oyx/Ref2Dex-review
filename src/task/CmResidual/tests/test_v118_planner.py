@@ -7,6 +7,7 @@ import torch
 import yaml
 
 from src.task.CmDecoderv2.kinematics import InspireKinematics
+from src.task.CmResidual.v118_latency_profile import STAGES, summarize
 from src.task.CmResidual.v118_planner import ACTION_DIM, PlannerConfig, QUERY_LINKS, TorchInspireKinematics
 
 
@@ -33,6 +34,30 @@ def test_v118_planner_contract_is_fixed_to_eight_candidates():
     assert PlannerConfig().rotation_scale_rad == 0.05
     assert PlannerConfig().planner_env_microbatch == 16
     assert PlannerConfig().interaction_object_chunk == 32
+
+
+def test_v118a_latency_summary_reports_percentiles_and_accounting():
+    samples = [
+        {name: float(stage_index + sample_index + 1) for stage_index, name in enumerate(STAGES)}
+        for sample_index in range(2)
+    ]
+    summary = summarize(samples)
+    assert summary["candidate_generation"]["mean_ms"] == 1.5
+    assert summary["end_to_end"]["median_ms"] == 10.5
+    assert summary["end_to_end"]["p90_ms"] == 10.9
+    assert summary["accounting"]["stages_mean_ms"] == 49.5
+
+
+def test_v118a_runner_pins_gpu6_real_phaseb_state_and_cuda_events():
+    runner = (ROOT / "src/task/CmResidual/tools/run_v118a_latency_profile.py").read_text()
+    bootstrap = (ROOT / "src/task/CmResidual/tools/v118a_latency_bootstrap.py").read_text()
+    profiler = (ROOT / "src/task/CmResidual/v118_latency_profile.py").read_text()
+    assert "default=6" in runner
+    assert '"num_envs=128"' in runner and '"seed=42"' in runner
+    assert '"train.params.config.cm_distill_coef=0.1"' in runner
+    assert "first planner-active pre-action state" in runner
+    assert "torch.cuda.Event(enable_timing=True)" in profiler
+    assert "FrozenCmv2Planner.teacher = _intercept" in bootstrap
 
 
 def test_v119_config_uses_streaming_memory_contract():
@@ -119,6 +144,23 @@ def test_v119_planner_microbatch_covers_all_active_envs_in_order(monkeypatch):
     assert torch.equal(result["activation"], torch.ones(batch))
     assert torch.equal(result["teacher_weight"], torch.ones(batch))
     assert torch.equal(result["valid_fraction"], torch.ones(batch))
+    adapter.calls.clear()
+    diagnostic = planner.teacher(
+        mu=torch.zeros(1, ACTION_DIM),
+        current_native=torch.zeros(1, ACTION_DIM),
+        base_target=torch.zeros(1, ACTION_DIM),
+        native_lower=torch.full((ACTION_DIM,), -1.0),
+        native_upper=torch.full((ACTION_DIM,), 1.0),
+        mimic_scales=tuple(1.0 for _ in range(ACTION_DIM)),
+        current_links=links[:1],
+        object_pose=torch.eye(4).expand(1, 4, 4).clone(),
+        reference_transport=torch.zeros(1, 232),
+        desired_delta_xi=torch.zeros(1, 6),
+        _diagnostic_candidate_count=2,
+    )
+    assert adapter.calls == [(2, 11)]
+    assert torch.equal(diagnostic["activation"], torch.ones(1))
+    assert torch.equal(diagnostic["valid_fraction"], torch.ones(1))
 
 
 def test_v119_stage_a_agent_skips_task_teacher_when_coef_zero():

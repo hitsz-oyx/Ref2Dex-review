@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Dict, Optional, Tuple
+from contextlib import nullcontext
 
 import torch
 from torch import Tensor, nn
@@ -18,6 +19,10 @@ import torch.nn.functional as F
 
 def _mlp(in_dim: int, hidden: int, out_dim: int) -> nn.Sequential:
     return nn.Sequential(nn.Linear(in_dim, hidden), nn.GELU(), nn.Linear(hidden, out_dim))
+
+
+def _profile_stage(profiler, name: str):
+    return profiler.stage(name) if profiler is not None else nullcontext()
 
 
 def _axis_angle_matrix(axis_angle: Tensor) -> Tensor:
@@ -122,7 +127,8 @@ class LocalInteractionEncoder(nn.Module):
                 hand_points: Tensor, hand_normals: Tensor, hand_flow: Tensor,
                 hand_valid_mask: Optional[Tensor] = None,
                 delta_time_s: Optional[Tensor] = None,
-                edge_object_chunk: Optional[int] = None) -> Tuple[Tensor, Dict[str, Tensor]]:
+                edge_object_chunk: Optional[int] = None,
+                latency_profiler=None) -> Tuple[Tensor, Dict[str, Tensor]]:
         if hand_valid_mask is None:
             hand_valid_mask = torch.ones(hand_points.shape[:2], dtype=torch.bool, device=hand_points.device)
         if delta_time_s is None:
@@ -130,7 +136,9 @@ class LocalInteractionEncoder(nn.Module):
         if delta_time_s.ndim == 2:
             delta_time_s = delta_time_s.squeeze(-1)
         if self.interaction_mode == "swept":
-            edge_distances, indices = swept_topk(object_points, hand_points, hand_flow, hand_valid_mask, self.knn_k)
+            with _profile_stage(latency_profiler, "swept_topk"):
+                edge_distances, indices = swept_topk(
+                    object_points, hand_points, hand_flow, hand_valid_mask, self.knn_k)
             indices = indices.clamp_max(hand_points.shape[1] - 1)
         else:
             distances = torch.cdist(object_points, hand_points)
@@ -145,54 +153,55 @@ class LocalInteractionEncoder(nn.Module):
         if edge_object_chunk <= 0:
             raise ValueError("edge_object_chunk must be positive")
 
-        contacts, valid_chunks = [], []
-        query_all = self.query(object_features)
-        hand_points_expanded = hand_points[:, None].expand(-1, object_count, -1, -1)
-        hand_normals_expanded = hand_normals[:, None].expand(-1, object_count, -1, -1)
-        hand_flow_expanded = hand_flow[:, None].expand(-1, object_count, -1, -1)
-        hand_valid_expanded = hand_valid_mask[:, None].expand(-1, object_count, -1)
-        for start in range(0, object_count, edge_object_chunk):
-            stop = min(start + edge_object_chunk, object_count)
-            chunk_indices = indices[:, start:stop]
-            gather = chunk_indices[..., None].expand(-1, -1, -1, 3)
-            hp = torch.gather(hand_points_expanded[:, start:stop], 2, gather)
-            hn = torch.gather(hand_normals_expanded[:, start:stop], 2, gather)
-            hf = torch.gather(hand_flow_expanded[:, start:stop], 2, gather)
-            chunk_distances = edge_distances[:, start:stop]
-            valid = torch.gather(hand_valid_expanded[:, start:stop], 2, chunk_indices)
-            valid = valid & chunk_distances.lt(self.radius_m)
-            relative = hp - object_points[:, start:stop, None, :]
-            current_distance = torch.linalg.vector_norm(relative, dim=-1, keepdim=True)
-            end_distance = torch.linalg.vector_norm(relative + hf, dim=-1, keepdim=True)
-            on = object_normals[:, start:stop, None, :].expand_as(hn)
-            dot = (on * hn).sum(-1, keepdim=True)
-            normal_flow = (hf * on).sum(-1, keepdim=True)
-            tangent_flow = hf - normal_flow * on
-            dt = delta_time_s[:, None, None, None].expand_as(dot)
-            if self.interaction_mode == "swept":
-                if self.feature_scale_m is None:
-                    edge_input = torch.cat([relative, current_distance, end_distance, chunk_distances[..., None],
-                                            on, hn, dot, hf, normal_flow, tangent_flow, dt], -1)
+        with _profile_stage(latency_profiler, "edge_contact"):
+            contacts, valid_chunks = [], []
+            query_all = self.query(object_features)
+            hand_points_expanded = hand_points[:, None].expand(-1, object_count, -1, -1)
+            hand_normals_expanded = hand_normals[:, None].expand(-1, object_count, -1, -1)
+            hand_flow_expanded = hand_flow[:, None].expand(-1, object_count, -1, -1)
+            hand_valid_expanded = hand_valid_mask[:, None].expand(-1, object_count, -1)
+            for start in range(0, object_count, edge_object_chunk):
+                stop = min(start + edge_object_chunk, object_count)
+                chunk_indices = indices[:, start:stop]
+                gather = chunk_indices[..., None].expand(-1, -1, -1, 3)
+                hp = torch.gather(hand_points_expanded[:, start:stop], 2, gather)
+                hn = torch.gather(hand_normals_expanded[:, start:stop], 2, gather)
+                hf = torch.gather(hand_flow_expanded[:, start:stop], 2, gather)
+                chunk_distances = edge_distances[:, start:stop]
+                valid = torch.gather(hand_valid_expanded[:, start:stop], 2, chunk_indices)
+                valid = valid & chunk_distances.lt(self.radius_m)
+                relative = hp - object_points[:, start:stop, None, :]
+                current_distance = torch.linalg.vector_norm(relative, dim=-1, keepdim=True)
+                end_distance = torch.linalg.vector_norm(relative + hf, dim=-1, keepdim=True)
+                on = object_normals[:, start:stop, None, :].expand_as(hn)
+                dot = (on * hn).sum(-1, keepdim=True)
+                normal_flow = (hf * on).sum(-1, keepdim=True)
+                tangent_flow = hf - normal_flow * on
+                dt = delta_time_s[:, None, None, None].expand_as(dot)
+                if self.interaction_mode == "swept":
+                    if self.feature_scale_m is None:
+                        edge_input = torch.cat([relative, current_distance, end_distance, chunk_distances[..., None],
+                                                on, hn, dot, hf, normal_flow, tangent_flow, dt], -1)
+                    else:
+                        s = self.feature_scale_m
+                        velocity = (hf / dt.clamp_min(1e-8)) * (self.frame_dt_s / s)
+                        edge_input = torch.cat([relative / s, current_distance / s, end_distance / s,
+                                                chunk_distances[..., None] / s, on, hn, dot, hf / s,
+                                                normal_flow / s, tangent_flow / s, dt / self.frame_dt_s,
+                                                velocity], -1)
                 else:
-                    s = self.feature_scale_m
-                    velocity = (hf / dt.clamp_min(1e-8)) * (self.frame_dt_s / s)
-                    edge_input = torch.cat([relative / s, current_distance / s, end_distance / s,
-                                            chunk_distances[..., None] / s, on, hn, dot, hf / s,
-                                            normal_flow / s, tangent_flow / s, dt / self.frame_dt_s,
-                                            velocity], -1)
-            else:
-                edge_input = torch.cat([relative, chunk_distances[..., None], on, hn, dot,
-                                        hf, normal_flow, tangent_flow], -1)
-            edge = self.edge(edge_input)
-            logits = (query_all[:, start:stop, None, :] * self.key(edge)).sum(-1) / (self.width ** 0.5)
-            weights = torch.softmax(logits.masked_fill(~valid, -torch.finfo(logits.dtype).max), -1)
-            weights = weights * valid.to(weights.dtype)
-            weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-8)
-            contact = (weights[..., None] * self.value(edge)).sum(2)
-            contacts.append(contact * valid.any(-1, keepdim=True).to(contact.dtype))
-            valid_chunks.append(valid)
-        contact = torch.cat(contacts, dim=1)
-        valid = torch.cat(valid_chunks, dim=1)
+                    edge_input = torch.cat([relative, chunk_distances[..., None], on, hn, dot,
+                                            hf, normal_flow, tangent_flow], -1)
+                edge = self.edge(edge_input)
+                logits = (query_all[:, start:stop, None, :] * self.key(edge)).sum(-1) / (self.width ** 0.5)
+                weights = torch.softmax(logits.masked_fill(~valid, -torch.finfo(logits.dtype).max), -1)
+                weights = weights * valid.to(weights.dtype)
+                weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-8)
+                contact = (weights[..., None] * self.value(edge)).sum(2)
+                contacts.append(contact * valid.any(-1, keepdim=True).to(contact.dtype))
+                valid_chunks.append(valid)
+            contact = torch.cat(contacts, dim=1)
+            valid = torch.cat(valid_chunks, dim=1)
         return contact, {"edge_indices": indices, "edge_distances": edge_distances,
                          "edge_valid_mask": valid, "has_interaction": valid.any(-1)}
 
@@ -339,36 +348,39 @@ class ObjectInteractionCmv2V13Model(nn.Module):
         if not torch.isfinite(object_scale).all() or (object_scale <= 1e-8).any():
             raise ValueError("Degenerate object geometry")
         log_scale = torch.log(object_scale / self.feature_scale_m)
-        geo = self.geometry_encoder(torch.cat((
-            centered / object_scale[:, None, None], normals,
-            log_scale[:, None, None].expand(-1, points.shape[1], 1)), dim=-1))
+        profiler = batch.get("_latency_profiler")
+        with _profile_stage(profiler, "geometry_encoder"):
+            geo = self.geometry_encoder(torch.cat((
+                centered / object_scale[:, None, None], normals,
+                log_scale[:, None, None].expand(-1, points.shape[1], 1)), dim=-1))
         contact, diagnostics = self.local_interaction(
             geo, points, normals, batch["hand_points"], batch["hand_normals"],
             batch["hand_flow"], batch.get("hand_valid_mask"), batch.get("delta_time_s"),
-            batch.get("interaction_object_chunk"))
-        active = diagnostics["has_interaction"]
-        global_feature = _masked_attention_pool(
-            geo, torch.ones_like(active), self.global_score)
-        interaction_feature = _masked_attention_pool(contact, active, self.contact_score)
-        direct = self.part_fusion(torch.cat((global_feature, interaction_feature), dim=-1))
-        tokens, anchors, token_normals, mass, token_mask = self.tokens(
-            contact, points, normals, active, object_scale)
-        token_input = torch.cat((tokens, anchors / object_scale[:, None, None],
-                                 token_normals, torch.log(mass.clamp_min(1e-8))[..., None]), dim=-1)
-        spatial_tokens = self.token_encoder(token_input)
-        # MultiheadAttention needs at least one unmasked key for each sample.
-        safe_mask = token_mask.clone()
-        empty = ~safe_mask.any(1)
-        safe_mask[empty, 0] = True
-        attended, _ = self.cross_attention(
-            direct[:, None], spatial_tokens, spatial_tokens,
-            key_padding_mask=~safe_mask, need_weights=False)
-        attended = attended[:, 0] * (~empty)[:, None].to(direct.dtype)
-        fused = self.fusion_head(torch.cat((direct, attended), dim=-1))
-        delta_xi = self.root_head(fused)
-        rotation = _axis_angle_matrix_stable(delta_xi[:, 3:])
-        structured_flow = torch.bmm(points, rotation.transpose(1, 2)) + delta_xi[:, None, :3] - points
-        cm_tokens = self.cm_projection(spatial_tokens) * token_mask[..., None].to(points.dtype)
+            batch.get("interaction_object_chunk"), profiler)
+        with _profile_stage(profiler, "token_attention_effect"):
+            active = diagnostics["has_interaction"]
+            global_feature = _masked_attention_pool(
+                geo, torch.ones_like(active), self.global_score)
+            interaction_feature = _masked_attention_pool(contact, active, self.contact_score)
+            direct = self.part_fusion(torch.cat((global_feature, interaction_feature), dim=-1))
+            tokens, anchors, token_normals, mass, token_mask = self.tokens(
+                contact, points, normals, active, object_scale)
+            token_input = torch.cat((tokens, anchors / object_scale[:, None, None],
+                                     token_normals, torch.log(mass.clamp_min(1e-8))[..., None]), dim=-1)
+            spatial_tokens = self.token_encoder(token_input)
+            # MultiheadAttention needs at least one unmasked key for each sample.
+            safe_mask = token_mask.clone()
+            empty = ~safe_mask.any(1)
+            safe_mask[empty, 0] = True
+            attended, _ = self.cross_attention(
+                direct[:, None], spatial_tokens, spatial_tokens,
+                key_padding_mask=~safe_mask, need_weights=False)
+            attended = attended[:, 0] * (~empty)[:, None].to(direct.dtype)
+            fused = self.fusion_head(torch.cat((direct, attended), dim=-1))
+            delta_xi = self.root_head(fused)
+            rotation = _axis_angle_matrix_stable(delta_xi[:, 3:])
+            structured_flow = torch.bmm(points, rotation.transpose(1, 2)) + delta_xi[:, None, :3] - points
+            cm_tokens = self.cm_projection(spatial_tokens) * token_mask[..., None].to(points.dtype)
         return {"delta_xi_root": delta_xi,
                 "obj_flow_structured": structured_flow,
                 "obj_flow_residual": torch.zeros_like(points),

@@ -1,5 +1,6 @@
 """V1.12 static Cmv2 adapter contract, independent of the real checkpoint."""
 import hashlib
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,16 @@ from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM, MODEL_CONFIG,
                                                 SCHEMA, FrozenCmv2Adapter,
                                                 encode_context)
 from src.task.ObjectInteractionCmv2.model import ObjectInteractionCmv2V13Model
+
+
+class _RecordingProfiler:
+    def __init__(self):
+        self.names = []
+
+    @contextmanager
+    def stage(self, name):
+        self.names.append(name)
+        yield
 
 
 def _object_points():
@@ -72,6 +83,14 @@ def test_checkpoint_requires_sha_architecture_and_strict_state(tmp_path: Path):
     torch.testing.assert_close(effect["delta_xi_root"], actor_output["delta_xi_root"], atol=1e-6, rtol=1e-6)
     assert torch.equal(effect["token_mask"], actor_output["token_mask"])
     torch.testing.assert_close(effect["token_mass"], actor_output["token_mass"], atol=1e-6, rtol=1e-6)
+    profiler = _RecordingProfiler()
+    profiled = adapter.predict_effect_only(
+        object_points, object_normals, hand_points, hand_normals,
+        torch.zeros_like(hand_points), 1 / 30,
+        interaction_object_chunk=32, latency_profiler=profiler)
+    assert profiler.names == ["geometry_encoder", "swept_topk", "edge_contact", "token_attention_effect"]
+    for name in effect:
+        torch.testing.assert_close(profiled[name], effect[name])
     with pytest.raises(ValueError, match="SHA256"):
         FrozenCmv2Adapter(checkpoint, "0" * 64, "cpu")
     sha = write({"architecture_version": "v1_2", "model": model.state_dict()})
