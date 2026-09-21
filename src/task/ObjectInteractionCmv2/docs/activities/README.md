@@ -1,5 +1,6 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260921-CMV2-V113-COMPACT-ENDPOINT](ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)：紧凑 endpoint shard schema、reference/compact parity、producer/reader 与 DDP backend 接线。
 - [ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3](ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)：端点并集 KNN、整体多部件采样、逐部件直接 SE(3) 的隔离实现、门禁及正式 run 受控停止终态。
 - [ACT-20260920-CMV2-V111G-MIXED-DDP-GATE](ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)：五组固定split与DDP准备；OakInk2多部件刚体一致性门禁失败，正式训练未启动。
 

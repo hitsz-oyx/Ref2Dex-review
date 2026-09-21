@@ -2,7 +2,9 @@
 
 ## 当前工作状态
 
-- work_version：`V1.12`；Task-local 实现、CPU/真实只读门禁、单 GPU smoke 及 GPU0+2 B64 双卡 smoke 已完成。V1.12 正式 run 已按用户要求在 step 200、epoch 1 受控停止，终态为 `STOPPED`；下一步在独立 V1.13 分支诊断并优化数据 I/O，当前不据此形成科学结论。
+- work_version：`V1.13`；紧凑 endpoint shard schema、producer/reader、reference/compact 双后端和 DDP 接线已实现，Task 测试及五组单样本 parity 已通过。尚未构建 V1.13 pilot/full cache，也未批准 benchmark、smoke 或正式训练。
+- V1.13 保持 V1.12 模型与研究语义不变：训练时可从去重手点表和预选 endpoint-32 edge 恢复交互输入，避免读取完整高分辨率手流及在线全手流 KNN；默认 reference backend 仍保留。
+- V1.13 入口：[紧凑 schema/reader](../compact_endpoint.py)、[cache producer](../tools/data/build_compact_endpoint_v1_13.py)、[FINAL 计划](plan/V1.13.md)与[实现 Activity](activities/ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
 - V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非正式运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现与 smoke Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
 - V1.11.1 正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 已按用户要求于 step 18040、epoch 2 受控停止；其 `latest.pt`、`best.pt`、metrics 与 source snapshot 均保留。
