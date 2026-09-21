@@ -63,6 +63,29 @@ def test_v13_interaction_object_chunk_matches_unchunked_outputs():
     assert torch.equal(chunked["edge_valid_mask"], unchunked["edge_valid_mask"])
 
 
+def test_v13_link_sparse_fast_path_matches_valid_dense_interaction():
+    torch.manual_seed(29)
+    value = batch()
+    for name in ("obj_points", "obj_normals"):
+        value[name][1] = value[name][0]
+    value["hand_points"] = value["obj_points"][:, :1].expand(-1, 10, -1).clone()
+    value["hand_points"] += torch.randn_like(value["hand_points"]) * 0.005
+    value["hand_flow"] = torch.randn_like(value["hand_points"]) * 0.002
+    table = torch.tensor([[0, 1, 2, 3, 10], [4, 5, 6, 10, 10], [7, 8, 9, 10, 10]])
+    net = model().eval()
+    with torch.no_grad():
+        dense = net(value)
+        fast_value = dict(value)
+        fast_value.update({"candidate_group_size": 2, "swept_algorithm": "link_aabb",
+                           "hand_link_index": table, "sparse_valid_edges": True})
+        fast = net(fast_value)
+    assert torch.equal(fast["edge_valid_mask"], dense["edge_valid_mask"])
+    assert torch.equal(fast["edge_indices"][fast["edge_valid_mask"]],
+                       dense["edge_indices"][dense["edge_valid_mask"]])
+    for key in ("delta_xi_root", "cm_tokens", "token_mass", "contact_features"):
+        torch.testing.assert_close(fast[key], dense[key], atol=1e-6, rtol=1e-6)
+
+
 def test_competitive_mass_conservation_and_permutation():
     torch.manual_seed(1)
     tokens = CompetitiveContactTokens(8, 4)

@@ -65,10 +65,94 @@ def _axis_angle_matrix_stable(axis_angle: Tensor) -> Tensor:
     return eye + a[..., None] * skew + b[..., None] * (skew @ skew)
 
 
+def _stable_smallest_k(distances: Tensor, indices: Tensor, k: int) -> Tuple[Tensor, Tensor]:
+    """Select lexicographic (distance, index) top-k without sorting the full axis."""
+    k = min(k, distances.shape[-1])
+    threshold = torch.topk(distances, k=k, largest=False, sorted=False, dim=-1).values.amax(
+        dim=-1, keepdim=True)
+    strictly_better = distances < threshold
+    needed_ties = (k - strictly_better.sum(dim=-1, keepdim=True)).clamp_min(1)
+    sentinel = torch.iinfo(indices.dtype).max
+    tied_indices = indices.masked_fill(distances != threshold, sentinel)
+    smallest_ties = torch.topk(tied_indices, k=k, largest=False, sorted=True, dim=-1).values
+    tie_cutoff = torch.gather(smallest_ties, -1, needed_ties.sub(1).clamp_max(k - 1))
+    selected = strictly_better | ((distances == threshold) & (indices <= tie_cutoff))
+    selected_distances = distances.masked_fill(~selected, float("inf"))
+    positions = torch.topk(selected_distances, k=k, largest=False, sorted=False, dim=-1).indices
+    result_distances = torch.gather(distances, -1, positions)
+    result_indices = torch.gather(indices, -1, positions)
+    # Only sort the retained k entries.  Stable two-pass sorting preserves the
+    # historical lower-index tie contract at a much smaller width.
+    by_index = torch.argsort(result_indices, dim=-1, stable=True)
+    result_distances = torch.gather(result_distances, -1, by_index)
+    result_indices = torch.gather(result_indices, -1, by_index)
+    by_distance = torch.argsort(result_distances, dim=-1, stable=True)
+    return (torch.gather(result_distances, -1, by_distance),
+            torch.gather(result_indices, -1, by_distance))
+
+
+def _swept_topk_link_aabb(object_points: Tensor, hand_points: Tensor, hand_flow: Tensor,
+                           hand_valid_mask: Tensor, hand_link_index: Tensor,
+                           k: int, radius_m: float, object_chunk: int) -> Tuple[Tensor, Tensor]:
+    """Conservative link AABB broad phase with exact segment-distance narrow phase."""
+    batch, count, _ = object_points.shape
+    hands = hand_points.shape[1]
+    table = hand_link_index.to(device=hand_points.device, dtype=torch.long)
+    if table.ndim != 2 or table.numel() == 0:
+        raise ValueError("hand_link_index must be a non-empty padded [L,M] table")
+    table_valid = table < hands
+    gather_index = table.clamp_max(hands - 1)
+    start = hand_points[:, gather_index]
+    end = start + hand_flow[:, gather_index]
+    point_valid = table_valid[None] & hand_valid_mask[:, gather_index]
+    lower = torch.minimum(start, end).masked_fill(~point_valid[..., None], float("inf")).amin(dim=2)
+    upper = torch.maximum(start, end).masked_fill(~point_valid[..., None], -float("inf")).amax(dim=2)
+    link_count, link_width = table.shape
+    selected_distances, selected_indices = [], []
+    for o_start in range(0, count, object_chunk):
+        obj = object_points[:, o_start:o_start + object_chunk]
+        broad = ((obj[:, :, None] >= lower[:, None] - radius_m) &
+                 (obj[:, :, None] <= upper[:, None] + radius_m)).all(dim=-1)
+        triples = broad.nonzero(as_tuple=False)
+        candidate_distances = torch.full(
+            (*broad.shape, min(k, link_width)), float("inf"), device=obj.device, dtype=obj.dtype)
+        candidate_indices = torch.full(
+            candidate_distances.shape, hands, device=obj.device, dtype=torch.long)
+        if triples.numel():
+            batch_ids, object_ids, link_ids = triples.unbind(-1)
+            point_indices = gather_index[link_ids]
+            hp = hand_points[batch_ids[:, None], point_indices]
+            flow = hand_flow[batch_ids[:, None], point_indices]
+            relative = hp - obj[batch_ids, object_ids, None]
+            alpha = (-(relative * flow).sum(-1) /
+                     flow.square().sum(-1).clamp_min(1e-12)).clamp(0, 1)
+            distance2 = (relative + alpha[..., None] * flow).square().sum(-1)
+            valid = point_valid[batch_ids, link_ids]
+            distance2 = distance2.masked_fill(~valid, float("inf"))
+            link_distances, link_indices = _stable_smallest_k(
+                distance2, point_indices, min(k, link_width))
+            candidate_distances[batch_ids, object_ids, link_ids] = link_distances
+            candidate_indices[batch_ids, object_ids, link_ids] = link_indices
+        candidate_distances = candidate_distances.flatten(2)
+        candidate_indices = candidate_indices.flatten(2)
+        if candidate_distances.shape[-1] < k:
+            padding = k - candidate_distances.shape[-1]
+            candidate_distances = F.pad(candidate_distances, (0, padding), value=float("inf"))
+            candidate_indices = F.pad(candidate_indices, (0, padding), value=hands)
+        best_distances, best_indices = _stable_smallest_k(candidate_distances, candidate_indices, k)
+        selected_distances.append(best_distances)
+        selected_indices.append(best_indices)
+    distance2 = torch.cat(selected_distances, dim=1)
+    return torch.where(torch.isfinite(distance2), distance2.clamp_min(0).sqrt(), distance2), torch.cat(
+        selected_indices, dim=1)
+
+
 def swept_topk(object_points: Tensor, hand_points: Tensor, hand_flow: Tensor,
                hand_valid_mask: Optional[Tensor] = None, k: int = 32,
-               object_chunk: int = 128, hand_chunk: int = 256) -> Tuple[Tensor, Tensor]:
-    """Exact segment-distance top-k, with lower hand index winning distance ties."""
+               object_chunk: int = 128, hand_chunk: int = 256,
+               *, algorithm: str = "legacy", hand_link_index: Optional[Tensor] = None,
+               radius_m: float = 0.02) -> Tuple[Tensor, Tensor]:
+    """Segment-distance top-k with legacy, merge-topk and link-AABB paths."""
     if object_points.ndim != 3 or hand_points.ndim != 3 or hand_flow.shape != hand_points.shape:
         raise ValueError("Expected object [B,N,3] and matching hand/flow [B,H,3]")
     batch, count, _ = object_points.shape
@@ -78,6 +162,14 @@ def swept_topk(object_points: Tensor, hand_points: Tensor, hand_flow: Tensor,
     if hand_valid_mask is None:
         hand_valid_mask = torch.ones((batch, hands), dtype=torch.bool, device=hand_points.device)
     k = min(k, hands)
+    if algorithm == "link_aabb":
+        if hand_link_index is None:
+            raise ValueError("link_aabb search requires hand_link_index")
+        return _swept_topk_link_aabb(
+            object_points, hand_points, hand_flow, hand_valid_mask,
+            hand_link_index, k, radius_m, object_chunk)
+    if algorithm not in ("legacy", "merge"):
+        raise ValueError(f"unknown swept search algorithm: {algorithm}")
     all_dist, all_idx = [], []
     for o_start in range(0, count, object_chunk):
         obj = object_points[:, o_start:o_start + object_chunk]
@@ -89,21 +181,28 @@ def swept_topk(object_points: Tensor, hand_points: Tensor, hand_flow: Tensor,
             relative = hp[:, None] - obj[:, :, None]
             alpha = (-(relative * flow[:, None]).sum(-1) /
                      flow.square().sum(-1)[:, None].clamp_min(1e-12)).clamp(0, 1)
-            distance = torch.linalg.vector_norm(relative + alpha[..., None] * flow[:, None], dim=-1)
+            delta = relative + alpha[..., None] * flow[:, None]
+            distance = (delta.square().sum(-1) if algorithm == "merge"
+                        else torch.linalg.vector_norm(delta, dim=-1))
             distance = distance.masked_fill(~hand_valid_mask[:, None, h_start:h_start + hp.shape[1]], float("inf"))
             idx = torch.arange(h_start, h_start + hp.shape[1], device=obj.device).expand_as(distance)
-            # Stable sorts preserve lower indices at equal distance.
             candidates_d = torch.cat((best_dist, distance), -1)
             candidates_i = torch.cat((best_idx, idx), -1)
-            by_index = torch.argsort(candidates_i, dim=-1, stable=True)
-            candidates_d = torch.gather(candidates_d, -1, by_index)
-            candidates_i = torch.gather(candidates_i, -1, by_index)
-            by_distance = torch.argsort(candidates_d, dim=-1, stable=True)[..., :k]
-            best_dist = torch.gather(candidates_d, -1, by_distance)
-            best_idx = torch.gather(candidates_i, -1, by_distance)
+            if algorithm == "legacy":
+                by_index = torch.argsort(candidates_i, dim=-1, stable=True)
+                candidates_d = torch.gather(candidates_d, -1, by_index)
+                candidates_i = torch.gather(candidates_i, -1, by_index)
+                by_distance = torch.argsort(candidates_d, dim=-1, stable=True)[..., :k]
+                best_dist = torch.gather(candidates_d, -1, by_distance)
+                best_idx = torch.gather(candidates_i, -1, by_distance)
+            else:
+                best_dist, best_idx = _stable_smallest_k(candidates_d, candidates_i, k)
         all_dist.append(best_dist)
         all_idx.append(best_idx)
-    return torch.cat(all_dist, 1), torch.cat(all_idx, 1)
+    distances = torch.cat(all_dist, 1)
+    if algorithm == "merge":
+        distances = torch.where(torch.isfinite(distances), distances.clamp_min(0).sqrt(), distances)
+    return distances, torch.cat(all_idx, 1)
 
 
 class LocalInteractionEncoder(nn.Module):
@@ -128,7 +227,10 @@ class LocalInteractionEncoder(nn.Module):
                 hand_valid_mask: Optional[Tensor] = None,
                 delta_time_s: Optional[Tensor] = None,
                 edge_object_chunk: Optional[int] = None,
-                latency_profiler=None) -> Tuple[Tensor, Dict[str, Tensor]]:
+                latency_profiler=None, swept_algorithm: str = "legacy",
+                hand_link_index: Optional[Tensor] = None,
+                sparse_valid_edges: bool = False,
+                candidate_group_size: Optional[int] = None) -> Tuple[Tensor, Dict[str, Tensor]]:
         if hand_valid_mask is None:
             hand_valid_mask = torch.ones(hand_points.shape[:2], dtype=torch.bool, device=hand_points.device)
         if delta_time_s is None:
@@ -138,12 +240,15 @@ class LocalInteractionEncoder(nn.Module):
         if self.interaction_mode == "swept":
             with _profile_stage(latency_profiler, "swept_topk"):
                 edge_distances, indices = swept_topk(
-                    object_points, hand_points, hand_flow, hand_valid_mask, self.knn_k)
+                    object_points, hand_points, hand_flow, hand_valid_mask, self.knn_k,
+                    algorithm=swept_algorithm, hand_link_index=hand_link_index,
+                    radius_m=self.radius_m)
             indices = indices.clamp_max(hand_points.shape[1] - 1)
         else:
             distances = torch.cdist(object_points, hand_points)
             edge_distances, indices = torch.topk(distances, k=min(self.knn_k, hand_points.shape[1]), largest=False, dim=-1)
-        edge_distances = torch.where(torch.isfinite(edge_distances), edge_distances,
+        edge_finite = torch.isfinite(edge_distances)
+        edge_distances = torch.where(edge_finite, edge_distances,
                                      torch.zeros_like(edge_distances))
 
         object_count = object_points.shape[1]
@@ -155,7 +260,13 @@ class LocalInteractionEncoder(nn.Module):
 
         with _profile_stage(latency_profiler, "edge_contact"):
             contacts, valid_chunks = [], []
-            query_all = self.query(object_features)
+            if candidate_group_size is None:
+                query_all = self.query(object_features)
+            else:
+                group = int(candidate_group_size)
+                if group <= 0 or object_features.shape[0] % group:
+                    raise ValueError("candidate_group_size must divide the candidate batch")
+                query_all = self.query(object_features[::group]).repeat_interleave(group, dim=0)
             hand_points_expanded = hand_points[:, None].expand(-1, object_count, -1, -1)
             hand_normals_expanded = hand_normals[:, None].expand(-1, object_count, -1, -1)
             hand_flow_expanded = hand_flow[:, None].expand(-1, object_count, -1, -1)
@@ -169,7 +280,7 @@ class LocalInteractionEncoder(nn.Module):
                 hf = torch.gather(hand_flow_expanded[:, start:stop], 2, gather)
                 chunk_distances = edge_distances[:, start:stop]
                 valid = torch.gather(hand_valid_expanded[:, start:stop], 2, chunk_indices)
-                valid = valid & chunk_distances.lt(self.radius_m)
+                valid = valid & edge_finite[:, start:stop] & chunk_distances.lt(self.radius_m)
                 relative = hp - object_points[:, start:stop, None, :]
                 current_distance = torch.linalg.vector_norm(relative, dim=-1, keepdim=True)
                 end_distance = torch.linalg.vector_norm(relative + hf, dim=-1, keepdim=True)
@@ -192,12 +303,24 @@ class LocalInteractionEncoder(nn.Module):
                 else:
                     edge_input = torch.cat([relative, chunk_distances[..., None], on, hn, dot,
                                             hf, normal_flow, tangent_flow], -1)
-                edge = self.edge(edge_input)
-                logits = (query_all[:, start:stop, None, :] * self.key(edge)).sum(-1) / (self.width ** 0.5)
+                if sparse_valid_edges:
+                    logits = torch.full(valid.shape, -torch.finfo(edge_input.dtype).max,
+                                        device=edge_input.device, dtype=edge_input.dtype)
+                    values = torch.zeros((*valid.shape, self.width), device=edge_input.device,
+                                         dtype=edge_input.dtype)
+                    encoded = self.edge(edge_input[valid])
+                    queries = query_all[:, start:stop, None, :].expand(
+                        -1, -1, valid.shape[-1], -1)[valid]
+                    logits[valid] = (queries * self.key(encoded)).sum(-1) / (self.width ** 0.5)
+                    values[valid] = self.value(encoded)
+                else:
+                    edge = self.edge(edge_input)
+                    logits = (query_all[:, start:stop, None, :] * self.key(edge)).sum(-1) / (self.width ** 0.5)
+                    values = self.value(edge)
                 weights = torch.softmax(logits.masked_fill(~valid, -torch.finfo(logits.dtype).max), -1)
                 weights = weights * valid.to(weights.dtype)
                 weights = weights / weights.sum(-1, keepdim=True).clamp_min(1e-8)
-                contact = (weights[..., None] * self.value(edge)).sum(2)
+                contact = (weights[..., None] * values).sum(2)
                 contacts.append(contact * valid.any(-1, keepdim=True).to(contact.dtype))
                 valid_chunks.append(valid)
             contact = torch.cat(contacts, dim=1)
@@ -343,20 +466,30 @@ class ObjectInteractionCmv2V13Model(nn.Module):
             raise KeyError(f"Missing V1.3 fields: {missing}")
         points = batch["obj_points"]
         normals = F.normalize(batch["obj_normals"], dim=-1, eps=1e-8)
-        centered = points - points.mean(1, keepdim=True)
-        object_scale = centered.square().sum(-1).mean(1).sqrt()
-        if not torch.isfinite(object_scale).all() or (object_scale <= 1e-8).any():
+        candidate_group_size = batch.get("candidate_group_size")
+        group = int(candidate_group_size) if candidate_group_size is not None else 1
+        if group <= 0 or points.shape[0] % group:
+            raise ValueError("candidate_group_size must divide the candidate batch")
+        unique_points = points[::group]
+        unique_normals = normals[::group]
+        unique_centered = unique_points - unique_points.mean(1, keepdim=True)
+        unique_scale = unique_centered.square().sum(-1).mean(1).sqrt()
+        if not torch.isfinite(unique_scale).all() or (unique_scale <= 1e-8).any():
             raise ValueError("Degenerate object geometry")
-        log_scale = torch.log(object_scale / self.feature_scale_m)
+        unique_log_scale = torch.log(unique_scale / self.feature_scale_m)
         profiler = batch.get("_latency_profiler")
         with _profile_stage(profiler, "geometry_encoder"):
-            geo = self.geometry_encoder(torch.cat((
-                centered / object_scale[:, None, None], normals,
-                log_scale[:, None, None].expand(-1, points.shape[1], 1)), dim=-1))
+            unique_geo = self.geometry_encoder(torch.cat((
+                unique_centered / unique_scale[:, None, None], unique_normals,
+                unique_log_scale[:, None, None].expand(-1, points.shape[1], 1)), dim=-1))
+            geo = unique_geo.repeat_interleave(group, dim=0)
+        object_scale = unique_scale.repeat_interleave(group, dim=0)
         contact, diagnostics = self.local_interaction(
             geo, points, normals, batch["hand_points"], batch["hand_normals"],
             batch["hand_flow"], batch.get("hand_valid_mask"), batch.get("delta_time_s"),
-            batch.get("interaction_object_chunk"), profiler)
+            batch.get("interaction_object_chunk"), profiler,
+            batch.get("swept_algorithm", "legacy"), batch.get("hand_link_index"),
+            bool(batch.get("sparse_valid_edges", False)), candidate_group_size)
         with _profile_stage(profiler, "token_attention_effect"):
             active = diagnostics["has_interaction"]
             global_feature = _masked_attention_pool(

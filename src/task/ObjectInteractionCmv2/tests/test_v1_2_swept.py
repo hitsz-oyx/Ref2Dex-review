@@ -41,6 +41,50 @@ def test_blocked_topk_matches_brute_with_ties_and_mask():
     assert torch.allclose(distances, torch.gather(brute, -1, expected), atol=1e-6)
 
 
+def test_merge_topk_preserves_legacy_ties_and_distances():
+    torch.manual_seed(2)
+    obj = torch.rand(2, 7, 3)
+    hand = torch.rand(2, 19, 3)
+    flow = torch.rand(2, 19, 3) * 0.1
+    hand[:, 1] = hand[:, 0]
+    flow[:, 1] = flow[:, 0]
+    mask = torch.ones(2, 19, dtype=torch.bool)
+    mask[:, -2:] = False
+    legacy = swept_topk(obj, hand, flow, mask, k=5, object_chunk=3, hand_chunk=4)
+    merged = swept_topk(
+        obj, hand, flow, mask, k=5, object_chunk=3, hand_chunk=4, algorithm="merge")
+    assert torch.equal(merged[1], legacy[1])
+    torch.testing.assert_close(merged[0], legacy[0], atol=1e-6, rtol=1e-6)
+
+
+def test_link_aabb_preserves_every_valid_radius_edge():
+    torch.manual_seed(8)
+    obj = torch.rand(1, 11, 3) * 0.04
+    hand = torch.rand(1, 18, 3) * 0.04
+    flow = (torch.rand(1, 18, 3) - 0.5) * 0.02
+    table = torch.tensor([[0, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11],
+                          [12, 13, 14, 15, 16, 17]])
+    radius = 0.02
+    dense = swept_topk(obj, hand, flow, k=8, algorithm="merge")
+    linked = swept_topk(
+        obj, hand, flow, k=8, algorithm="link_aabb",
+        hand_link_index=table, radius_m=radius)
+    for object_id in range(obj.shape[1]):
+        dense_valid = {
+            int(index): float(distance)
+            for distance, index in zip(dense[0][0, object_id], dense[1][0, object_id])
+            if distance < radius
+        }
+        link_valid = {
+            int(index): float(distance)
+            for distance, index in zip(linked[0][0, object_id], linked[1][0, object_id])
+            if distance < radius
+        }
+        assert link_valid.keys() == dense_valid.keys()
+        for index in dense_valid:
+            assert abs(link_valid[index] - dense_valid[index]) < 1e-6
+
+
 def test_hard_radius_and_empty_contact_have_finite_gradients():
     batch = make_synthetic_batch(batch_size=1, num_object=6, num_hand=8)
     batch["hand_points"] = batch["hand_points"] * 0 + torch.tensor([0.02, 0., 0.])

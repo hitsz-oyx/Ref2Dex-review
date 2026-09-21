@@ -208,6 +208,15 @@ class FrozenCmv2Planner:
                                                  device=kinematics.device)
         self.tip_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in TIP_LINKS], dtype=torch.long,
                                                  device=kinematics.device)
+        self.hand_link_index = None
+        if hasattr(geometry, "hand_link"):
+            link_ids = np.asarray(geometry.hand_link, dtype=np.int64)
+            groups = [np.flatnonzero(link_ids == link) for link in range(len(QUERY_LINKS))]
+            width = max(map(len, groups))
+            table = np.full((len(groups), width), len(link_ids), dtype=np.int64)
+            for link, values in enumerate(groups):
+                table[link, :len(values)] = values
+            self.hand_link_index = torch.as_tensor(table, device=kinematics.device)
 
     def _candidates(self, mu: torch.Tensor) -> torch.Tensor:
         if mu.ndim != 2 or mu.shape[-1] != ACTION_DIM:
@@ -231,12 +240,17 @@ class FrozenCmv2Planner:
                 native_lower: torch.Tensor, native_upper: torch.Tensor, mimic_scales: tuple[float, ...],
                 current_links: torch.Tensor, object_pose: torch.Tensor, reference_transport: torch.Tensor,
                 desired_delta_xi: torch.Tensor, _latency_profiler=None,
-                _diagnostic_candidate_count: int | None = None) -> dict[str, torch.Tensor]:
+                _diagnostic_candidate_count: int | None = None,
+                _interaction_variant: str = "baseline") -> dict[str, torch.Tensor]:
         """Return detached action/weight.  All inputs are pre-action simulator state."""
         batch = mu.shape[0]
         candidate_count = self.config.candidates if _diagnostic_candidate_count is None else _diagnostic_candidate_count
         if candidate_count not in (1, 2, 4, 8):
             raise ValueError("diagnostic candidate count must be one of 1, 2, 4, 8")
+        if _interaction_variant not in ("baseline", "merge", "link_aabb", "link_sparse"):
+            raise ValueError(f"unknown interaction variant: {_interaction_variant}")
+        if _interaction_variant.startswith("link") and self.hand_link_index is None:
+            raise ValueError("link interaction variants require geometry.hand_link")
         fallback = {"teacher_action": mu.detach(), "teacher_weight": torch.zeros(batch, device=mu.device),
                     "activation": torch.zeros(batch, device=mu.device), "valid_fraction": torch.zeros(batch, device=mu.device),
                     "predicted_cost_improvement": torch.zeros(batch, device=mu.device)}
@@ -284,6 +298,13 @@ class FrozenCmv2Planner:
                 adapter_kwargs = {"interaction_object_chunk": self.config.interaction_object_chunk}
                 if _latency_profiler is not None:
                     adapter_kwargs["latency_profiler"] = _latency_profiler
+                if _interaction_variant != "baseline":
+                    adapter_kwargs.update({
+                        "swept_algorithm": ("merge" if _interaction_variant == "merge" else "link_aabb"),
+                        "hand_link_index": (self.hand_link_index if _interaction_variant.startswith("link") else None),
+                        "sparse_valid_edges": _interaction_variant == "link_sparse",
+                        "candidate_group_size": candidate_count,
+                    })
                 output = self.adapter.predict_effect_only(
                     obj_points, obj_normals, current_batch, current_normal_batch,
                     next_points.reshape(-1, hand_count, 3) - current_batch,

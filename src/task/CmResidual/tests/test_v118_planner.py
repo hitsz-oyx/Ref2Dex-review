@@ -61,6 +61,15 @@ def test_v118a_runner_pins_gpu6_real_phaseb_state_and_cuda_events():
     assert "FrozenCmv2Planner.teacher = _intercept" in bootstrap
 
 
+def test_v118b_runner_pins_v118a_identity_and_cumulative_variants():
+    runner = (ROOT / "src/task/CmResidual/tools/run_v118b_latency_profile.py").read_text()
+    assert 'default=6' in runner
+    assert 'EXPECTED_STATE_SHA = "9f66e70f' in runner
+    assert 'EXPECTED_CANDIDATE_SHA = "0c3723c7' in runner
+    assert '["baseline", "merge", "link_aabb", "link_sparse"]' in runner
+    assert '"candidate_count": 8' in runner
+
+
 def test_v119_config_uses_streaming_memory_contract():
     task = yaml.safe_load((ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118.yaml").read_text())
     planner = task["cmPlanner"]

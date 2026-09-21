@@ -210,6 +210,88 @@ def profile_first_active_state(planner, kwargs: dict[str, object], *, warmup: in
     }
 
 
+@torch.inference_mode()
+def profile_interaction_variants(planner, kwargs: dict[str, object], *, warmup: int,
+                                 repeats: int) -> dict[str, object]:
+    """Benchmark cumulative V1.18b interaction variants on one active K=8 state."""
+    if warmup < 0 or repeats <= 0:
+        raise ValueError("warmup must be non-negative and repeats must be positive")
+    mu = kwargs["mu"]
+    if not isinstance(mu, torch.Tensor) or mu.device.type != "cuda":
+        raise ValueError("V1.18b latency profile requires CUDA planner inputs")
+    object_points, _ = planner.geometry.object(kwargs["object_pose"])
+    active = planner._activation(
+        kwargs["current_links"], object_points, kwargs["reference_transport"], kwargs["desired_delta_xi"])
+    active_ids = active.nonzero(as_tuple=False).flatten()
+    if not len(active_ids):
+        raise LookupError("planner call contains no active state")
+    selected_index = int(active_ids[0].item())
+    state = _slice_state(kwargs, selected_index)
+    fixed_rng = torch.cuda.get_rng_state(mu.device)
+
+    torch.cuda.set_rng_state(fixed_rng, mu.device)
+    baseline = planner.teacher(**state)
+    torch.cuda.set_rng_state(fixed_rng, mu.device)
+    baseline_duplicate = planner.teacher(**state)
+    duplicate_error = _max_output_error(baseline, baseline_duplicate)
+    behavioral_fields = ("teacher_action", "teacher_weight", "activation", "valid_fraction")
+    parity_limits = {name: max(1e-6, duplicate_error[name]) for name in behavioral_fields}
+
+    torch.cuda.set_rng_state(fixed_rng, mu.device)
+    candidates = planner._candidates(state["mu"])
+    results: dict[str, object] = {}
+    for variant in ("baseline", "merge", "link_aabb", "link_sparse"):
+        torch.cuda.set_rng_state(fixed_rng, mu.device)
+        candidate_output = planner.teacher(**state, _interaction_variant=variant)
+        parity = _max_output_error(baseline, candidate_output)
+        violations = {name: parity[name] for name in behavioral_fields if parity[name] > parity_limits[name]}
+        if violations:
+            raise RuntimeError(
+                f"{variant} changed behavioral planner output: {violations}; "
+                f"production_duplicate={duplicate_error}"
+            )
+        for _ in range(warmup):
+            torch.cuda.set_rng_state(fixed_rng, mu.device)
+            planner.teacher(**state, _interaction_variant=variant)
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats(mu.device)
+        samples = []
+        for _ in range(repeats):
+            torch.cuda.set_rng_state(fixed_rng, mu.device)
+            profiler = CudaEventProfiler()
+            with profiler.stage("end_to_end"):
+                planner.teacher(
+                    **state, _latency_profiler=profiler,
+                    _interaction_variant=variant,
+                )
+            samples.append(profiler.resolve_ms())
+        results[variant] = {
+            "latency": summarize(samples),
+            "peak_memory_allocated_bytes": torch.cuda.max_memory_allocated(mu.device),
+            "peak_memory_reserved_bytes": torch.cuda.max_memory_reserved(mu.device),
+            "behavioral_parity_max_abs": parity,
+        }
+
+    link_counts = None
+    if planner.hand_link_index is not None:
+        link_counts = (planner.hand_link_index < len(planner.geometry.hand_link)).sum(-1).cpu().tolist()
+    return {
+        "schema": "ref2dex.cmresidual.v118b_interaction_latency.v1",
+        "selected_env_index": selected_index,
+        "source_batch_size": int(mu.shape[0]),
+        "warmup_iterations": warmup,
+        "measured_iterations": repeats,
+        "candidate_count": 8,
+        "candidate_order": ["mu", "zero", "+eps0", "+eps1", "+eps2", "-eps0", "-eps1", "-eps2"],
+        "state_sha256": _tensor_sha256(state),
+        "candidate_actions_sha256": _tensor_sha256({"candidate_actions": candidates}),
+        "baseline_duplicate_max_abs": duplicate_error,
+        "behavioral_parity_limits": parity_limits,
+        "hand_points_per_link": link_counts,
+        "results": results,
+    }
+
+
 def write_profile(path: str | Path, payload: dict[str, object]) -> None:
     destination = Path(path)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
