@@ -170,6 +170,20 @@ class CompactEndpointShardWriter:
         self.view_ranges: dict[str, list[list[int]]] = {}
         self.source_bytes = self.record_bytes = self.unique_points = self.source_points = 0
         self.shard_paths: list[Path] = []
+        self._write_run_manifest("STARTED")
+
+    def _write_run_manifest(self, status: str, **extra: Any) -> None:
+        payload = {
+            "task": "ObjectInteractionCmv2", "work_version": WORK_VERSION,
+            "run_id": self.run_id, "run_status": status,
+            "operation": "compact_endpoint_cache_build", "git_commit": self.git_commit,
+            "output": str(self.output), "partial_output": str(self.partial),
+            "updated_at": utc_now(), "records_written": self.count,
+            "serialized_bytes": self.record_bytes, "conclusion": "N/A", **extra,
+        }
+        temporary = self.partial / "run_manifest.json.tmp"
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        temporary.replace(self.partial / "run_manifest.json")
 
     def _open_shard(self) -> None:
         if self.shard_handle is not None:
@@ -209,6 +223,12 @@ class CompactEndpointShardWriter:
         self.record_bytes += len(payload)
         self.unique_points += int(record["unique_hand_points"])
         self.source_points += int(record["source_hand_points"])
+        if self.count == 1 or self.count % 100 == 0:
+            self._write_run_manifest("RUNNING")
+            print(json.dumps({
+                "timestamp": utc_now(), "run_id": self.run_id, "run_status": "RUNNING",
+                "records_written": self.count, "serialized_bytes": self.record_bytes,
+            }), flush=True)
 
     def finalize(self, *, validation_bad_count: int = 0) -> Path:
         if not self.count:
@@ -249,12 +269,7 @@ class CompactEndpointShardWriter:
         }
         (self.partial / "manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-        (self.partial / "run_manifest.json").write_text(json.dumps({
-            "task": "ObjectInteractionCmv2", "work_version": WORK_VERSION,
-            "run_id": self.run_id, "run_status": "COMPLETED",
-            "operation": "compact_endpoint_cache_build", "git_commit": self.git_commit,
-            "finished_at": utc_now(), "output": str(self.output), "conclusion": "N/A",
-        }, ensure_ascii=False, indent=2) + "\n")
+        self._write_run_manifest("COMPLETED", finished_at=utc_now(), manifest="manifest.json")
         self.partial.rename(self.output)
         return self.output
 
