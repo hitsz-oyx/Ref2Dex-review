@@ -10,10 +10,109 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from .model import _axis_angle_matrix_stable, _mlp
-from .part_se3 import _segment_mean, endpoint_union_topk
+from .part_se3 import _segment_mean, _stable_smallest
 
 
-PART_SE3_V114_VERSION = "v1_14_narrow_interaction_candidate_shared"
+PART_SE3_V114_VERSION = "v1_14a_shared_start_knn_4096"
+
+
+def endpoint_union_topk_shared_start(
+    object_points: Tensor,
+    hand_points: Tensor,
+    candidate_flow: Tensor,
+    hand_valid_mask: Tensor | None = None,
+    *,
+    k: int = 32,
+    object_chunk: int = 128,
+    hand_chunk: int = 256,
+) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Candidate endpoint top-k with one start-distance search per state.
+
+    ``hand_points`` is shared across candidates while ``candidate_flow`` carries
+    the candidate axis. The result is numerically equivalent to duplicating the
+    start stream and invoking the V1.12 endpoint oracle K times.
+    """
+    if (object_points.ndim != 3 or hand_points.ndim != 3 or candidate_flow.ndim != 4
+            or candidate_flow.shape[0] != hand_points.shape[0]
+            or candidate_flow.shape[2:] != hand_points.shape[1:]):
+        raise ValueError("expected object [B,N,3], hand [B,H,3], and flow [B,K,H,3]")
+    if object_points.shape[0] != hand_points.shape[0] or object_points.shape[-1] != 3:
+        raise ValueError("shared endpoint KNN batch or coordinate shape mismatch")
+    batch, object_count, _ = object_points.shape
+    candidates, hand_count = candidate_flow.shape[1:3]
+    if candidates <= 0 or hand_count <= 0 or k <= 0 or object_chunk <= 0 or hand_chunk <= 0:
+        raise ValueError("shared endpoint KNN requires positive counts, k, and chunks")
+    if hand_valid_mask is None:
+        hand_valid_mask = torch.ones(
+            (batch, hand_count), dtype=torch.bool, device=hand_points.device)
+    if hand_valid_mask.shape != (batch, hand_count):
+        raise ValueError("shared hand_valid_mask must be [B,H]")
+    keep = min(int(k), hand_count)
+    if torch.any(hand_valid_mask.sum(-1) < keep):
+        raise ValueError(f"each sample needs at least {keep} valid hand points")
+
+    endpoint = hand_points[:, None] + candidate_flow
+    output_min, output_idx, output_start, output_end = [], [], [], []
+    for object_start in range(0, object_count, object_chunk):
+        query = object_points[:, object_start:object_start + object_chunk]
+        width = query.shape[1]
+        start_best = torch.full(
+            (batch, width, keep), float("inf"), dtype=query.dtype, device=query.device)
+        start_idx = torch.full(start_best.shape, hand_count, dtype=torch.long, device=query.device)
+        end_best = torch.full(
+            (batch, candidates, width, keep), float("inf"), dtype=query.dtype, device=query.device)
+        end_idx = torch.full(end_best.shape, hand_count, dtype=torch.long, device=query.device)
+        for hand_start in range(0, hand_count, hand_chunk):
+            stop = min(hand_start + hand_chunk, hand_count)
+            valid = hand_valid_mask[:, None, hand_start:stop]
+            start_distance = torch.linalg.vector_norm(
+                hand_points[:, None, hand_start:stop] - query[:, :, None], dim=-1)
+            start_distance = start_distance.masked_fill(~valid, float("inf"))
+            source_idx = torch.arange(hand_start, stop, device=query.device).expand_as(start_distance)
+            start_best, start_idx = _stable_smallest(
+                torch.cat((start_best, start_distance), -1),
+                torch.cat((start_idx, source_idx), -1), keep)
+
+            end_distance = torch.linalg.vector_norm(
+                endpoint[:, :, None, hand_start:stop] - query[:, None, :, None], dim=-1)
+            end_distance = end_distance.masked_fill(~valid[:, None], float("inf"))
+            end_source_idx = torch.arange(hand_start, stop, device=query.device).expand_as(end_distance)
+            flat_shape = (batch * candidates, width, -1)
+            flat_best, flat_idx = _stable_smallest(
+                torch.cat((end_best, end_distance), -1).reshape(*flat_shape),
+                torch.cat((end_idx, end_source_idx), -1).reshape(*flat_shape), keep)
+            end_best = flat_best.reshape(batch, candidates, width, keep)
+            end_idx = flat_idx.reshape(batch, candidates, width, keep)
+
+        candidates_idx = torch.cat(
+            (start_idx[:, None].expand(-1, candidates, -1, -1), end_idx), -1)
+        candidate_count = candidates_idx.shape[-1]
+        gather = candidates_idx[..., None].expand(-1, -1, -1, -1, 3)
+        start_points = torch.gather(
+            hand_points[:, None, None].expand(-1, candidates, width, -1, -1), 3, gather)
+        end_points = torch.gather(
+            endpoint[:, :, None].expand(-1, -1, width, -1, -1), 3, gather)
+        expanded_query = query[:, None, :, None]
+        start_distance = torch.linalg.vector_norm(start_points - expanded_query, dim=-1)
+        end_distance = torch.linalg.vector_norm(end_points - expanded_query, dim=-1)
+        minimum = torch.minimum(start_distance, end_distance)
+        candidate_valid = torch.gather(
+            hand_valid_mask[:, None, None].expand(-1, candidates, width, -1), 3, candidates_idx)
+        minimum = minimum.masked_fill(~candidate_valid, float("inf"))
+
+        earlier = torch.tril(torch.ones(
+            (candidate_count, candidate_count), dtype=torch.bool, device=query.device), diagonal=-1)
+        duplicate = ((candidates_idx[..., :, None] == candidates_idx[..., None, :]) & earlier).any(-1)
+        minimum = minimum.masked_fill(duplicate, float("inf"))
+        selected_min, selected_idx = _stable_smallest(minimum, candidates_idx, keep)
+        selection = selected_idx[..., None] == candidates_idx[..., None, :]
+        first_match = selection.to(torch.int64).argmax(-1)
+        output_min.append(selected_min)
+        output_idx.append(selected_idx)
+        output_start.append(torch.gather(start_distance, -1, first_match))
+        output_end.append(torch.gather(end_distance, -1, first_match))
+    return tuple(torch.cat(values, 2) for values in (
+        output_min, output_idx, output_start, output_end))
 
 
 @dataclass(frozen=True)
@@ -120,32 +219,26 @@ class EndpointInteractionEncoderV114(nn.Module):
         hand_normals = candidate["hand_normals"]
         hand_flow = candidate["hand_flow"]
         hand_valid = candidate["hand_valid_mask"].bool()
-        if hand_points.ndim != 4 or hand_normals.shape != hand_points.shape or hand_flow.shape != hand_points.shape:
-            raise ValueError("reference candidate hand tensors must be [B,K,H,3]")
-        candidates, hand_count = hand_points.shape[1:3]
-        if hand_valid.shape != (batch, candidates, hand_count):
-            raise ValueError("candidate hand_valid_mask must be [B,K,H]")
-        flat_points = points[:, None].expand(-1, candidates, -1, -1).reshape(
-            batch * candidates, object_count, 3)
-        flat_hand = hand_points.reshape(batch * candidates, hand_count, 3)
-        flat_flow = hand_flow.reshape_as(flat_hand)
-        distance, indices, start_distance, end_distance = endpoint_union_topk(
-            flat_points, flat_hand, flat_flow, hand_valid.reshape(batch * candidates, hand_count),
-            k=self.k, object_chunk=object_chunk, hand_chunk=hand_chunk)
-        edge_shape = (batch, candidates, object_count, self.k)
-        distance = distance.reshape(edge_shape)
-        indices = indices.reshape(edge_shape)
-        start_distance = start_distance.reshape(edge_shape)
-        end_distance = end_distance.reshape(edge_shape)
+        if (hand_points.ndim != 3 or hand_normals.shape != hand_points.shape
+                or hand_flow.ndim != 4 or hand_flow.shape[0] != batch
+                or hand_flow.shape[2:] != hand_points.shape[1:]):
+            raise ValueError(
+                "reference tensors must be shared hand [B,H,3] and candidate flow [B,K,H,3]")
+        candidates, hand_count = hand_flow.shape[1:3]
+        if hand_valid.shape != (batch, hand_count):
+            raise ValueError("shared hand_valid_mask must be [B,H]")
+        distance, indices, start_distance, end_distance = endpoint_union_topk_shared_start(
+            points, hand_points, hand_flow, hand_valid, k=self.k,
+            object_chunk=object_chunk, hand_chunk=hand_chunk)
         gather = indices[..., None].expand(-1, -1, -1, -1, 3)
         hp = torch.gather(
-            hand_points[:, :, None].expand(-1, -1, object_count, -1, -1), 3, gather)
+            hand_points[:, None, None].expand(-1, candidates, object_count, -1, -1), 3, gather)
         hn = torch.gather(
-            hand_normals[:, :, None].expand(-1, -1, object_count, -1, -1), 3, gather)
+            hand_normals[:, None, None].expand(-1, candidates, object_count, -1, -1), 3, gather)
         hf = torch.gather(
             hand_flow[:, :, None].expand(-1, -1, object_count, -1, -1), 3, gather)
         input_valid = torch.gather(
-            hand_valid[:, :, None].expand(-1, -1, object_count, -1), 3, indices)
+            hand_valid[:, None, None].expand(-1, candidates, object_count, -1), 3, indices)
         return hp, hn, hf, indices, input_valid, distance, start_distance, end_distance
 
     def forward_candidates(
@@ -379,12 +472,13 @@ class PartSE3ObjectInteractionCmv2V114Model(nn.Module):
 
     def forward(self, batch: Mapping[str, Tensor]) -> dict[str, Tensor]:
         context = self.encode_object(batch)
-        dynamic_keys = (
-            "hand_points", "hand_normals", "hand_flow", "hand_valid_mask", "delta_time_s",
-            "edge_hand_points", "edge_hand_normals", "edge_hand_flow", "edge_source_id",
-            "edge_valid_mask",
+        shared_keys = ("hand_points", "hand_normals", "hand_valid_mask")
+        candidate_keys = (
+            "hand_flow", "delta_time_s", "edge_hand_points", "edge_hand_normals",
+            "edge_hand_flow", "edge_source_id", "edge_valid_mask",
         )
-        candidate = {key: batch[key].unsqueeze(1) for key in dynamic_keys if key in batch}
+        candidate = {key: batch[key] for key in shared_keys if key in batch}
+        candidate.update({key: batch[key].unsqueeze(1) for key in candidate_keys if key in batch})
         for key in ("interaction_object_chunk", "interaction_hand_chunk"):
             if key in batch:
                 candidate[key] = batch[key]

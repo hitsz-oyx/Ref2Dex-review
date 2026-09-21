@@ -9,13 +9,24 @@ import torch
 import yaml
 
 from .mixed_training import GROUPS
-from .part_se3_training import EXPECTED_DATA, EXPECTED_LOSS, REPO_ROOT, build_part_se3_dataset
+from .part_se3_training import (
+    EXPECTED_DATA,
+    EXPECTED_LOSS,
+    REPO_ROOT,
+    build_part_se3_dataset as _build_part_se3_dataset,
+)
 from .part_se3_v114 import PART_SE3_V114_VERSION, PartSE3ObjectInteractionCmv2V114Model
 
 
 WORK_VERSION = "V1.14"
-CONFIG_SCHEMA = "object_interaction_cmv2_narrow_candidate_v1_14"
-CHECKPOINT_SCHEMA = "object_interaction_cmv2_narrow_candidate_checkpoint_v1"
+CONFIG_SCHEMA = "object_interaction_cmv2_shared_start_candidate_v1_14a"
+CHECKPOINT_SCHEMA = "object_interaction_cmv2_shared_start_candidate_checkpoint_v2"
+EXPECTED_HAND_SAMPLING = {
+    "contract": "bilateral_fixed_random_2048_per_side_v1",
+    "points_per_side": 2048,
+    "bilateral_points": 4096,
+    "seed": 42,
+}
 EXPECTED_MODEL = {
     "architecture_version": PART_SE3_V114_VERSION,
     "hidden_width": 128,
@@ -44,6 +55,8 @@ def load_v114_config(path: str | Path) -> dict[str, Any]:
         raise ValueError("V1.14 model contract mismatch")
     if config.get("data") != EXPECTED_DATA or config.get("loss") != EXPECTED_LOSS:
         raise ValueError("V1.14 data or loss contract mismatch")
+    if config.get("hand_sampling") != EXPECTED_HAND_SAMPLING:
+        raise ValueError("V1.14a hand sampling contract mismatch")
     if set(config.get("sources") or {}) != set(GROUPS):
         raise ValueError("V1.14 requires the frozen five source groups")
     if set(config.get("oakink2_parts") or {}) != {
@@ -64,6 +77,20 @@ def load_v114_config(path: str | Path) -> dict[str, Any]:
     elif backend != "reference":
         raise ValueError(f"unsupported V1.14 data backend: {backend}")
     return config
+
+
+def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, **kwargs):
+    """Build only the V1.14a fixed-4096 reference path."""
+    if config.get("hand_sampling") != EXPECTED_HAND_SAMPLING:
+        raise ValueError("V1.14a dataset requires the fixed 2048-per-side contract")
+    if config.get("data_backend", "reference") != "reference":
+        raise ValueError("V1.14a compact-v2 cache has not been materialized")
+    return _build_part_se3_dataset(
+        config, group, split,
+        hand_points_per_side=EXPECTED_HAND_SAMPLING["points_per_side"],
+        hand_sampling_seed=EXPECTED_HAND_SAMPLING["seed"],
+        **kwargs,
+    )
 
 
 def initialize_random_v114_model(
@@ -107,7 +134,7 @@ def restore_checkpoint_v114(
         payload.get("architecture_version"),
     )
     if identity != (CHECKPOINT_SCHEMA, WORK_VERSION, PART_SE3_V114_VERSION):
-        raise ValueError("checkpoint is not a V1.14 narrow-candidate checkpoint")
+        raise ValueError("checkpoint is not a V1.14a shared-start checkpoint")
     model.load_state_dict(payload["model"], strict=True)
     if optimizer is not None:
         optimizer.load_state_dict(payload["optimizer"])
@@ -118,6 +145,7 @@ __all__ = [
     "CHECKPOINT_SCHEMA",
     "CONFIG_SCHEMA",
     "EXPECTED_MODEL",
+    "EXPECTED_HAND_SAMPLING",
     "WORK_VERSION",
     "build_part_se3_dataset",
     "checkpoint_payload_v114",

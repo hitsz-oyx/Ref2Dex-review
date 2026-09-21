@@ -158,7 +158,9 @@ def restore_checkpoint(path: str | Path, model: torch.nn.Module,
 
 def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, *,
                            fixed_stride: int | None = None,
-                           max_sequences: int | None = None):
+                           max_sequences: int | None = None,
+                           hand_points_per_side: int | None = None,
+                           hand_sampling_seed: int = 42):
     """Build the explicit reference or V1.13 compact backend."""
     if group not in GROUPS or split not in ("train", "val", "test"):
         raise ValueError("invalid V1.12 group or split")
@@ -184,7 +186,9 @@ def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, *,
               "manifest": str(split_root / "cache_manifest.json")}],
             split, num_obj_points=1024, train_stride_values={domain: strides},
             fixed_stride=fixed_stride, active_only=False, base_seed=42,
-            max_sequences_per_domain=max_sequences, allow_manifest_split_override=True)
+            max_sequences_per_domain=max_sequences, allow_manifest_split_override=True,
+            hand_points_per_side=hand_points_per_side,
+            hand_sampling_seed=hand_sampling_seed)
         return OakInkWholePartTransitions(base, config["oakink2_parts"]["adapter_root"])
     index = json.loads((split_root / "index.json").read_text())
     articulation = json.loads(Path(config["articulation_metadata"]).read_text())["articulation"]
@@ -195,4 +199,6 @@ def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, *,
               "articulation": articulation if domain == "arctic" else {"num_links": 1, "joints": []}}
              for row in rows]
     return RigidArticulatedPartTransitions(
-        specs, split, num_obj_points=1024, stride_values=strides, base_seed=42)
+        specs, split, num_obj_points=1024, stride_values=strides, base_seed=42,
+        hand_points_per_side=hand_points_per_side,
+        hand_sampling_seed=hand_sampling_seed)

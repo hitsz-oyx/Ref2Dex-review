@@ -13,7 +13,10 @@ from types import SimpleNamespace
 import torch
 
 from src.task.ObjectInteractionCmv2.part_se3 import endpoint_union_topk
-from src.task.ObjectInteractionCmv2.part_se3_v114 import PartSE3ObjectInteractionCmv2V114Model
+from src.task.ObjectInteractionCmv2.part_se3_v114 import (
+    PartSE3ObjectInteractionCmv2V114Model,
+    endpoint_union_topk_shared_start,
+)
 
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -85,9 +88,9 @@ def _inputs(device: torch.device, seed: int, hand_points: int):
         "delta_time_s": torch.full((batch, candidates), 1 / 30, device=device),
     }
     reference_hand = torch.randn(
-        (batch, candidates, hand_points, 3), generator=generator, device=device) * 0.08
+        (batch, hand_points, 3), generator=generator, device=device) * 0.08
     reference_flow = torch.randn(
-        reference_hand.shape, generator=generator, device=device) * 0.002
+        (batch, candidates, hand_points, 3), generator=generator, device=device) * 0.002
     return object_batch, candidate, reference_hand, reference_flow
 
 
@@ -220,15 +223,27 @@ def run(args) -> Path:
 
             flat_points = object_batch["obj_points"][:, None].expand(
                 -1, 8, -1, -1).reshape(8, 1024, 3)
-            flat_hand = reference_hand.reshape(8, args.hand_points, 3)
-            flat_flow = reference_flow.reshape_as(flat_hand)
+            flat_hand = reference_hand[:, None].expand(
+                -1, 8, -1, -1).reshape(8, args.hand_points, 3)
+            flat_flow = reference_flow.reshape(8, args.hand_points, 3)
             valid = torch.ones((8, args.hand_points), dtype=torch.bool, device=device)
-            endpoint = _cuda_times(
+            endpoint_duplicated_start = _cuda_times(
                 lambda: endpoint_union_topk(
                     flat_points, flat_hand, flat_flow, valid, k=32,
                     object_chunk=args.object_chunk, hand_chunk=args.hand_chunk),
                 args.endpoint_warmup, args.endpoint_iterations)
-            stream.write(json.dumps({"type": "endpoint", **endpoint}, allow_nan=False) + "\n")
+            shared_valid = torch.ones((1, args.hand_points), dtype=torch.bool, device=device)
+            endpoint_shared_start = _cuda_times(
+                lambda: endpoint_union_topk_shared_start(
+                    object_batch["obj_points"], reference_hand, reference_flow, shared_valid, k=32,
+                    object_chunk=args.object_chunk, hand_chunk=args.hand_chunk),
+                args.endpoint_warmup, args.endpoint_iterations)
+            stream.write(json.dumps(
+                {"type": "endpoint_duplicated_start", **endpoint_duplicated_start},
+                allow_nan=False) + "\n")
+            stream.write(json.dumps(
+                {"type": "endpoint_shared_start", **endpoint_shared_start},
+                allow_nan=False) + "\n")
 
         baseline = results["128"]
         narrow = results["32"]
@@ -241,22 +256,24 @@ def run(args) -> Path:
                                       / narrow["encode_plus_candidate"]["median_ms"]),
         }
         estimated_e2e = {
-            width: endpoint["median_ms"] + metrics["encode_plus_candidate"]["median_ms"]
+            width: endpoint_shared_start["median_ms"] + metrics["encode_plus_candidate"]["median_ms"]
             for width, metrics in results.items()
         }
         speedups["endpoint_plus_model"] = estimated_e2e["128"] / estimated_e2e["32"]
+        speedups["shared_start_endpoint"] = (
+            endpoint_duplicated_start["median_ms"] / endpoint_shared_start["median_ms"])
         gates = {
-            "local_interaction_at_least_3x": speedups["local_interaction"] >= 3.0,
-            "candidate_forward_at_least_2x": speedups["candidate_forward"] >= 2.0,
-            "endpoint_plus_model_at_least_1_5x": speedups["endpoint_plus_model"] >= 1.5,
             "peak_memory_not_higher": (narrow["candidate_peak_allocated_mib"]
                                        <= baseline["candidate_peak_allocated_mib"]),
+            "shared_start_endpoint_at_least_1_5x": speedups["shared_start_endpoint"] >= 1.5,
+            "shared_start_endpoint_plus_model_at_most_28ms": estimated_e2e["32"] <= 28.0,
         }
         conclusion = "SUPPORTED" if all(gates.values()) else "REFUTED"
         summary = {
-            "hypothesis": "32D satisfies every V1.14 random-weight performance gate versus 128D",
+            "hypothesis": "V1.14a shared-start KNN improves H=4096 candidate endpoint latency",
             "results": results,
-            "endpoint": endpoint,
+            "endpoint_duplicated_start": endpoint_duplicated_start,
+            "endpoint_shared_start": endpoint_shared_start,
             "estimated_endpoint_plus_model_median_ms": estimated_e2e,
             "speedups_128_over_32": speedups,
             "gates": gates,
@@ -266,6 +283,7 @@ def run(args) -> Path:
                 "endpoint-plus-model is the sum of separately timed sequential stages",
                 "no prediction-quality or training evidence",
                 "single GPU model and driver state",
+                "shared-start timing uses the same random start stream for all candidates",
             ],
         }
         _write_json(output / "summary.json", summary)

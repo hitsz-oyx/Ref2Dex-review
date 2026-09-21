@@ -10,7 +10,13 @@ import torch
 from torch.utils.data import Dataset
 
 from .articulated import ArticulatedSequenceView
-from .multi_domain import _is_se3, _normal_world_to_frame, _stable_seed, _world_to_frame
+from .multi_domain import (
+    _is_se3,
+    _normal_world_to_frame,
+    _stable_seed,
+    _world_to_frame,
+    fixed_bilateral_hand_indices,
+)
 from .oakink2_parts import OakInkPartTransitions, _part_arrays
 
 
@@ -84,18 +90,24 @@ def _axis_angle_rotation(axis: np.ndarray, angle: float) -> np.ndarray:
 
 
 def _transition_values(sequence, current: int, future: int, reference: np.ndarray,
-                       selected: np.ndarray) -> dict[str, np.ndarray]:
+                       selected: np.ndarray,
+                       hand_indices: np.ndarray | None = None) -> dict[str, np.ndarray]:
     object_world = np.asarray(sequence.arrays["obj_points_pool_world"][current, selected], dtype=np.float32)
     future_world = np.asarray(sequence.arrays["obj_points_pool_world"][future, selected], dtype=np.float32)
     hand_world = np.asarray(sequence.arrays["knn_hand_points_world"][current], dtype=np.float32)
     hand_future_world = np.asarray(sequence.arrays["knn_hand_points_world"][future], dtype=np.float32)
+    hand_normals_world = np.asarray(
+        sequence.arrays["knn_hand_normals_world"][current], dtype=np.float32)
+    if hand_indices is not None:
+        hand_world = hand_world[hand_indices]
+        hand_future_world = hand_future_world[hand_indices]
+        hand_normals_world = hand_normals_world[hand_indices]
     values = {
         "obj_points": _world_to_frame(object_world, reference),
         "obj_normals": _normal_world_to_frame(
             np.asarray(sequence.arrays["obj_normals_pool_world"][current, selected]), reference),
         "hand_points": _world_to_frame(hand_world, reference),
-        "hand_normals": _normal_world_to_frame(
-            np.asarray(sequence.arrays["knn_hand_normals_world"][current]), reference),
+        "hand_normals": _normal_world_to_frame(hand_normals_world, reference),
         "obj_future": _world_to_frame(future_world, reference),
     }
     values["hand_flow"] = _world_to_frame(hand_future_world, reference) - values["hand_points"]
@@ -139,11 +151,15 @@ class RigidArticulatedPartTransitions(Dataset):
 
     def __init__(self, sequence_specs: Sequence[Mapping[str, Any]], split: str, *,
                  num_obj_points: int = 1024, stride_values: Sequence[int] = (1, 2, 3),
-                 base_seed: int = 42) -> None:
+                 base_seed: int = 42, hand_points_per_side: int | None = None,
+                 hand_sampling_seed: int = 42) -> None:
         if num_obj_points != 1024 or not stride_values or any(int(value) <= 0 for value in stride_values):
             raise ValueError("V1.12 fixes 1024 object points and positive strides")
         self.split, self.num_obj_points = split, int(num_obj_points)
         self.stride_values, self.base_seed = tuple(int(value) for value in stride_values), int(base_seed)
+        self.hand_points_per_side = (
+            None if hand_points_per_side is None else int(hand_points_per_side))
+        self.hand_sampling_seed = int(hand_sampling_seed)
         self.sequences, self.entries = [], []
         for item in sequence_specs:
             domain = str(item.get("name", item.get("domain", "")))
@@ -173,7 +189,10 @@ class RigidArticulatedPartTransitions(Dataset):
         part_pool = view.part_ids(np.arange(4096, dtype=np.int64))
         selected = stratified_part_indices(part_pool, 1024, seed=seed ^ 0xB15)
         part_ids = part_pool[selected]
-        values = _transition_values(view.base, current, future, reference, selected)
+        hand_indices = (None if self.hand_points_per_side is None else fixed_bilateral_hand_indices(
+            view.base.hand_variant, self.hand_points_per_side, self.hand_sampling_seed))
+        values = _transition_values(
+            view.base, current, future, reference, selected, hand_indices)
         root_rotation, root_translation = delta_in_reference(reference, root_future, reference)
         links = view.kinematics["num_links"]
         rotations = np.tile(root_rotation[None], (links, 1, 1))
@@ -190,7 +209,7 @@ class RigidArticulatedPartTransitions(Dataset):
         return _sample_payload(
             values, part_ids, rotations, translations, _object_point_ids(str(view.path))[selected],
             delta_time=float(frame_time[future] - frame_time[current]), stride=stride,
-            hand_points=view.hand_points, source=view.domain,
+            hand_points=values["hand_points"].shape[0], source=view.domain,
             sequence_id=str(self.entries[sequence_index].get("id", view.path)),
             source_frame_id=int(source_ids[current]), next_source_frame_id=int(source_ids[future]))
 
@@ -238,7 +257,9 @@ class OakInkWholePartTransitions(Dataset):
         seed = _stable_seed(self.base.base_seed, sequence.path, raw_current, self.base.split)
         selected = stratified_part_indices(part_pool, 1024, seed=seed ^ 0xC15)
         part_ids = part_pool[selected]
-        values = _transition_values(sequence, current, future, reference, selected)
+        values = _transition_values(
+            sequence, current, future, reference, selected,
+            self.base.hand_indices[sequence_index])
         rotations, translations = [], []
         for part in parts:
             arrays = _part_arrays(part["root"])
@@ -251,5 +272,5 @@ class OakInkWholePartTransitions(Dataset):
         return _sample_payload(
             values, part_ids, np.stack(rotations), np.stack(translations), raw_ids[selected],
             delta_time=float(frame_time[future] - frame_time[current]), stride=stride,
-            hand_points=sequence.hand_points, source="oakink2", sequence_id=str(entry["id"]),
+            hand_points=values["hand_points"].shape[0], source="oakink2", sequence_id=str(entry["id"]),
             source_frame_id=raw_current, next_source_frame_id=int(source_ids[future]))

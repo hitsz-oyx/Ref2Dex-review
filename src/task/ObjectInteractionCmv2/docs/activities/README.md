@@ -1,5 +1,7 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260921-CMV2-V114A-SHARED-START](ACT-20260921-CMV2-V114A-SHARED-START.md)：每手 2048 点与 candidate 共享 start KNN 实现、接口 parity 和未完成的真实 cache/GPU 门禁。
+
 - [ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK](ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)：128/64/32D 与 default/tuned chunk 的正式随机权重性能 benchmark。
 - [ACT-20260921-CMV2-V114-NARROW-CANDIDATES](ACT-20260921-CMV2-V114-NARROW-CANDIDATES.md)：32D local interaction、candidate-axis 静态共享、随机初始化合同与接口门禁。
 - [ACT-20260921-CMV2-V113-COMPACT-ENDPOINT](ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)：紧凑 endpoint shard schema、reference/compact parity、producer/reader 与 DDP backend 接线。

@@ -30,6 +30,9 @@ DECODER_POINTS_PER_SIDE = 1538
 DECODER_HAND_POINTS = DECODER_POINTS_PER_SIDE * 2
 KNN_POINTS_PER_SIDE = {"mano": 2048, "inspire_f1": 10135}
 KNN_HAND_POINTS = {name: 2 * count for name, count in KNN_POINTS_PER_SIDE.items()}
+V114A_POINTS_PER_SIDE = 2048
+V114A_HAND_POINTS = 2 * V114A_POINTS_PER_SIDE
+V114A_HAND_SAMPLING_CONTRACT = "bilateral_fixed_random_2048_per_side_v1"
 DOMAIN_NAMES = ("grab", "arctic", "oakink2")
 HAND_VARIANTS = tuple(KNN_POINTS_PER_SIDE)
 VARIANT_ALIASES = {
@@ -66,6 +69,38 @@ def sha256_file(path: str | Path) -> str:
 def _stable_seed(*parts: object) -> int:
     payload = "\0".join(str(part) for part in parts).encode("utf-8")
     return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "little")
+
+
+@lru_cache(maxsize=16)
+def fixed_bilateral_hand_indices(
+    hand_variant: str,
+    points_per_side: int = V114A_POINTS_PER_SIDE,
+    seed: int = 42,
+) -> np.ndarray:
+    """Return stable left-then-right point IDs shared by every sequence/frame."""
+    variant = normalize_hand_variant(hand_variant)
+    source_per_side = KNN_POINTS_PER_SIDE[variant]
+    target = int(points_per_side)
+    if target <= 0 or target > source_per_side:
+        raise ValueError(
+            f"{variant}: requested {target} points per side from {source_per_side}")
+    selected = []
+    for side, offset in (("left", 0), ("right", source_per_side)):
+        if target == source_per_side:
+            indices = np.arange(source_per_side, dtype=np.int64)
+        else:
+            rng = np.random.default_rng(_stable_seed(
+                V114A_HAND_SAMPLING_CONTRACT, int(seed), variant, side))
+            indices = np.sort(rng.choice(source_per_side, size=target, replace=False)).astype(
+                np.int64, copy=False)
+        selected.append(indices + offset)
+    result = np.ascontiguousarray(np.concatenate(selected), dtype=np.int64)
+    result.setflags(write=False)
+    return result
+
+
+def hand_index_sha256(indices: np.ndarray) -> str:
+    return hashlib.sha256(np.ascontiguousarray(indices, dtype=np.int64).tobytes()).hexdigest()
 
 
 def _world_to_frame(points: np.ndarray, pose_world: np.ndarray) -> np.ndarray:
@@ -300,6 +335,8 @@ class ThreeDomainTransitions(Dataset):
         base_seed: int = 42,
         max_sequences_per_domain: int | None = None,
         allow_manifest_split_override: bool = False,
+        hand_points_per_side: int | None = None,
+        hand_sampling_seed: int = 42,
     ) -> None:
         if split not in ("train", "val", "test"):
             raise ValueError("split must be train, val, or test")
@@ -308,6 +345,9 @@ class ThreeDomainTransitions(Dataset):
         if not 1 <= self.num_obj_points <= 4096:
             raise ValueError("num_obj_points must lie in [1,4096]")
         self.base_seed = int(base_seed)
+        self.hand_points_per_side = (
+            None if hand_points_per_side is None else int(hand_points_per_side))
+        self.hand_sampling_seed = int(hand_sampling_seed)
         self.active_only = bool(active_only)
         self.fixed_stride = None if fixed_stride is None else int(fixed_stride)
         self.stride_values = {
@@ -344,6 +384,11 @@ class ThreeDomainTransitions(Dataset):
                 raise ValueError(f"{path}: index frame_count mismatch")
             self.sequences.append(sequence)
             self.sequence_entries.append(entry)
+        self.hand_indices = [
+            (None if self.hand_points_per_side is None else fixed_bilateral_hand_indices(
+                sequence.hand_variant, self.hand_points_per_side, self.hand_sampling_seed))
+            for sequence in self.sequences
+        ]
         self.rows: list[tuple[int, int]] = []
         self.dropped_transitions = 0
         self.dropped_timeline_transitions = 0
@@ -418,9 +463,14 @@ class ThreeDomainTransitions(Dataset):
         object_future = _world_to_frame(object_future_world, pose)
         object_normals = _normal_world_to_frame(
             np.asarray(sequence.arrays["obj_normals_pool_world"][current, selected], dtype=np.float32), pose)
+        hand_indices = self.hand_indices[sequence_index]
         hand_world = np.asarray(sequence.arrays["knn_hand_points_world"][current], dtype=np.float32)
         hand_future_world = np.asarray(sequence.arrays["knn_hand_points_world"][future], dtype=np.float32)
         hand_normals_world = np.asarray(sequence.arrays["knn_hand_normals_world"][current], dtype=np.float32)
+        if hand_indices is not None:
+            hand_world = hand_world[hand_indices]
+            hand_future_world = hand_future_world[hand_indices]
+            hand_normals_world = hand_normals_world[hand_indices]
         hand_points = _world_to_frame(hand_world, pose)
         hand_future = _world_to_frame(hand_future_world, pose)
         hand_normals = _normal_world_to_frame(hand_normals_world, pose)
@@ -442,7 +492,7 @@ class ThreeDomainTransitions(Dataset):
         return {
             **{key: torch.from_numpy(np.ascontiguousarray(value, dtype=np.float32)) for key, value in tensors.items()},
             "delta_time_s": torch.tensor(delta_time, dtype=torch.float32),
-            "hand_valid_mask": torch.ones((sequence.hand_points,), dtype=torch.bool),
+            "hand_valid_mask": torch.ones((hand_points.shape[0],), dtype=torch.bool),
             "stride": torch.tensor(stride, dtype=torch.int64),
             "source_frame_id": torch.tensor(raw_current, dtype=torch.int64),
             "next_source_frame_id": torch.tensor(int(source_ids[future]), dtype=torch.int64),
