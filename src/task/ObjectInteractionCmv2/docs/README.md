@@ -2,10 +2,11 @@
 
 ## 当前工作状态
 
-- work_version：`V1.12`；Task-local 实现、CPU/真实只读门禁、单 GPU smoke 及 GPU0+2 B64 双卡 smoke 已完成。用户已批准沿用 V1.11.1 的五组正式训练预算并停止旧 run，V1.12 正式 run 待启动。
+- work_version：`V1.12`；Task-local 实现、CPU/真实只读门禁、单 GPU smoke 及 GPU0+2 B64 双卡 smoke 已完成。V1.12 正式 run 已按用户要求在 step 200、epoch 1 受控停止，终态为 `STOPPED`；下一步在独立 V1.13 分支诊断并优化数据 I/O，当前不据此形成科学结论。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
 - V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非正式运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现与 smoke Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
 - V1.11.1 正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 已按用户要求于 step 18040、epoch 2 受控停止；其 `latest.pt`、`best.pt`、metrics 与 source snapshot 均保留。
+- V1.12 正式 run `cmv2_v112_part_se3_ddp_formal_20260921T030019Z` 已于 `2026-09-21T03:31:14+00:00` 受控停止；`latest.pt`、manifest、metrics 与日志均保留，尚未完成首轮 validation，故无 `best.pt`。
 - [V1.11g FINAL](plan/V1.11g.md)：五组、GPU1+3、每卡64、stride1..3、16epochs、15组验证，ARCTIC Inspire不等待也不动态纳入；资源切换见 [V1.11i FINAL](plan/V1.11i.md)。
 - V1.11.1 历史入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件 adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity 与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
 

@@ -6,7 +6,7 @@
 - base_commit：`3d5d73c53ed93029d917c66c09b0eb5c5110716e`；git_commit：`961e6d61db44c234618fb9fe02ef48183c64a291`；branch：`ai/ObjectInteractionCmv2/v1.12-endpoint-knn`。
 - scope / impact：Task-local model、dataset、构造/checkpoint 合同、非运行配置、测试与状态文档；L2。
 - approval：用户确认逐部件直接 SE(3)、固定起始物体 query、起止 top-32 并集后按最小端点距离重排且最终仍为 32、整体 1024 点按部件分层采样且每部件至少 64 点、固定 `log(rho+eps)` prior、无直接 interaction 的 part surface 输出严格为零、part ID 不 embedding、pose sample 内 part 等权、SO(3) geodesic、flow 普通逐点平均及随机初始化，并授权修改。
-- run_status：单 GPU 与 GPU0+2 B64 双卡 smoke 均 `COMPLETED`；正式训练已获用户批准、尚未启动；未构建 cache。
+- run_status：单 GPU 与 GPU0+2 B64 双卡 smoke 均 `COMPLETED`；正式训练已启动并按用户要求于 step 200、epoch 1 受控停止，终态为 `STOPPED`；未构建新 cache。
 - scientific conclusion：`INCONCLUSIVE`；当前证据只证明实现合同、数据 replay 与接线，不证明预测效果。
 
 ## 已完成
@@ -46,8 +46,18 @@
 - smoke 输出目录：`/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v112_part_se3_ddp_smoke_20260921T025835Z`；入口为同目录 `run_manifest.json`、`config.json`、`metrics.jsonl`、`train.log`、`service.log`、`latest.pt` 和 `best.pt`。
 - GPU0 上 lxp 用户的 GR00T server（PID `1759014`，约 8.7 GiB）全程保留；smoke 结束后 GPU2 显存归零，GPU0 仅保留该外部进程。
 
+## V1.12 正式训练终态
+
+- timestamp：`2026-09-21T03:00:23+00:00` 至 `2026-09-21T03:31:14+00:00`
+- run_id：`cmv2_v112_part_se3_ddp_formal_20260921T030019Z`；git_commit：`d9c1b2e1e9825813be0168d52142f20964c8ca9b`
+- protocol：物理 GPU0+2、每卡64、global batch128、计划16 epochs、随机初始化；其余五组采样、stride、validation 与 checkpoint 合同见固定配置和 run manifest。
+- run_status：`STOPPED`；phase：`training`；stop_signal：`15`；last_step：`200`；last_epoch：`1`；best metric：`N/A`。用户决定先结束本 run，并在合并 V1.12 后以独立 V1.13 分支处理加速问题。
+- 启动阶段从 `03:00:23` 加载至 `03:17:24` 才进入 training，约 `17 min 01 s`；进入训练后 200 steps 用时约 `818.06 s`（约 `4.09 s/step`）。这些是定位 I/O 加速边界的运行事实，不构成优化方案或效果结论。
+- 终态产物：`latest.pt`（step 200）、`run_manifest.json`、`config.json`、`metrics.jsonl`、`train.log` 与 `service.log` 均保留在 `/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v112_part_se3_ddp_formal_20260921T030019Z`；首轮 validation 未发生，故无 `best.pt`。
+- 停止后该 run 的 supervisor、torchrun 与两个 worker 均已退出；GPU0 上外部 GR00T 进程未触碰。科学结论保持 `INCONCLUSIVE`，不得用前 200 step 的训练 loss 判断模型效果。
+
 ## 保护与回滚
 
-未修改 `src/base`、既有 V1.11 模型/runner/config、原始数据、cache、adapter、checkpoint 或历史 outputs。V1.11.1 仅按用户明确授权受控停止，产物完整保留；GPU0 外部 GR00T 未触碰。用户维护的 `指导/V1.12.md` 内容保留。
+未修改 `src/base`、既有 V1.11 模型/runner/config、原始数据、cache、adapter、checkpoint 或历史 outputs。V1.11.1 与 V1.12 正式 run 仅按用户明确授权受控停止，产物完整保留；GPU0 外部 GR00T 未触碰。用户维护的 `指导/V1.12.md` 内容保留。
 
 回滚可删除本 Activity 所列 V1.12 独立源码、配置、测试与状态增量，并把 Task work_version 指针恢复为 `V1.11.1`；无需迁移或删除任何数据和运行产物。
