@@ -103,8 +103,10 @@ def _entries(index_path: Path, source_root: Path, output_root: Path, domain: str
 class InspireConverter:
     def __init__(self, dex_root: Path) -> None:
         dex_root = dex_root.resolve()
-        RetargetingConfig.set_default_urdf_dir(dex_root / "assets" / "robots" / "hands")
         source_urdf = REPO_ROOT.parent / "dexplore" / "dexplore" / "data" / "assets" / "inspire_hand_new" / "inspire_hand_right.urdf"
+        RetargetingConfig.set_default_urdf_dir(source_urdf.parent)
+        config_roots = (dex_root / "dex_retargeting" / "configs" / "offline",
+                        dex_root / "configs" / "offline")
         tree = ET.parse(str(source_urdf)); active: list[str] = []
         for joint in tree.getroot().findall("joint"):
             if joint.get("type") != "fixed": active.append(str(joint.get("name")))
@@ -129,8 +131,12 @@ class InspireConverter:
             cloud = _sample_uniform_surface(pool, 2024, INSPIRE_PER_SIDE)
             points, normals = canonical_cloud_to_visual_local(model, cloud.points, cloud.normals, cloud.source_visual_ids)
             self.models[side] = model; self.samplings[side] = (points, normals, cloud.source_visual_ids)
+            config_path = next((root / f"inspire_hand_{side}.yml" for root in config_roots
+                                if (root / f"inspire_hand_{side}.yml").is_file()), None)
+            if config_path is None:
+                raise FileNotFoundError(f"no Inspire {side} retarget config below {dex_root}")
             self.retargeters[side] = RetargetingConfig.load_from_file(
-                dex_root / "dex_retargeting" / "configs" / "offline" / f"inspire_hand_{side}.yml",
+                config_path,
                 override={"urdf_path": str(patched), "add_dummy_free_joint": False,
                           "target_joint_names": active, "ignore_mimic_joint": True},
             ).build()

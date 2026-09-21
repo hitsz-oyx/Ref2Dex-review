@@ -156,13 +156,20 @@ def restore_checkpoint(path: str | Path, model: torch.nn.Module,
     return {key: payload[key] for key in ("epoch", "step", "best_metric")}
 
 
+SUPPORTED_PART_SE3_GROUPS = tuple(
+    f"{domain}/{variant}"
+    for domain in ("grab", "arctic", "oakink2")
+    for variant in ("mano", "inspire_f1")
+)
+
+
 def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, *,
                            fixed_stride: int | None = None,
                            max_sequences: int | None = None,
                            hand_points_per_side: int | None = None,
                            hand_sampling_seed: int = 42):
     """Build the explicit reference or V1.13 compact backend."""
-    if group not in GROUPS or split not in ("train", "val", "test"):
+    if group not in SUPPORTED_PART_SE3_GROUPS or split not in ("train", "val", "test"):
         raise ValueError("invalid V1.12 group or split")
     backend = str(config.get("data_backend", "reference"))
     if backend == "compact":

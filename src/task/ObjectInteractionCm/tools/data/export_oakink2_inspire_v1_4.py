@@ -519,7 +519,9 @@ class _InspireRetargeter:
         patched = Path(self._temp.name) / source_urdf.name
         tree.write(str(patched))
         self._inv_native = np.argsort(np.asarray([0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 16, 17, 14, 15, 6, 7, 8, 9]))
-        RetargetingConfig.set_default_urdf_dir(self.dex_root / "assets" / "robots" / "hands")
+        RetargetingConfig.set_default_urdf_dir(source_urdf.parent)
+        config_roots = (self.dex_root / "dex_retargeting" / "configs" / "offline",
+                        self.dex_root / "configs" / "offline")
         self.models = {}
         self.samplings = {}
         self.configs = {}
@@ -539,8 +541,12 @@ class _InspireRetargeter:
             )
             self.models[side] = model
             self.samplings[side] = (local_points, local_normals, cloud.source_visual_ids)
+            config_path = next((root / f"inspire_hand_{side}.yml" for root in config_roots
+                                if (root / f"inspire_hand_{side}.yml").is_file()), None)
+            if config_path is None:
+                raise FileNotFoundError(f"no Inspire {side} retarget config below {self.dex_root}")
             self.configs[side] = (RetargetingConfig.load_from_file(
-                self.dex_root / "dex_retargeting" / "configs" / "offline" / f"inspire_hand_{side}.yml",
+                config_path,
                 override={
                     "urdf_path": str(patched),
                     "add_dummy_free_joint": False,

@@ -236,8 +236,8 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         rows = rows[int(args.offset):int(args.offset) + int(args.limit)]
     elif args.offset:
         rows = rows[int(args.offset):]
-    existing_root = args.existing_root.resolve()
     output_root = args.output_root.resolve()
+    existing_root = args.existing_root.resolve() if args.existing_root else None
     output_root.mkdir(parents=True, exist_ok=True)
     _set_legacy_highres_contract()
     # A resume must not overwrite the manifest of the interrupted baseline
@@ -257,7 +257,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "work_version": WORK_VERSION,
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "selection_index": str(selection_path),
-        "existing_root": str(existing_root),
+        "existing_root": str(existing_root) if existing_root else None,
         "output_root": str(output_root),
         "knn_frame_batch": int(args.knn_frame_batch),
         "knn_object_chunk": int(args.knn_object_chunk),
@@ -288,13 +288,14 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
     for ordinal, row in enumerate(rows, 1):
         selection_id = str(row["id"])
         destination = _output_destination(output_root, selection_id)
-        existing = _output_destination(existing_root, selection_id)
+        existing = _output_destination(existing_root, selection_id) if existing_root else None
         try:
             reusable = False
             # Prefer complete entries already written in this high-resolution
             # root.  The original `existing_root` contains legacy 3076-point
             # entries and remains only a read-only audit source.
-            for candidate in (destination, existing):
+            candidates = (destination, existing) if existing_root else (destination,)
+            for candidate in candidates:
                 if not (candidate / "geometry" / "manifest.json").is_file():
                     continue
                 # Only an already corrected high-resolution cache may be reused.
@@ -381,7 +382,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "counts": {"train": len(entries), "val": 0, "test": 0,
                    "frames": sum(int(item["frame_count"]) for item in entries)},
         "selection_index": str(selection_path),
-        "existing_root": str(existing_root),
+        "existing_root": str(existing_root) if existing_root else None,
         "backfill_root": str(output_root),
     }
     cache_manifest = {
@@ -390,7 +391,7 @@ def backfill(args: argparse.Namespace) -> dict[str, Any]:
         "work_version": WORK_VERSION,
         "created_at": _now(),
         "storage": "NAS" if "/mnt/ugreen_nas/" in str(output_root) else "unknown",
-        "roots": [str(existing_root), str(output_root)],
+        "roots": ([str(existing_root)] if existing_root else []) + [str(output_root)],
         "sequence_counts": {"oakink2": len(entries)},
         "total_sequences": len(entries),
         "total_frames": int(index["counts"]["frames"]),
@@ -423,7 +424,7 @@ def main(argv=None) -> None:
     parser.add_argument("--annotation-root", type=Path, required=True)
     parser.add_argument("--stage3-root", type=Path, required=True)
     parser.add_argument("--canonical-root", type=Path)
-    parser.add_argument("--existing-root", type=Path, required=True)
+    parser.add_argument("--existing-root", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--mano-root", type=Path, required=True)
     parser.add_argument("--dex-root", type=Path, required=True)

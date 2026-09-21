@@ -1,5 +1,7 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL](ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)：双手 portable raw 入口、六组动态 split 与 V1.14a DDP runner；真实 OakInk2 smoke 当前受本机缺少 `manotorch` 阻断。
+
 - [ACT-20260921-CMV2-V114A-SHARED-START](ACT-20260921-CMV2-V114A-SHARED-START.md)：每手 2048 点与 candidate 共享 start KNN 实现、接口 parity 和未完成的真实 cache/GPU 门禁。
 
 - [ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK](ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)：128/64/32D 与 default/tuned chunk 的正式随机权重性能 benchmark。

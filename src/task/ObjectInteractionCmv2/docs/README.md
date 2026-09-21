@@ -2,6 +2,14 @@
 
 ## 当前工作状态
 
+- V1.14b 已补齐 portable bilateral 路线：本地 GRAB 可显式启用 `mano + inspire_f1`，服务器配置可启用
+  `GRAB/ARCTIC/OakInk2 × MANO/Inspire` 六组；模型输入继续固定左/右各 2048 点。OakInk2 raw bundle 已校验后迁入
+  `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。
+  Task 测试与本机左右 Inspire retarget 初始化通过；真实 OakInk2 producer smoke 因本机缺 `manotorch` 尚未通过，
+  因而没有生成正式 cache 或启动训练。入口：[V1.14b FINAL 计划](plan/V1.14b.md)、
+  [Activity](activities/ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)、
+  [本地两组配置](../configs/active/mixed_part_se3_v1_14b_local.yaml)与
+  [服务器六组模板](../configs/active/mixed_part_se3_v1_14b_six_source.yaml)。
 - work_version：`V1.14`；V1.14a 已把 reference hand stream 固定为每手 2048、双手 4096 点，并实现 candidate 共享 start KNN：start top-32 每个 state 只计算一次，end top-32 仍逐 candidate 计算。随机初始化接口与 duplicated-start oracle parity 已通过；GPU3 正式 synthetic benchmark 中 endpoint 从 `33.316 ms` 降至 `19.958 ms`（`1.669x`），shared endpoint + 32D model 为 `25.851 ms`，性能假设 `SUPPORTED`。真实五组 cache 覆盖审计因 NAS 未挂载尚未完成，因此未启动训练。
 - V1.14a 不兼容旧 V1.14 checkpoint 与 V1.13 compact cache；compact-v2 当前仅允许内存 pilot，不授权 full build。入口：[模型](../part_se3_v114.py)、[构造与 checkpoint 合同](../part_se3_v114_training.py)、[未授权运行配置](../configs/active/mixed_part_se3_v1_14a.yaml)、[V1.14a FINAL 计划](plan/V1.14a.md)与[实现 Activity](activities/ACT-20260921-CMV2-V114A-SHARED-START.md)。
 - V1.14 性能证据：[benchmark Activity](activities/ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)与[实验卡](experiments/EXP-20260921-V114-NARROW-CANDIDATE-PERFORMANCE.md)；结论仅适用于随机权重 synthetic `B=1,K=8,N=1024,E=32,H=4096` 工程延迟。
@@ -48,6 +56,7 @@
 - [V1.13 最终计划](plan/V1.13.md)：以紧凑 endpoint 派生 cache、分片读取和可选本地 staging 消除完整手流读取与在线 KNN；保持 V1.12 科学语义不变。
 - [V1.14 指导](指导/V1.14.md) 与 [V1.14 最终计划](plan/V1.14.md)：32D 稠密交互、128D token/part reasoning、静态物体编码与 candidate-axis 共享。
 - [V1.14a 指导](指导/V1.14a.md) 与 [V1.14a 最终计划](plan/V1.14a.md)：每手固定 2048 点、共享 start KNN 与独立 candidate end KNN。
+- [V1.14b 最终计划](plan/V1.14b.md)：双手 portable raw 数据入口、可配置 active groups 与跨机器 V1.14a 训练 runner。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
