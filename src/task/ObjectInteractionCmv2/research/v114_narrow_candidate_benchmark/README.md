@@ -1,11 +1,12 @@
-# V1.14 窄交互 Candidate Benchmark
+# V1.14a 共享起点 Candidate Benchmark
 
 本实验用同一份随机 synthetic endpoint 输入比较 `interaction_dim={128,64,32}`，只检验工程延迟与显存，
 不检验预测质量。主合同固定为 `B=1,K=8,N=1024,E=32`、FP32、TF32 关闭，并分别记录 static object
 encode、local interaction、共享后的完整 candidate forward 和 encode+forward。
 
-endpoint 构建以相同对象和 `H=4096` 手点单独计时；`endpoint + encode + forward` 是顺序执行时间之和，
-不是隐藏 KNN 成本的“纯模型”数字。输出写入 `output/<run_id>/`，拒绝覆盖旧运行。
+endpoint 构建固定为每手 2048、双手 `H=4096`，分别计时 duplicated-start oracle 与 shared-start；
+`shared endpoint + encode + forward` 是顺序执行时间之和，不是隐藏 KNN 成本的“纯模型”数字。
+输出写入 `output/<run_id>/`，拒绝覆盖旧运行。
 
 `--object-chunk` 和 `--hand-chunk` 同时进入模型与 endpoint 计时，可用于比较当前默认 `128/256` 与
 不改变数学语义的 planner-oriented chunk。所有 run 必须在 manifest/config 中保留实际值。

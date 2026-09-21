@@ -1,12 +1,12 @@
-name: v114_narrow_candidate_benchmark
+name: v114a_shared_start_candidate_benchmark
 work_version: V1.14
 operation_category: [benchmark, diagnostic]
 importance: primary
 pinned: true
-tags: [candidate-sharing, endpoint, latency, random-initialization]
+tags: [candidate-sharing, shared-start-knn, endpoint, latency, random-initialization]
 entrypoint: src.task.ObjectInteractionCmv2.research.v114_narrow_candidate_benchmark.run
-guidance: ../../docs/指导/V1.14.md
-plan: ../../docs/plan/V1.14.md
+guidance: ../../docs/指导/V1.14a.md
+plan: ../../docs/plan/V1.14a.md
 output: output/<run_id>/
 initialization: random
 seed: 42
