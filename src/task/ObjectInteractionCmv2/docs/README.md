@@ -2,9 +2,10 @@
 
 ## 当前工作状态
 
-- work_version：`V1.14`；V1.14a 已把 reference hand stream 固定为每手 2048、双手 4096 点，并实现 candidate 共享 start KNN：start top-32 每个 state 只计算一次，end top-32 仍逐 candidate 计算。随机初始化接口与 duplicated-start oracle parity 已通过；真实五组 cache 审计和 GPU 性能 benchmark 尚未完成，因此未启动训练。
+- work_version：`V1.14`；V1.14a 已把 reference hand stream 固定为每手 2048、双手 4096 点，并实现 candidate 共享 start KNN：start top-32 每个 state 只计算一次，end top-32 仍逐 candidate 计算。随机初始化接口与 duplicated-start oracle parity 已通过；GPU3 正式 synthetic benchmark 中 endpoint 从 `33.316 ms` 降至 `19.958 ms`（`1.669x`），shared endpoint + 32D model 为 `25.851 ms`，性能假设 `SUPPORTED`。真实五组 cache 覆盖审计因 NAS 未挂载尚未完成，因此未启动训练。
 - V1.14a 不兼容旧 V1.14 checkpoint 与 V1.13 compact cache；compact-v2 当前仅允许内存 pilot，不授权 full build。入口：[模型](../part_se3_v114.py)、[构造与 checkpoint 合同](../part_se3_v114_training.py)、[未授权运行配置](../configs/active/mixed_part_se3_v1_14a.yaml)、[V1.14a FINAL 计划](plan/V1.14a.md)与[实现 Activity](activities/ACT-20260921-CMV2-V114A-SHARED-START.md)。
 - V1.14 性能证据：[benchmark Activity](activities/ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)与[实验卡](experiments/EXP-20260921-V114-NARROW-CANDIDATE-PERFORMANCE.md)；结论仅适用于随机权重 synthetic `B=1,K=8,N=1024,E=32,H=4096` 工程延迟。
+- V1.14a 性能证据：[实现与 benchmark Activity](activities/ACT-20260921-CMV2-V114A-SHARED-START.md)与[实验卡](experiments/EXP-20260921-V114A-SHARED-START-PERFORMANCE.md)；结论仍只适用于随机权重 synthetic 工程延迟。
 - V1.13 保持 V1.12 模型与研究语义不变：训练时可从去重手点表和预选 endpoint-32 edge 恢复交互输入，避免读取完整高分辨率手流及在线全手流 KNN；默认 reference backend 仍保留。
 - V1.13 入口：[紧凑 schema/reader](../compact_endpoint.py)、[cache producer](../tools/data/build_compact_endpoint_v1_13.py)、[FINAL 计划](plan/V1.13.md)与[实现 Activity](activities/ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
