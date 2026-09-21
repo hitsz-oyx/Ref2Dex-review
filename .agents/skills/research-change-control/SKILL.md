@@ -46,6 +46,20 @@ worktree 仅在干净、无未跟踪内容且用户明确授权后可移除；�
 `verify.py` 只检查适合机器判断的语法、结构、链接、版本合同和 hermetic 测试；Activity
 字段、提交范围和变更理由仍须由人审阅，不以逐路径脚本冒充完整审计。
 
+## Plan 内容合同
+
+Plan 是执行合同，不是研究日志或设计说明。
+
+最终 plan 默认只包含：
+
+1. Goal
+2. Change / Protected
+3. Implementation
+4. Verification / Stop conditions
+5. Rollback
+
+写计划的时候要求简洁可读
+
 ## 交接
 
 最终回复按 Task / mode / impact level / work_version / branch / git_commit / research semantics / changed / protected / verification / scientific conclusion / next 交接。工程 smoke 只能说明接线或可运行性，不能作为科研效果。
