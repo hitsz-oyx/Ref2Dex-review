@@ -120,30 +120,61 @@ class EndpointInteractionEncoder(nn.Module):
         self.value = nn.Linear(self.width, self.width, bias=False)
 
     def forward(self, object_features: Tensor, object_points: Tensor, object_normals: Tensor,
-                hand_points: Tensor, hand_normals: Tensor, hand_flow: Tensor,
+                hand_points: Tensor | None = None, hand_normals: Tensor | None = None,
+                hand_flow: Tensor | None = None,
                 hand_valid_mask: Tensor | None = None, delta_time_s: Tensor | None = None,
-                edge_object_chunk: int = 128, edge_hand_chunk: int = 256) -> tuple[Tensor, dict[str, Tensor]]:
-        if hand_valid_mask is None:
-            hand_valid_mask = torch.ones(hand_points.shape[:2], dtype=torch.bool, device=hand_points.device)
+                edge_object_chunk: int = 128, edge_hand_chunk: int = 256, *,
+                edge_hand_points: Tensor | None = None,
+                edge_hand_normals: Tensor | None = None,
+                edge_hand_flow: Tensor | None = None,
+                edge_source_id: Tensor | None = None,
+                edge_valid_mask: Tensor | None = None) -> tuple[Tensor, dict[str, Tensor]]:
         if delta_time_s is None:
             delta_time_s = torch.full((object_points.shape[0],), self.frame_dt_s,
                                       dtype=object_points.dtype, device=object_points.device)
         delta_time_s = delta_time_s.reshape(object_points.shape[0])
-        distance, indices, start_distance, end_distance = endpoint_union_topk(
-            object_points, hand_points, hand_flow, hand_valid_mask, k=self.k,
-            object_chunk=int(edge_object_chunk), hand_chunk=int(edge_hand_chunk))
+        compact = edge_hand_points is not None
+        if compact:
+            if any(value is None for value in (
+                    edge_hand_normals, edge_hand_flow, edge_source_id, edge_valid_mask)):
+                raise ValueError("compact endpoint input requires points, normals, flow, source IDs and mask")
+            expected = (*object_points.shape[:2], self.k, 3)
+            if (edge_hand_points.shape != expected or edge_hand_normals.shape != expected
+                    or edge_hand_flow.shape != expected):
+                raise ValueError("compact endpoint edge tensors have invalid shape")
+            if edge_source_id.shape != expected[:-1] or edge_valid_mask.shape != expected[:-1]:
+                raise ValueError("compact endpoint IDs or mask have invalid shape")
+            relative_all = edge_hand_points - object_points[:, :, None]
+            start_distance = torch.linalg.vector_norm(relative_all, dim=-1)
+            end_distance = torch.linalg.vector_norm(relative_all + edge_hand_flow, dim=-1)
+            distance = torch.minimum(start_distance, end_distance)
+            indices = edge_source_id.long()
+        else:
+            if hand_points is None or hand_normals is None or hand_flow is None:
+                raise ValueError("reference endpoint input requires the full hand stream")
+            if hand_valid_mask is None:
+                hand_valid_mask = torch.ones(hand_points.shape[:2], dtype=torch.bool, device=hand_points.device)
+            distance, indices, start_distance, end_distance = endpoint_union_topk(
+                object_points, hand_points, hand_flow, hand_valid_mask, k=self.k,
+                object_chunk=int(edge_object_chunk), hand_chunk=int(edge_hand_chunk))
         object_count = object_points.shape[1]
         contacts, masks = [], []
         query = self.query(object_features)
         for start in range(0, object_count, int(edge_object_chunk)):
             stop = min(start + int(edge_object_chunk), object_count)
             chunk_indices = indices[:, start:stop]
-            gather = chunk_indices[..., None].expand(-1, -1, -1, 3)
             width = stop - start
-            hp = torch.gather(hand_points[:, None].expand(-1, width, -1, -1), 2, gather)
-            hn = torch.gather(hand_normals[:, None].expand(-1, width, -1, -1), 2, gather)
-            hf = torch.gather(hand_flow[:, None].expand(-1, width, -1, -1), 2, gather)
-            valid = torch.gather(hand_valid_mask[:, None].expand(-1, width, -1), 2, chunk_indices)
+            if compact:
+                hp = edge_hand_points[:, start:stop]
+                hn = edge_hand_normals[:, start:stop]
+                hf = edge_hand_flow[:, start:stop]
+                valid = edge_valid_mask[:, start:stop].bool()
+            else:
+                gather = chunk_indices[..., None].expand(-1, -1, -1, 3)
+                hp = torch.gather(hand_points[:, None].expand(-1, width, -1, -1), 2, gather)
+                hn = torch.gather(hand_normals[:, None].expand(-1, width, -1, -1), 2, gather)
+                hf = torch.gather(hand_flow[:, None].expand(-1, width, -1, -1), 2, gather)
+                valid = torch.gather(hand_valid_mask[:, None].expand(-1, width, -1), 2, chunk_indices)
             valid = valid & distance[:, start:stop].lt(self.radius_m)
             relative = hp - object_points[:, start:stop, None]
             on = object_normals[:, start:stop, None].expand_as(hn)
@@ -245,11 +276,17 @@ class PartSE3ObjectInteractionCmv2V112Model(nn.Module):
         self.part_motion_head = nn.Linear(width, 6)
 
     def forward(self, batch: Mapping[str, Tensor]) -> dict[str, Tensor]:
-        required = ("obj_points", "obj_normals", "obj_part_id", "part_valid_mask",
-                    "hand_points", "hand_normals", "hand_flow", "hand_valid_mask")
+        required = ("obj_points", "obj_normals", "obj_part_id", "part_valid_mask")
         missing = [key for key in required if key not in batch]
         if missing:
             raise KeyError(f"missing V1.12 fields: {missing}")
+        reference_keys = ("hand_points", "hand_normals", "hand_flow", "hand_valid_mask")
+        compact_keys = ("edge_hand_points", "edge_hand_normals", "edge_hand_flow",
+                        "edge_source_id", "edge_valid_mask")
+        reference = all(key in batch for key in reference_keys)
+        compact = all(key in batch for key in compact_keys)
+        if reference == compact:
+            raise KeyError("provide exactly one of the reference hand stream or compact endpoint edges")
         points = batch["obj_points"]
         normals = F.normalize(batch["obj_normals"], dim=-1, eps=1e-8)
         part_ids, part_valid = batch["obj_part_id"].long(), batch["part_valid_mask"].bool()
@@ -268,9 +305,12 @@ class PartSE3ObjectInteractionCmv2V112Model(nn.Module):
             centered / object_scale[:, None, None], normals,
             torch.log(object_scale / self.feature_scale_m)[:, None, None].expand(-1, points.shape[1], 1)), -1))
         contact, diagnostics = self.local_interaction(
-            geo, points, normals, batch["hand_points"], batch["hand_normals"], batch["hand_flow"],
-            batch["hand_valid_mask"], batch.get("delta_time_s"),
-            int(batch.get("interaction_object_chunk", 128)), int(batch.get("interaction_hand_chunk", 256)))
+            geo, points, normals, batch.get("hand_points"), batch.get("hand_normals"),
+            batch.get("hand_flow"), batch.get("hand_valid_mask"), batch.get("delta_time_s"),
+            int(batch.get("interaction_object_chunk", 128)), int(batch.get("interaction_hand_chunk", 256)),
+            edge_hand_points=batch.get("edge_hand_points"),
+            edge_hand_normals=batch.get("edge_hand_normals"), edge_hand_flow=batch.get("edge_hand_flow"),
+            edge_source_id=batch.get("edge_source_id"), edge_valid_mask=batch.get("edge_valid_mask"))
         active = diagnostics["has_interaction"]
         tokens, anchors, token_normals, token_mass, token_mask, assignment = self.tokens(
             contact, points, normals, active, object_scale)
@@ -353,7 +393,10 @@ def collate_part_se3(batch: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     hand_keys = {"hand_points", "hand_normals", "hand_flow", "hand_valid_mask"}
     part_keys = {"part_valid_mask", "delta_translation_part_gt", "delta_rotation_part_gt"}
-    max_hand = max(int(sample["hand_points"].shape[0]) for sample in batch)
+    has_reference = "hand_points" in batch[0]
+    if any(("hand_points" in sample) != has_reference for sample in batch):
+        raise ValueError("cannot mix reference and compact endpoint samples in one batch")
+    max_hand = max(int(sample["hand_points"].shape[0]) for sample in batch) if has_reference else 0
     max_part = max(int(sample["part_valid_mask"].shape[0]) for sample in batch)
     for key in batch[0]:
         values = [sample[key] for sample in batch]

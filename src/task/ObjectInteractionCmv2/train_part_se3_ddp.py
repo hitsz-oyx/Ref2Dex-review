@@ -31,7 +31,6 @@ from .mixed_training import (
 from .part_se3 import PART_SE3_VERSION, collate_part_se3, part_se3_v112_loss
 from .part_se3_training import (
     CHECKPOINT_SCHEMA,
-    WORK_VERSION,
     build_part_se3_dataset,
     initialize_random_model,
     load_part_se3_training_config,
@@ -73,7 +72,7 @@ def save_checkpoint(output: Path, name: str, model, optimizer, generator, config
         temporary = output / (name + ".tmp")
         torch.save({
             "schema_name": CHECKPOINT_SCHEMA,
-            "work_version": WORK_VERSION,
+            "work_version": config["work_version"],
             "architecture_version": PART_SE3_VERSION,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
@@ -197,14 +196,15 @@ def run_worker(output_value: str | Path) -> None:
         manifest.update(run_status="RUNNING", phase="loading_datasets", started_at=utc_now())
         emit(output, manifest, rank, {"phase": "loading_datasets", "last_step": 0, "last_epoch": 0})
         train, validation = {}, {}
+        sequence_limit = 1 if smoke and config.get("data_backend", "reference") == "reference" else None
         for group in GROUPS:
             train[group] = build_part_se3_dataset(
-                config, group, "train", max_sequences=1 if smoke else None)
+                config, group, "train", max_sequences=sequence_limit)
             emit(output, manifest, rank, {"phase": "loading_datasets", "group": group,
                                           "train_rows": len(train[group])})
             for stride in config["data"]["validation_strides"]:
                 validation[f"{group}/stride{stride}"] = build_part_se3_dataset(
-                    config, group, "val", fixed_stride=stride, max_sequences=1 if smoke else None)
+                    config, group, "val", fixed_stride=stride, max_sequences=sequence_limit)
         steps_per_epoch = math.ceil(sum(len(dataset) for dataset in train.values()) / 128)
         if smoke:
             steps_per_epoch = manifest["smoke_steps"]
@@ -333,6 +333,22 @@ def prepare(config_path: str | Path, run_id: str, smoke_steps: int) -> Path:
         identity_paths.extend((source["index"], source["manifest"]))
     for path in identity_paths:
         inputs[path] = sha256_file(path)
+    if config.get("data_backend") == "compact":
+        from .compact_endpoint import CACHE_SCHEMA
+        compact_root = Path(config["compact_cache_root"])
+        compact_manifest_path = compact_root / "manifest.json"
+        compact_index_path = compact_root / "index.bin"
+        compact_manifest = json.loads(compact_manifest_path.read_text())
+        if (compact_manifest.get("schema_name") != CACHE_SCHEMA
+                or compact_manifest.get("work_version") != "V1.13"
+                or int(compact_manifest.get("validation", {}).get("bad_count", 1)) != 0
+                or sha256_file(compact_index_path) != compact_manifest.get("index_sha256")):
+            raise ValueError("V1.13 compact cache identity or validation failed")
+        for path, expected in compact_manifest.get("source_sha256", {}).items():
+            if sha256_file(path) != expected:
+                raise ValueError(f"V1.13 compact cache source changed: {path}")
+        inputs[str(compact_manifest_path)] = sha256_file(compact_manifest_path)
+        inputs[str(compact_index_path)] = compact_manifest["index_sha256"]
     output = Path(config["output_root"]) / run_id
     output.mkdir(parents=True, exist_ok=False)
     (output / "tmp").mkdir()
@@ -350,9 +366,13 @@ def prepare(config_path: str | Path, run_id: str, smoke_steps: int) -> Path:
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip()
     manifest = {
         "schema_name": "ref2dex_run_manifest_v1", "task": "ObjectInteractionCmv2",
-        "work_version": WORK_VERSION, "run_id": run_id, "run_status": "STARTED",
+        "work_version": config["work_version"], "run_id": run_id, "run_status": "STARTED",
         "created_at": utc_now(),
-        "operation": "five_source_endpoint_part_se3_ddp_smoke" if smoke_steps else "five_source_endpoint_part_se3_ddp_train",
+        "operation": (("five_source_compact_endpoint_part_se3_ddp_smoke" if smoke_steps
+                       else "five_source_compact_endpoint_part_se3_ddp_train")
+                      if config.get("data_backend") == "compact" else
+                      ("five_source_endpoint_part_se3_ddp_smoke" if smoke_steps
+                       else "five_source_endpoint_part_se3_ddp_train")),
         "git_commit": commit,
         "branch": subprocess.check_output(["git", "branch", "--show-current"], cwd=REPO_ROOT, text=True).strip(),
         "implementation_identity": "clean git_commit plus frozen source_snapshot SHA256",
@@ -361,11 +381,15 @@ def prepare(config_path: str | Path, run_id: str, smoke_steps: int) -> Path:
         "seed": config["training"]["seed"], "physical_gpus": config["resources"]["physical_gpus"],
         "nofile_limit": config["resources"]["nofile_limit"],
         "batch_size_per_rank": 64, "global_batch_size": 128, "group_weights": GROUP_WEIGHTS,
-        "schema": "V1.12 endpoint KNN; whole-object part sampling; direct per-part SE(3)",
+        "schema": ("V1.13 compact endpoint edges; V1.12 model/GT/loss semantics"
+                   if config.get("data_backend") == "compact" else
+                   "V1.12 endpoint KNN; whole-object part sampling; direct per-part SE(3)"),
         "coordinates": "current object/root reference frame; metres; seconds; radians",
         "split": str(split_root / "index.json"), "initial_checkpoint": None,
         "initialization": "random", "selection_metric": "weighted five-group mean of stride1/2/3 total loss",
-        "approval_basis": "user approved stopping V1.11.1 and reusing its formal budget on physical GPUs 0 and 2",
+        "approval_basis": config.get(
+            "approval_basis",
+            "user approved stopping V1.11.1 and reusing its formal budget on physical GPUs 0 and 2"),
         "outputs": {"directory": str(output), "metrics": "metrics.jsonl", "log": "train.log",
                     "service_log": "service.log", "latest": "latest.pt", "best": "best.pt"},
         "conclusion": "INCONCLUSIVE",

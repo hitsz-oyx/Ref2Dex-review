@@ -16,8 +16,10 @@ from .part_se3_data import OakInkWholePartTransitions, RigidArticulatedPartTrans
 
 
 WORK_VERSION = "V1.12"
+COMPACT_WORK_VERSION = "V1.13"
 CONFIG_SCHEMA = "object_interaction_cmv2_part_se3_v1_12"
 FORMAL_CONFIG_SCHEMA = "object_interaction_cmv2_part_se3_ddp_v1_12"
+COMPACT_FORMAL_CONFIG_SCHEMA = "object_interaction_cmv2_part_se3_ddp_v1_13"
 CHECKPOINT_SCHEMA = "object_interaction_cmv2_part_se3_checkpoint_v1"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -63,9 +65,9 @@ def _absolute(value: str | Path) -> str:
     return str((path if path.is_absolute() else REPO_ROOT / path).resolve())
 
 
-def _validate_common(config: dict[str, Any]) -> dict[str, Any]:
-    if config.get("work_version") != WORK_VERSION or config.get("initialization") != "random":
-        raise ValueError("V1.12 work_version or initialization mismatch")
+def _validate_common(config: dict[str, Any], *, work_version: str = WORK_VERSION) -> dict[str, Any]:
+    if config.get("work_version") != work_version or config.get("initialization") != "random":
+        raise ValueError(f"{work_version} work_version or initialization mismatch")
     if config.get("model") != EXPECTED_MODEL or config.get("data") != EXPECTED_DATA:
         raise ValueError("V1.12 model or data contract mismatch")
     if config.get("loss") != EXPECTED_LOSS:
@@ -94,11 +96,22 @@ def load_part_se3_config(path: str | Path) -> dict[str, Any]:
 
 
 def load_part_se3_training_config(path: str | Path) -> dict[str, Any]:
-    """Load the user-approved GPU0/2 formal-training contract."""
+    """Load an explicitly approved V1.12 reference or V1.13 compact run contract."""
     config = yaml.safe_load(Path(path).read_text())
-    if config.get("schema_name") != FORMAL_CONFIG_SCHEMA or config.get("run_authorization") != "approved":
-        raise ValueError("V1.12 formal config schema or authorization mismatch")
-    _validate_common(config)
+    schema = config.get("schema_name")
+    if schema not in (FORMAL_CONFIG_SCHEMA, COMPACT_FORMAL_CONFIG_SCHEMA):
+        raise ValueError("part-SE3 formal config schema mismatch")
+    if config.get("run_authorization") != "approved":
+        raise ValueError("part-SE3 formal run is not approved")
+    work_version = WORK_VERSION if schema == FORMAL_CONFIG_SCHEMA else COMPACT_WORK_VERSION
+    _validate_common(config, work_version=work_version)
+    if schema == FORMAL_CONFIG_SCHEMA:
+        if config.get("data_backend", "reference") != "reference":
+            raise ValueError("V1.12 formal config requires the reference backend")
+    else:
+        if config.get("data_backend") != "compact" or not config.get("compact_cache_root"):
+            raise ValueError("V1.13 formal config requires an explicit compact cache")
+        config["compact_cache_root"] = _absolute(config["compact_cache_root"])
     if config.get("training") != EXPECTED_TRAINING:
         raise ValueError("V1.12 formal training budget mismatch")
     if config.get("resources") != {"physical_gpus": [0, 2], "nofile_limit": 262144}:
@@ -109,7 +122,7 @@ def load_part_se3_training_config(path: str | Path) -> dict[str, Any]:
 
 def initialize_random_model(config: Mapping[str, Any], device: torch.device | str = "cpu"):
     if config.get("initialization") != "random":
-        raise ValueError("V1.12 only permits random initialization")
+        raise ValueError("part-SE3 only permits random initialization")
     model_config = dict(config["model"])
     if model_config != EXPECTED_MODEL:
         raise ValueError("V1.12 model contract mismatch")
@@ -146,9 +159,20 @@ def restore_checkpoint(path: str | Path, model: torch.nn.Module,
 def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, *,
                            fixed_stride: int | None = None,
                            max_sequences: int | None = None):
-    """Build one frozen split/group without mutating or materializing source caches."""
+    """Build the explicit reference or V1.13 compact backend."""
     if group not in GROUPS or split not in ("train", "val", "test"):
         raise ValueError("invalid V1.12 group or split")
+    backend = str(config.get("data_backend", "reference"))
+    if backend == "compact":
+        if max_sequences is not None:
+            raise ValueError("compact backend does not support sequence-count truncation")
+        from .compact_endpoint import CompactEndpointDataset
+        root = config.get("compact_cache_root")
+        if not root:
+            raise ValueError("compact backend requires compact_cache_root")
+        return CompactEndpointDataset(root, group, split, fixed_stride=fixed_stride)
+    if backend != "reference":
+        raise ValueError(f"unsupported part-SE3 data backend: {backend}")
     domain, variant = group.split("/")
     split_root = Path(config["split_root"])
     strides = (fixed_stride,) if fixed_stride is not None else tuple(

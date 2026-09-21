@@ -104,7 +104,7 @@ def _transition_values(sequence, current: int, future: int, reference: np.ndarra
 
 
 def _sample_payload(values: Mapping[str, np.ndarray], part_ids: np.ndarray,
-                    rotations: np.ndarray, translations: np.ndarray, *, delta_time: float,
+                    rotations: np.ndarray, translations: np.ndarray, object_point_ids: np.ndarray, *, delta_time: float,
                     stride: int, hand_points: int, source: str, sequence_id: str,
                     source_frame_id: int, next_source_frame_id: int) -> dict[str, Any]:
     reconstructed = np.empty_like(values["obj_points"])
@@ -118,6 +118,7 @@ def _sample_payload(values: Mapping[str, np.ndarray], part_ids: np.ndarray,
     return {
         **{key: torch.from_numpy(np.ascontiguousarray(value, dtype=np.float32))
            for key, value in tensors.items()},
+        "obj_point_id": torch.from_numpy(np.ascontiguousarray(object_point_ids, dtype=np.int64)),
         "obj_part_id": torch.from_numpy(np.ascontiguousarray(part_ids, dtype=np.int64)),
         "part_valid_mask": torch.ones((len(rotations),), dtype=torch.bool),
         "delta_translation_part_gt": torch.from_numpy(np.ascontiguousarray(translations, dtype=np.float32)),
@@ -187,7 +188,7 @@ class RigidArticulatedPartTransitions(Dataset):
             translations[child] = ((origin - origin @ joint_rotation.T) @ root_rotation.T
                                    + root_translation)
         return _sample_payload(
-            values, part_ids, rotations, translations,
+            values, part_ids, rotations, translations, _object_point_ids(str(view.path))[selected],
             delta_time=float(frame_time[future] - frame_time[current]), stride=stride,
             hand_points=view.hand_points, source=view.domain,
             sequence_id=str(self.entries[sequence_index].get("id", view.path)),
@@ -196,7 +197,10 @@ class RigidArticulatedPartTransitions(Dataset):
 
 @lru_cache(maxsize=128)
 def _object_point_ids(sequence_path: str) -> np.ndarray:
-    values = np.load(Path(sequence_path) / "geometry" / "obj_point_id.npy", mmap_mode="r")
+    path = Path(sequence_path) / "geometry" / "obj_point_id.npy"
+    if not path.is_file():
+        return np.arange(4096, dtype=np.int64)
+    values = np.load(path, mmap_mode="r")
     if values.shape != (4096,):
         raise ValueError(f"{sequence_path}: obj_point_id must be [4096]")
     return values
@@ -245,7 +249,7 @@ class OakInkWholePartTransitions(Dataset):
             translations.append(translation)
         frame_time = np.asarray(sequence.arrays["frame_time"], dtype=np.float64)
         return _sample_payload(
-            values, part_ids, np.stack(rotations), np.stack(translations),
+            values, part_ids, np.stack(rotations), np.stack(translations), raw_ids[selected],
             delta_time=float(frame_time[future] - frame_time[current]), stride=stride,
             hand_points=sequence.hand_points, source="oakink2", sequence_id=str(entry["id"]),
             source_frame_id=raw_current, next_source_frame_id=int(source_ids[future]))
