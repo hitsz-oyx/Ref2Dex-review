@@ -2,9 +2,9 @@
 
 ## 当前工作状态
 
-- work_version：`V1.12`；[FINAL 计划](plan/V1.12.md) 的 Task-local 实现与 CPU/真实只读门禁已完成，尚未批准或启动 V1.12 smoke、cache 构建或正式训练。
+- work_version：`V1.12`；[FINAL 计划](plan/V1.12.md) 的 Task-local 实现、CPU/真实只读门禁及单 GPU 真实 batch smoke 已完成；尚未批准或启动 cache 构建或正式训练。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
-- V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现 Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
+- V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非正式运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现与 smoke Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
 - V1.11.1 正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 使用冻结 source snapshot 继续运行；其进程、输出、checkpoint、cache 与解释均未改变。
 - [V1.11g FINAL](plan/V1.11g.md)：五组、GPU1+3、每卡64、stride1..3、16epochs、15组验证，ARCTIC Inspire不等待也不动态纳入；资源切换见 [V1.11i FINAL](plan/V1.11i.md)。
 - V1.11.1 历史入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件 adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity 与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
