@@ -1,12 +1,14 @@
 # ObjectInteractionCmv2 文档入口
 
-## 当前五组训练状态
+## 当前工作状态
 
-- work_version：`V1.11.1`；问题：既有best权重初始化的MANO/Inspire三域混合训练。
+- work_version：`V1.12`；Task-local 实现、CPU/真实只读门禁、单 GPU smoke 及 GPU0+2 B64 双卡 smoke 已完成。V1.12 正式 run 已按用户要求在 step 200、epoch 1 受控停止，终态为 `STOPPED`；下一步在独立 V1.13 分支诊断并优化数据 I/O，当前不据此形成科学结论。
+- 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
+- V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非正式运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现与 smoke Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
+- V1.11.1 正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 已按用户要求于 step 18040、epoch 2 受控停止；其 `latest.pt`、`best.pt`、metrics 与 source snapshot 均保留。
+- V1.12 正式 run `cmv2_v112_part_se3_ddp_formal_20260921T030019Z` 已于 `2026-09-21T03:31:14+00:00` 受控停止；`latest.pt`、manifest、metrics 与日志均保留，尚未完成首轮 validation，故无 `best.pt`。
 - [V1.11g FINAL](plan/V1.11g.md)：五组、GPU1+3、每卡64、stride1..3、16epochs、15组验证，ARCTIC Inspire不等待也不动态纳入；资源切换见 [V1.11i FINAL](plan/V1.11i.md)。
-- **当前阶段**：用户已确认OakInk2按真实刚性部件训练；GPU0+GPU2 smoke 已通过，正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 正在 NAS 上运行。
-- 当前架构仍为 `v1_5_articulated_fk`；原始坐标/单位、cache、best与ARCTIC导出受保护。部件级语义、验证聚合与回滚见 [V1.11h FINAL](plan/V1.11h.md)。
-- 入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
+- V1.11.1 历史入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件 adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity 与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
 
 ## 指导与历史方案入口
 
@@ -37,6 +39,7 @@
 - [V1.11b 最终计划](plan/V1.11b.md)：用 V1.9 固定 validation 口径评估 V1.11 最优二域 checkpoint。
 - [V1.11c 最终计划](plan/V1.11c.md)：按 stride 1/2/3 分开统计二域 validation 的 EPE 与流模长。
 - [V1.11d 最终计划](plan/V1.11d.md)：在 OakInk2 loader 中排除跨 `frame_time` discontinuity 的短 stride transition，不重导 cache。
+- [V1.12 指导](指导/V1.12.md) 与 [V1.12 最终计划](plan/V1.12.md)：固定起始物体 query 的端点 KNN union-rerank、整体多部件采样、surface-token soft routing 与逐部件直接 SE(3)。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
