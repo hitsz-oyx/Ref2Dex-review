@@ -2,7 +2,7 @@
 
 ## 当前工作状态
 
-- work_version：`V1.13`；紧凑 endpoint shard schema、producer/reader、reference/compact 双后端和 DDP 接线已实现，Task 测试及五组单样本 parity 已通过。五组各一 sequence 的 compact-cache pilot 正在受控运行；尚未构建 full cache，也未批准 benchmark、smoke 或正式训练。
+- work_version：`V1.13`；紧凑 endpoint shard schema、producer/reader、reference/compact 双后端和 DDP 接线已实现，Task 测试及五组单样本 parity 已通过。compact-cache pilot 已按用户要求在 2510 records 受控停止；已覆盖记录的结构检查为零错误，但未覆盖 OakInk2/Inspire 和 validation，因此未通过完整 pilot 门禁。尚未构建 full cache，也未批准 benchmark、smoke 或正式训练。
 - V1.13 保持 V1.12 模型与研究语义不变：训练时可从去重手点表和预选 endpoint-32 edge 恢复交互输入，避免读取完整高分辨率手流及在线全手流 KNN；默认 reference backend 仍保留。
 - V1.13 入口：[紧凑 schema/reader](../compact_endpoint.py)、[cache producer](../tools/data/build_compact_endpoint_v1_13.py)、[FINAL 计划](plan/V1.13.md)与[实现 Activity](activities/ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。

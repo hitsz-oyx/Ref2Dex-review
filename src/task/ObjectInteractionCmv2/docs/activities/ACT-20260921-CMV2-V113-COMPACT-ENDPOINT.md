@@ -7,7 +7,7 @@
 - branch：`ai/ObjectInteractionCmv2/v1.13-io-acceleration`
 - scope / impact：Task-local compact cache schema、producer、reader、预选 edge 模型入口、DDP backend 接线、测试与版本指针；`L2`。
 - approval：用户确认 V1.13 FINAL 计划后明确要求直接实现。
-- run_status：当前 pilot `RUNNING`；一次早期 pilot `STOPPED`；未构建 full cache，未启动 benchmark、smoke 或正式训练。
+- run_status：两次 pilot 均已 `STOPPED`；未构建 full cache，未启动 benchmark、smoke 或正式训练。
 - scientific conclusion：`N/A`；工程 parity 不证明预测效果。
 
 ## 完成内容
@@ -29,8 +29,9 @@
 
 - 早期 run `cmv2_v113_compact_pilot_20260921T035137Z` 在最后已记录 100 条时受控停止；发现两个 edge index 可由 int32 收窄为 int16。约 69 MiB `.partial` 与 `STOPPED` manifest 保留，未删除或覆盖。
 - int16 仍覆盖最大 20,269 的 hand-point ID；Task 测试重新通过。首条真实 record 从约 `355756` bytes 降为 `224684` bytes，减少约 36.8%。
-- 当前 run_id：`cmv2_v113_compact_pilot_20260921T035408Z`；service：`ref2dex-cmv2-v113-compact-pilot-20260921T035408Z.service`；source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`。
-- 当前输出：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_endpoint_knn/object_interaction_cmv2_compact_endpoint_v1/cmv2_v113_compact_pilot_20260921T035408Z.partial`；预算为 train/val 五组各一个 sequence，共约 12821 records。终态、容量比和 full-build gate 尚待完成后记录。
+- run_id：`cmv2_v113_compact_pilot_20260921T035408Z`；service：`ref2dex-cmv2-v113-compact-pilot-20260921T035408Z.service`；source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`。用户要求先使用已导出数据检验，该运行于 `2026-09-21T04:12:19+00:00` 收到 SIGTERM 后受控停止，终态 manifest 为 `STOPPED`，共保留 2510 records / 623726760 serialized bytes。
+- partial 输出：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_endpoint_knn/object_interaction_cmv2_compact_endpoint_v1/cmv2_v113_compact_pilot_20260921T035408Z.partial`。逐记录反序列化、schema、必需 tensor、`[1024,32]` edge shape、lookup range、index offset 与 shard size 检查的 `bad_count=0`。
+- 阶段统计为 serialized/source-sample-tensor ratio `0.929356`，unique/source hand-point ratio `0.124524`。覆盖仅包含 `grab/mano`、`arctic/mano`、`oakink2/mano`和 `grab/inspire_f1` 的 train stride 1/2/3；尚未覆盖 `oakink2/inspire_f1` 及任何 validation view。因此该结果只证明已覆盖记录的工程结构可用且阶段容量比低于 1.25，不构成完整 pilot 或 full-build gate 通过。
 
 ## 保护与回滚
 
