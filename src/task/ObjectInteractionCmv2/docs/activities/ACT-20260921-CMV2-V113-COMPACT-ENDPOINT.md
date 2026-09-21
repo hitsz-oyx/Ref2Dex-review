@@ -3,11 +3,11 @@
 - timestamp：`2026-09-21T03:49:43+00:00`
 - activity_id：`ACT-20260921-CMV2-V113-COMPACT-ENDPOINT`
 - Task / work_version：`ObjectInteractionCmv2` / `V1.13`
-- base_commit：`303bf296140a4774a108f0d111501fc6d8995e5c`；git_commit：`a3ffe8602ad2ad8390fde08e93deba5f284ac769`
+- base_commit：`303bf296140a4774a108f0d111501fc6d8995e5c`；核心实现 commit：`a3ffe8602ad2ad8390fde08e93deba5f284ac769`；当前 pilot source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`
 - branch：`ai/ObjectInteractionCmv2/v1.13-io-acceleration`
 - scope / impact：Task-local compact cache schema、producer、reader、预选 edge 模型入口、DDP backend 接线、测试与版本指针；`L2`。
 - approval：用户确认 V1.13 FINAL 计划后明确要求直接实现。
-- run_status：`N/A`；本 Activity 未构建 pilot/full cache，未启动 benchmark、smoke 或正式训练。
+- run_status：当前 pilot `RUNNING`；一次早期 pilot `STOPPED`；未构建 full cache，未启动 benchmark、smoke 或正式训练。
 - scientific conclusion：`N/A`；工程 parity 不证明预测效果。
 
 ## 完成内容
@@ -24,6 +24,13 @@
 - ObjectInteractionCmv2 Task 全量测试：`65 passed`。覆盖 reference/compact edge ID、mask、distance、forward 与 loss 的 `1e-6` parity，shard/index 过滤、未验证 manifest 拒绝、backend 选择和正式配置审批门禁。
 - 五组各一条真实 transition 只读核对通过；compact 展开后的 hand point/normal/flow 与 reference 按原 hand ID gather 完全一致。
 - 五组单样本 `unique/source hand points`：GRAB/MANO `59/4096`、ARCTIC/MANO `173/4096`、OakInk2/MANO `688/4096`、GRAB/Inspire `50/20270`、OakInk2/Inspire `2098/20270`。这些仅是可行性样本，不替代计划要求的完整 pilot 容量统计。
+
+## Pilot 生命周期
+
+- 早期 run `cmv2_v113_compact_pilot_20260921T035137Z` 在最后已记录 100 条时受控停止；发现两个 edge index 可由 int32 收窄为 int16。约 69 MiB `.partial` 与 `STOPPED` manifest 保留，未删除或覆盖。
+- int16 仍覆盖最大 20,269 的 hand-point ID；Task 测试重新通过。首条真实 record 从约 `355756` bytes 降为 `224684` bytes，减少约 36.8%。
+- 当前 run_id：`cmv2_v113_compact_pilot_20260921T035408Z`；service：`ref2dex-cmv2-v113-compact-pilot-20260921T035408Z.service`；source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`。
+- 当前输出：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_endpoint_knn/object_interaction_cmv2_compact_endpoint_v1/cmv2_v113_compact_pilot_20260921T035408Z.partial`；预算为 train/val 五组各一个 sequence，共约 12821 records。终态、容量比和 full-build gate 尚待完成后记录。
 
 ## 保护与回滚
 
