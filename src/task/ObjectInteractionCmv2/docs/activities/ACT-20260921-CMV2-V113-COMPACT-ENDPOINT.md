@@ -3,11 +3,11 @@
 - timestamp：`2026-09-21T03:49:43+00:00`
 - activity_id：`ACT-20260921-CMV2-V113-COMPACT-ENDPOINT`
 - Task / work_version：`ObjectInteractionCmv2` / `V1.13`
-- base_commit：`303bf296140a4774a108f0d111501fc6d8995e5c`；核心实现 commit：`a3ffe8602ad2ad8390fde08e93deba5f284ac769`；当前 pilot source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`
+- base_commit：`303bf296140a4774a108f0d111501fc6d8995e5c`；核心实现 commit：`a3ffe8602ad2ad8390fde08e93deba5f284ac769`；均衡 pilot source commit：`816bd93bbc98b3bb46b10f4b0bd8c6a69ede6756`
 - branch：`ai/ObjectInteractionCmv2/v1.13-io-acceleration`
 - scope / impact：Task-local compact cache schema、producer、reader、预选 edge 模型入口、DDP backend 接线、测试与版本指针；`L2`。
 - approval：用户确认 V1.13 FINAL 计划后明确要求直接实现。
-- run_status：两次 pilot 均已 `STOPPED`；未构建 full cache，未启动 benchmark、smoke 或正式训练。
+- run_status：均衡 pilot 已 `COMPLETED`，两次早期 pilot 已 `STOPPED`；未构建 full cache，未启动 benchmark、smoke 或正式训练。
 - scientific conclusion：`N/A`；工程 parity 不证明预测效果。
 
 ## 完成内容
@@ -32,6 +32,8 @@
 - run_id：`cmv2_v113_compact_pilot_20260921T035408Z`；service：`ref2dex-cmv2-v113-compact-pilot-20260921T035408Z.service`；source commit：`c176d5eeb358d522acbb4129c05c01578b0e9667`。用户要求先使用已导出数据检验，该运行于 `2026-09-21T04:12:19+00:00` 收到 SIGTERM 后受控停止，终态 manifest 为 `STOPPED`，共保留 2510 records / 623726760 serialized bytes。
 - partial 输出：`/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_endpoint_knn/object_interaction_cmv2_compact_endpoint_v1/cmv2_v113_compact_pilot_20260921T035408Z.partial`。逐记录反序列化、schema、必需 tensor、`[1024,32]` edge shape、lookup range、index offset 与 shard size 检查的 `bad_count=0`。
 - 阶段统计为 serialized/source-sample-tensor ratio `0.929356`，unique/source hand-point ratio `0.124524`。覆盖仅包含 `grab/mano`、`arctic/mano`、`oakink2/mano`和 `grab/inspire_f1` 的 train stride 1/2/3；尚未覆盖 `oakink2/inspire_f1` 及任何 validation view。因此该结果只证明已覆盖记录的工程结构可用且阶段容量比低于 1.25，不构成完整 pilot 或 full-build gate 通过。
+- 均衡 run `cmv2_v113_balanced_pilot_20260921T041538Z` 于 `2026-09-21T04:52:58+00:00` 完成；输出为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicmv2_endpoint_knn/object_interaction_cmv2_compact_endpoint_v1/cmv2_v113_balanced_pilot_20260921T041538Z`，共 2000 records / 513327936 serialized bytes，一个 shard，`bad_count=0`。
+- 均衡 pilot 完整覆盖五组 train stride 1/2/3 与五组 val stride 1/2/3，无缺失视图。serialized/source-sample-tensor ratio 为 `0.5777003981`，unique/source hand-point ratio 为 `0.0897000644`；source identity、schema、`bad_count` 和 `<=1.25` 容量门限已由 full builder 的实际 `validate_full_gate` 通过。该结果放行 full cache 构建，但不自动授权或启动 full build、benchmark 或正式训练。
 
 ## 保护与回滚
 
