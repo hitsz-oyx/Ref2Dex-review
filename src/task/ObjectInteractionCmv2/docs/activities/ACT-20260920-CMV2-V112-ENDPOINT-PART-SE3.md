@@ -3,7 +3,7 @@
 - timestamp：`2026-09-20T16:28:39+00:00`
 - activity_id：`ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3`
 - Task / work_version：`ObjectInteractionCmv2` / `V1.12`
-- base_commit：`3d5d73c53ed93029d917c66c09b0eb5c5110716e`；branch：`ai/ObjectInteractionCmv2/v1.12-endpoint-knn`；实现尚未提交，`git_commit` 待交接提交后补记。
+- base_commit：`3d5d73c53ed93029d917c66c09b0eb5c5110716e`；git_commit：`961e6d61db44c234618fb9fe02ef48183c64a291`；branch：`ai/ObjectInteractionCmv2/v1.12-endpoint-knn`。
 - scope / impact：Task-local model、dataset、构造/checkpoint 合同、非运行配置、测试与状态文档；L2。
 - approval：用户确认逐部件直接 SE(3)、固定起始物体 query、起止 top-32 并集后按最小端点距离重排且最终仍为 32、整体 1024 点按部件分层采样且每部件至少 64 点、固定 `log(rho+eps)` prior、无直接 interaction 的 part surface 输出严格为零、part ID 不 embedding、pose sample 内 part 等权、SO(3) geodesic、flow 普通逐点平均及随机初始化，并授权修改。
 - run_status：`NOT_STARTED`；本 Activity 未启动训练、GPU smoke、cache 构建或数据写入。
