@@ -142,12 +142,30 @@ def profile_first_active_state(planner, kwargs: dict[str, object], *, warmup: in
     fixed_rng = torch.cuda.get_rng_state(mu.device)
 
     torch.cuda.set_rng_state(fixed_rng, mu.device)
-    production = planner.teacher(**state)
+    production_a = planner.teacher(**state)
     torch.cuda.set_rng_state(fixed_rng, mu.device)
-    diagnostic = planner.teacher(**state, _diagnostic_candidate_count=8)
-    parity = _max_output_error(production, diagnostic)
-    if any(value != 0.0 for value in parity.values()):
-        raise RuntimeError(f"K=8 diagnostic path changed planner output: {parity}")
+    production_b = planner.teacher(**state)
+    duplicate_error = _max_output_error(production_a, production_b)
+    torch.cuda.set_rng_state(fixed_rng, mu.device)
+    parity_profiler = CudaEventProfiler()
+    with parity_profiler.stage("end_to_end"):
+        diagnostic = planner.teacher(
+            **state, _latency_profiler=parity_profiler,
+            _diagnostic_candidate_count=8,
+        )
+    parity_profiler.resolve_ms()
+    parity = _max_output_error(production_a, diagnostic)
+    # predicted_cost_improvement is diagnostic telemetry and the frozen CUDA
+    # model is not bitwise repeatable for that cost.  The four fields consumed
+    # by rollout/training remain protected against profiler-induced drift.
+    behavioral_fields = ("teacher_action", "teacher_weight", "activation", "valid_fraction")
+    parity_limits = {name: max(1e-6, duplicate_error[name]) for name in behavioral_fields}
+    violations = {name: parity[name] for name in behavioral_fields if parity[name] > parity_limits[name]}
+    if violations:
+        raise RuntimeError(
+            f"K=8 profiler path changed behavioral planner output: {violations}; "
+            f"production_duplicate={duplicate_error}"
+        )
 
     torch.cuda.set_rng_state(fixed_rng, mu.device)
     candidates = planner._candidates(state["mu"])
@@ -185,7 +203,9 @@ def profile_first_active_state(planner, kwargs: dict[str, object], *, warmup: in
         "candidate_order": ["mu", "zero", "+eps0", "+eps1", "+eps2", "-eps0", "-eps1", "-eps2"],
         "state_sha256": _tensor_sha256(state),
         "candidate_actions_sha256": candidate_sha256,
-        "k8_output_parity_max_abs": parity,
+        "k8_production_duplicate_max_abs": duplicate_error,
+        "k8_profiled_vs_production_max_abs": parity,
+        "k8_behavioral_parity_limits": parity_limits,
         "results": results,
     }
 

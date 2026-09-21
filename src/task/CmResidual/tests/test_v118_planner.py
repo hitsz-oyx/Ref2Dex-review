@@ -57,6 +57,7 @@ def test_v118a_runner_pins_gpu6_real_phaseb_state_and_cuda_events():
     assert '"train.params.config.cm_distill_coef=0.1"' in runner
     assert "first planner-active pre-action state" in runner
     assert "torch.cuda.Event(enable_timing=True)" in profiler
+    assert 'behavioral_fields = ("teacher_action", "teacher_weight", "activation", "valid_fraction")' in profiler
     assert "FrozenCmv2Planner.teacher = _intercept" in bootstrap
 
 
