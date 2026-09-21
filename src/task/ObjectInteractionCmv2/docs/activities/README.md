@@ -1,5 +1,6 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK](ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)：128/64/32D 与 default/tuned chunk 的正式随机权重性能 benchmark。
 - [ACT-20260921-CMV2-V114-NARROW-CANDIDATES](ACT-20260921-CMV2-V114-NARROW-CANDIDATES.md)：32D local interaction、candidate-axis 静态共享、随机初始化合同与接口门禁。
 - [ACT-20260921-CMV2-V113-COMPACT-ENDPOINT](ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)：紧凑 endpoint shard schema、reference/compact parity、producer/reader 与 DDP backend 接线。
 - [ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3](ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)：端点并集 KNN、整体多部件采样、逐部件直接 SE(3) 的隔离实现、门禁及正式 run 受控停止终态。

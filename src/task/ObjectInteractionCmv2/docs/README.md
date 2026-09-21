@@ -2,8 +2,9 @@
 
 ## 当前工作状态
 
-- work_version：`V1.14`；32D local interaction、128D token/part reasoning 和 candidate-axis static object sharing 已作为独立随机初始化模型实现。`encode_object()` 与 `forward_candidates()` 接口、V1.13 compact/reference parity、旧 checkpoint 拒绝、CPU forward/backward 和 GPU `B=1,K=8,N=1024,E=32` 工程 smoke 已通过。尚未运行正式性能 benchmark、短程训练或正式训练。
+- work_version：`V1.14`；32D local interaction、128D token/part reasoning 和 candidate-axis static object sharing 已作为独立随机初始化模型实现。接口与 GPU smoke 已通过；两次正式 synthetic benchmark 表明 32D 显著降低显存，但未达到相对 128D 的速度门槛。planner-oriented chunk 将估算总延迟约从 `73.53 ms` 降至 `38.42 ms`，而同一 tuned chunk 下 128D→32D 只将总延迟从 `39.96 ms` 降至 `38.42 ms`，endpoint 构建仍占主导。按 V1.14 停止条件，尚未启动短程训练或正式训练。
 - V1.14 不兼容 V1.12/V1.13 checkpoint，保留 V1.13 compact cache schema；入口：[模型](../part_se3_v114.py)、[构造与 checkpoint 合同](../part_se3_v114_training.py)、[未授权运行配置](../configs/active/mixed_part_se3_v1_14.yaml)、[FINAL 计划](plan/V1.14.md)与[实现 Activity](activities/ACT-20260921-CMV2-V114-NARROW-CANDIDATES.md)。
+- V1.14 性能证据：[benchmark Activity](activities/ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)与[实验卡](experiments/EXP-20260921-V114-NARROW-CANDIDATE-PERFORMANCE.md)；结论仅适用于随机权重 synthetic `B=1,K=8,N=1024,E=32,H=4096` 工程延迟。
 - V1.13 保持 V1.12 模型与研究语义不变：训练时可从去重手点表和预选 endpoint-32 edge 恢复交互输入，避免读取完整高分辨率手流及在线全手流 KNN；默认 reference backend 仍保留。
 - V1.13 入口：[紧凑 schema/reader](../compact_endpoint.py)、[cache producer](../tools/data/build_compact_endpoint_v1_13.py)、[FINAL 计划](plan/V1.13.md)与[实现 Activity](activities/ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)。
 - 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
