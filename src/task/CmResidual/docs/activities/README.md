@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY](ACT-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY.md)：两个交错 GPU6 repeats 显示 merge、link-AABB 与 sparse-edge 均无可重复提速，生产默认保持 legacy。
 - [ACT-20260921-115510-CMRESIDUAL-V118A-LATENCY](ACT-20260921-115510-CMRESIDUAL-V118A-LATENCY.md)：真实 Phase-B active state 的 K=8 CUDA profile 显示 swept + edge/contact 占端到端 69.07%，定位为主要 planner 延迟热点。
 - [ACT-20260920-234054-CMRESIDUAL-V121E2-WARMUP-REFUTED](ACT-20260920-234054-CMRESIDUAL-V121E2-WARMUP-REFUTED.md)：72/72 arms 有效完成，但 `L=0/1/2/4/8` 均为 0/6 states 通过；有界结论为 `warmup<=8 insufficient`。
 - [ACT-20260920-231450-CMRESIDUAL-V121E2-WARMUP-SWEEP](ACT-20260920-231450-CMRESIDUAL-V121E2-WARMUP-SWEEP.md)：实现独立 canonical snapshot-generation 与 6-state、72-arm 的 `L={0,1,2,4,8,full}` warm-up parity sweep。

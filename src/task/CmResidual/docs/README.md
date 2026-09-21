@@ -7,6 +7,12 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 ## 当前状态
 
 - `work_version`: `V1.21`
+- 隔离 V1.18b 性能探索：在 V1.18a 同一 K=8 active state 上实现并重复测量 merge-topk、conservative
+  swept-link AABB 与 radius-valid sparse edge。两个循环移位交错的 GPU6 runs 中，四个 rollout 行为字段 parity
+  均为 0，但 merge 与 sparse-edge 持续变慢，link-AABB 的 13.33% 首次收益未在第二次复现且增加约 94 MiB
+  peak allocation。因此 tested fast paths 不采用，生产默认保持 legacy；结论不覆盖 fused kernel、BVH/voxel 或
+  低维 interaction redesign。详见 [Activity](activities/ACT-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY.md)
+  与 [experiment](experiments/EXP-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY.md)。
 - V1.21e.2：按 [短 warm-up replay sweep 微补充计划](plan/V1.21e.2.md)，GPU3 上独立 canonical
   generation 与 6-state/72-arm fresh single-env run 已有效完成。30 个 `t-L` snapshots 均带 content
   hash 并在 arms 期间只读；所有 full/warm-up duplicates 可重复，setter、identity、finite 和 hard ceiling
