@@ -28,9 +28,11 @@ from src.task.ObjectInteractionCmv2.part_se3_training import (
     checkpoint_payload,
     initialize_random_model,
     restore_checkpoint,
+    load_part_se3_training_config,
 )
 from src.task.ObjectInteractionCmv2.tests.test_mixed_training_v1_11g import make_part_adapter
 from src.task.ObjectInteractionCmv2.tests.test_v1_4_three_domain import _make_domain
+from src.task.ObjectInteractionCmv2.train_part_se3_ddp import validation_indices
 
 
 def _model() -> PartSE3ObjectInteractionCmv2V112Model:
@@ -275,3 +277,14 @@ def test_v112_config_is_random_only_and_checkpoint_rejects_v111(tmp_path):
     torch.save(payload, old_path)
     with pytest.raises(ValueError, match="not a V1.12"):
         restore_checkpoint(old_path, first)
+
+
+def test_v112_formal_config_freezes_previous_training_budget_on_gpu_zero_two():
+    path = Path(__file__).parents[1] / "configs/active/mixed_part_se3_v1_12_ddp.yaml"
+    config = load_part_se3_training_config(path)
+    assert config["training"]["batch_size_per_rank"] == 64
+    assert config["training"]["epochs"] == 16
+    assert config["resources"]["physical_gpus"] == [0, 2]
+    assert config["initialization"] == "random"
+    assert validation_indices(7, 0, 2) == [0, 2, 4, 6]
+    assert validation_indices(7, 1, 2) == [1, 3, 5]

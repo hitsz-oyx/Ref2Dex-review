@@ -17,6 +17,7 @@ from .part_se3_data import OakInkWholePartTransitions, RigidArticulatedPartTrans
 
 WORK_VERSION = "V1.12"
 CONFIG_SCHEMA = "object_interaction_cmv2_part_se3_v1_12"
+FORMAL_CONFIG_SCHEMA = "object_interaction_cmv2_part_se3_ddp_v1_12"
 CHECKPOINT_SCHEMA = "object_interaction_cmv2_part_se3_checkpoint_v1"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -44,6 +45,17 @@ EXPECTED_LOSS = {
     "flow": "smooth_l1_2cm_point_mean",
     "weights": {"translation": 1.0, "rotation": 1.0, "flow": 1.0},
 }
+EXPECTED_TRAINING = {
+    "batch_size_per_rank": 64,
+    "world_size": 2,
+    "epochs": 16,
+    "learning_rate": 0.001,
+    "seed": 42,
+    "checkpoint_interval": 200,
+    "log_interval": 20,
+    "minimum_free_memory_gib": 20,
+    "cpu_threads_per_rank": 8,
+}
 
 
 def _absolute(value: str | Path) -> str:
@@ -51,13 +63,9 @@ def _absolute(value: str | Path) -> str:
     return str((path if path.is_absolute() else REPO_ROOT / path).resolve())
 
 
-def load_part_se3_config(path: str | Path) -> dict[str, Any]:
-    """Load only the frozen architecture/data contract, never a run budget."""
-    config = yaml.safe_load(Path(path).read_text())
-    if config.get("schema_name") != CONFIG_SCHEMA or config.get("work_version") != WORK_VERSION:
-        raise ValueError("V1.12 config schema or work_version mismatch")
-    if config.get("initialization") != "random" or config.get("run_authorization") != "not_approved":
-        raise ValueError("V1.12 implementation config requires random init and no run authorization")
+def _validate_common(config: dict[str, Any]) -> dict[str, Any]:
+    if config.get("work_version") != WORK_VERSION or config.get("initialization") != "random":
+        raise ValueError("V1.12 work_version or initialization mismatch")
     if config.get("model") != EXPECTED_MODEL or config.get("data") != EXPECTED_DATA:
         raise ValueError("V1.12 model or data contract mismatch")
     if config.get("loss") != EXPECTED_LOSS:
@@ -74,6 +82,28 @@ def load_part_se3_config(path: str | Path) -> dict[str, Any]:
     for source in config["sources"].values():
         for key in ("index", "manifest"):
             source[key] = _absolute(source[key])
+    return config
+
+
+def load_part_se3_config(path: str | Path) -> dict[str, Any]:
+    """Load only the frozen architecture/data contract, never a run budget."""
+    config = yaml.safe_load(Path(path).read_text())
+    if config.get("schema_name") != CONFIG_SCHEMA or config.get("run_authorization") != "not_approved":
+        raise ValueError("V1.12 implementation config schema or authorization mismatch")
+    return _validate_common(config)
+
+
+def load_part_se3_training_config(path: str | Path) -> dict[str, Any]:
+    """Load the user-approved GPU0/2 formal-training contract."""
+    config = yaml.safe_load(Path(path).read_text())
+    if config.get("schema_name") != FORMAL_CONFIG_SCHEMA or config.get("run_authorization") != "approved":
+        raise ValueError("V1.12 formal config schema or authorization mismatch")
+    _validate_common(config)
+    if config.get("training") != EXPECTED_TRAINING:
+        raise ValueError("V1.12 formal training budget mismatch")
+    if config.get("resources") != {"physical_gpus": [0, 2], "nofile_limit": 262144}:
+        raise ValueError("V1.12 formal resources must be physical GPUs 0 and 2")
+    config["output_root"] = _absolute(config["output_root"])
     return config
 
 
