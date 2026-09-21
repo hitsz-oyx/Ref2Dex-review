@@ -40,6 +40,7 @@
 - [V1.11c 最终计划](plan/V1.11c.md)：按 stride 1/2/3 分开统计二域 validation 的 EPE 与流模长。
 - [V1.11d 最终计划](plan/V1.11d.md)：在 OakInk2 loader 中排除跨 `frame_time` discontinuity 的短 stride transition，不重导 cache。
 - [V1.12 指导](指导/V1.12.md) 与 [V1.12 最终计划](plan/V1.12.md)：固定起始物体 query 的端点 KNN union-rerank、整体多部件采样、surface-token soft routing 与逐部件直接 SE(3)。
+- [V1.13 最终计划](plan/V1.13.md)：以紧凑 endpoint 派生 cache、分片读取和可选本地 staging 消除完整手流读取与在线 KNN；保持 V1.12 科学语义不变。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
