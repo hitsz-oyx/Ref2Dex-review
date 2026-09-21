@@ -22,6 +22,7 @@ from src.task.ObjectInteractionCmv2.part_se3_v114 import (
 ROOT = Path(__file__).resolve().parents[5]
 HERE = Path(__file__).resolve().parent
 WIDTHS = (128, 64, 32)
+HISTORICAL_TUNED_ENDPOINT_MS = 32.9257
 
 
 def _write_json(path: Path, value) -> None:
@@ -262,10 +263,14 @@ def run(args) -> Path:
         speedups["endpoint_plus_model"] = estimated_e2e["128"] / estimated_e2e["32"]
         speedups["shared_start_endpoint"] = (
             endpoint_duplicated_start["median_ms"] / endpoint_shared_start["median_ms"])
+        speedups["historical_endpoint_over_shared_start"] = (
+            HISTORICAL_TUNED_ENDPOINT_MS / endpoint_shared_start["median_ms"])
         gates = {
             "peak_memory_not_higher": (narrow["candidate_peak_allocated_mib"]
                                        <= baseline["candidate_peak_allocated_mib"]),
             "shared_start_endpoint_at_least_1_5x": speedups["shared_start_endpoint"] >= 1.5,
+            "historical_endpoint_over_shared_start_at_least_1_5x": (
+                speedups["historical_endpoint_over_shared_start"] >= 1.5),
             "shared_start_endpoint_plus_model_at_most_28ms": estimated_e2e["32"] <= 28.0,
         }
         conclusion = "SUPPORTED" if all(gates.values()) else "REFUTED"
@@ -325,6 +330,8 @@ def main() -> None:
            args.endpoint_warmup, args.endpoint_iterations,
            args.object_chunk, args.hand_chunk) <= 0:
         raise ValueError("benchmark budgets must be positive")
+    if args.hand_points != 4096:
+        raise ValueError("V1.14a benchmark fixes 2048 points per hand, H=4096")
     output = run(args)
     print(json.dumps({"output": str(output)}))
 

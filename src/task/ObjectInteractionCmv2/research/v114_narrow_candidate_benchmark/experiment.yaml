@@ -15,4 +15,5 @@ interaction_dims: [128, 64, 32]
 warmup: 30
 iterations: 100
 endpoint_hand_points: 4096
+historical_tuned_endpoint_ms: 32.9257
 default_chunks: {object: 128, hand: 256}
