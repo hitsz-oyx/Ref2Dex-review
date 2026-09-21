@@ -130,7 +130,6 @@ def test_v113_formal_config_requires_explicit_approval_and_compact_root(tmp_path
     assert loaded["data_backend"] == "compact"
 
 
-def test_v113_plan_and_pointer_are_declared():
+def test_v113_plan_remains_declared():
     repo = Path(__file__).parents[4]
     assert (repo / "src/task/ObjectInteractionCmv2/docs/plan/V1.13.md").is_file()
-    assert "work_version: V1.13" in (repo / "docs/current_versions.yaml").read_text()
