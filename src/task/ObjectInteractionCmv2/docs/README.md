@@ -5,10 +5,13 @@
 - V1.14b 已补齐 portable bilateral 路线：本地 GRAB 可显式启用 `mano + inspire_f1`，服务器配置可启用
   `GRAB/ARCTIC/OakInk2 × MANO/Inspire` 六组；模型输入继续固定左/右各 2048 点。OakInk2 raw bundle 已校验后迁入
   `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。
-  Task 测试、本机左右 Inspire retarget 初始化和真实 OakInk2 双手 8-frame producer smoke 均通过；固定
-  `manotorch v0.0.2` 仅安装在专用 `graspenv`，没有生成正式 cache 或启动训练。入口：
+  Task 测试、本机左右 Inspire retarget 初始化和真实 OakInk2 双手 producer smoke 均通过；固定
+  `manotorch v0.0.2` 仅安装在专用 `graspenv`。随后以真实本地数据完成一次 bounded 六组 1-step smoke：训练 batch
+  六组各 1 个样本，六组 stride 1/2/3 validation 全部完成。该 smoke 使用随机初始化与 90 MB 临时缓存，只证明
+  三域双手型接线可运行，不构成科研效果证据，也不授权正式训练。入口：
   [V1.14b FINAL 计划](plan/V1.14b.md)、[依赖微补充](plan/V1.14b.1.md)、
   [Activity](activities/ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)、
+  [六组 smoke Activity](activities/ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE.md)、
   [本地两组配置](../configs/active/mixed_part_se3_v1_14b_local.yaml)与
   [服务器六组模板](../configs/active/mixed_part_se3_v1_14b_six_source.yaml)。
 - work_version：`V1.14`；V1.14a 已把 reference hand stream 固定为每手 2048、双手 4096 点，并实现 candidate 共享 start KNN：start top-32 每个 state 只计算一次，end top-32 仍逐 candidate 计算。随机初始化接口与 duplicated-start oracle parity 已通过；GPU3 正式 synthetic benchmark 中 endpoint 从 `33.316 ms` 降至 `19.958 ms`（`1.669x`），shared endpoint + 32D model 为 `25.851 ms`，性能假设 `SUPPORTED`。真实五组 cache 覆盖审计因 NAS 未挂载尚未完成，因此未启动训练。
