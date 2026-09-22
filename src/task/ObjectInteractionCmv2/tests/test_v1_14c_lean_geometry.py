@@ -88,6 +88,17 @@ def test_v114e_smoke_config_keeps_formal_authorization_isolated() -> None:
     assert config["split_root"].endswith("grab_two_group_split")
 
 
+def test_v114e_formal_config_only_changes_available_gpu() -> None:
+    config_root = Path(__file__).parents[1] / "configs/active"
+    baseline = load_v114_config(
+        config_root / "mixed_part_se3_v1_14c_local_lean.yaml", allow_approved_run=True)
+    formal = load_v114_config(
+        config_root / "mixed_part_se3_v1_14e_local_lean_gpu5.yaml", allow_approved_run=True)
+    assert formal["resources"]["physical_gpus"] == [5]
+    baseline["resources"]["physical_gpus"] = [5]
+    assert formal == baseline
+
+
 def test_v114d_config_is_approved_mano_only_run() -> None:
     path = Path(__file__).parents[1] / "configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml"
     config = load_v114_config(path, allow_approved_run=True)
