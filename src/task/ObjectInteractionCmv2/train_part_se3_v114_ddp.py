@@ -131,6 +131,9 @@ def worker(config_path: Path, output: Path, run_id: str, smoke_steps: int) -> No
         batch_size = int(config.get("training", {}).get("batch_size_per_rank", max(1, len(train))))
         steps_per_epoch = smoke_steps or math.ceil(sum(len(value) for value in train.values()) / (batch_size * world_size))
         epochs = 1 if smoke_steps else int(config["training"]["epochs"])
+        checkpoint_interval = int(config["training"]["checkpoint_interval"])
+        if checkpoint_interval <= 0:
+            raise ValueError("checkpoint_interval must be positive")
         model = initialize_random_v114_model(config, device)
         optimizer = torch.optim.Adam(model.parameters(), lr=float(config.get("training", {}).get("learning_rate", 1e-3)))
         wrapped = DistributedDataParallel(model, device_ids=[local_rank])
@@ -154,6 +157,11 @@ def worker(config_path: Path, output: Path, run_id: str, smoke_steps: int) -> No
                     _emit(output, manifest, rank, {"phase": "training", "last_step": step,
                           "last_epoch": epoch, "loss": float(value), "batch_counts_per_rank": counts,
                           "elapsed_s": time.perf_counter() - started})
+                if not smoke_steps and step % checkpoint_interval == 0:
+                    _checkpoint(output, "latest.pt", model, optimizer, config, manifest,
+                                step, epoch, best, rank)
+                    _emit(output, manifest, rank, {"phase": "checkpoint", "last_step": step,
+                          "last_epoch": epoch, "best_metric": best})
             result = _evaluate(model, validation, config, device, rank, world_size, bool(smoke_steps))
             improved = best is None or result["selection_metric"] < best
             if improved:
