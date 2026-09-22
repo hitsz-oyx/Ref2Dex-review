@@ -13,8 +13,8 @@ from src.task.ObjectInteractionCmv2.multi_domain import normalize_hand_variant
 from src.task.ObjectInteractionCmv2.part_se3_v114_training import load_v114_config
 
 
-def build(config_path: Path, output: Path, run_id: str) -> dict:
-    config = load_v114_config(config_path)
+def build(config_path: Path, output: Path, run_id: str, *, approved_run: bool = False) -> dict:
+    config = load_v114_config(config_path, allow_approved_run=approved_run)
     if output.exists():
         raise FileExistsError(output)
     grouped = {}; fingerprints = {}
@@ -95,8 +95,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True); parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--approved-run", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(build(args.config, args.output, args.run_id), indent=2))
+    print(json.dumps(build(
+        args.config, args.output, args.run_id, approved_run=args.approved_run), indent=2))
 
 
 if __name__ == "__main__":

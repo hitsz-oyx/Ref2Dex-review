@@ -77,3 +77,12 @@ def test_v114c_config_is_approved_lean_run() -> None:
     config = load_v114_config(path, allow_approved_run=True)
     assert config["data_backend"] == "lean_geometry"
     assert config["active_groups"] == ["grab/mano", "grab/inspire_f1"]
+
+
+def test_v114d_config_is_approved_mano_only_run() -> None:
+    path = Path(__file__).parents[1] / "configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml"
+    config = load_v114_config(path, allow_approved_run=True)
+    assert config["data_backend"] == "lean_geometry"
+    assert config["active_groups"] == ["grab/mano"]
+    assert config["group_weights"] == {"grab/mano": 1.0}
+    assert config["resources"]["physical_gpus"] == [6]

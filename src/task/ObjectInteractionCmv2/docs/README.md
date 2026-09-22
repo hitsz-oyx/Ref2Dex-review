@@ -2,6 +2,9 @@
 
 ## 当前工作状态
 
+- V1.14d 按用户授权在 Inspire cache 继续生成期间先启动本地 GRAB/MANO 单组随机初始化 1-epoch 训练；
+  active group 固定为 `grab/mano`，不会在运行中动态加入 Inspire。入口：
+  [V1.14d FINAL 计划](plan/V1.14d.md)与[MANO-only 配置](../configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml)。
 - V1.14c 已批准并实现本地 GRAB lean geometry 路线：沿用 `full_grab_v1` 的 `1068/134/133` split，MANO 与
   Inspire 均固定每手 2048 点，只保存训练消费的几何流和由完整源手流计算的 2 cm mask。真实序列 parity 中，MANO
   mask 与旧 reference 完全一致，Inspire 固定点/法向和 mask 与完整高分辨率 reference 完全一致；样例 lean/legacy
