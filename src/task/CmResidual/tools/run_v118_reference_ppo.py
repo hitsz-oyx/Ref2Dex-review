@@ -90,6 +90,8 @@ def main() -> None:
         f"+full_experiment_name=CmResidualGrabReferenceV118_{args.stage}",
         f"hydra.run.dir={output / 'hydra'}", "hydra.job.chdir=True",
     ]
+    if args.stage == "smoke":
+        overrides.append(f"train.params.config.minibatch_size={num_envs * 64}")
     if checkpoint is not None:
         overrides.append(f"checkpoint={checkpoint}")
     resolved = _resolved_config(overrides)
