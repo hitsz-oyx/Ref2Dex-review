@@ -145,3 +145,5 @@ def test_v118c_config_uses_one_inspire_hand_with_2048_points():
         "third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118Cmv2V114.yaml").read_text())
     assert task["basePolicy"]["cmHandPoints"] == 2048
     assert task["basePolicy"]["cmv2Schema"] == "cmv2_v114a_rigid_candidate_16x32_v1"
+    registry = Path("third_party/IsaacGymEnvs/isaacgymenvs/tasks/__init__.py").read_text()
+    assert '"CmResidualGrabReferenceV118Cmv2V114": CmResidual' in registry
