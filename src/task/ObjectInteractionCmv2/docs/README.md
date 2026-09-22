@@ -7,8 +7,9 @@
   `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。
   Task 测试、本机左右 Inspire retarget 初始化和真实 OakInk2 双手 producer smoke 均通过；固定
   `manotorch v0.0.2` 仅安装在专用 `graspenv`。随后以真实本地数据完成一次 bounded 六组 1-step smoke：训练 batch
-  六组各 1 个样本，六组 stride 1/2/3 validation 全部完成。该 smoke 使用随机初始化与 90 MB 临时缓存，只证明
-  三域双手型接线可运行，不构成科研效果证据，也不授权正式训练。入口：
+  六组各 1 个样本，六组 stride 1/2/3 validation 全部完成；进一步纠正 GRAB/ARCTIC 的开头无接触窗口后，
+  interaction-positive 重跑也完成相同门禁，六组共 96 个输入帧均含 2 cm active points。该 smoke 使用随机初始化，
+  只证明三域双手型的真实交互接线可运行，不构成科研效果证据，也不授权正式训练。入口：
   [V1.14b FINAL 计划](plan/V1.14b.md)、[依赖微补充](plan/V1.14b.1.md)、
   [Activity](activities/ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)、
   [六组 smoke Activity](activities/ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE.md)、

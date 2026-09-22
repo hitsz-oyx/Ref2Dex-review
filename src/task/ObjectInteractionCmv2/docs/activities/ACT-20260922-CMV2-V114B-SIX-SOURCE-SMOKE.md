@@ -34,6 +34,27 @@
   `VERIFY PASS`，Python compile 与 `git diff --check` 通过。
 - 本轮为工程接线 smoke；scientific conclusion：`N/A`。loss 与 best metric 不支持模型质量、跨域泛化或收敛结论。
 
+## Interaction-positive 纠正重跑
+
+首轮 GRAB/ARCTIC 为最低成本直接截取轨迹开头 8 帧，虽然接线通过，但这些窗口没有 2 cm active points。完整轨迹
+审计确认数据本身包含大量接触帧，因此保留首轮证据，并用显式 raw frame start 建立独立纠正缓存：GRAB train/val
+分别从 raw frame `236/128` 开始，ARCTIC train/val 分别从 `768/332` 开始；OakInk2 复用已验证交互窗口。
+
+- git_commit：`382b994f371d85175c6adea52381090ce19ff59f`
+- run_id：`cmv2_v114b_six_source_interaction_smoke_20260922_382b994`
+- run_status：`COMPLETED`
+- 输出：`outputs/objectinteractioncmv2/cmv2_v114b_six_source_interaction_smoke_20260922_382b994/`
+- 最后 step/epoch：`1/1`
+- 训练 batch：六组各 `1`；六组 stride `1/2/3` validation 均完成，每项 4 个样本
+- 2 cm 门禁：六组共 96 个缓存帧全部 active；各组逐帧 active 点数整体范围为 `181..4096`
+- smoke 缓存：`data/processed_data/ObjectInteractionCmv2/v114b/six_source_interaction_smoke/`，约 53 MB；
+  OakInk2 输入通过 manifest SHA 复用首轮已验证缓存
+- best metric：`87.15498691134982`；随机初始化 smoke 记录，不作科学解释
+
+ARCTIC Stage4 新增默认关闭的 `--frame-start`，只改变显式 bounded 运行的起始 raw frame，并保持绝对
+`raw_frame_id`；默认 `0` 时与原行为一致。纠正重跑把工程结论加强为“六组真实 interaction-positive 路径可运行”，
+scientific conclusion 仍为 `N/A`。
+
 ## 改变、保护与回滚
 
 - 新增 bounded 六组输入/config/metadata helper；MANO producer 仅在显式 `--allow-partial` 时接受小 assignment；
