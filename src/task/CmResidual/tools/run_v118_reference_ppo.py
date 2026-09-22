@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,9 +32,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-envs", type=int, default=None,
                         help="Explicit smoke env count; defaults to 1 for V1.14a and 128 otherwise.")
     parser.add_argument("--checkpoint", default="", help="Pinned Stage-A checkpoint required for B/C.")
+    parser.add_argument("--checkpoint-sha256", default="",
+                        help="Required actor checkpoint digest for V1.14a Stage-B pilots.")
     parser.add_argument("--max-epochs", type=int, default=None)
     parser.add_argument("--cmv2-v114", action="store_true",
-                        help="Use the opt-in V1.14a shared-candidate adapter (smoke only).")
+                        help="Use the opt-in V1.14a shared-candidate adapter.")
+    parser.add_argument("--cmv2-v114-checkpoint", default="",
+                        help="Explicit V1.14a checkpoint; required for Stage B.")
+    parser.add_argument("--cmv2-v114-sha256", default="",
+                        help="Explicit V1.14a checkpoint digest; required for Stage B.")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -50,13 +57,36 @@ def _stage_settings(stage: str) -> tuple[int, int, float]:
     return 366, 100_000_000, 0.10
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_v114_checkpoint(path: Path, expected_sha256: str, *, require_inspire: bool) -> dict:
+    import torch
+    if not path.is_file() or len(expected_sha256) != 64 or _sha256(path) != expected_sha256:
+        raise ValueError("V1.14a checkpoint path/SHA256 mismatch")
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    if payload.get("schema_name") != "object_interaction_cmv2_shared_start_candidate_checkpoint_v2":
+        raise ValueError("V1.14a checkpoint schema mismatch")
+    groups = tuple(payload.get("active_groups") or ())
+    if require_inspire and "grab/inspire_f1" not in groups:
+        raise ValueError("Stage-B V1.14a checkpoint must include grab/inspire_f1")
+    return {"path": str(path), "sha256": expected_sha256, "active_groups": list(groups),
+            "run_id": payload.get("run_id"), "step": payload.get("step"), "epoch": payload.get("epoch")}
+
+
 def main() -> None:
     args = parse_args()
     if args.gpu < 0:
         raise ValueError("--gpu must be a non-negative physical CUDA device index")
-    if args.cmv2_v114 and args.stage != "smoke":
-        raise ValueError("V1.14a Cmv2 integration is currently authorized only for smoke")
-    num_envs = args.num_envs if args.num_envs is not None else (1 if args.cmv2_v114 else 128)
+    if args.cmv2_v114 and args.stage not in ("smoke", "b"):
+        raise ValueError("V1.14a Cmv2 integration is authorized only for smoke or bounded Stage B")
+    num_envs = args.num_envs if args.num_envs is not None else (
+        1 if args.cmv2_v114 and args.stage == "smoke" else 128)
     if num_envs <= 0 or (args.stage != "smoke" and num_envs != 128):
         raise ValueError("--num-envs must be positive and is adjustable only for smoke")
     window, budget_steps, lambda_cm = _stage_settings(args.stage)
@@ -72,6 +102,24 @@ def main() -> None:
     checkpoint = Path(args.checkpoint).expanduser().resolve() if args.checkpoint else None
     if checkpoint is not None and not checkpoint.is_file():
         raise FileNotFoundError(f"Pinned predecessor checkpoint does not exist: {checkpoint}")
+    checkpoint_identity = None
+    if checkpoint is not None:
+        checkpoint_digest = _sha256(checkpoint)
+        if args.checkpoint_sha256 and checkpoint_digest != args.checkpoint_sha256:
+            raise ValueError("Actor checkpoint SHA256 mismatch")
+        if args.cmv2_v114 and args.stage == "b" and not args.checkpoint_sha256:
+            raise ValueError("V1.14a Stage B requires --checkpoint-sha256")
+        checkpoint_identity = {"path": str(checkpoint), "sha256": checkpoint_digest}
+    v114_identity = None
+    if args.cmv2_v114_checkpoint or args.cmv2_v114_sha256:
+        if not (args.cmv2_v114_checkpoint and args.cmv2_v114_sha256):
+            raise ValueError("V1.14a checkpoint path and SHA256 must be provided together")
+        v114_path = Path(args.cmv2_v114_checkpoint).expanduser().resolve()
+        v114_identity = _validate_v114_checkpoint(
+            v114_path, args.cmv2_v114_sha256,
+            require_inspire=args.stage == "b")
+    elif args.cmv2_v114 and args.stage == "b":
+        raise ValueError("V1.14a Stage B requires an explicit Inspire-compatible checkpoint")
     epochs = int(args.max_epochs) if args.max_epochs is not None else (1 if args.stage == "smoke" else 100000000)
     if epochs <= 0:
         raise ValueError("--max-epochs must be positive")
@@ -94,6 +142,9 @@ def main() -> None:
         overrides.append(f"train.params.config.minibatch_size={num_envs * 64}")
     if checkpoint is not None:
         overrides.append(f"checkpoint={checkpoint}")
+    if v114_identity is not None:
+        overrides.extend((f"task.basePolicy.cmv2Checkpoint={v114_identity['path']}",
+                          f"task.basePolicy.cmv2CheckpointSha256={v114_identity['sha256']}"))
     resolved = _resolved_config(overrides)
     task, params = resolved["task"], resolved["train"]["params"]
     if (task["env"]["numObservations"] != 1442 or task["env"]["numActions"] != 18 or
@@ -113,9 +164,12 @@ def main() -> None:
         "operation_category": ["experiment", "operation"], "output_dir": str(output), "seed": 42,
         "base_commit": _git("rev-parse", "HEAD"), "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path), "metadata_snapshot": str(REFERENCE.with_name("manifest.json")),
-        "input_references": [reference, source], "initial_checkpoint": str(checkpoint) if checkpoint else None,
+        "input_references": [reference, source], "initial_checkpoint": checkpoint_identity,
+        "cmv2_checkpoint": v114_identity,
         "metrics": str(metrics_path), "log": str(log_path), "cm_buffer": str(cm_buffer), "physical_gpu": args.gpu,
-        "budget": {"envs": num_envs, "window": window, "target_env_steps": budget_steps, "max_epochs": epochs,
+        "budget": {"envs": num_envs, "window": window,
+                   "target_env_steps": (num_envs * window * epochs if args.max_epochs is not None else budget_steps),
+                   "max_epochs": epochs,
                    "trainer_max_epochs": trainer_max_epochs,
                    "lambda_cm": lambda_cm}, "cmv2_variant": "v1.14a" if args.cmv2_v114 else "v1.3",
         "conclusion": "INCONCLUSIVE",

@@ -1,6 +1,7 @@
 """PPO agent with a fixed rollout-time Cm teacher target for V1.18."""
 from __future__ import annotations
 
+import json
 import torch
 from torch import nn
 
@@ -56,6 +57,8 @@ class V118PlannerAgent(CommonAgent):
     def play_steps(self):
         self.set_eval()
         epinfos = []
+        teacher_totals = None
+        teacher_samples = 0
         for n in range(self.horizon_length):
             self.obs, done_env_ids = self._env_reset_done()
             self.experience_buffer.update_data("obses", n, self.obs["obs"])
@@ -76,6 +79,17 @@ class V118PlannerAgent(CommonAgent):
                 }
             self.experience_buffer.update_data("cm_teacher_actions", n, teacher["teacher_action"])
             self.experience_buffer.update_data("cm_teacher_weights", n, teacher["teacher_weight"].unsqueeze(-1))
+            if self.cm_distill_coef > 0:
+                delta = (teacher["teacher_action"] - res_dict["mus"]).norm(dim=-1)
+                values = {key: teacher[key].sum() for key in (
+                    "activation", "valid_fraction", "teacher_weight", "predicted_cost_improvement")}
+                values["teacher_delta_l2"] = delta.sum()
+                if teacher_totals is None:
+                    teacher_totals = values
+                else:
+                    for key, value in values.items():
+                        teacher_totals[key] += value
+                teacher_samples += int(delta.numel())
             if self.has_central_value:
                 self.experience_buffer.update_data("states", n, self.obs["states"])
             self.obs, rewards, self.dones, infos = self.env_step(res_dict["actions"])
@@ -104,6 +118,11 @@ class V118PlannerAgent(CommonAgent):
         batch = self.experience_buffer.get_transformed_list(a2c_common.swap_and_flatten01, self.tensor_list)
         batch["returns"] = a2c_common.swap_and_flatten01(returns + self.experience_buffer.tensor_dict["values"])
         batch["played_frames"] = self.batch_size
+        if teacher_samples:
+            print("REF2DEX_V118_TEACHER " + json.dumps({
+                "samples": teacher_samples,
+                **{key + "_mean": float(value) / teacher_samples for key, value in teacher_totals.items()},
+            }, sort_keys=True), flush=True)
         return batch
 
     def calc_gradients(self, input_dict):

@@ -195,3 +195,15 @@ def test_v118_launcher_honors_explicit_physical_gpu():
     assert 'env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)' in source
     assert '"physical_gpu": args.gpu' in source
     assert "trainer_max_epochs = epochs - 1" in source
+    assert 'args.stage not in ("smoke", "b")' in source
+    assert "Stage-B V1.14a checkpoint must include grab/inspire_f1" in source
+    assert "--cmv2-v114-checkpoint" in source and "--cmv2-v114-sha256" in source
+    assert '"cmv2_checkpoint": v114_identity' in source
+
+
+def test_v118_agent_emits_teacher_sanity_metrics():
+    source = (ROOT / "third_party/IsaacGymEnvs/isaacgymenvs/learning/v118_agent.py").read_text()
+    assert 'REF2DEX_V118_TEACHER ' in source
+    for field in ("activation", "valid_fraction", "teacher_weight", "teacher_delta_l2",
+                  "predicted_cost_improvement"):
+        assert field in source
