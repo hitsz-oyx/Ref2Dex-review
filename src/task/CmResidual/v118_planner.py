@@ -188,6 +188,7 @@ class PlannerConfig:
     effect_rotation_gate_rad: float = 0.01
     planner_env_microbatch: int = 16
     interaction_object_chunk: int = 32
+    interaction_hand_chunk: int = 256
 
 
 class FrozenCmv2Planner:
@@ -204,6 +205,8 @@ class FrozenCmv2Planner:
             raise ValueError("planner_env_microbatch must be positive")
         if config.interaction_object_chunk <= 0:
             raise ValueError("interaction_object_chunk must be positive")
+        if config.interaction_hand_chunk <= 0:
+            raise ValueError("interaction_hand_chunk must be positive")
         self.key_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in KEY_LINKS], dtype=torch.long,
                                                  device=kinematics.device)
         self.tip_query_indices = torch.as_tensor([QUERY_LINKS.index(name) for name in TIP_LINKS], dtype=torch.long,
@@ -291,27 +294,58 @@ class FrozenCmv2Planner:
                     next_points = next_points.view(count, candidate_count, -1, 3)
                     next_normals = next_normals.view(count, candidate_count, -1, 3)
                 hand_count = next_points.shape[2]
-                obj_points = object_points.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_points.shape[1], 3)
-                obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_normals.shape[1], 3)
-                current_batch = current_points[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
-                current_normal_batch = current_normals[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
-                adapter_kwargs = {"interaction_object_chunk": self.config.interaction_object_chunk}
-                if _latency_profiler is not None:
-                    adapter_kwargs["latency_profiler"] = _latency_profiler
-                if _interaction_variant != "baseline":
-                    adapter_kwargs.update({
-                        "swept_algorithm": ("merge" if _interaction_variant == "merge" else "link_aabb"),
-                        "hand_link_index": (self.hand_link_index if _interaction_variant.startswith("link") else None),
-                        "sparse_valid_edges": _interaction_variant == "link_sparse",
-                        "candidate_group_size": candidate_count,
-                    })
-                output = self.adapter.predict_effect_only(
-                    obj_points, obj_normals, current_batch, current_normal_batch,
-                    next_points.reshape(-1, hand_count, 3) - current_batch,
-                    1.0 / 30.0,
-                    torch.ones((count * candidate_count, hand_count),
-                               dtype=torch.bool, device=mu.device),
-                    **adapter_kwargs)
+                if hasattr(self.adapter, "predict_candidates"):
+                    if _interaction_variant != "baseline" or _latency_profiler is not None:
+                        raise ValueError("V1.14a adapter does not use legacy V1.18b diagnostic variants")
+                    # V1.14a was trained in the current object frame.  Keep the
+                    # planner's world-frame activation/scoring, but transform its
+                    # learned-model inputs into that pinned local convention.
+                    pose = object_pose.index_select(0, ids)
+                    rotation, translation = pose[:, :3, :3], pose[:, :3, 3]
+
+                    def local_points(value):
+                        return torch.matmul(
+                            (value - translation[(slice(None),) + (None,) * (value.ndim - 2)]).unsqueeze(-2),
+                            rotation[(slice(None),) + (None,) * (value.ndim - 3)]).squeeze(-2)
+
+                    def local_vectors(value):
+                        return torch.matmul(
+                            value.unsqueeze(-2),
+                            rotation[(slice(None),) + (None,) * (value.ndim - 3)]).squeeze(-2)
+
+                    object_local = local_points(object_points.index_select(0, ids))
+                    object_normal_local = local_vectors(object_normals.index_select(0, ids))
+                    current_local = local_points(current_points)
+                    current_normal_local = local_vectors(current_normals)
+                    next_local = local_points(next_points)
+                    output = self.adapter.predict_candidates(
+                        object_local, object_normal_local, current_local, current_normal_local,
+                        next_local - current_local[:, None], 1.0 / 30.0,
+                        torch.ones((count, hand_count), dtype=torch.bool, device=mu.device),
+                        interaction_object_chunk=self.config.interaction_object_chunk,
+                        interaction_hand_chunk=self.config.interaction_hand_chunk)
+                else:
+                    obj_points = object_points.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_points.shape[1], 3)
+                    obj_normals = object_normals.index_select(0, ids)[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, object_normals.shape[1], 3)
+                    current_batch = current_points[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
+                    current_normal_batch = current_normals[:, None].expand(-1, candidate_count, -1, -1).reshape(-1, hand_count, 3)
+                    adapter_kwargs = {"interaction_object_chunk": self.config.interaction_object_chunk}
+                    if _latency_profiler is not None:
+                        adapter_kwargs["latency_profiler"] = _latency_profiler
+                    if _interaction_variant != "baseline":
+                        adapter_kwargs.update({
+                            "swept_algorithm": ("merge" if _interaction_variant == "merge" else "link_aabb"),
+                            "hand_link_index": (self.hand_link_index if _interaction_variant.startswith("link") else None),
+                            "sparse_valid_edges": _interaction_variant == "link_sparse",
+                            "candidate_group_size": candidate_count,
+                        })
+                    output = self.adapter.predict_effect_only(
+                        obj_points, obj_normals, current_batch, current_normal_batch,
+                        next_points.reshape(-1, hand_count, 3) - current_batch,
+                        1.0 / 30.0,
+                        torch.ones((count * candidate_count, hand_count),
+                                   dtype=torch.bool, device=mu.device),
+                        **adapter_kwargs)
                 with _profile_stage(_latency_profiler, "scoring"):
                     predicted = output["delta_xi_root"].view(count, candidate_count, 6)
                     token_mask = output["token_mask"].view(count, candidate_count, -1)

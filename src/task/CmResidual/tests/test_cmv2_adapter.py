@@ -10,8 +10,12 @@ import yaml
 
 from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM, MODEL_CONFIG,
                                                 SCHEMA, FrozenCmv2Adapter,
+                                                V114_HAND_POINTS, V114_MODEL_CONFIG,
+                                                FrozenCmv2V114Adapter,
                                                 encode_context)
 from src.task.ObjectInteractionCmv2.model import ObjectInteractionCmv2V13Model
+from src.task.ObjectInteractionCmv2.part_se3_v114 import PartSE3ObjectInteractionCmv2V114Model
+from src.task.ObjectInteractionCmv2.part_se3_v114_training import CHECKPOINT_SCHEMA as V114_CHECKPOINT_SCHEMA
 
 
 class _RecordingProfiler:
@@ -110,3 +114,34 @@ def test_action_eval_config_exposes_frozen_cmv2_contract():
     assert task["basePolicy"]["cmv2Schema"] == SCHEMA
     assert task["basePolicy"]["cmv2ModelConfig"] == MODEL_CONFIG
     assert task["reference"]["allowIneligibleFor"] == "diagnostic"
+
+
+def test_v114_adapter_loads_strict_checkpoint_and_preserves_candidate_axis(tmp_path: Path):
+    model = PartSE3ObjectInteractionCmv2V114Model(SimpleNamespace(**V114_MODEL_CONFIG))
+    checkpoint = tmp_path / "v114.pt"
+    torch.save({"schema_name": V114_CHECKPOINT_SCHEMA, "work_version": "V1.14",
+                "architecture_version": model.architecture_version,
+                "model": model.state_dict()}, checkpoint)
+    sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    adapter = FrozenCmv2V114Adapter(checkpoint, sha, "cpu")
+    assert not adapter.model.training
+    assert not any(parameter.requires_grad for parameter in adapter.model.parameters())
+    object_points = _object_points()
+    object_normals = torch.zeros_like(object_points); object_normals[..., 2] = 1
+    hand_points = torch.linspace(-0.03, 0.03, V114_HAND_POINTS).view(1, -1, 1).expand(-1, -1, 3).clone()
+    hand_normals = torch.zeros_like(hand_points); hand_normals[..., 2] = 1
+    flow = torch.zeros(1, 2, V114_HAND_POINTS, 3)
+    output = adapter.predict_candidates(
+        object_points, object_normals, hand_points, hand_normals, flow, 1 / 30,
+        interaction_object_chunk=128, interaction_hand_chunk=256)
+    assert output["delta_xi_root"].shape == (1, 2, 6)
+    assert output["token_mask"].shape == (1, 2, 16)
+    assert output["token_mass"].shape == (1, 2, 16)
+    assert all(torch.isfinite(value).all() for value in output.values() if value.dtype != torch.bool)
+
+
+def test_v118c_config_uses_one_inspire_hand_with_2048_points():
+    task = yaml.safe_load(Path(
+        "third_party/IsaacGymEnvs/isaacgymenvs/cfg/task/CmResidualGrabReferenceV118Cmv2V114.yaml").read_text())
+    assert task["basePolicy"]["cmHandPoints"] == 2048
+    assert task["basePolicy"]["cmv2Schema"] == "cmv2_v114a_rigid_candidate_16x32_v1"

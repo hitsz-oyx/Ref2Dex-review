@@ -28,8 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--work-version", default="V1.18")
     parser.add_argument("--stage", choices=("smoke", "a", "b", "c128", "c366"), required=True)
     parser.add_argument("--gpu", type=int, default=5)
+    parser.add_argument("--num-envs", type=int, default=None,
+                        help="Explicit smoke env count; defaults to 1 for V1.14a and 128 otherwise.")
     parser.add_argument("--checkpoint", default="", help="Pinned Stage-A checkpoint required for B/C.")
     parser.add_argument("--max-epochs", type=int, default=None)
+    parser.add_argument("--cmv2-v114", action="store_true",
+                        help="Use the opt-in V1.14a shared-candidate adapter (smoke only).")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -50,6 +54,11 @@ def main() -> None:
     args = parse_args()
     if args.gpu < 0:
         raise ValueError("--gpu must be a non-negative physical CUDA device index")
+    if args.cmv2_v114 and args.stage != "smoke":
+        raise ValueError("V1.14a Cmv2 integration is currently authorized only for smoke")
+    num_envs = args.num_envs if args.num_envs is not None else (1 if args.cmv2_v114 else 128)
+    if num_envs <= 0 or (args.stage != "smoke" and num_envs != 128):
+        raise ValueError("--num-envs must be positive and is adjustable only for smoke")
     window, budget_steps, lambda_cm = _stage_settings(args.stage)
     if args.stage in ("b", "c128", "c366") and not args.checkpoint:
         raise ValueError("Stage B/C requires an explicit pinned predecessor checkpoint")
@@ -70,10 +79,11 @@ def main() -> None:
     # public launcher argument as the actual requested count instead.
     trainer_max_epochs = epochs - 1
     train_dir, cm_buffer = output / "train", output / "cm_buffer"
+    task_name = "CmResidualGrabReferenceV118Cmv2V114" if args.cmv2_v114 else "CmResidualGrabReferenceV118"
     overrides = [
-        "task=CmResidualGrabReferenceV118", "train=CmResidualGrabReferenceV118PPO",
+        f"task={task_name}", "train=CmResidualGrabReferenceV118PPO",
         "headless=True", "force_render=False", "pipeline=gpu", "sim_device=cuda:0", "rl_device=cuda:0",
-        "graphics_device_id=0", "num_envs=128", "num_subscenes=4", "seed=42",
+        "graphics_device_id=0", f"num_envs={num_envs}", "num_subscenes=4", "seed=42",
         f"task.env.episodeLength={window}", f"task.referenceStart.windowLength={window}",
         f"task.cmBuffer.outputDir={cm_buffer}", f"train.params.config.cm_distill_coef={lambda_cm}",
         f"train.params.config.max_epochs={trainer_max_epochs}", f"+train.params.config.train_dir={train_dir}",
@@ -88,19 +98,25 @@ def main() -> None:
             not task["basePolicy"]["useV118Planner"] or task["cmPlanner"]["candidates"] != 8 or
             task["cmBuffer"]["mode"] != "transition_only" or params["algo"]["name"] != "cm_planner_continuous"):
         raise RuntimeError("V1.18 task/PPO contract drift")
+    if args.cmv2_v114 and (task["basePolicy"]["cmv2Schema"] != "cmv2_v114a_rigid_candidate_16x32_v1"
+                           or int(task["basePolicy"]["cmHandPoints"]) != 2048):
+        raise RuntimeError("V1.18c V1.14a Cmv2 contract drift")
     _write_json(config_path, {"run_id": args.run_id, "resolved": resolved, "runtime_overrides": overrides})
     manifest = {
         "manifest_schema": "ref2dex.run.v1", "created_at": _now(), "task": "CmResidual",
-        "mode": f"v118_reference_ppo_{args.stage}", "run_id": args.run_id, "activity_id": args.activity_id,
+        "mode": (f"v118c_v114a_reference_ppo_{args.stage}" if args.cmv2_v114
+                 else f"v118_reference_ppo_{args.stage}"),
+        "run_id": args.run_id, "activity_id": args.activity_id,
         "run_status": "STARTED", "work_version": args.work_version,
         "operation_category": ["experiment", "operation"], "output_dir": str(output), "seed": 42,
         "base_commit": _git("rev-parse", "HEAD"), "worktree_dirty": bool(_git("status", "--porcelain")),
         "config_snapshot": str(config_path), "metadata_snapshot": str(REFERENCE.with_name("manifest.json")),
         "input_references": [reference, source], "initial_checkpoint": str(checkpoint) if checkpoint else None,
         "metrics": str(metrics_path), "log": str(log_path), "cm_buffer": str(cm_buffer), "physical_gpu": args.gpu,
-        "budget": {"envs": 128, "window": window, "target_env_steps": budget_steps, "max_epochs": epochs,
+        "budget": {"envs": num_envs, "window": window, "target_env_steps": budget_steps, "max_epochs": epochs,
                    "trainer_max_epochs": trainer_max_epochs,
-                   "lambda_cm": lambda_cm}, "conclusion": "INCONCLUSIVE",
+                   "lambda_cm": lambda_cm}, "cmv2_variant": "v1.14a" if args.cmv2_v114 else "v1.3",
+        "conclusion": "INCONCLUSIVE",
     }
     _write_json(manifest_path, manifest)
     metrics_path.write_text("", encoding="utf-8")

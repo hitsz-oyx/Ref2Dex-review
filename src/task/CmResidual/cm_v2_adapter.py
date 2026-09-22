@@ -10,6 +10,9 @@ import torch
 import torch.nn.functional as F
 
 from src.task.ObjectInteractionCmv2.model import ObjectInteractionCmv2V13Model
+from src.task.ObjectInteractionCmv2.part_se3_v114 import (
+    PART_SE3_V114_VERSION, PartSE3ObjectInteractionCmv2V114Model)
+from src.task.ObjectInteractionCmv2.part_se3_v114_training import CHECKPOINT_SCHEMA as V114_CHECKPOINT_SCHEMA
 
 
 SCHEMA = "cmv2_v13_rigid_16x40_v1"
@@ -18,6 +21,11 @@ MODEL_CONFIG = dict(hidden_width=128, num_tokens=16, use_residual=False,
                     knn_k=32, interaction_radius_m=0.02,
                     interaction_mode="swept", feature_scale_m=0.02,
                     frame_dt_s=1 / 30)
+V114_SCHEMA = "cmv2_v114a_rigid_candidate_16x32_v1"
+V114_HAND_POINTS = 2048
+V114_MODEL_CONFIG = dict(hidden_width=128, interaction_dim=32, num_tokens=16,
+                         knn_k=32, interaction_radius_m=0.02,
+                         feature_scale_m=0.02, frame_dt_s=1 / 30)
 
 
 def _sha256(path: Path) -> str:
@@ -186,3 +194,82 @@ class FrozenCmv2Adapter:
         """Compatibility call returning only the deprecated diagnostic context."""
         return self.predict(object_points, object_normals, hand_points, hand_normals,
                             hand_flow, delta_time_s, hand_valid_mask)["cm_context"]
+
+
+class FrozenCmv2V114Adapter:
+    """Rigid, candidate-axis adapter for the V1.14a shared-start model."""
+
+    def __init__(self, checkpoint: str | Path, expected_sha256: str,
+                 device: str | torch.device):
+        path = Path(checkpoint).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Cmv2 V1.14a checkpoint missing: {path}")
+        expected_sha256 = str(expected_sha256).lower()
+        if len(expected_sha256) != 64 or any(c not in "0123456789abcdef" for c in expected_sha256):
+            raise ValueError("Cmv2 V1.14a checkpoint requires explicit SHA256")
+        self.checkpoint_sha256 = _sha256(path)
+        if self.checkpoint_sha256 != expected_sha256:
+            raise ValueError("Cmv2 V1.14a checkpoint SHA256 mismatch")
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+        identity = (payload.get("schema_name"), payload.get("work_version"),
+                    payload.get("architecture_version")) if isinstance(payload, dict) else None
+        if identity != (V114_CHECKPOINT_SCHEMA, "V1.14", PART_SE3_V114_VERSION):
+            raise ValueError("Cmv2 V1.14a checkpoint identity mismatch")
+        if not isinstance(payload.get("model"), dict):
+            raise ValueError("Cmv2 V1.14a checkpoint has no model state_dict")
+        self.model = PartSE3ObjectInteractionCmv2V114Model(SimpleNamespace(**V114_MODEL_CONFIG))
+        self.model.load_state_dict(payload["model"], strict=True)
+        self.model.to(device).eval().requires_grad_(False)
+        self.device = torch.device(device)
+
+    @torch.inference_mode()
+    def predict_candidates(self, object_points: torch.Tensor, object_normals: torch.Tensor,
+                           hand_points: torch.Tensor, hand_normals: torch.Tensor,
+                           hand_flow: torch.Tensor, delta_time_s: float,
+                           hand_valid_mask: torch.Tensor | None = None,
+                           interaction_object_chunk: int = 128,
+                           interaction_hand_chunk: int = 256) -> dict[str, torch.Tensor]:
+        """Evaluate ``[B,K]`` candidates while encoding each rigid object once."""
+        if object_points.ndim != 3 or object_points.shape[1:] != (1024, 3):
+            raise ValueError("Cmv2 V1.14a object_points must be [B,1024,3]")
+        batch = object_points.shape[0]
+        if hand_points.shape != (batch, V114_HAND_POINTS, 3):
+            raise ValueError(f"Cmv2 V1.14a hand_points must be [B,{V114_HAND_POINTS},3]")
+        if hand_normals.shape != hand_points.shape:
+            raise ValueError("Cmv2 V1.14a hand_normals shape mismatch")
+        if hand_flow.ndim != 4 or hand_flow.shape[0] != batch or hand_flow.shape[2:] != hand_points.shape[1:]:
+            raise ValueError("Cmv2 V1.14a hand_flow must be [B,K,2048,3]")
+        tensors = (object_points, object_normals, hand_points, hand_normals, hand_flow)
+        if object_normals.shape != object_points.shape or any(
+                value.device != self.device or not torch.isfinite(value).all() for value in tensors):
+            raise ValueError("Cmv2 V1.14a inputs must have matching finite tensors on the adapter device")
+        if not math.isfinite(delta_time_s) or abs(delta_time_s - 1 / 30) > 1e-6:
+            raise ValueError("Cmv2 V1.14a delta_time_s must equal 1/30 s")
+        if hand_valid_mask is None:
+            hand_valid_mask = torch.ones((batch, V114_HAND_POINTS), dtype=torch.bool, device=self.device)
+        if hand_valid_mask.shape != (batch, V114_HAND_POINTS) or hand_valid_mask.dtype != torch.bool:
+            raise ValueError("Cmv2 V1.14a hand_valid_mask must be boolean [B,2048]")
+        candidates = hand_flow.shape[1]
+        object_batch = {
+            "obj_points": object_points,
+            "obj_normals": object_normals,
+            "obj_part_id": torch.zeros((batch, 1024), dtype=torch.long, device=self.device),
+            "part_valid_mask": torch.ones((batch, 1), dtype=torch.bool, device=self.device),
+        }
+        context = self.model.encode_object(object_batch)
+        output = self.model.forward_candidates(context, {
+            "hand_points": hand_points,
+            "hand_normals": hand_normals,
+            "hand_flow": hand_flow,
+            "hand_valid_mask": hand_valid_mask,
+            "delta_time_s": torch.full((batch, candidates), delta_time_s,
+                                        dtype=object_points.dtype, device=self.device),
+            "interaction_object_chunk": int(interaction_object_chunk),
+            "interaction_hand_chunk": int(interaction_hand_chunk),
+        })
+        delta = output["delta_xi_part"][:, :, 0]
+        if delta.shape != (batch, candidates, 6) or not torch.isfinite(delta).all():
+            raise FloatingPointError("Non-finite Cmv2 V1.14a rigid effect output")
+        return {"delta_xi_root": delta,
+                "token_mask": output["token_mask"],
+                "token_mass": output["token_mass"]}

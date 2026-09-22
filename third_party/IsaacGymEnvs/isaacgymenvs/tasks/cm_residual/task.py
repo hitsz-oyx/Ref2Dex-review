@@ -21,6 +21,9 @@ from src.task.CmDecoderv2.kinematics import InspireKinematics
 from src.task.CmResidual.cm_v2_adapter import (CONTEXT_DIM as CMV2_CONTEXT_DIM,
                                                 MODEL_CONFIG as CMV2_MODEL_CONFIG,
                                                 SCHEMA as CMV2_SCHEMA, FrozenCmv2Adapter,
+                                                V114_MODEL_CONFIG as CMV2_V114_MODEL_CONFIG,
+                                                V114_SCHEMA as CMV2_V114_SCHEMA,
+                                                FrozenCmv2V114Adapter,
                                                 encode_tokens)
 from src.task.CmResidual.cm_v2_action_evaluator import (
     Cmv2ActionEvaluator, build_nominal_hand_sweep, compose_nominal_targets,
@@ -335,10 +338,15 @@ class CmResidual(VecTask):
         """Lazily construct the one frozen Cmv2 instance local to this rank."""
         if self.cmv2 is None:
             base = self.cfg["basePolicy"]
-            if (base.get("cmv2Schema") != CMV2_SCHEMA or
-                    dict(base.get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
+            schema = base.get("cmv2Schema")
+            model_config = dict(base.get("cmv2ModelConfig", {}))
+            if schema == CMV2_SCHEMA and model_config == CMV2_MODEL_CONFIG:
+                adapter = FrozenCmv2Adapter
+            elif schema == CMV2_V114_SCHEMA and model_config == CMV2_V114_MODEL_CONFIG:
+                adapter = FrozenCmv2V114Adapter
+            else:
                 raise ValueError("Cmv2 schema/model configuration mismatch")
-            self.cmv2 = FrozenCmv2Adapter(
+            self.cmv2 = adapter(
                 base["cmv2Checkpoint"], base["cmv2CheckpointSha256"], self.device)
         return self.cmv2
 
@@ -348,8 +356,9 @@ class CmResidual(VecTask):
             raise RuntimeError("V1.18 planner is disabled by this task configuration")
         if self.v118_planner is None:
             base = self.cfg["basePolicy"]
-            if (base.get("cmv2Schema") != CMV2_SCHEMA or
-                    dict(base.get("cmv2ModelConfig", {})) != CMV2_MODEL_CONFIG):
+            identity = (base.get("cmv2Schema"), dict(base.get("cmv2ModelConfig", {})))
+            if identity not in ((CMV2_SCHEMA, CMV2_MODEL_CONFIG),
+                                (CMV2_V114_SCHEMA, CMV2_V114_MODEL_CONFIG)):
                 raise ValueError("V1.18 Cmv2 schema/model configuration mismatch")
             planner_cfg = self.cfg["cmPlanner"]
             frozen = self.build_cmv2_adapter()
@@ -373,7 +382,8 @@ class CmResidual(VecTask):
                               effect_translation_gate_m=float(planner_cfg["effectTranslationGateM"]),
                               effect_rotation_gate_rad=float(planner_cfg["effectRotationGateRad"]),
                               planner_env_microbatch=int(planner_cfg["plannerEnvMicrobatch"]),
-                              interaction_object_chunk=int(planner_cfg["interactionObjectChunk"])))
+                              interaction_object_chunk=int(planner_cfg["interactionObjectChunk"]),
+                              interaction_hand_chunk=int(planner_cfg.get("interactionHandChunk", 256))))
         return self.v118_planner
 
     @torch.inference_mode()

@@ -1,0 +1,25 @@
+defaults:
+  - CmResidualGrabReferenceV118
+  - _self_
+
+name: CmResidualGrabReferenceV118Cmv2V114
+
+basePolicy:
+  cmv2Schema: cmv2_v114a_rigid_candidate_16x32_v1
+  cmv2Checkpoint: ${oc.env:CMRESIDUAL_CMV2_V114_CHECKPOINT,/home2/wyy/oyx_ws/Ref2Dex/outputs/objectinteractioncmv2/cmv2_v114d_grab_mano_lean_e1_20260922T1504/best.pt}
+  cmv2CheckpointSha256: 9d2940f91d8b4f47f33eb58fb4b047bc89202fe605d03999aad435d0b9197297
+  cmv2ModelConfig:
+    hidden_width: 128
+    interaction_dim: 32
+    num_tokens: 16
+    knn_k: 32
+    interaction_radius_m: 0.02
+    feature_scale_m: 0.02
+    frame_dt_s: 0.03333333333333333
+  cmObjectPoints: 1024
+  cmHandPoints: 2048
+
+cmPlanner:
+  plannerEnvMicrobatch: 1
+  interactionObjectChunk: 1024
+  interactionHandChunk: 2048
