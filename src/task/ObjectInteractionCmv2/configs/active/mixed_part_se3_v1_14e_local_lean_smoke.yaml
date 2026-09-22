@@ -1,0 +1,56 @@
+schema_name: object_interaction_cmv2_portable_bilateral_v1_14b
+work_version: V1.14
+initialization: random
+run_authorization: not_approved
+data_backend: lean_geometry
+active_groups: [grab/mano, grab/inspire_f1]
+group_weights: {grab/mano: 0.5, grab/inspire_f1: 0.5}
+articulation_metadata: src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json
+sources:
+  grab/mano:
+    index: data/processed_data/ObjectInteractionCmv2/v114c/grab_mano_lean/index.json
+    manifest: data/processed_data/ObjectInteractionCmv2/v114c/grab_mano_lean/cache_manifest.json
+  grab/inspire_f1:
+    index: data/processed_data/ObjectInteractionCmv2/v114c/grab_inspire_f1_lean/index.json
+    manifest: data/processed_data/ObjectInteractionCmv2/v114c/grab_inspire_f1_lean/cache_manifest.json
+hand_sampling:
+  contract: bilateral_fixed_random_2048_per_side_v1
+  points_per_side: 2048
+  bilateral_points: 4096
+  seed: 42
+model:
+  architecture_version: v1_14a_shared_start_knn_4096
+  hidden_width: 128
+  interaction_dim: 32
+  num_tokens: 16
+  knn_k: 32
+  interaction_radius_m: 0.02
+  feature_scale_m: 0.02
+  frame_dt_s: 0.03333333333333333
+data:
+  num_obj_points: 1024
+  minimum_points_per_part: 64
+  train_strides: [1, 2, 3]
+  validation_strides: [1, 2, 3]
+  oakink2_val_fraction: 0.1
+  endpoint_candidate_k_per_frame: 32
+  endpoint_final_k: 32
+loss:
+  translation: smooth_l1_2cm_sample_part_mean
+  rotation: so3_geodesic_sample_part_mean
+  flow: smooth_l1_2cm_point_mean
+  weights: {translation: 1.0, rotation: 1.0, flow: 1.0}
+split_root: data/processed_data/ObjectInteractionCmv2/v114c/grab_two_group_split
+training:
+  batch_size_per_rank: 16
+  world_size: 1
+  epochs: 1
+  learning_rate: 0.001
+  seed: 42
+  checkpoint_interval: 200
+  log_interval: 20
+  cpu_threads_per_rank: 8
+resources:
+  physical_gpus: [0]
+  nofile_limit: 262144
+output_root: outputs/objectinteractioncmv2

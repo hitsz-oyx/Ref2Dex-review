@@ -79,6 +79,15 @@ def test_v114c_config_is_approved_lean_run() -> None:
     assert config["active_groups"] == ["grab/mano", "grab/inspire_f1"]
 
 
+def test_v114e_smoke_config_keeps_formal_authorization_isolated() -> None:
+    path = Path(__file__).parents[1] / "configs/active/mixed_part_se3_v1_14e_local_lean_smoke.yaml"
+    config = load_v114_config(path, allow_approved_run=False)
+    assert config["run_authorization"] == "not_approved"
+    assert config["data_backend"] == "lean_geometry"
+    assert config["active_groups"] == ["grab/mano", "grab/inspire_f1"]
+    assert config["split_root"].endswith("grab_two_group_split")
+
+
 def test_v114d_config_is_approved_mano_only_run() -> None:
     path = Path(__file__).parents[1] / "configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml"
     config = load_v114_config(path, allow_approved_run=True)
