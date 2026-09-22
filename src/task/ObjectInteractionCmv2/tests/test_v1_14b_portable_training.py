@@ -32,6 +32,11 @@ def test_v114b_configs_cover_local_two_group_and_portable_six_group_contracts():
     assert tuple(full["active_groups"]) == SUPPORTED_PART_SE3_GROUPS
     assert abs(sum(full["group_weights"].values()) - 1.0) < 1e-12
     assert full["hand_sampling"]["points_per_side"] == 2048
+    smoke = load_v114_config(
+        TASK_ROOT / "configs/active/mixed_part_se3_v1_14b_six_source_smoke.yaml")
+    assert tuple(smoke["active_groups"]) == SUPPORTED_PART_SE3_GROUPS
+    assert smoke["training"]["batch_size_per_rank"] == len(SUPPORTED_PART_SE3_GROUPS)
+    assert smoke["training"]["world_size"] == 1
 
 
 def test_v114b_batch_rounding_is_exact_positive_and_deterministic():

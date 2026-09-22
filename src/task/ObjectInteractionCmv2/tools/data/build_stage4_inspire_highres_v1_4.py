@@ -32,7 +32,7 @@ from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import Insp
 from src.task.ObjectInteractionCm.tools.data.retarget_stage4_bilateral_inspire import canonical_cloud_to_visual_local
 
 
-WORK_VERSION = "V1.11.1"
+WORK_VERSION = "V1.14"
 OBJECT_POINTS = 4096
 DECODER_PER_SIDE = 1538
 DECODER_POINTS = 3076
@@ -163,6 +163,9 @@ def _validate(path: Path) -> dict[str, Any]:
                 "knn_hand_points_world.npy": (frames, INSPIRE_POINTS, 3), "knn_hand_normals_world.npy": (frames, INSPIRE_POINTS, 3),
                 "obj_knn_indices.npy": (frames, OBJECT_POINTS, KNN_K), "obj_candidate_mask_2cm.npy": (frames, OBJECT_POINTS),
                 "obj_pose_world.npy": (frames, 4, 4), "frame_time.npy": (frames,), "source_frame_id.npy": (frames,)}
+    if manifest["dataset"] == "arctic":
+        expected.update({"obj_part_id.npy": (OBJECT_POINTS,), "obj_articulation.npy": (frames, 1),
+                         "obj_root_pose_world.npy": (frames, 4, 4)})
     for name, shape in expected.items():
         value = np.load(geometry / name, mmap_mode="r")
         if value.shape != shape: raise ValueError(f"{path}/{name}: expected {shape}, got {value.shape}")
@@ -177,7 +180,7 @@ def _validate(path: Path) -> dict[str, Any]:
 
 
 def _process(entry: Entry, converter: InspireConverter, device: torch.device, frame_batch: int,
-             object_chunk: int, resume: bool) -> dict[str, Any]:
+             object_chunk: int, resume: bool, arctic_meta: dict[str, Any]) -> dict[str, Any]:
     if (entry.target / "geometry" / "manifest.json").is_file():
         if not resume: raise FileExistsError(entry.target)
         return _validate(entry.target)
@@ -216,15 +219,23 @@ def _process(entry: Entry, converter: InspireConverter, device: torch.device, fr
                                 ("knn_hand_points_world", high_points), ("knn_hand_normals_world", high_normals),
                                 ("hand_points_world", decoder), ("hand_normals_world", decoder_normals),
                                 ("obj_candidate_mask_5cm", np.logical_or.reduce(masks) if masks else np.ones((len(obj), OBJECT_POINTS), dtype=bool))): np.save(geometry / f"{name}.npy", value)
+            if entry.domain == "arctic":
+                raw_path = mano_cache._resolve_arctic_raw(shared, arctic_meta)
+                object_meta = mano_cache._write_arctic_object_fields(
+                    geometry, shared, arctic_meta, raw_path, device
+                )
+            else:
+                np.save(geometry / "obj_point_id.npy", np.asarray(shared["obj_point_id"], dtype=np.int32))
+                object_meta = {"object_representation": "rigid_se3"}
         mano_cache._build_knn(geometry, device=device, frame_batch_size=frame_batch, object_chunk=object_chunk)
         _write_json(geometry / "manifest.json", {"schema_name": "ref2dex_object_interaction_cmv2_stage4_inspire_v1_4", "schema_version": "1.0.0", "work_version": WORK_VERSION,
             "sequence_id": entry.sequence_id, "dataset": entry.domain, "source_dataset": entry.domain, "source": "inspire_f1", "hand_variant": "inspire_f1", "split": entry.split,
-            "source_path": str(entry.source.resolve()), "coordinate_frame": "object_pose_t", "hand_side": "bilateral_merged_left_then_right", "frame_count": len(ids),
+            "source_path": str(entry.source.resolve()), "coordinate_frame": "world" if entry.domain == "arctic" else "object_pose_t", "hand_side": "bilateral_merged_left_then_right", "frame_count": len(ids),
             "object_pool_points": OBJECT_POINTS, "decoder_hand_points": DECODER_POINTS, "decoder_points_per_side": DECODER_PER_SIDE, "knn_hand_points": INSPIRE_POINTS,
             "knn_points_per_side": INSPIRE_PER_SIDE, "knn_k": KNN_K, "knn_index_dtype": "uint16", "interaction_radius_m": RADIUS_M, "hand_supervision_radius_m": RADIUS_M,
             "effective_fps": 30.0, "source_fps": 120.0 if entry.domain == "grab" else 30.0, "source_type": "stage4_mano_to_inspire_position_retarget",
             "surface_sampling": {"method": "global Inspire visual triangle area uniform", "seed": 2024, "points_per_side": INSPIRE_PER_SIDE, "space": "visual_mesh_local_then_single_fk"},
-            "retarget_qpos_max_abs": qmax})
+            "retarget_qpos_max_abs": qmax, **object_meta})
         entry.target.parent.mkdir(parents=True, exist_ok=True); os.replace(partial, entry.target)
         return _validate(entry.target)
     except Exception:
@@ -237,13 +248,18 @@ def run(args: argparse.Namespace) -> int:
     if device.type != "cuda" or not torch.cuda.is_available(): raise RuntimeError(f"CUDA is required, got {device}")
     torch.cuda.set_device(device)
     entries = _entries(args.source_index.resolve(), args.source_root.resolve(), output, args.domain, args.sequence)
+    arctic_meta = (json.loads((args.source_root.resolve() / "meta.json").read_text(encoding="utf-8"))
+                   if args.domain == "arctic" else {})
     if args.limit: entries = entries[:args.limit]
     commit, dirty = _git_state(); manifest_path = output / f"run_manifest_{args.run_id}.json"
     manifest = {"schema_name": "ref2dex_data_run_manifest_v1", "task": "ObjectInteractionCmv2", "operation": "stage4_inspire_highres_export", "run_id": args.run_id, "run_status": "STARTED", "started_at": _now(), "work_version": WORK_VERSION, "base_commit": commit, "worktree_dirty": dirty, "device": str(device), "expected_sequences": len(entries), "completed_sequences": 0, "completed_frames": 0, "failures": [], "inputs": {"source_index": str(args.source_index.resolve()), "source_root": str(args.source_root.resolve())}, "outputs": {"root": str(output)}, "conclusion": "INCONCLUSIVE"}
     _write_json(manifest_path, manifest); converter = InspireConverter(args.dex_root.resolve()); records = []
     for ordinal, entry in enumerate(entries, 1):
         try:
-            value = _process(entry, converter, device, args.knn_frame_batch, args.knn_object_chunk, args.resume)
+            value = _process(
+                entry, converter, device, args.knn_frame_batch, args.knn_object_chunk,
+                args.resume, arctic_meta,
+            )
             records.append({"source": "inspire_f1", "hand_variant": "inspire_f1", "id": entry.sequence_id, "path": value["path"], "dataset": entry.domain, "split": entry.split, "frame_count": value["frames"]})
             manifest["completed_sequences"] = len(records); manifest["completed_frames"] += int(value["frames"]); _write_json(manifest_path, manifest)
             print(json.dumps({"status": "COMPLETED", "index": ordinal, "total": len(entries), **value}), flush=True)

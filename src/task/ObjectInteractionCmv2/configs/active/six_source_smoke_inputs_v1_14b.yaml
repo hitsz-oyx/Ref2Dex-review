@@ -1,0 +1,16 @@
+schema_name: object_interaction_cmv2_six_source_smoke_inputs_v1_14b
+work_version: V1.14
+stage4:
+  train:
+    - {dataset: grab, id: grab/s9/cubelarge_pass_1}
+    - {dataset: arctic, id: arctic/s01/box_use_01}
+  val:
+    - {dataset: grab, id: grab/s10/pyramidsmall_inspect_1}
+    - {dataset: arctic, id: arctic/s02/capsulemachine_use_01}
+oakink2:
+  - sequence: scene_01__A001++seq__07bb164dc3d3873d6389__2023-04-27-20-45-29
+    raw_frame_start: 966
+    raw_frame_count: 32
+  - sequence: scene_01__A003++seq__888432237275999c9f7d__2023-04-18-10-32-34
+    raw_frame_start: 2100
+    raw_frame_count: 32

@@ -97,6 +97,8 @@ def _entries(
     grab_root: Path,
     arctic_root: Path,
     output_root: Path,
+    *,
+    require_complete: bool = True,
 ) -> list[Entry]:
     payload = json.loads(split_index.read_text(encoding="utf-8"))
     result: list[Entry] = []
@@ -128,7 +130,7 @@ def _entries(
             ))
     expected_grab = sum(entry.dataset == "grab" for entry in result)
     expected_arctic = sum(entry.dataset == "arctic" for entry in result)
-    if expected_grab != 1335 or expected_arctic != 301:
+    if require_complete and (expected_grab != 1335 or expected_arctic != 301):
         raise ValueError(
             f"Expected complete GRAB/ARCTIC assignment 1335/301, got {expected_grab}/{expected_arctic}"
         )
@@ -629,7 +631,8 @@ def _validate_sequence(sequence: Path) -> dict[str, Any]:
 def _worker(args: argparse.Namespace) -> int:
     output_root = args.output_root.resolve()
     entries = _entries(
-        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root
+        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root,
+        require_complete=not args.allow_partial,
     )
     if args.sequence:
         selected = set(args.sequence)
@@ -689,6 +692,7 @@ def _worker(args: argparse.Namespace) -> int:
                 "sequences": len(_entries(
                     args.split_index.resolve(), args.grab_root.resolve(),
                     args.arctic_root.resolve(), output_root,
+                    require_complete=not args.allow_partial,
                 )),
                 "num_shards": args.num_shards,
             },
@@ -747,7 +751,8 @@ def _write_correspondence_asset(output_root: Path, correspondences: dict[str, di
 def _finalize(args: argparse.Namespace) -> int:
     output_root = args.output_root.resolve()
     entries = _entries(
-        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root
+        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root,
+        require_complete=not args.allow_partial,
     )
     if args.sequence:
         selected = set(args.sequence)
@@ -865,6 +870,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--knn-batch-size", type=int, default=1)
     parser.add_argument("--object-chunk", type=int, default=512)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--allow-partial", action="store_true",
+        help="Allow an explicitly bounded smoke assignment instead of the full 1335/301 corpus.",
+    )
     return parser
 
 
