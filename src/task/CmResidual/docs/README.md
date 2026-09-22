@@ -6,6 +6,7 @@ interaction residual。canonical owner 为 `src/task/CmResidual/`；IsaacGym ven
 
 ## 当前状态
 
+- V1.18c 隔离性能探索：OICmv2 V1.14a 已通过单手 2048 点、object-local、K=8 shared-candidate adapter 接入真实抓取 rollout。GPU6 matched 1-env/64-step smoke 中 step/total FPS 从旧 V1.3 的 `5.383/5.038` 提高到 `7.243/6.640`（`1.345x/1.318x`）；两侧 checkpoint 与 64-sample buffer finite。该 checkpoint 仅训练 GRAB/MANO 一轮，Inspire 准确性、抓取效果和多环境 scaling 仍为 `INCONCLUSIVE`。详见 [Activity](activities/ACT-20260922-173100-CMRESIDUAL-V118C-V114A-INTEGRATION.md) 与 [experiment](experiments/EXP-20260922-173100-CMRESIDUAL-V118C-V114A-FPS.md)。
 - `work_version`: `V1.21`
 - 隔离 V1.18b 性能探索：在 V1.18a 同一 K=8 active state 上实现并重复测量 merge-topk、conservative
   swept-link AABB 与 radius-valid sparse edge。两个循环移位交错的 GPU6 runs 中，四个 rollout 行为字段 parity

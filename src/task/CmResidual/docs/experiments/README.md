@@ -1,5 +1,7 @@
 # CmResidual Experiments
 
+- [EXP-20260922-173100-CMRESIDUAL-V118C-V114A-FPS](EXP-20260922-173100-CMRESIDUAL-V118C-V114A-FPS.md)：单环境 matched smoke 中 V1.14a shared-candidate adapter 的 step/total FPS 为旧 V1.3 的 `1.345x/1.318x`；多环境与效果仍未定。
+
 - [EXP-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY](EXP-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY.md)：三个等价 fast-path implementation 的可重复单状态提速假设被反驳；不反驳 fused kernel 或其它表示。
 - [EXP-20260921-115510-CMRESIDUAL-V118A-LATENCY](EXP-20260921-115510-CMRESIDUAL-V118A-LATENCY.md)：sampled-state K=8 中 swept + edge/contact 占 69.07%，local interaction hotspot 获支持；K-scaling 仍不确定。
 - [EXP-20260920-234054-CMRESIDUAL-V121E2-WARMUP-PARITY](EXP-20260920-234054-CMRESIDUAL-V121E2-WARMUP-PARITY.md)：`L=0/1/2/4/8` short warm-up 在有效的 6-state/72-arm 协议下均未恢复 full-prefix parity，有界结论为 `REFUTED`。

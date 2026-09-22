@@ -1,5 +1,6 @@
 # CmResidual Activities
 
+- [ACT-20260922-173100-CMRESIDUAL-V118C-V114A-INTEGRATION](ACT-20260922-173100-CMRESIDUAL-V118C-V114A-INTEGRATION.md)：V1.14a shared-candidate adapter 完成 1-env 抓取 rollout，matched step/total FPS 为旧 V1.3 的 `1.345x/1.318x`。
 - [ACT-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY](ACT-20260921-164700-CMRESIDUAL-V118B-SPARSE-LATENCY.md)：两个交错 GPU6 repeats 显示 merge、link-AABB 与 sparse-edge 均无可重复提速，生产默认保持 legacy。
 - [ACT-20260921-115510-CMRESIDUAL-V118A-LATENCY](ACT-20260921-115510-CMRESIDUAL-V118A-LATENCY.md)：真实 Phase-B active state 的 K=8 CUDA profile 显示 swept + edge/contact 占端到端 69.07%，定位为主要 planner 延迟热点。
 - [ACT-20260920-234054-CMRESIDUAL-V121E2-WARMUP-REFUTED](ACT-20260920-234054-CMRESIDUAL-V121E2-WARMUP-REFUTED.md)：72/72 arms 有效完成，但 `L=0/1/2/4/8` 均为 0/6 states 通过；有界结论为 `warmup<=8 insufficient`。
