@@ -37,7 +37,7 @@ loss:
   rotation: so3_geodesic_sample_part_mean
   flow: smooth_l1_2cm_point_mean
   weights: {translation: 1.0, rotation: 1.0, flow: 1.0}
-split_root: data/processed_data/ObjectInteractionCmv2/v114d/grab_mano_split
+split_root: data/processed_data/ObjectInteractionCmv2/v114d/grab_mano_split_pose_repaired
 training:
   batch_size_per_rank: 16
   world_size: 1
