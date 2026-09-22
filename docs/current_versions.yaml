@@ -13,8 +13,8 @@ tasks:
   CmResidual:
     work_version: V1.21
   ObjectInteractionCm:
-    work_version: V1.4.22
+    work_version: V1.4.23
   ObjectInteractionCmv2:
-    work_version: V1.3.4
+    work_version: V1.14
   correspondence_ptv3_v2:
     work_version: V1.2.16

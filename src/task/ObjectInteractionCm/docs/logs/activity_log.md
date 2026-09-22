@@ -8741,3 +8741,416 @@ OakInk2 官方定义 mocap 120 Hz、视频 30 Hz；旧 pilot 直接在连续 moc
 **回滚**
 
 反向应用本次提交即可恢复原 Git 可见性；生成样本始终原位保留。
+
+## 2026-09-17 09:08:08 +0000 — 启动 OakInk2 V1.4 Inspire cache 导出
+
+- timestamp: `2026-09-17 09:08:08 +0000`
+- activity_id: `ACT-20260917-090808-OICM-OAKINK2-CACHE-START`
+- modification_version: `V1.4.23`
+- type: `code, data, operation`
+- change_level: `L3`（新增 OakInk2 正式选择与双手 Inspire geometric/KNN producer，并写入独立 NAS cache）
+- approval: `user-approved`
+- approval_basis: 用户明确要求“现在开始导出 OakInk2 的 cache”；范围沿用已定稿 [src/task/ObjectInteractionCm/docs/plan/V1.4.md](../plan/V1.4.md) §9、§10、§19。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e444b1d0cce192dc9a310f0dcfd7bb67eea8f67c`
+- worktree_dirty: `true`（本次新增 producer 尚未提交；既有用户改动未覆盖）
+- scope: 读取 OakInk2 单物体 primitive index、原始双手 quaternion MANO、Stage3 几何；按官方 30 Hz、7 帧中心窗、2 mm/2 deg、运动优先和严格 `<2 cm` 规则创建独立选择 index；随后生成双手 Inspire 3076 点、4096 物体点和离线 KNN cache。只写 NAS 独立目录，不修改原始 annotation/Stage3、旧 v1/v1.1 index、GRAB/ARCTIC cache、val/test、训练配置和 checkpoint。
+
+**运行**
+
+- smoke selection/export：`run_id=oakink2_v1423_cache_smoke_20260917T090808Z`，`run_status=STARTED`，GPU `cuda:2`；目标目录和 manifest 在 smoke 创建后补写。
+- full selection/export：`run_id=oakink2_v1423_cache_full_20260917T090808Z`，`run_status=PENDING`；等待 smoke 通过后启动后台运行。
+- [src/task/ObjectInteractionCm/tools/data/export_oakink2_inspire_v1_4.py](../../tools/data/export_oakink2_inspire_v1_4.py) — 新增 producer，旧数据处理脚本保持不变。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/` — smoke/full 选择 index 目录，NAS 路径解析后写入。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/` — smoke/full cache 目录，终态链接待运行完成后补齐（当前 `PENDING`）。
+
+**验证**
+
+- 已通过 producer `py_compile`、导入检查和 `git diff --check`；尚未形成 cache 工程或科研结论。
+- smoke 运行终态补记 selection/export 的 `run_manifest.json`、关键数组 shape/finite/KNN 校验和输出目录；full 运行终态另行追加。
+- 当前结论：`INCONCLUSIVE`（代码链路尚未经过 smoke；不把训练 val 指标当作 OakInk2 cache 结论）。
+
+**保护与回滚**
+
+- 既有 GRAB/ARCTIC cache、旧 OakInk2 index、训练输出和外部 DExplore/dex-retargeting 仓库保持只读。
+- 代码回滚入口为本次 producer 与版本/activity 增量；运行回滚只停止对应 run 并保留 NAS 审计产物，不删除既有数据。
+
+## 2026-09-17 09:17:05 +0000 — OakInk2 全量选择与 cache 流水线后台运行
+
+- timestamp: `2026-09-17 09:17:05 +0000`
+- activity_id: `ACT-20260917-091705-OICM-OAKINK2-FULL-RUNNING`
+- modification_version: `V1.4.23`
+- type: `operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户“现在开始导出 OakInk2 的 cache”的明确指令和 V1.4 §9/§10/§19；smoke 已通过后启动全量。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9f9b827db662aaa7d1c51754d083e421ccf06150`
+- worktree_dirty: `false`（启动时；运行日志不写 Git 工作区）
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`
+- run_status: `RUNNING`
+- command: NAS `run_full.sh`；先执行 `export_oakink2_inspire_v1_4.py select`，成功后执行 `export ... export --device cuda:2 --resume`。
+- pid: `4002771`（wrapper）；selection 子进程 `4002773`。
+- scope: 全部 `2177` 条单物体 primitive 候选；选择输出和 cache 输出均为独立 NAS 目录。GPU 2 仅用于后续 MANO/KNN，GPU 3 外部仿真保持不动。
+
+**原因**
+
+用户已批准 OakInk2 仅保留单物体 primitive，并要求开始生成正式 cache；smoke 已验证 producer 的输入、双手 Inspire retarget 和 KNN 合同可以运行，因此进入全量操作。
+
+**运行与证据**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json) — `STARTED/RESTARTED` wrapper manifest；首次普通 `nohup` 子进程组被执行器回收，未产生选择产物，随后用 `setsid` 重启，未修改输入。
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log) — 实时日志；当前已处理 `10/517` 个序列，`19` 个候选，`0` 个失败。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/` — `PENDING`；选择输出尚未终态，目录在选择完成后写入，运行中不把它当作终态证据。
+- `data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/` — `PENDING`；cache 输出尚未开始。
+
+**验证**
+
+- smoke selection：`1` 段、`1246` 帧、`0` 失败；smoke cache：双手 `3076` 点、物体 `4096` 点、KNN `K=32`、所有数组 finite，工程结论 `SUPPORTED`。
+- full 运行阶段结论仍为 `INCONCLUSIVE`；最终以 selection/export 两个 run manifest、index、cache_manifest 和全量校验为准，不把 smoke 结果外推到全量或科研效果。
+
+**保护与回滚**
+
+- 现有 GRAB/ARCTIC cache、旧 OakInk2 v1/v1.1 index、训练权重、split、源 annotation/Stage3 和外部仓库未修改。
+- 停止入口为 wrapper PID `4002771`；保留已写入的选择/缓存和 manifest，不删除既有产物。
+
+## 2026-09-17 09:31:38 +0000 — OakInk2 全量 cache 流水线状态核对
+
+- timestamp: `2026-09-17 09:31:38 +0000`
+- activity_id: `ACT-20260917-093138-OICM-OAKINK2-CACHE-STATUS`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 cache 是否仍在导出。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `9f9b827db662aaa7d1c51754d083e421ccf06150`
+- worktree_dirty: `false`
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`
+- run_status: `RUNNING`
+- scope: 只读核对 OakInk2 全量选择与 Inspire cache 流水线的进程、pipeline manifest 和实时日志；不停止进程、不修改代码、输入数据、选择规则或 cache。
+- conclusion: `INCONCLUSIVE`（全量运行尚未完成，不能据此下科研结论）。
+
+**原因**
+
+确认用户需要当前后台任务的真实阶段，避免把“全量选择”误报成“cache 已导出”。
+
+**验证**
+
+- wrapper PID `4002771` 与选择子进程 PID `4002773` 仍存活。
+- 实时日志已处理 `100/517` 个序列，得到 `343` 个候选，失败 `0`；pipeline manifest 的进度字段仍停留在 `40/517`，以实时日志和存活进程作为当前进度依据。
+- 流水线配置为选择完成后才启动 `export`；因此当前 Inspire cache 导出尚未开始，目标 cache 目录仍未形成终态 manifest。
+- 诊断命令：`ps -eo pid,ppid,etime,stat,cmd`、`cat pipeline_manifest.json`、`tail -n 12 pipeline.log`。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+
+**回滚**
+
+本次仅新增诊断记录，无代码、配置或数据改动；删除本 activity 条目即可回滚记录。
+
+## 2026-09-17 10:43:40 +0000 — OakInk2 与 ARCTIC 几何重定向 cache 状态核对
+
+- timestamp: `2026-09-17 10:43:40 +0000`
+- activity_id: `ACT-20260917-104340-OICM-OAKINK2-ARCTIC-STATUS`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 和 ARCTIC 几何重定向数据是否导出完成。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `eaf028dc2d9c7dc2c21b5c74343cf618d6756e7c`
+- worktree_dirty: `false`
+- scope: 只读核对 OakInk2 选择/cache manifest、实时流水线和现有 GRAB/ARCTIC Inspire geometric cache manifest；不停止任务、不修改代码、输入数据或 cache。
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`（OakInk2）；ARCTIC 使用既有 full cache manifest。
+- run_status: `RUNNING`（OakInk2 cache export）；ARCTIC manifest `COMPLETED` 对应既有全量 cache。
+- conclusion: `INCONCLUSIVE`（OakInk2 尚未完成）；ARCTIC 工程完整性 `SUPPORTED`。
+
+**原因**
+
+确认 OakInk2 是否已经从选择阶段进入并完成 cache 导出，同时核对 ARCTIC 几何重定向数据的正式 manifest 和坏样本统计。
+
+**验证**
+
+- OakInk2 选择已完成：`2177` 个输入 primitive 中选出 `1849` 段、`379591` 帧，`0` 个选择失败。
+- OakInk2 cache export 仍在运行：已完成 `406/1849` 段、`116725` 帧；当前记录 `43` 个失败，原因均为对应选择缺少 Stage3 geometry；cache `index`/`cache_manifest` 仍为 `PENDING`，全量结论保持 `INCONCLUSIVE`。
+- ARCTIC Inspire geometric cache 已完成：`301` 个序列、30 Hz；合并 manifest 的 `bad_count=0`，手部合同为双手 Inspire `3076` 点，物体池 `4096` 点。
+- 诊断命令：`ps`、`cat` 两个 OakInk2 run manifest、`tail pipeline.log`、`cat cache_manifest.json`。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+- [data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json](../../../../../data/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json)
+
+**回滚**
+
+本次仅新增诊断记录，无代码、配置或数据改动；删除本 activity 条目即可回滚记录。
+
+## 2026-09-17 12:13:47 +0000 — 三域等概率训练接口与 smoke 完成
+
+- timestamp: `2026-09-17 12:13:47 +0000`
+- activity_id: `ACT-20260917-121347-OICM-THREE-DOMAIN-SMOKE`
+- modification_version: `V1.4.24`
+- type: `code, experiment, operation`
+- task_mode: `change` → `run-only/operation`
+- change_level: `L2`
+- approval: `user-requested`
+- approval_basis: 用户明确要求“先把接口写好”“开始三域训练的 smoke”，并要求各数据域概率均等；stride 沿用既有日志合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `ca90da99740a1dc6f1512714478e3c006a7b1a36`
+- worktree_dirty: `false`
+- scope: 为 GRAB、ARCTIC、OakInk2 增加显式 source domain、动态 source stride 和严格等概率采样接口；将 V1.4 有效 30 Hz stride 固定为三域均为 `1..10`、验证固定 `2`；生成独立三域 smoke index 并运行 2 step GPU smoke。正式 OakInk2 全量 cache、GRAB/ARCTIC 正式 index、split、GT、旧 checkpoint 和全量训练保持不变。
+
+**原因**
+
+原 V1.4 index 将三个数据域统一标成 `inspire_f1`，无法让 loader 按 GRAB/ARCTIC/OakInk2 三域分别等概率采样；现将 source 名称和 stride 作为显式合同写入 index/config/metadata。
+
+**修改**
+
+- [src/task/ObjectInteractionCm/dataset.py](../../dataset.py) — 支持 `source_domains`、`source_stride_values`、`arctic_stride_values`、`oakink2_stride_values`；`source_probability_policy=equal` 时要求训练域完整匹配并归一化为每域 `1/3`；修复 decoder 模式读取带离线 KNN 的 Inspire cache。
+- [src/task/ObjectInteractionCm/runner.py](../../runner.py) — validation equal-source 指标按 metadata 中的实际 source 动态聚合。
+- [src/task/ObjectInteractionCm/tools/data/build_v1_4_full_index.py](../../tools/data/build_v1_4_full_index.py) — formal index 使用 `grab`/`arctic`/`oakink2` source，写入等概率和三域 stride；新增隔离的 `--smoke` index 模式并排除 `.partial` 目录。
+- [src/task/ObjectInteractionCm/configs/active/grab_arctic_oakink2_inspire_geometric_v1_4_smoke.yaml](../../configs/active/grab_arctic_oakink2_inspire_geometric_v1_4_smoke.yaml) — 三域 smoke 配置。
+- [src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py](../../tests/test_v1_4_data_contract.py) — 等概率 sampler 合同测试。
+
+**运行**
+
+- `run_id=object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221`
+- `run_status=COMPLETED`
+- command: 在隔离 `/tmp/oicm_tri_domain_smoke_20260917T121220Z` 工作目录中运行 `python -u -m src.task.ObjectInteractionCm.train`，使用 GPU `cuda:0`、batch `2`、`max_steps=2`、`skip_eval=true`；`data.index_path` 指向独立 NAS smoke index。
+- 失败尝试：`/tmp/oicm_tri_domain_smoke_20260917T121156Z` 在训练初始化前因 YAML 未引用的 `off` 被解析为 `false`，状态 `INVALID_IMPLEMENTATION`；修正为字符串后未复用该失败目录。
+
+**验证**
+
+- 单测：`/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCm/tests/test_v1_4_data_contract.py`，`3 passed`。
+- loader 预检：三域各 1 条 sequence，`train_rows_by_source={arctic:408, grab:234, oakink2:1236}`；metadata 概率为 `1/3,1/3,1/3`，三域 stride 均为 `[1..10]`，采样器为 `SourceBalancedSampler`。
+- smoke 终态：step `2` / epoch `1`，loss、object/hand EPE 和梯度均 finite；生成 `latest.pt` 与 step checkpoint；checkpoint 可加载，`metrics.jsonl` 3 行全部 finite。
+- 工程结论：`SUPPORTED`（三域 loader、等概率合同、forward/backward、checkpoint 写入/读取均通过）。科研效果结论：`INCONCLUSIVE`（仅 2 step engineering smoke，未作效果判断）。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4/smoke_index.json](../../../../../data/processed_data/oicm_v1_4_raw/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4/smoke_index.json)
+- [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/run_manifest.json](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/run_manifest.json)
+- [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/metadata.json](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/metadata.json)
+- [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/metrics.jsonl](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/metrics.jsonl)
+- [outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/checkpoints/latest.pt](../../../../../outputs/objectinteractioncm/object_interaction_cm_grab_arctic_oakink2_inspire_geometric_v1_4_smoke_20260917_121221/checkpoints/latest.pt)
+
+**保护与回滚**
+
+- 三域 smoke index、运行目录和 checkpoint 均为独立产物；OakInk2 全量失败运行的 `1656` 个完成目录和 `193` 个 `.partial` 目录保留在原 NAS，未接入 smoke 或正式 index。
+- 删除本 activity、smoke config/index/output，并反向应用代码提交 `5956ebc`、`ca90da9` 即可回滚本次接口与 smoke；正式 GRAB/ARCTIC/OakInk2 数据和旧 V1.4 运行保持原位。
+
+## 2026-09-17 12:17:46 +0000 — OakInk2 全量 cache 导出终态核对
+
+- timestamp: `2026-09-17 12:17:46 +0000`
+- activity_id: `ACT-20260917-121746-OICM-OAKINK2-EXPORT-FAILED`
+- modification_version: `V1.4.24`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic` → `run-only/operation`（终态登记）
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户要求继续三域 smoke；同时核对 OakInk2 后台导出是否完成，记录其终态以避免将部分 cache 当成正式输入。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `ca90da99740a1dc6f1512714478e3c006a7b1a36`
+- worktree_dirty: `true`（仅本 activity 记录待提交）
+- scope: 只读核对 OakInk2 全量 cache 导出结果，并修正其 pipeline manifest 的过期 `RUNNING` 状态；不删除或覆盖已完成目录、`.partial` 目录、选择结果、正式 index 或 cache schema。
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`
+- run_status: `FAILED`
+- conclusion: `INCONCLUSIVE`（未生成正式 index/cache_manifest，不能作为三域正式训练输入）。
+
+**原因**
+
+OakInk2 导出已处理完全部 `472` 个 selection sequence，但 `193` 条记录缺少 Stage3 geometry，导出器因此以失败退出；随后 wrapper 的 `RUN_DIR` 未定义又产生收尾错误。失败项均为几何输入缺失，不能静默过滤后宣称全量 cache 完成。
+
+**验证**
+
+- cache run manifest：`1656/1849` 个 segment 完成、`328118` 帧完成、`193` 条失败；`outputs.index` 与 `outputs.cache_manifest` 仍为 `PENDING`。
+- 失败记录均为 `FileNotFoundError: no Stage3 geometry ...`；pipeline log 最后报告 `export_sequences=472`、`completed_segments=1656`、`failures=193`，随后抛出 `RuntimeError`。
+- 已将 pipeline manifest 从过期的 `RUNNING` 修正为 `FAILED`，补充终止时间、完成计数和失败原因；保留全部已完成目录与 `.partial` 目录，不重跑、不删除。
+- 工程状态：`FAILED`；科研结论：`INCONCLUSIVE`。正式三域训练需先处理缺失 Stage3 geometry，并重新生成可审计的正式 index/cache_manifest。
+
+**证据入口**
+
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline_manifest.json)
+
+**保护与回滚**
+
+- 本条目与 pipeline manifest 状态修正均可回滚；回滚入口为恢复 pipeline manifest 的原 JSON，并删除本 activity 条目。已完成的 `1656` 个目录和 `193` 个 `.partial` 目录不作任何破坏性处理。
+
+## 2026-09-17 12:52:21 +0000 — 回退旧 Task 的三域接口实现
+
+- timestamp: `2026-09-17 12:52:21 +0000`
+- activity_id: `ACT-20260917-125221-OICM-REVERT-THREE-DOMAIN`
+- modification_version: `V1.4.23`
+- type: `code, operation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-requested`
+- approval_basis: 用户要求将三域训练改到 `ObjectInteractionCmv2`，并回退本轮在旧 `ObjectInteractionCm` 中新增的接口。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `10a1e37c88bc6b50d91b6cb83eff161d9b0d2a61`
+- worktree_dirty: `true`（仅本条回退记录待提交）
+- scope: 回退 `ObjectInteractionCm` 的三域等概率 loader、index builder、smoke config、合同测试和版本指针；保留 smoke 输出、NAS cache、失败目录、pipeline manifest 和历史 activity 记录，不触碰旧 Task 的原始数据与 checkpoint。
+
+**原因**
+
+三域训练目标改由 `ObjectInteractionCmv2` 承担，旧 Task 不再作为实现入口；保留审计产物便于追溯，不把旧 smoke 结果当成当前 v2 训练结果。
+
+**修改**
+
+- 通过 `git revert --no-edit ca90da9` 和 `git revert --no-edit 5956ebc` 完成可逆回退。
+- 当前 `docs/current_versions.yaml` 的 `ObjectInteractionCm` 指针恢复为 `V1.4.23`；`ObjectInteractionCmv2` 保持 `V1.3.4`。
+
+**验证**
+
+- `git status` 在回退提交后干净；旧 `ObjectInteractionCm` 三域实现文件已恢复到回退前版本。
+- 回退提交：`d7deafc`、`10a1e37`；未删除 `/mnt/ugreen_nas` 下已有 smoke、OakInk2 partial/final 目录和运行 manifest。
+- [ObjectInteractionCm activity_log.md](activity_log.md) — 本次回退记录与历史 smoke/导出证据入口。
+- 工程结论：`SUPPORTED`（回退范围与保护边界完成）；科研结论：`INCONCLUSIVE`（v2 三域接口尚未实现）。
+
+**保护与回滚**
+
+- 反向应用 `d7deafc`、`10a1e37` 可恢复旧 Task 的三域实现；本条 activity 记录和历史提交均保留。
+
+## 2026-09-17 12:25:52 +0000 — OakInk2 Stage3 覆盖缺口诊断
+
+- timestamp: `2026-09-17 12:25:52 +0000`
+- activity_id: `ACT-20260917-122552-OICM-OAKINK2-STAGE3-COVERAGE`
+- modification_version: `V1.4.24`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 缺少 Stage3 geometry 的原因和补全方式。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `474e6b6d3e4dad4b587322b0e8eeb767ddc3c0e7`
+- worktree_dirty: `false`
+- scope: 只读检查 Stage3 生成器、OakInk2 selection/export 代码、全量失败记录和 NAS Stage3 stats；未修改代码、selection、Stage3 NPZ、cache 内容或研究变量。
+- run_id: `oakink2_v1423_cache_full_20260917T091507Z`（被诊断的全量 export）
+- run_status: `FAILED`
+- conclusion: `INCONCLUSIVE`（根因已定位；补全方案尚未执行）。
+
+**原因**
+
+- [correspondence_ptv3_v2/research/oakink2_conversion/convert_oakink2_stage3.py](../../../correspondence_ptv3_v2/research/oakink2_conversion/convert_oakink2_stage3.py) 的 Stage3 生成器先计算全序列距离，再用 `min(distance) <= 0.05 m` 保留帧；因此每个 NPZ 只包含该 object/side 的交互帧，非交互帧被主动裁掉，并可能记录 `no_interacting_frame`。
+- [ObjectInteractionCm/tools/data/export_oakink2_inspire_v1_4.py](../../tools/data/export_oakink2_inspire_v1_4.py) 的 selection 阶段对所有 object part 和两只手取距离最小值；某一 part 接触即可选中该帧。export 阶段随后要求每个 `selected_object_id` 的某个 Stage3 side 对 `selected_frame_ids` 全覆盖，任一 part 缺帧就抛出 `no Stage3 geometry`。
+- 因此这次不是 193 个 NPZ 路径全部不存在，而是 Stage3 文件存在但只覆盖部分 selected frame。逐条核对 193 条失败记录均属于 partial frame coverage；首条 `.../0011` 示例中选中 `637` 帧，`O02@0015@00001` 的 left Stage3 文件从 `1576` 帧开始，选中区间从 `1334` 帧开始，缺少 `61` 个 selected frame。
+- wrapper 的 `RUN_DIR: unbound variable` 是失败后的状态收尾 bug，不是 Stage3 缺口的原因。
+
+**验证**
+
+- Stage3 stats：3 个 shard、`4742` 个 NPZ、`627` 个序列；生成器的交互帧裁剪位置见上述代码的 `active` / `frame_ids_active`。
+- 失败 export manifest：`1656/1849` segments 完成、`193` 条失败，正式 `index` 和 `cache_manifest` 仍为 `PENDING`。
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z/run_manifest.json)
+- [data/processed_data/stage3/oakink2_object_centered_v1/split_manifest.json](../../../../../data/processed_data/stage3/oakink2_object_centered_v1/split_manifest.json)
+- [data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/oakink2_v1423_cache_full_20260917T091507Z/pipeline.log)
+
+**补全路径**
+
+- 推荐先走低成本路径：保持现有 Stage3 只负责 selection 的交互距离；让 OICm export 使用现有 NPZ 的静态 `obj_points/obj_normals`，对 selected frame 的 `obj_root_pose_world` 直接读取同一 annotation 的 `obj_transf`。这不制造几何或姿态，只消除“非接触 object part 没有被 Stage3 保留”的错误假设；需要新增覆盖检查、定向重跑失败 segment，再重新生成正式 index/cache_manifest。
+- 若必须保持当前 exporter 的严格 Stage3 frame 覆盖合同，则生成一个新的 full-frame Stage3 variant：对失败涉及的 sequence/object/side 输出全部官方 raw frame（或至少所有 selected frame），不要应用 `<=5 cm` 裁剪；用新 root 重新导出并验证所有 `selected_frame_ids` 完整覆盖。现有 `oakink2_object_centered_v1` 不覆盖写。
+- 不建议直接删除 193 条 segment 或把缺帧用最近帧填充；前者改变 split/样本分布，后者会伪造物体姿态或接触标签，需另行用户确认。
+
+**保护与回滚**
+
+- 本次仅新增诊断记录；既有 Stage3、selection、失败 cache 和 pipeline manifest 均未改动。删除本条 activity 即可回滚记录。
+
+## 2026-09-19 03:28:10 +0000 — 复用既有 ARCTIC KNN/距离 viewer（Δ=10）
+
+- timestamp: `2026-09-19 03:28:10 +0000`
+- activity_id: `ACT-20260919-032810-OICM-REUSE-ARCTIC-VIEWER`
+- modification_version: `V1.4.24`
+- type: `operation`
+- task_mode: `run-only/operation`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户明确要求不要实现新脚本，复用先前已经能够显示 ARCTIC 的 viewer，并在开启 delta 时查看点流模长。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅本次及撤回新 viewer 的 activity 记录待提交）
+- scope: 仅启动既有 `visualize_grab.py`，读取既有 ARCTIC raw bilateral MANO viewer-only index；不修改数据、训练 cache、模型、checkpoint、坐标系或 viewer 代码。
+- run_id: `arctic_mano_knn_viewer_reuse_20260919T032810Z`
+- run_status: `RUNNING`
+- command: `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -m src.task.ObjectInteractionCm.visualize_grab --index /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json --split train --sequence arctic/s01/box_use_01 --frame 0 --future-delta 10 --point-display both --mesh-display off --host 127.0.0.1 --port 8113 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z --modification-version V1.4.24`
+
+**启动前证据**
+
+- `--check-only` 已通过：`arctic/s01/box_use_01` 有 889 帧，raw source-frame 的 Δ=10 对应 0.333333 s；第 0→10 帧物体点流为 median `0.0231 mm`、P95 `0.0353 mm`、max `0.0397 mm`。该 viewer 原本就会在 delta 开启时在 Viser 页面显示这三个统计量。
+- [既有 viewer 实现](../../visualize_grab.py)；[既有 ARCTIC viewer-only index](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json)。
+- viewer: `http://127.0.0.1:8113`（HTTP 200；启动进程 PID `2205981`）。
+- [运行目录](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z)；[run_manifest.json](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z/run_manifest.json)；[viewer.log](../../../../../data/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/arctic_mano_knn_viewer_reuse_20260919T032810Z/viewer.log)。
+
+**原因**
+
+- 该旧 viewer 已有 ARCTIC raw bilateral MANO adapter、KNN/距离着色和 delta 点流统计；新增 Cmv2 viewer 会重复实现且不符合用户本次要求，因此仅复用既有入口。
+
+**验证**
+
+- `--check-only` 退出码 0；服务运行清单为 `RUNNING`，`http://127.0.0.1:8113` 返回 HTTP 200。以上仅为可视化工程证据，未对模型或训练效果作科研结论。
+
+**保护与回滚**
+
+- 回滚为停止本次 8113 进程并保留独立运行目录；不覆盖历史 viewer 输出或任何训练产物。
+
+## 2026-09-19 03:52:20 +0000 — ARCTIC/GRAB 同 stride raw 物体点流对比
+
+- timestamp: `2026-09-19 03:52:20 +0000`
+- activity_id: `ACT-20260919-035220-OICM-ARCTIC-GRAB-SAME-STRIDE-FLOW`
+- modification_version: `V1.4.23`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户要求统计 ARCTIC 和 GRAB 在相同 stride 下的点流模长对比。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅本次及此前 viewer/retraction 的 activity 记录待提交）
+- scope: 只读遍历 raw bilateral MANO `shared.npz` 的 `obj_points_world`；不读取训练 cache，不修改数据、split、模型、checkpoint 或 viewer 代码。
+
+**原因**
+
+- 先前单条 ARCTIC viewer 的 delta 数值不能代表数据域总体分布；本次以两域相同的 30 Hz source-frame stride 汇总，避免将时间跨度差异误解为数据域差异。
+
+**方法与结果**
+
+- 输入：[GRAB raw bilateral MANO](../../../../../data/processed_data/oicm_v1_4_raw/grab_mano_30hz/)（1335 条序列）和 [ARCTIC raw bilateral MANO](../../../../../data/processed_data/oicm_v1_4_raw/arctic_mano_30hz/)（301 条序列）。对每个有效 `(t, t+s)`，先在对应的 4096 个物体点上计算 `mean(||p[t+s]-p[t]||_2)`，单位 mm；表中再对全部有效帧对取 mean / median / P95。两域均为 30 Hz。
+
+| stride（帧 / ms） | GRAB 帧对数 | GRAB mean / median / P95 (mm) | ARCTIC 帧对数 | ARCTIC mean / median / P95 (mm) | mean 比值 G/A |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 / 33.3 | 404929 | 6.92 / 1.02 / 32.83 | 217972 | 4.58 / 2.75 / 15.67 | 1.51 |
+| 2 / 66.7 | 403594 | 13.70 / 1.96 / 65.15 | 217671 | 9.03 / 5.42 / 31.09 | 1.52 |
+| 3 / 100.0 | 402259 | 20.37 / 2.91 / 96.77 | 217370 | 13.35 / 8.06 / 46.13 | 1.53 |
+| 4 / 133.3 | 400924 | 26.91 / 3.87 / 127.41 | 217069 | 17.55 / 10.66 / 60.58 | 1.53 |
+| 5 / 166.7 | 399589 | 33.30 / 4.92 / 157.00 | 216768 | 21.62 / 13.28 / 74.38 | 1.54 |
+| 6 / 200.0 | 398254 | 39.53 / 6.05 / 185.79 | 216467 | 25.56 / 15.87 / 87.40 | 1.55 |
+| 7 / 233.3 | 396919 | 45.63 / 7.28 / 213.14 | 216166 | 29.38 / 18.52 / 99.80 | 1.55 |
+| 8 / 266.7 | 395584 | 51.58 / 8.68 / 240.00 | 215865 | 33.08 / 21.13 / 111.67 | 1.56 |
+| 9 / 300.0 | 394249 | 57.39 / 10.33 / 265.60 | 215564 | 36.66 / 23.79 / 123.01 | 1.57 |
+| 10 / 333.3 | 392914 | 63.06 / 12.21 / 290.68 | 215263 | 40.14 / 26.44 / 133.58 | 1.57 |
+
+**验证**
+
+- 一次性只读计算以 4 个进程完成；每条序列只接受其自身有效 `T-s` 帧对，未做跨序列拼接或补帧。该统计说明 raw 数据的运动分布差异，不能直接推出模型预测误差、训练难度或方法优劣。
+- 结论：`INCONCLUSIVE`（数据分布事实已量化；对训练效果的影响尚未评估）。
+
+**保护与回滚**
+
+- 本次没有生成或改写数据/cache；删除本 activity 条目即可回滚记录。

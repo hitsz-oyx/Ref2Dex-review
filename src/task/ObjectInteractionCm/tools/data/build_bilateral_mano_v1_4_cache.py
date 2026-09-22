@@ -49,7 +49,7 @@ MERGED_KNN_POINTS = KNN_POINTS_PER_SIDE * 2
 KNN_K = 32
 RADIUS_M = 0.02
 SURFACE_SEED = 2024
-MODIFICATION_VERSION = "V1.4.21"
+WORK_VERSION = "V1.4.21"
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,8 @@ def _entries(
     grab_root: Path,
     arctic_root: Path,
     output_root: Path,
+    *,
+    require_complete: bool = True,
 ) -> list[Entry]:
     payload = json.loads(split_index.read_text(encoding="utf-8"))
     result: list[Entry] = []
@@ -128,7 +130,7 @@ def _entries(
             ))
     expected_grab = sum(entry.dataset == "grab" for entry in result)
     expected_arctic = sum(entry.dataset == "arctic" for entry in result)
-    if expected_grab != 1335 or expected_arctic != 301:
+    if require_complete and (expected_grab != 1335 or expected_arctic != 301):
         raise ValueError(
             f"Expected complete GRAB/ARCTIC assignment 1335/301, got {expected_grab}/{expected_arctic}"
         )
@@ -503,7 +505,7 @@ def _process_entry(
         manifest = {
             "schema_name": CACHE_SCHEMA,
             "schema_version": "1.0.0",
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "sequence_id": entry.sequence_id,
             "dataset": entry.dataset,
             "source": "mano",
@@ -629,7 +631,8 @@ def _validate_sequence(sequence: Path) -> dict[str, Any]:
 def _worker(args: argparse.Namespace) -> int:
     output_root = args.output_root.resolve()
     entries = _entries(
-        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root
+        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root,
+        require_complete=not args.allow_partial,
     )
     if args.sequence:
         selected = set(args.sequence)
@@ -654,7 +657,7 @@ def _worker(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_cache_worker_report_v1",
         "run_id": args.run_id,
         "run_status": "STARTED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "started_at": started_at,
         "base_commit": commit,
         "worktree_dirty": dirty,
@@ -673,7 +676,7 @@ def _worker(args: argparse.Namespace) -> int:
             "schema_name": "ref2dex_data_run_manifest_v1",
             "run_id": args.run_id,
             "run_status": "STARTED",
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "operation_category": ["code", "data", "operation"],
             "started_at": started_at,
             "base_commit": commit,
@@ -689,6 +692,7 @@ def _worker(args: argparse.Namespace) -> int:
                 "sequences": len(_entries(
                     args.split_index.resolve(), args.grab_root.resolve(),
                     args.arctic_root.resolve(), output_root,
+                    require_complete=not args.allow_partial,
                 )),
                 "num_shards": args.num_shards,
             },
@@ -714,7 +718,7 @@ def _worker(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_cache_worker_report_v1",
         "run_id": args.run_id,
         "run_status": "COMPLETED" if not failures else "FAILED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "started_at": started_at,
         "finished_at": _now(),
         "base_commit": commit,
@@ -747,7 +751,8 @@ def _write_correspondence_asset(output_root: Path, correspondences: dict[str, di
 def _finalize(args: argparse.Namespace) -> int:
     output_root = args.output_root.resolve()
     entries = _entries(
-        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root
+        args.split_index.resolve(), args.grab_root.resolve(), args.arctic_root.resolve(), output_root,
+        require_complete=not args.allow_partial,
     )
     if args.sequence:
         selected = set(args.sequence)
@@ -788,7 +793,7 @@ def _finalize(args: argparse.Namespace) -> int:
     index = {
         "schema_name": INDEX_SCHEMA,
         "schema_version": "1.4.0",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "created_at": _now(),
         "object_pool_points": OBJECT_POINTS,
         "model_object_points": 1024,
@@ -822,7 +827,7 @@ def _finalize(args: argparse.Namespace) -> int:
         "schema_name": "ref2dex_data_run_manifest_v1",
         "run_id": args.run_id,
         "run_status": "COMPLETED",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "operation_category": ["code", "data", "operation"],
         "created_at": _now(),
         "base_commit": commit,
@@ -865,6 +870,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--knn-batch-size", type=int, default=1)
     parser.add_argument("--object-chunk", type=int, default=512)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--allow-partial", action="store_true",
+        help="Allow an explicitly bounded smoke assignment instead of the full 1335/301 corpus.",
+    )
     return parser
 
 

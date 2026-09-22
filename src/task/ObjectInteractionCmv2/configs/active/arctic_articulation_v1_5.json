@@ -1,0 +1,34 @@
+{
+  "schema_name": "object_interaction_cmv2_arctic_articulation_v1_5",
+  "schema_version": "1.0.0",
+  "work_version": "V1.5.2",
+  "source": {
+    "dataset": "arctic",
+    "producer": "process/ARCTIC/raw.py:transform_object_points_batch",
+    "raw_object_parameters": "<sequence>.object.npy[:, 0]"
+  },
+  "coordinate_convention": {
+    "vector_layout": "row_vector",
+    "root_frame": "obj_root_pose_world",
+    "q_units": "rad",
+    "top_link_transform": "p_top(q) = p_top(0) @ R_z(-q)^T"
+  },
+  "articulation": {
+    "num_links": 2,
+    "link_0": "bottom_root",
+    "link_1": "top_child",
+    "joints": [
+      {
+        "parent": 0,
+        "child": 1,
+        "type": "revolute",
+        "axis_root": [0.0, 0.0, -1.0],
+        "origin_root_m": [0.0, 0.0, 0.0]
+      }
+    ]
+  },
+  "validation": {
+    "required_arrays": ["obj_part_id.npy", "obj_articulation.npy", "obj_root_pose_world.npy"],
+    "fk_replay": "GT root pose and q_t/q_future must reconstruct cached obj_flow_gt before training"
+  }
+}

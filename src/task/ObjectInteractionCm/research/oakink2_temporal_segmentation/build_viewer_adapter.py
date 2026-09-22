@@ -23,7 +23,7 @@ from src.task.ObjectInteractionCm.research.oakink2_segment_visualizer.run import
     _sample_rows,
 )
 from src.task.ObjectInteractionCm.research.oakink2_temporal_segmentation.run import (
-    MODIFICATION_VERSION,
+    WORK_VERSION,
     SOURCE_MOCAP_FPS,
     TARGET_FPS,
     _git_state,
@@ -233,7 +233,7 @@ def run(args: argparse.Namespace) -> dict:
         "run_status": "COMPLETED",
         "started_at": started_at,
         "completed_at": _now(),
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "base_commit": commit,
         "worktree_dirty": dirty,
         "command": [sys.executable, *sys.argv],

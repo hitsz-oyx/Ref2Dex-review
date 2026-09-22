@@ -40,7 +40,7 @@ worktree 仅在干净、无未跟踪内容且用户明确授权后可移除；�
 
 修改后执行：
 
-    python tools/verify.py --changed
+    python3 tools/verify.py --changed
 
 第一阶段工具尚不存在时，记录实际定向检查和 git diff --check，不得声称 VERIFY PASS。
 `verify.py` 只检查适合机器判断的语法、结构、链接、版本合同和 hermetic 测试；Activity

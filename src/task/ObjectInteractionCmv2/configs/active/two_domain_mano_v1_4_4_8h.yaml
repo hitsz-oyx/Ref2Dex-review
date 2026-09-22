@@ -1,0 +1,38 @@
+schema_name: object_interaction_cmv2_two_domain_mano_v1_4
+work_version: V1.4.4
+sources:
+  - name: grab
+    hand_variant: mano
+    index: ${REF2DEX_CMV2_TWO_DOMAIN_MANO_INDEX}
+    manifest: ${REF2DEX_CMV2_TWO_DOMAIN_MANO_MANIFEST}
+  - name: arctic
+    hand_variant: mano
+    index: ${REF2DEX_CMV2_TWO_DOMAIN_MANO_INDEX}
+    manifest: ${REF2DEX_CMV2_TWO_DOMAIN_MANO_MANIFEST}
+model:
+  architecture_version: v1_3_rigid_only
+  hidden_width: 128
+  num_tokens: 16
+  use_residual: false
+  knn_k: 32
+  interaction_radius_m: 0.02
+  interaction_mode: swept
+  feature_scale_m: 0.02
+  frame_dt_s: 0.03333333333333333
+data:
+  num_obj_points: 1024
+  active_only: true
+  train_source_probabilities: {grab: 0.5, arctic: 0.5}
+  train_stride_values: {grab: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], arctic: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]}
+  eval_stride: 2
+training:
+  device: cuda:0
+  batch_size: 160
+  validation_batch_size: 160
+  max_epochs: 16
+  max_duration_s: 28800
+  checkpoint_interval: 200
+  learning_rate: 0.001
+  seed: 42
+  minimum_free_memory_gib: 35
+output_root: ${REF2DEX_CMV2_OUTPUT_ROOT}

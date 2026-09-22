@@ -7,6 +7,8 @@
 | Date | Activity | work_version | Type | Result |
 | --- | --- | --- | --- | --- |
 | 2026-09-20 | [V1.2h.1 plan micro supplements](V1.2h.1-plan-micro-supplements.md) | V1.2h | governance | completed |
+| 2026-09-20 | [Cmv2 V1.11 merge oyx](ACT-20260920-CMV2-V111-MERGE-OYX.md) | V1.2h | governance | completed |
+| 2026-09-19 | [cmv2 merge oyx](ACT-20260919-CMV2-MERGE-OYX.md) | V1.2h | governance | completed |
 | 2026-09-19 | [V1.2h plan finalization rule](V1.2h-plan-finalization-rule.md) | V1.2h | governance | completed |
 | 2026-09-19 | [V1.2g retire remote CI and retain worktree lifecycle](V1.2g-retire-remote-ci-worktree-lifecycle.md) | V1.2g | governance | completed |
 | 2026-09-19 | [V1.2e hermetic CI test selection](V1.2e-hermetic-ci-test-selection.md) | V1.2e | governance | completed |

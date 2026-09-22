@@ -44,7 +44,7 @@ from src.task.ObjectInteractionCm.tools.data.build_dexplore_rl_cache import (  #
 )
 
 
-MODIFICATION_VERSION = "V1.4.8"
+WORK_VERSION = "V1.4.8"
 SEQUENCE_ID = "grab/s1/airplane_fly_1"
 NATIVE_ID = "s1/airplane_fly_1"
 OBJECT_POINTS = 4096
@@ -218,7 +218,7 @@ def _save_geometry(
             "surface_sampling_space": "visual_mesh_local" if variant == "inspire_geometric" else "mano_mesh_faces",
             "surface_fk_application_count": 1 if variant == "inspire_geometric" else 0,
             "native_q_slice": [NATIVE_Q_START, NATIVE_Q_START + NUM_DOFS] if variant == "inspire_geometric" else None,
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "inputs": inputs,
         },
     )
@@ -425,7 +425,7 @@ def main() -> int:
             "run_status": "COMPLETED",
             "started_at": timestamp,
             "completed_at": timestamp,
-            "work_version": MODIFICATION_VERSION,
+            "work_version": WORK_VERSION,
             "base_commit": commit,
             "worktree_dirty": dirty,
             "command": shlex.join([sys.executable, *sys.argv]),

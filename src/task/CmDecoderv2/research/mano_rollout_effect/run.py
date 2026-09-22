@@ -40,7 +40,7 @@ from ..inspire_rollout_effect.run import (
 )
 
 
-MODIFICATION_VERSION = "V1.1.5"
+WORK_VERSION = "V1.1.5"
 
 
 def _now() -> str:
@@ -358,7 +358,7 @@ def main() -> None:
         "run_status": "RUNNING" if args.serve else "COMPLETED",
         "conclusion": "INCONCLUSIVE",
         "conclusion_scope": "MANO-source rollout-generated Inspire hand flow forwarded through frozen OICM; no future object GT comparison",
-        "work_version": MODIFICATION_VERSION,
+        "work_version": WORK_VERSION,
         "operation_category": ["diagnostic", "experiment", "operation"],
         "created_at": _now(),
         "base_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

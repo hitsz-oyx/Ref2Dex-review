@@ -1490,3 +1490,2276 @@ V1.3 直接监督刚体位姿会新增 GT 合同；在协商前需确认缓存�
 **回滚**
 
 本次提交作为独立 Git commit，可按提交范围反向应用；正在运行的独立训练目录、输入 cache 与旧 checkpoint 不变。
+
+## 2026-09-17 12:41:44 +0000 — Cmv2 与三域 OICm 训练入口范围核对
+
+- timestamp: `2026-09-17 12:41:44 +0000`
+- activity_id: `ACT-20260917-124144-CMV2-OICM-SCOPE-CHECK`
+- modification_version: `V1.3.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问“目前 OICmv2 可以开始全量训练了吗、接口是否好了”，并要求继续补全 OakInk2 失败帧。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `7afcb4605988e04f44326bb0395a886a78c9be80`
+- worktree_dirty: `false`
+- scope: 只读区分 `ObjectInteractionCmv2` 与新三域 `ObjectInteractionCm` 的训练接口和运行状态；未启动训练、未修改代码、cache 或 checkpoint。
+- conclusion: `INCONCLUSIVE`（任务名存在范围歧义；三域正式训练仍需先完成 OakInk2 回填）。
+
+**原因**
+
+`ObjectInteractionCmv2` 当前 V1.3 接口在配置层固定为 GRAB/MANO、stride=1；新三域等概率接口属于独立的 `ObjectInteractionCm` Task。两者不能按同一个全量训练入口解释。
+
+**验证**
+
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) 强制 `source.name=grab`、`hand_source=mano`、`stride=1`，没有 ARCTIC/OakInk2 三域 sampler。
+- `run_id=cmv2_v134_grab_ddp4_20260917T070638Z` 的 manifest 为 `COMPLETED`、`last_step=4088`、`last_epoch=4`；这是 GRAB-only DDP 训练，未运行完整 val/test，效果结论仍为 `INCONCLUSIVE`。[run_manifest.json](../../../../../outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/run_manifest.json)
+- 新三域 `ObjectInteractionCm` 的 loader/等概率接口和 2-step smoke 已通过，但 OakInk2 全量 cache 仍因 `193` 条 partial frame coverage 失败；补全前不能开始三域正式训练。
+
+**待确认边界**
+
+用户所说的“ OICmv2 ”需要在以下两者中确认其一：
+
+1. `ObjectInteractionCmv2`：继续 GRAB-only V1.3；其四轮全量 GRAB DDP 已完成。
+2. `ObjectInteractionCm`：继续 GRAB/ARCTIC/OakInk2 三域；下一步读取 OakInk2 原始 annotation/object cache，补齐失败 segment 后再启动正式训练。
+
+**保护与回滚**
+
+本次仅新增诊断记录；删除本条 activity 即可回滚。训练、cache、checkpoint 和现有接口均未改变。
+
+## 2026-09-17 13:40:05 +0000 — V1.4 三域高分辨率接口与回填器实现
+
+- timestamp: `2026-09-17 13:40:05 +0000`
+- activity_id: `ACT-20260917-134005-CMV2-V142-THREE-DOMAIN-IMPLEMENTATION`
+- modification_version: `V1.4.2`
+- type: `code, data, documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户于 2026-09-17 明确确认 Cmv2 V1.4 三域范围，并明确 MANO 每侧 2048、Inspire 每侧 10135 的训练手点合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `a7449d716b0185514e77a1fa698cccd9fc09de2c`
+- worktree_dirty: `true`
+- scope: 在 Cmv2 新增三域高分辨率 loader、等概率 sampler、变长 batch、2-step smoke 入口与 OakInk2 原始 annotation 回填器；不改 V1.3 GRAB 入口、`src/base`、旧 ObjectInteractionCm、已有 cache/输出/checkpoint。
+
+**文件**
+
+- [V1.4 最终计划](../plan/V1.4.md) — 已批准的范围、点数、2 cm、KNN32、split 与 smoke 闸门。
+- [V1.4 指导](../指导/V1.4.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md) 与 [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 用户确认的范围、Task 导航和 `V1.4.2` 版本指针。
+- [src/task/ObjectInteractionCmv2/config.py](../../config.py) — V1.4 三域配置和不变量验证。
+- [src/task/ObjectInteractionCmv2/multi_domain.py](../../multi_domain.py) — MANO 4096 / Inspire 20270 高分辨率流、直接 SE(3) GT、stride、padding 与 sampler。
+- [src/task/ObjectInteractionCmv2/train_multi_domain.py](../../train_multi_domain.py) 与 [src/task/ObjectInteractionCmv2/configs/active/three_domain_v1_4_smoke.yaml](../../configs/active/three_domain_v1_4_smoke.yaml) — 独立 smoke 入口。
+- [src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py](../../tools/data/backfill_oakink2_inspire_v1_4.py) — 从原始 annotation pose 和既有 Stage3 静态几何重建独立 OakInk2 高分辨率 cache。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py](../../tests/test_v1_4_three_domain.py) — variant、padding、stride、GT 与严格域均衡回归。
+
+**原因**
+
+此前 OakInk2 3076 点 export 和 1656 个旧 complete 目录都不符合 V1.4 高分辨率训练合同，不能复用为训练输入。新 loader 强制将 3076 限为 decoder 兼容流；高分辨率 KNN 流分别严格为双手 MANO 4096 或 Inspire 20270，旧 cache 仅保留审计用途。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/config.py src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/train_multi_domain.py src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py`：`4 passed`。
+- 只读实证核对：GRAB/ARCTIC 真实 `knn_hand_points_world.npy` 为双手 4096；旧 OakInk2 pilot 为 3076，故被 loader 拒绝作为 `inspire_f1` 训练流。高分辨率 OakInk2 raw-frame smoke 尚未启动，结论为 `INCONCLUSIVE`。
+
+**回滚**
+
+本次仅为 Task-local V1.4 增量；回滚入口是本次实现提交的父提交与 [V1.4 最终计划](../plan/V1.4.md) §6。不会删除或覆盖旧 OakInk2 full、partial 或 pilot 目录。
+
+## 2026-09-17 13:43:00 +0000 — OakInk2 高分辨率原始帧回填全量启动
+
+- timestamp: `2026-09-17 13:43:00 +0000`
+- activity_id: `ACT-20260917-134300-CMV2-V142-OAKINK2-HIGHRES-START`
+- modification_version: `V1.4.2`
+- type: `data, operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求从原始 OakInk2 数据补齐失败帧，并已确认 V1.4 三域范围、高分辨率手点合同和全量 cache 前置步骤。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `3243a8ed7eb053fe5ee47b7a052ff80c1d5a7ff1`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `STARTED`
+- scope: 在 GPU2 从原始 OakInk2 annotation 的 `obj_transf` 和 Stage3 静态几何重建 1849 个 selected segment 的 Inspire 20270 KNN cache；V1.3、旧 Task 及旧 OakInk2 3076 full/partial/pilot 输出保持不变。
+- conclusion: `INCONCLUSIVE`（运行中；仅此前 1-segment 高分辨率 smoke 已证明工程链路）。
+
+**命令与状态**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.tools.data.backfill_oakink2_inspire_v1_4 --selection-index …/oakink2_inspire_selection_v1_4_23/full_20260917T091507Z/index.json --annotation-root …/OakInk-v2/anno_preview --stage3-root …/stage3/oakink2_object_centered_v1 --existing-root …/full_20260917T091507Z --output-root …/cmv2_highres_full_20260917T134300Z --mano-root …/mano --dex-root …/dex-retargeting --device cuda:2 --mano-batch-size 128 --knn-frame-batch 2 --knn-object-chunk 512 --run-id cmv2_highres_full_20260917T134300Z`。
+- [高分辨率运行目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z)、[run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json)、[实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log)。
+- 启动状态：`expected_segments=1849`、`reused_segments=0`、`backfilled_segments=0`、`completed_frames=0`、`failures=[]`；预计只有全量成功时才会生成正式 `index.json` 和 `cache_manifest.json`，当前 PENDING。
+
+**原因**
+
+先前 full export 的 1656 个完成段及 193 个 partial 段均为 3076 高分辨率错误合同或失败残留，不能拼接为本轮训练输入。因此新根目录从头重建所有 1849 段；输入选择 index、原始数据和旧输出全部只读保留。
+
+**验证**
+
+- `run_id=cmv2_highres_backfill_smoke_20260917T134100Z` 的失败段 smoke 已 `COMPLETED`：637 帧、`failures=[]`、KNN hand shape `[637,20270,3]`、decoder compatibility shape `[637,3076,3]`、KNN32 最大 index `20268`；Cmv2 `InspireSequenceView(..., hand_variant="inspire_f1")` 实际读取为 20270 点。
+- NAS 可用空间约 52 TB；该 637 帧 high-resolution smoke 占约 567 MB。GPU2 启动后进程存活，当前正式运行尚未生成效果结论。
+
+**回滚**
+
+停止该独立 PID/运行即可；新运行根与旧 full/partial/pilot 根隔离，不覆盖原始 annotation、Stage3、旧 cache、训练输出或 checkpoint。终态将以本 activity 为唯一状态入口补充。
+
+## 2026-09-17 13:54:26 +0000 — 部分 OakInk2 高分辨率三域 smoke 终态
+
+- timestamp: `2026-09-17 13:54:26 +0000`
+- activity_id: `ACT-20260917-135426-CMV2-V142-PARTIAL-THREE-DOMAIN-SMOKE`
+- modification_version: `V1.4.2`
+- type: `experiment, operation`
+- task_mode: `run-only/operation`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户明确要求“拿一部分来试试看”；范围限定为三域各一条 sequence、固定 seed、2 optimizer steps。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `196ade2d32e1047c6ecab32b4debaa31b129cac7`
+- worktree_dirty: `false`
+- run_id: `cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z`
+- run_status: `COMPLETED`
+- scope: 只读使用 GRAB/ARCTIC MANO 4096 cache 和全量回填中已完成的一条 OakInk2 Inspire 20270 cache，验证三域 loader、变长 collate、V1.3 刚体模型前反向与 loss；不修改正式 cache、split、模型、V1.3 或旧 Task。
+- conclusion: `SUPPORTED`（工程 smoke）；科研效果结论 `INCONCLUSIVE`。
+
+**命令与状态**
+
+- 以 [V1.4 smoke 配置](../../configs/active/three_domain_v1_4_smoke.yaml) 解析同一 2-step 合同，因四张 GPU 均有外部任务或 OakInk2 回填占用，运行设备改为 CPU；这不验证 GPU 性能。
+- [临时运行目录](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z)、[run_manifest.json](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/run_manifest.json)、[metrics.jsonl](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/metrics.jsonl)、[train.log](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/train.log) 与 [latest.pt](../../../../../../../../../../tmp/ref2dex-cmv2-three-domain-smoke.7VugWN/cmv2_v142_three_domain_partial_highres_smoke_20260917T135300Z/latest.pt)。
+- runner 终态：`last_step=2`、`last_epoch=1`、`best_metric=null`、`source_counts={grab: 4}`；replacement sampler 的两个随机 batch 恰好均抽到 GRAB，因此这些 step loss 不能作为三域效果样本。
+
+**原因**
+
+正式 OakInk2 20270 cache 尚在运行，用户要求先用已完成的部分验证接口。为了不抢占 GPU2 或干扰其他 GPU 任务，采用 CPU 运行。NAS canonical `outputs/ObjectInteractionCmv2` 对当前用户没有写权限，两个启动尝试均在创建运行目录前退出，故使用本机临时目录保存本次小型 smoke；没有写入或覆盖 NAS 正式 output/cache。
+
+**验证**
+
+- dataset 已读取 `grab=219`、`arctic=593`、`oakink2=1236` 个有效 transition，合计 2048；variant 行数为 `mano=812`、`inspire_f1=1236`。
+- 两个 runner step 的 loss 均 finite：`1.8631`、`1.4577`；checkpoint 记录 `v1_3_rigid_only`、`step=2`。
+- 另行构造一个必含 `grab/arctic/oakink2` 的真实 batch 并执行前向、loss、反向：hand batch shape `[3,20270,3]`，valid hand counts `[4096,4096,20270]`，loss `4.4040` finite。这直接覆盖了 MANO/Inspire 混合 padding 的模型路径。
+- 该结果只证明数据/模型接线；不验证泛化、跨域效果或 GPU 吞吐。全量 OakInk2 回填仍 `STARTED`，当时 `30/1849` 段、`16567` 帧、`failures=[]`。
+
+**回滚**
+
+本次为独立本机临时 smoke；移除其临时目录即可回收小型 checkpoint/日志，不影响 NAS cache。正式训练仍须等待高分辨率 OakInk2 cache 完成并另行确定 GPU、预算、验证指标。
+
+## 2026-09-17 13:57:02 +0000 — NAS Cmv2 output 写入状态更正
+
+- timestamp: `2026-09-17 13:57:02 +0000`
+- activity_id: `ACT-20260917-135702-CMV2-OUTPUT-WRITE-STATUS-CORRECTION`
+- modification_version: `V1.4.2`
+- type: `diagnostic, documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问此前为什么没有写权限；本条只读复核权限、挂载和历史输出归属。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `c480f6afa2cb142788a22bbdda67ec849f9d45cf`
+- worktree_dirty: `false`
+- scope: 更正部分三域 smoke 记录中关于 NAS canonical output 不可写的未证实归因；不修改 NAS 权限、运行、cache 或 checkpoint。
+- conclusion: `SUPPORTED`（权限状态复核）；与模型科研结论无关。
+
+**原因**
+
+此前两个后台 smoke 启动均未留下输出目录或 launcher log，但没有保留可证明 `permission denied` 的 stderr；不能据此断定 ACL 拒绝写入。
+
+**验证**
+
+- `/mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2` 的表面归属为 `lsj:uucp`、模式 `775`，本机身份为 `wbcd`（UID 1006），且当前 group 不含 `uucp`；单看 POSIX mode 会推断无写权限。
+- 实际 NFSv3 挂载为 `rw,sec=sys`，Shell `test -w` 对该目录及相邻 output/data run root 均返回 writable，说明服务端实际授权或映射与本机 group 列表不同。
+- 系统未安装 `getfacl`，且失败 launcher 没有日志，故不能追溯其确切退出原因。此前“没有写权限”的说法撤回；后续正式运行应先保留一次创建结果/错误，再做归因。
+- [src/task/ObjectInteractionCmv2/docs/logs/activity_log.md](activity_log.md) — 本次更正与原 smoke 状态的唯一入口。
+
+**回滚**
+
+本条仅追加诊断更正；不涉及权限变更或数据写入。临时 smoke 输出仍按上一条记录保留，不能据此推断正式 NAS output 不可用。
+
+## 2026-09-17 14:03:02 +0000 — OakInk2 高分辨率回填吞吐瓶颈诊断
+
+- timestamp: `2026-09-17 14:03:02 +0000`
+- activity_id: `ACT-20260917-140302-CMV2-HIGHRES-BACKFILL-BOTTLENECK`
+- modification_version: `V1.4.2`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问全量 cache 导出耗时原因；只读检查运行进程、GPU、I/O 计数和 exporter hot path。
+- skills_used: `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `ae3d6ab4e10bafa1357d85dd28ad493c283a95ee`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `RUNNING`
+- scope: 解释高分辨率 OakInk2 cache 的吞吐瓶颈；不改变 exporter、GPU 分配、参数、输入或输出。
+- conclusion: `SUPPORTED`（工程性能诊断）；与模型科研结论无关。
+
+**原因**
+
+每个 selected frame 必须生成双手 Inspire 20270 点训练流、KNN32、2 cm/5 cm object masks 和 hand supervision mask。相较旧 3076 点流，高分辨率手点数约为 6.6 倍；exporter 又按 segment 串行处理，逐帧 Python retarget、FK、chunked pairwise distance 与 NAS memmap 写出不能重叠。
+
+**验证**
+
+- 当时完成 `60/1849` segment、`27899` frame、`failures=[]`；进程墙钟约 19 分 41 秒，RSS 约 3.5 GiB、CPU 约 70%。[run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) 与 [实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log)。
+- 每帧 object→hand KNN 需要 `4096×20270≈8300 万` 距离；反向 hand→object supervision 再做一次 chunked distance。GPU2 显存约 675 MiB、采样瞬时利用率为 0%，符合 KNN 短 burst 与 CPU 串行 retarget/FK 交替的行为，而非 GPU 持续饱和。
+- 内核累计 I/O 约读取 11.9 GB、写入 42.8 GB，输出约 26 GB；`pidstat` 采样写入约 25 MB/s、无 iodelay，说明 NAS 写入有成本但不是已观测的唯一或主导饱和点。
+- 当前实现不会跨 segment 缓存重叠帧的 retarget/KNN 结果；优化该点需要停止/重启并改变数据处理实现，本次未做。
+
+**回滚**
+
+只读诊断，无需回滚；当前导出继续使用已批准的参数与独立输出根。
+
+## 2026-09-17 14:10:22 +0000 — 高分辨率 cache 可复用性与并行化预检
+
+- timestamp: `2026-09-17 14:10:22 +0000`
+- activity_id: `ACT-20260917-141022-CMV2-HIGHRES-PARALLEL-PREFLIGHT`
+- modification_version: `V1.4.2`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问能否尝试批量并行以及既有结果是否可复用；本条只读核查当前 completed cache、partial 状态与 selection 重叠。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `a76f23603c24eae529f2f0eb573c21ce83684505`
+- worktree_dirty: `false`
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `RUNNING`
+- scope: 判断在不覆盖当前高分辨率输出的前提下实施并行 producer 的可行性；未停止、修改或重启导出。
+- conclusion: `SUPPORTED`（可复用性诊断）；不涉及模型效果。
+
+**原因**
+
+并行化需要停止/恢复当前 L3 数据任务并修改 producer，必须先确认已完成段是否符合 V1.4 高分辨率合同，以及跨 segment 重叠能带来多少缓存收益。
+
+**验证**
+
+- 当时 run manifest 记录 `90/1849` 完成、`34950` 帧、`failures=[]`；磁盘扫描发现 94 个 complete geometry manifest、`0` 个 `.partial` 目录。逐段校验 `hand_variant=inspire_f1`、`knn_hand_points=20270`、`knn_points_per_side=10135`、实际 KNN points shape 与 KNN indices `<20270`，全部通过。已完成段可原样复用。
+- selection 共有 379591 个 segment-frame occurrence、359857 个唯一 `(sequence, raw_frame_id)`，重复 19734 个（约 5.20%）；333 个 sequence 有多个 segment，单 sequence 最多 28 个。跨段 frame cache 有帮助但其理论上限约为 5%，不是主瓶颈。
+- 当前 producer 只从旧 3076 `existing_root` 复用，若改造必须增加“先校验当前 `output_root` 中已完成的 20270 段再跳过”的 resume 行为；不能让新 worker 与当前 writer 并发写同一 root。
+- [run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) 与 [实时日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_full_20260917T134300Z.log) — 当前运行状态入口。
+
+**回滚**
+
+只读预检，无代码或数据改动。后续若获得批准，先安全停止当前 writer、保留/验证 complete 段、使用独立并行实现恢复未完成段；旧 full/partial 与当前 complete cache 均不覆盖。
+
+## 2026-09-17 14:15:54 +0000 — 高分辨率回填安全恢复与 KNN 批处理 smoke 准备
+
+- timestamp: `2026-09-17 14:15:54 +0000`
+- activity_id: `ACT-20260917-141554-CMV2-HIGHRES-RESUME-BATCH-SMOKE-PREP`
+- modification_version: `V1.4.3`
+- type: `code, data, operation, documentation`
+- task_mode: `change`，随后切换为 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确回复“可以，你继续吧”，批准停止单 writer、复用已完成段并尝试批量恢复 smoke。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e1966df71bab1d807be0a969538b4f054ff18407`
+- worktree_dirty: `true`（仅本条列出的 V1.4.3 文件尚未提交）
+- run_id: `cmv2_highres_full_20260917T134300Z`
+- run_status: `STOPPED`
+- scope: 停止已批准的单 writer 基线；保留同一高分辨率输出根并逐段校验复用；为两个未完成段的 GPU2 KNN batch smoke 增加独立 manifest。未改变 selection、split、坐标、2 cm、KNN32、MANO 4096 或 Inspire KNN 20270 合同。
+- conclusion: `INCONCLUSIVE`（工程恢复准备；不是模型效果结论）。
+
+**文件与产物**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Cmv2 当前指针更新为 `V1.4.3`。
+- [docs/plan/V1.4.md](../plan/V1.4.md) — 已定稿的批处理恢复边界：先单 writer 的 frame batch smoke，不在未测量前加入多进程 GPU/写入竞争。
+- [tools/data/backfill_oakink2_inspire_v1_4.py](../../tools/data/backfill_oakink2_inspire_v1_4.py) — 同一 `output_root` 优先校验复用完整 20270 点段；恢复 run 不覆盖已暂停基线 manifest；限量 smoke 不发布局部正式 index/cache manifest，并登记实际 batch 参数。
+- [已暂停基线 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest.json) — `STOPPED`，`100` 个计数已写入段、磁盘逐段校验发现 `102` 个 complete geometry 段、`39885` 已计帧、无记录 failure。
+
+**原因**
+
+基线只能从旧 3076 点 root 查找可复用项，恢复时会错过同一 high-resolution root 中已完成的有效段，且会覆盖基线 `run_manifest.json`。该最小修订先消除这两个恢复风险；GPU2 的 frame batch 从默认 `2` 提至 smoke 的 `8`，以测量 KNN 短 burst 的批处理收益，但不引入未经测量的多进程写入或新的数据语义。
+
+**验证**
+
+- `ps -p 370520 -o pid=,stat=,etime=,cmd=` 无输出，GPU2 空闲 `48509 MiB`，并扫描到 `0` 个 `.partial` 目录；未删除、移动或覆盖已有 sequence。
+- 已逐段检查 102 个 geometry manifest 及其 KNN shape/index/finite 合同；旧 `existing_root` 的 3076 点条目仍只作只读审计源，不能进入 V1.4 训练流。
+- 待提交前运行 `py_compile`、Task 定向测试、`git diff --check` 和 `audit_diff.py --check-links`；恢复 smoke 的结果另记独立 `run_id`/manifest。
+
+**回滚**
+
+停止新的限量恢复 run 即可；基线 manifest、102 个已验证高分辨率段与旧 3076 审计 root 均保留。撤销代码只需恢复本条所列三个受版本控制文件，绝不删除 NAS cache。
+
+## 2026-09-17 14:17:56 +0000 — GPU2 KNN batch=8 恢复 smoke 已启动
+
+- timestamp: `2026-09-17 14:17:56 +0000`
+- activity_id: `ACT-20260917-141756-CMV2-HIGHRES-RESUME-BATCH8-SMOKE-STARTED`
+- modification_version: `V1.4.3`
+- type: `operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确回复“可以，你继续吧”，批准批量恢复 smoke；运行参数遵循已定稿 [docs/plan/V1.4.md](../plan/V1.4.md)。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `c1b501ef6e7b4ffd72d5308d8a47e7df5ed1e338`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_highres_resume_batch8_smoke_20260917T142000Z`
+- run_status: `RUNNING`
+- scope: selection offset `102` 的两个连续未完成 OakInk2 段；同一高分辨率输出根，GPU2 单 writer，`knn_frame_batch=8`、`knn_object_chunk=512`、`mano_batch_size=128`。不生成局部正式 index/cache manifest。
+- conclusion: `INCONCLUSIVE`（工程 smoke 运行中；不是模型效果结论）。
+
+**原因**
+
+先测量 frame batch 对实际高分辨率 KNN 阶段的影响，再决定是否值得引入独立 CPU 预取队列；这样不会同时改变并发模型与 GPU batch，且不会让多个进程争用 GPU2 或同一 sequence 写入。
+
+**命令与产物**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py ... --device cuda:2 --mano-batch-size 128 --knn-frame-batch 8 --knn-object-chunk 512 --offset 102 --limit 2 --run-id cmv2_highres_resume_batch8_smoke_20260917T142000Z`。
+- [恢复 smoke manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_smoke_20260917T142000Z.json) — 当前 `STARTED`，独立于已暂停基线 manifest。
+- [恢复 smoke 日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T142000Z.log) — `RUNNING`。
+- [首次启动失败日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T141800Z.log) — `ModuleNotFoundError: src`，在创建 manifest/cache 前退出；已保留并用显式 `PYTHONPATH` 的新 run id 重试。
+
+**验证**
+
+- 启动 4 秒后 PID `433153` 存活；GPU2 为 `417 MiB / 48092 MiB free`。manifest 已记录两个待处理段、batch/chunk/MANO 参数且 `failures=[]`。
+- 若任一段出现 schema、finite、KNN index、OOM 或写入错误，停止该 smoke，保留已完成基线并将终态写回本活动记录；不自动启动全量恢复。
+
+**回滚**
+
+仅终止此 run；不删除其已有输出，也不修改基线 `run_manifest.json` 或任何已验证段。
+
+## 2026-09-17 14:19:14 +0000 — GPU2 KNN batch=8 恢复 smoke 完成
+
+- timestamp: `2026-09-17 14:19:14 +0000`
+- activity_id: `ACT-20260917-141914-CMV2-HIGHRES-RESUME-BATCH8-SMOKE-COMPLETED`
+- modification_version: `V1.4.3`
+- type: `operation, data, diagnostic`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 V1.4.3 限量批处理恢复 smoke 的明确批准。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `b55afe93d8ad3fb5fb93bc9f8c8c6394e28c15c8`
+- worktree_dirty: `false`（终态检查时）
+- run_id: `cmv2_highres_resume_batch8_smoke_20260917T142000Z`
+- run_status: `COMPLETED`
+- last_step: `2/2 segments`
+- best_metric: `N/A`（数据回填，无训练指标）
+- checkpoint: `N/A`（数据回填，无 checkpoint）
+- scope: GPU2 单 writer 对 selection offset `102:104` 的两个未完成段执行 `knn_frame_batch=8` 限量恢复；不启动全量恢复、不改变并发模型，也不发布局部正式 index/cache manifest。
+- conclusion: `SUPPORTED`（cache 恢复与高分辨率合同 smoke）；模型效果结论为 `INCONCLUSIVE`。
+
+**原因**
+
+该终态用于验证同 root 的完整段复用设计和 KNN frame batch 参数能在真实未完成段上写出合规数据，再决定是否启动受同一计划约束的余下恢复；两段样本不足以量化全量吞吐收益，也不能据此证明 CPU worker 的价值。
+
+**产物与结果**
+
+- [恢复 smoke manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_smoke_20260917T142000Z.json) — `COMPLETED`，`backfilled_segments=2`、`completed_frames=389`、`reused_segments=0`、`failures=[]`，从 `2026-09-17T14:17:46+00:00` 至 `14:18:20+00:00`。
+- [恢复 smoke 日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_smoke_20260917T142000Z.log) — writer 输出 `segments=2`、`backfilled=2`、`failures=0`。
+- [共享高分辨率输出根](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z) — 基线的 102 个加本次 2 个，共 104 个 complete geometry 段；基线仍由其独立 manifest 标记 `STOPPED`。
+
+**验证**
+
+- 对新段 `0102`（89 帧）和 `0103`（300 帧）逐段执行 `_validate_v1_4_geometry`：`hand_variant=inspire_f1`、KNN bilateral `20270` 点、KNN32 index 上界、数组 shape 与 sampled finite 均通过。
+- 输出根无 `.partial` 目录；`index.json` 和 `cache_manifest.json` 均不存在，确认限量 smoke 没有发布误导性的局部正式 cache。
+- 运行结束后 GPU2 恢复空闲（`0 MiB / 48509 MiB free`）；未生成 `metrics.jsonl`、`train.log` 或 checkpoint，因为本运行是数据回填而非训练/评估。
+- smoke 总墙钟约 34 秒（含模型/retarget 初始化），约 11.4 frame/s；样本段长度与单 writer 基线不同，因此仅作为可运行证据，不报告相对加速比。
+
+**回滚**
+
+无需删除任何 cache；若不继续，保持基线 `STOPPED` 和这 104 个 complete 段即可。若继续，恢复入口会先校验并跳过它们；若出现错误，停止新的 run 并保留所有已完成段。
+
+## 2026-09-17 14:23:05 +0000 — OakInk2 高分辨率 batch=8 全量恢复已启动
+
+- timestamp: `2026-09-17 14:23:05 +0000`
+- activity_id: `ACT-20260917-142305-CMV2-HIGHRES-RESUME-BATCH8-FULL-STARTED`
+- modification_version: `V1.4.3`
+- type: `operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在限量 smoke 成功后明确要求“那你继续吧”；运行遵循已定稿 [docs/plan/V1.4.md](../plan/V1.4.md) 的同 root 恢复边界。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `3d590398fcb7459ae01b7ac22895960c2bf08d3c`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_highres_resume_batch8_full_20260917T142300Z`
+- run_status: `RUNNING`
+- scope: 对完整 1849 个 selected OakInk2 segment 恢复；先校验并跳过 current root 中已完成的 104 段，再用 GPU2 单 writer 回填余下段。参数固定为 `mano_batch_size=128`、`knn_frame_batch=8`、`knn_object_chunk=512`，不改变 cache schema、selection、split、坐标、KNN32、2 cm、MANO 4096 或 Inspire KNN 20270 合同。
+- conclusion: `INCONCLUSIVE`（工程数据运行中；不是模型效果结论）。
+
+**原因**
+
+限量 smoke 已证明 batch=8 的恢复路径能在未完成真实段生成合规高分辨率 cache；全量运行沿用同一 writer 与参数，以避免把未测量的 CPU 多进程预取和正式数据回填混为一次变量变化。
+
+**命令与产物**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex /home/wbcd/miniconda3/envs/graspenv/bin/python -u src/task/ObjectInteractionCmv2/tools/data/backfill_oakink2_inspire_v1_4.py ... --device cuda:2 --mano-batch-size 128 --knn-frame-batch 8 --knn-object-chunk 512 --run-id cmv2_highres_resume_batch8_full_20260917T142300Z`。
+- [全量恢复 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) — 当前 `STARTED`，将记录复用/回填段数、frames 和失败清单。
+- [全量恢复日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_full_runs/cmv2_highres_resume_batch8_full_20260917T142300Z.log) — `RUNNING`。
+- [共享高分辨率输出根](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z) — 只追加缺失 sequence；不覆盖 104 个已验证 complete 段或已暂停基线 manifest。
+
+**验证**
+
+- 启动约 4 秒后 PID `443044` 存活，manifest 的 `expected_segments=1849`；前 100 个已完成段已校验复用、`failures=[]`，GPU2 已分配 `417 MiB`。
+- 每完成 10 段刷新运行 manifest；终态前将检查 failures、formal `index.json`/`cache_manifest.json`、完整段数、schema/KNN 合同和 `.partial` 残留。未生成 `metrics.jsonl` 或 checkpoint，因为是数据回填。
+
+**回滚**
+
+终止此 `run_id` 即可；其此前已经完成的完整段仍可被后续 resume 校验复用。不得删除、覆盖或移动基线及本次生成的 cache。
+
+## 2026-09-17 14:59:50 +0000 — V1.4.4 双域 MANO 续训与 cache 队列实现
+
+- timestamp: `2026-09-17 14:59:50 +0000`
+- activity_id: `ACT-20260917-145950-CMV2-V144-TWO-DOMAIN-TRAIN-CACHE-QUEUE-IMPLEMENTATION`
+- modification_version: `V1.4.4`
+- type: `code, data, experiment, operation, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确确认以 4-epoch `latest.pt` 作模型权重初始化、自行 trajectory 划分 ARCTIC、约 8 小时预算、保存 `best.pt`，并授权 GPU0。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0a4d6ba1922ab63d8215017d8d74a5609c2104ce`
+- worktree_dirty: `true`（仅本条列出的 V1.4.4 实现尚未提交）
+- scope: 新增 GRAB+ARCTIC MANO 双域权重初始化训练、ARCTIC trajectory split、best/latest checkpoint 规则和通用顺序 cache queue；不修改旧 4-epoch checkpoint、原始 MANO cache、旧 Task 或正在 GPU2 上运行的 OakInk2 Inspire 回填。
+- conclusion: `INCONCLUSIVE`（实现已完成、尚未启动正式训练；不是跨域效果结论）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — Cmv2 指针与已定稿 V1.4.4 范围。
+- [config.py](../../config.py)、[configs/active/two_domain_mano_v1_4_4_8h.yaml](../../configs/active/two_domain_mano_v1_4_4_8h.yaml)、[train_two_domain_mano.py](../../train_two_domain_mano.py) — GPU0、MANO-4096 双域 `1/2:1/2` 训练，旧权重仅初始化，8 小时/16 epoch 上限，GRAB 与 ARCTIC 验证等权选择 `best.pt`，同时保留 `latest.pt`。
+- [tools/data/build_two_domain_mano_split_v1_4.py](../../tools/data/build_two_domain_mano_split_v1_4.py) — 不改原 cache 的 ARCTIC trajectory 级 90/10 split 和独立 index/cache/run manifest。
+- [tools/data/run_cache_queue_v1_4_4.py](../../tools/data/run_cache_queue_v1_4_4.py) — 顺序、可恢复且以 producer 成功 manifest 为完成条件的后台 cache queue，不把旧 3076/KNN8 Inspire cache 误判为合格。
+- [tests/test_v1_4_4_two_domain_split.py](../../tests/test_v1_4_4_two_domain_split.py) — trajectory 稳定性与 GRAB split 保留测试。
+
+**原因**
+
+旧 `train_grab_ddp.py` 的 optimizer/RNG resume 合同严格绑定 GRAB-only index、两卡 world size 和 epoch 数，不能在双域数据合同下直接恢复。新入口仅导入经批准的模型权重；ARCTIC 验证以完整 trajectory 划分，令 `best.pt` 有可审计且不泄漏的选择指标。cache queue 只编排明确的 producer command/成功 manifest，避免失败 cache 被静默继续使用。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/config.py src/task/ObjectInteractionCmv2/train_two_domain_mano.py src/task/ObjectInteractionCmv2/tools/data/build_two_domain_mano_split_v1_4.py src/task/ObjectInteractionCmv2/tools/data/run_cache_queue_v1_4_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`5 passed`。
+- `git diff --check` 通过。GPU2 OakInk2 Inspire run 仍为 `RUNNING`、`backfilled_segments=96`、`failures=[]`；本实现未接触其进程或输出。
+
+**回滚**
+
+恢复本条所列受版本控制文件并把 Cmv2 指针回退到 `V1.4.3`；不删除任何 cache 或旧 checkpoint。尚未产生的新 split/run 输出可通过停止其独立 run 保留审计后不再使用。
+
+## 2026-09-17 15:01:08 +0000 — 修正双域 split 首次运行的 manifest 父目录创建
+
+- timestamp: `2026-09-17 15:01:08 +0000`
+- activity_id: `ACT-20260917-150108-CMV2-V144-SPLIT-MANIFEST-PARENT-FIX`
+- modification_version: `V1.4.4`
+- type: `code, data, operation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 属于用户已批准的 V1.4.4 trajectory split 正式运行前的最小实现修正。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `b418c6b02b97bdbf1d769d2e60e92a5f72816921`
+- worktree_dirty: `true`（仅本条所列修正和记录尚未提交）
+- run_id: `cmv2_two_domain_mano_split_20260917T150100Z`
+- run_status: `FAILED`
+- scope: 修正 split 工具在 output root 尚不存在时首次写 run manifest 的父目录创建顺序；未写入 split、未修改原 cache、未启动训练。
+- conclusion: `INVALID_IMPLEMENTATION`（首次启动包装错误；数据/模型合同未执行）。
+
+**文件**
+
+- [tools/data/build_two_domain_mano_split_v1_4.py](../../tools/data/build_two_domain_mano_split_v1_4.py) — `_write_json` 先创建父目录，再执行原子临时文件替换。
+
+**原因**
+
+首次命令在 `run_manifest_*.json.tmp` 写入前调用 `build()`，因此 output root 尚未创建并触发 `FileNotFoundError`。错误发生在读取/处理 source index 之前，未产生可误用的 split 产物。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/tools/data/build_two_domain_mano_split_v1_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`1 passed`。
+- 下一步以同一独立 output root 和新 run id 重跑；只有 `COMPLETED` manifest/index/cache manifest 同时存在才可用于训练。
+
+**回滚**
+
+撤销该单行目录创建修正即可；没有需要删除或恢复的 cache/split 数据。
+
+## 2026-09-17 15:02:16 +0000 — GRAB+ARCTIC MANO 权重初始化训练已启动
+
+- timestamp: `2026-09-17 15:02:16 +0000`
+- activity_id: `ACT-20260917-150216-CMV2-V144-TWO-DOMAIN-MANO-TRAIN-STARTED`
+- modification_version: `V1.4.4`
+- type: `experiment, operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户批准 GPU0，并确认只以今日 4-epoch `latest.pt` 初始化模型、ARCTIC trajectory split、8 小时预算和 `best.pt` 保存规则。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `e26934a85d9c3b90a8f8cba784578dc41c8e4c28`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z`
+- run_status: `RUNNING`
+- scope: GPU0 上的 GRAB/ARCTIC MANO-4096 `1/2:1/2` source-balanced 训练；从 GRAB-only 4-epoch checkpoint 加载模型权重但重建 optimizer/sampler，最大 16 epoch 或 28800 秒，以先达到者为准。GPU2 OakInk2 Inspire cache 回填继续独立运行。
+- conclusion: `INCONCLUSIVE`（训练运行中；不是跨域效果结论）。
+
+**原因**
+
+当前两域 MANO cache 已完整，且独立 ARCTIC trajectory split 已生成；以新 output root 训练可以保留旧 run，并按 GRAB/ARCTIC val loss 等权选择新 `best.pt`。
+
+**命令与产物**
+
+- 命令：`PYTHONPATH=/home/wbcd/workspace/oyx_ws/Ref2Dex REF2DEX_CMV2_TWO_DOMAIN_MANO_INDEX=.../two_domain_mano_split_seed42/index.json REF2DEX_CMV2_TWO_DOMAIN_MANO_MANIFEST=.../cache_manifest.json REF2DEX_CMV2_OUTPUT_ROOT=.../outputs/ObjectInteractionCmv2 python -m src.task.ObjectInteractionCmv2.train_two_domain_mano --config src/task/ObjectInteractionCmv2/configs/active/two_domain_mano_v1_4_4_8h.yaml --run-id cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z --initial-checkpoint .../cmv2_v134_grab_ddp4_20260917T070638Z/latest.pt`。
+- [双域 split run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/run_manifest_cmv2_two_domain_mano_split_20260917T150200Z.json) — `COMPLETED`；ARCTIC `266` train / `35` val trajectory，GRAB 既有 split 保持不变。
+- [训练运行目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z) — `RUNNING`；[run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z/run_manifest.json)、[launcher log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z.launcher.log)，`metrics.jsonl`、`train.log`、`latest.pt` 与 `best.pt` 在生成前为 `PENDING`。
+
+**验证**
+
+- 启动 12 秒后 PID `509488` 存活；GPU0 `9145 MiB` 已用、约 `39364 MiB` 空闲，满足 35 GiB 启动门槛；manifest 已记录批准的初始 checkpoint。
+- 数据集构建/首步完成后将核对双域 transition 数、loss finite、GPU 内存、`latest.pt` 和首个完整 epoch 的 `best.pt`；任何 OOM、非有限 loss、缺少任一 val 域或影响 GPU0 既有进程都会停止此 run，而不停止 GPU2 cache。
+
+**回滚**
+
+终止此独立 run 即可；旧 4-epoch checkpoint、split、GPU2 cache 回填和其他用户 GPU0 进程不被覆盖。
+
+## 2026-09-17 15:04:57 +0000 — 修正 ARCTIC 派生验证 split 的严格标签冲突
+
+- timestamp: `2026-09-17 15:04:57 +0000`
+- activity_id: `ACT-20260917-150457-CMV2-V144-ARCTIC-DERIVED-SPLIT-OVERRIDE`
+- modification_version: `V1.4.4`
+- type: `code, experiment, data, operation, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确授权 Agent 自行按 trajectory 划分 ARCTIC 验证集；本修正仅使该已批准的派生 split 可被 V1.4.4 双域 runner 读取。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0f11a4c9d3036128056fb890ef71e6ddde8740ba`
+- worktree_dirty: `true`（仅本条列出的修正、V1.4.4 plan 补充和记录尚未提交）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z`
+- run_status: `FAILED`
+- scope: 记录并修正首次双域启动对 ARCTIC source geometry 原始 `split=train` 与派生 index `split=val` 的严格冲突；未训练、未执行 optimizer step、未生成 checkpoint，也未修改源 cache。
+- conclusion: `INVALID_IMPLEMENTATION`（首次 loader split 标签错误）；修正后的 runner 尚待新 run 验证。
+
+**文件与产物**
+
+- [multi_domain.py](../../multi_domain.py) — 默认仍严格验证 manifest split；增加显式 `allow_manifest_split_override`，只由 V1.4.4 双域 runner 传入。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py)、[tests/test_v1_4_4_two_domain_split.py](../../tests/test_v1_4_4_two_domain_split.py) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — 将该覆盖限制为用户批准的 ARCTIC trajectory 派生 split，并验证默认严格/显式覆盖两条路径。
+- [训练失败 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z/run_manifest.json) — `FAILED` 于 dataset validation，`last_step=null`；[launcher log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150300Z.launcher.log)。
+
+**原因**
+
+ARCTIC 原始 cache 的 geometry manifest 正确标记其来源处理 split 为 `train`，而新的、独立的 trajectory-level index 把其中 35 条用于模型验证。原 loader 将两者一律当作错误；此处不能重写 source geometry manifest，故在新 runner 中以显式开关声明 index 为训练 split 的权威来源。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/train_two_domain_mano.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`6 passed`；新增用例确认默认仍拒绝 mismatch，只有显式 override 才允许。
+- `git diff --check` 通过；GPU0 训练进程已退出，GPU2 OakInk2 Inspire cache 回填未被停止。
+
+**回滚**
+
+撤销该显式 override 和新 run 即可；源 geometry manifest、ARCTIC split cache、旧 checkpoint 与失败运行目录均保留审计。
+
+## 2026-09-17 15:06:03 +0000 — 修正后 GRAB+ARCTIC MANO 权重初始化训练已启动
+
+- timestamp: `2026-09-17 15:06:03 +0000`
+- activity_id: `ACT-20260917-150603-CMV2-V144-TWO-DOMAIN-MANO-TRAIN-RESTARTED`
+- modification_version: `V1.4.4`
+- type: `experiment, operation, data`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 GPU0、旧 `latest.pt` 模型权重初始化、ARCTIC trajectory val、8 小时预算与 `best.pt` 的明确批准；此前失败为已修正的实现错误。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `808b777cf1d1b5d9770172c86b195ffa7410f6b2`
+- worktree_dirty: `false`（启动时）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`
+- scope: GPU0 上的 GRAB/ARCTIC MANO-4096 等概率双域训练；旧 4-epoch checkpoint 仅初始化模型，重建 optimizer/sampler，最多 16 epoch 或 28800 秒。ARCTIC 派生 val 只通过 V1.4.4 显式 loader override 读取；GPU2 OakInk2 Inspire cache 回填继续独立运行。
+- conclusion: `INCONCLUSIVE`（训练运行中；不是跨域效果结论）。
+
+**原因**
+
+首次运行在尚未训练前被严格 source geometry split 检查拒绝；修正后仍不改变 source cache，而由已审计的派生 index 定义 ARCTIC 模型验证归属。
+
+**命令与产物**
+
+- [训练运行目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z) — [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 与 [launcher log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z.launcher.log)；`metrics.jsonl`、`train.log`、`latest.pt`、`best.pt` 在生成前为 `PENDING`。
+- 初始权重：[cmv2_v134_grab_ddp4 latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v134_grab_ddp4_20260917T070638Z/latest.pt)；split：[run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/run_manifest_cmv2_two_domain_mano_split_20260917T150200Z.json)。
+
+**验证**
+
+- 启动约 9 秒后 PID `516837` 存活、GPU0 `9145 MiB` 已用/约 `39364 MiB` 空闲，满足 35 GiB 启动门槛；新 manifest 已记录输入 checkpoint。
+- 首次完成 dataset 构建/epoch 后检查 train/val 两域 transition、finite loss、`latest.pt` 与按等权 val metric 写出的 `best.pt`；出现 OOM、非有限 loss 或资源异常则停止此独立 run，绝不停止 GPU2 cache 回填。
+
+**回滚**
+
+终止此 run 即可；不覆盖旧 checkpoint、失败 run、split、缓存或 GPU0 既有进程。
+
+## 2026-09-17 15:21:18 +0000 — V1.4.4 cache queue producer 审计
+
+- timestamp: `2026-09-17 15:21:18 +0000`
+- activity_id: `ACT-20260917-152118-CMV2-V144-CACHE-QUEUE-PRODUCER-AUDIT`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求先审计，确认无问题后才让后台 queue 持续导出其他 cache；本条只读检查 producer、schema、当前运行和 GPU 归属。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `175d3ec60f0505e8c73dc22bd3d2de908de4f8af`
+- worktree_dirty: `false`
+- scope: 审计 GRAB/ARCTIC Inspire-20270、OakInk2 MANO-4096 是否已有可由 V1.4.4 queue 安全调用的 producer；不启动/停止 queue 或 cache run。
+- conclusion: `REFUTED`（当前不能安全启动完整 queue）；与模型效果无关。
+
+**原因**
+
+queue 的完成条件是 producer 写出 `COMPLETED` success manifest；在将长期后台任务交给它前，必须确认每个 job 的输出已经满足 V1.4 的 4096/20270、KNN32 和 manifest 合同，不能用名称相似的历史 cache 代替。
+
+**验证**
+
+- 当前 OakInk2 Inspire producer [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 正在 GPU2 运行，`backfilled_segments=156`、`completed_frames=81201`、`failures=[]`；这是唯一可直接延续的高分辨率 queue job。
+- GRAB/ARCTIC MANO-4096 已有完整 producer/cache；但旧 Inspire [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_inspire_geometric_v1_4/cache_manifest.json) 明确为 bilateral `3076` 点、`KNN=8`，且没有完整 geometry manifest，不能升级为 20270/KNN32 或加入训练。
+- 当前仓库没有 GRAB/ARCTIC Inspire-20270/KNN32 producer，也没有 OakInk2 MANO-4096 producer；`run_cache_queue_v1_4_4.py` 是安全编排器，但尚无三个可审计的 job command/success manifest 可入队。
+- GPU2 由 OakInk2 cache 使用；GPU0 的 V1.4.4 双域 MANO 训练仍在运行，其他 GPU 也有既有进程。queue 不应擅自占用或和现有 producer 并发写入。
+
+**回滚**
+
+纯诊断，无需回滚；保持当前 OakInk2 Inspire run 与双域训练不变。后续需先实现并小规模验证三个缺失高分辨率 producer，才生成 queue JSON 并启动后台连续任务。
+
+## 2026-09-17 15:31:58 +0000 — 实现 V1.4.5 缺失高分辨率 cache producer
+
+- timestamp: `2026-09-17 15:31:58 +0000`
+- activity_id: `ACT-20260917-153158-CMV2-V145-HIGHRES-PRODUCER-IMPLEMENTATION`
+- modification_version: `V1.4.5`
+- type: `code, data, documentation`
+- task_mode: `change`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户在 producer 审计后明确回复“可以，你先实现吧”；范围限定为新增 GRAB/ARCTIC Inspire-20270/KNN32 与 OakInk2 MANO-4096/KNN32 producer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `2c3df4df64ddd66a49f3696cc3121848b4245864`
+- worktree_dirty: `true`（本条所列 V1.4.5 实现和记录尚未提交）
+- scope: 新 producer 只写 Cmv2 新 output root，保存 decoder 3076 compatibility stream 和独立高分辨率 KNN stream；不修改 `ObjectInteractionCm`、旧 3076/KNN8 cache、原 MANO cache、正在运行的 GPU0 训练或 GPU2 OakInk2 Inspire 回填。
+- conclusion: `INCONCLUSIVE`（实现和无 GPU contract smoke 已通过；真实数据 GPU smoke 尚未运行，不能作为数据或效果结论）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) 与 [docs/plan/V1.4.md](../plan/V1.4.md) — 指向已定稿的 V1.4.5 producer/queue 边界。
+- [multi_domain.py](../../multi_domain.py) — 仅新增两种 Cmv2 producer schema 的显式 reader 白名单；保持既有 schema 和点数检查不变。
+- [tools/data/build_stage4_inspire_highres_v1_4.py](../../tools/data/build_stage4_inspire_highres_v1_4.py) — 以只读 Stage4 MANO、固定 Inspire visual surface sample（每侧 10135）和 KNN32 生成 GRAB/ARCTIC Inspire cache；来源 split 逐项沿用现有 MANO index。
+- [tools/data/build_oakink2_mano_highres_v1_4.py](../../tools/data/build_oakink2_mano_highres_v1_4.py) — 以官方 OakInk2 annotation、固定 MANO triangle/barycentric correspondence（每侧 2048）和 KNN32 生成 train segment cache。
+- [tests/test_v1_4_5_highres_producers.py](../../tests/test_v1_4_5_highres_producers.py) — 验证双侧 high-res→3076 decoder 派生、两 producer schema、4096/20270 shape 与 reader 接受路径。
+- [docs/logs/activity_log.md](activity_log.md) — 本次实现的唯一活动时间线。
+
+**原因**
+
+审计确认旧 GRAB/ARCTIC Inspire 为 3076/KNN8，且 OakInk2 MANO producer 缺失；它们不能被重新标记为新合同。新实现将 KNN 永远建立在 `knn_hand_points_world.npy` 的 4096/20270 点流上，decoder 仅由该流确定性下采样，避免 3076 点意外成为训练输入。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/multi_domain.py src/task/ObjectInteractionCmv2/tools/data/build_stage4_inspire_highres_v1_4.py src/task/ObjectInteractionCmv2/tools/data/build_oakink2_mano_highres_v1_4.py` 通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_three_domain.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py src/task/ObjectInteractionCmv2/tests/test_v1_4_5_highres_producers.py`：`8 passed`。
+- `git diff --check` 通过。真实 cache smoke 遵循 [docs/plan/V1.4.md](../plan/V1.4.md) 的 GPU2 串行闸门，当前 OakInk2 Inspire writer 完成前不与之并发；因此三个新 producer 均未入 queue。
+
+**回滚**
+
+恢复本条列出的版本控制文件并把 Cmv2 指针回退至 `V1.4.4` 即可；不删除任何已有 cache、checkpoint、输出或运行进程。后续 smoke/full run 使用独立 root，停止时保留其 manifest 和日志审计。
+
+## 2026-09-17 15:35:55 +0000 — 双域 MANO 训练状态检查
+
+- timestamp: `2026-09-17 15:35:55 +0000`
+- activity_id: `ACT-20260917-153555-CMV2-V144-TWO-DOMAIN-MANO-STATUS`
+- modification_version: `V1.4.4`
+- type: `operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户已批准的 GPU0、8 小时 GRAB/ARCTIC MANO 双域训练；本条仅查询状态。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `a6c3f2062b6fc567da05cde5cf96810bcc60900c`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`
+- scope: 查询既有 GPU0 训练和独立 GPU2 OakInk2 Inspire cache 回填；不停止、重启或改写任何运行。
+- conclusion: `INCONCLUSIVE`（训练仍在进行，当前指标不是最终跨域结论）。
+
+**原因**
+
+用户询问训练是否仍在运行；需以 PID、GPU 和实际 epoch 指标区分“进程存在”与“有有效训练进度”。
+
+**状态与证据**
+
+- 训练 PID `516837` 仍存活；已完成 epoch `2`、step `4550`。当前 `selection_metric=0.1935872248433341`（GRAB val `0.3062595267893915`，ARCTIC val `0.08091492289727668`），优于 epoch 1，因此已有新的 [best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt) 和 [latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt)。
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 与 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 已存在。
+- GPU2 OakInk2 Inspire backfill PID `443044` 也仍存活；其 manifest 当前累计 `reused_segments=104`、`backfilled_segments=516`、`completed_frames=182654`、`failures=[]`，尚未完成，故 V1.4.5 smoke/queue 仍不启动。
+
+**验证**
+
+- `ps -p 516837,443044` 确认两个 PID 均为 `Rsl`；`nvidia-smi` 显示训练 GPU0 利用率 `100%`。
+- 仅检查 [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 的最新两条完整 epoch 记录，未作额外训练或 cache 操作。
+
+## 2026-09-18 02:12:18 +0000 — V1.4.5 高分辨率 producer 串行真实 smoke 启动
+
+- timestamp: `2026-09-18 02:12:18 +0000`
+- activity_id: `ACT-20260918-021218-CMV2-V145-HIGHRES-PRODUCER-SMOKE-STARTED`
+- modification_version: `V1.4.5`
+- type: `data, operation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户已确认的 V1.4.5 producer/持续 queue 范围；V1.4 最终计划 §9 要求当前 OakInk2 Inspire 成功完成后，先对三条新 producer 做单条真实数据 smoke，再串行启动 full queue。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `cbc4a798b8c50f81def0181bfe14f5a37fd0eadd`
+- worktree_dirty: `false`（启动前）
+- run_id: `cmv2_v145_highres_producer_smoke_20260918T021218Z`
+- run_status: `STARTED`
+- scope: GPU2 串行运行 GRAB Inspire-20270、ARCTIC Inspire-20270、OakInk2 MANO-4096 各一条真实 source smoke；已有 OakInk2 Inspire-20270 全量回填已 `COMPLETED`，双域训练也已完成。smoke 仅写新的独立 root，不触及旧 cache、训练 checkpoint 或其他 GPU 进程。
+- conclusion: `INCONCLUSIVE`（真实 producer 合同尚待 smoke 结果；不能据此得出模型效果结论）。
+
+**前序状态与计划产物**
+
+- OakInk2 Inspire 前序 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 已 `COMPLETED`，`1849/1849` segment、`379591` frame、`failures=[]`；其 [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/cache_manifest.json) 已存在。
+- GRAB/ARCTIC Inspire smoke 与 OakInk2 MANO smoke 的独立 run root、run manifest 和日志将在产生前标记为 `PENDING`；任一 smoke `FAILED` 即不创建 full queue，已产生的独立 smoke 目录保留审计。
+
+**验证与回滚**
+
+- 启动前确认 GPU2 空闲，且没有 `build_stage4_inspire_highres_v1_4`、`build_oakink2_mano_highres_v1_4` 或 cache queue 进程；所有输入 index、Stage4、annotation、Stage3、MANO 和旧 cache 均按只读输入使用。
+- 回滚入口为终止当前独立 smoke；不删除任何已完成 cache 或 checkpoint。只有三个 smoke 都以 `COMPLETED` manifest 结束，才按 [V1.4 最终计划 §9](../plan/V1.4.md) 创建并启动串行 full queue。
+
+## 2026-09-18 02:19:57 +0000 — V1.4.5 高分辨率 full cache queue 已启动；双域 MANO 训练已完成
+
+- timestamp: `2026-09-18 02:19:57 +0000`
+- activity_id: `ACT-20260918-021957-CMV2-V145-CACHE-QUEUE-STARTED-V144-TRAIN-COMPLETED`
+- modification_version: `V1.4.5`（queue）；`V1.4.4`（已完成训练）
+- type: `operation, data, experiment, documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 延续用户对 GPU2 串行持续导出和 V1.4.4 双域 MANO 训练的明确批准；V1.4 §9 的三项真实 smoke 均已成功完成，满足 full queue 启动条件。
+- skills_used: `research-experiment-workflow`, `research-change-control`
+- branch: `oyx`
+- base_commit: `cbc4a798b8c50f81def0181bfe14f5a37fd0eadd`
+- worktree_dirty: `true`（仅本次活动记录尚未提交；full cache producer 使用同一已提交代码）
+- run_id: `cmv2_v145_highres_queue_20260918T022000Z` / `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `RUNNING`（queue）/ `COMPLETED`（训练）
+- scope: queue 在 GPU2 串行导出 GRAB Inspire-20270、ARCTIC Inspire-20270、OakInk2 MANO-4096；每项仅在自身 success manifest 为 `COMPLETED` 时才解锁下一项。双域训练的既有独立 output 已封存；不启动新的模型训练，不覆盖旧 cache、checkpoint 或其他 GPU 进程。
+- conclusion: `INCONCLUSIVE`（cache queue 仍在运行；训练只提供优化状态，尚无 held-out 跨域效果结论）。
+
+**原因**
+
+此前 queue 缺少三条可审计 producer，因而不能启动；实现后的三个独立真实 smoke 已分别验证 GRAB/ARCTIC Inspire-20270 和 OakInk2 MANO-4096 的数据合同。前序 OakInk2 Inspire 回填也已成功终态，故按计划启动同一 GPU 的单 writer 队列，而不与其他 cache 或训练并发写入。
+
+**真实 smoke 与 queue 证据**
+
+- GRAB Inspire smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_grab_inspire_smoke_20260918T021300Z/run_manifest_cmv2_v145_grab_inspire_smoke_20260918T021300Z.json)：`COMPLETED`，`279` frame，KNN 最大 index `20251`。
+- ARCTIC Inspire smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_arctic_inspire_smoke_20260918T021500Z/run_manifest_cmv2_v145_arctic_inspire_smoke_20260918T021500Z.json)：`COMPLETED`，`732` frame，KNN 最大 index `20269`。
+- OakInk2 MANO smoke [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_smokes/cmv2_v145_oakink2_mano_smoke_20260918T021800Z/run_manifest_cmv2_v145_oakink2_mano_smoke_20260918T021800Z.json)：`COMPLETED`，`1246` frame，KNN 最大 index `4093`；三项均 `failures=[]`。
+- queue 的 [配置](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.json)、[状态](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 与 [启动日志](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.launcher.log) 已存在；当前 GRAB job 为 `RUNNING`，其 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 与 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 为实时入口。
+
+**双域训练终态**
+
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 为 `COMPLETED`：last epoch `16`、last step `36400`，`best_metric=0.18120233068706187`（epoch 13）；[best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt)、[latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 与 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 均保留。
+
+**验证**
+
+- 三项真实 smoke 都由其独立 `COMPLETED` manifest 和 `failures=[]` 证明 producer、shape、KNN index 上界、30 Hz 及原子输出链路可用；它们是工程 smoke 证据，不是模型效果结论。
+- queue 启动后 PID `897032` 及其 GRAB producer 子进程均存活，GPU2 处于使用状态；queue state 已持久化首项的命令、manifest 和日志入口。
+
+**验证与回滚**
+
+- 启动后 PID `897032`（queue）及其 GRAB producer 子进程均存活；GPU2 处于使用状态。queue 遇任一非零退出或 success manifest 不为 `COMPLETED` 会写 `FAILED` 并停止，不启动后续 job。
+- 回滚入口是终止 queue/当前 job；已完成的独立 full cache 及 smoke 保留审计，不删除、移动或覆盖；恢复时用相同 [queue 配置](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue.json) 重新执行，producer 的 `--resume` 只验证并复用完整段。
+
+## 2026-09-18 02:23:11 +0000 — 双域 MANO 训练终态与 ARCTIC stride 核验
+
+- timestamp: `2026-09-18 02:23:11 +0000`
+- activity_id: `ACT-20260918-022311-CMV2-V144-TWO-DOMAIN-TRAIN-STRIDE-DIAGNOSTIC`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问既有 GRAB/ARCTIC 双域训练状态及 ARCTIC temporal stride；本条仅读取已完成 run 的 manifest、配置、metrics 和实现。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `241e6d3f372b53335ba7bea066d29d9d3014ec58`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`
+- scope: 核验 V1.4.4 GRAB/ARCTIC MANO 双域 run 的终态、最佳 selection metric 和实际训练/验证 stride；不启动、停止或修改任何训练、queue、配置、cache、checkpoint。
+- conclusion: `INCONCLUSIVE`（工程优化运行已完成；没有新的 held-out 跨域效果评估）。
+
+**原因**
+
+运行状态和 temporal stride 会改变对 checkpoint 与验证指标的解释，必须以该 run 的冻结 `config.json` 和 runner 实现为准，而非从数据的 30 Hz 输入或口头范围推断。
+
+**状态与证据**
+
+- [训练 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json)：`COMPLETED`，last epoch `16`、last step `36400`，`best_metric=0.18120233068706187`；最佳发生在 epoch `13`，GRAB val loss `0.28988706171464246`，ARCTIC val loss `0.07251759965948128`。
+- 冻结 [config.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/config.json) 声明 `train_stride_values.arctic=[1,2,3,4,5,6,7,8,9,10]`，与 GRAB 相同；并非只使用 `[5,6,7,8,9,10]`。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py) 在 train split 将上述 domain-specific stride values 交给 transition dataset；[multi_domain.py](../../multi_domain.py) 以稳定 seed 对每条 `(sequence, current frame)` 在允许集合中选一个 stride，故训练样本使用 `1..10`。验证通过 `fixed_stride=2`，即两域验证都是 stride `2`。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl)、[train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log)、[best.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/best.pt) 与 [latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/latest.pt) 均存在。
+
+**验证**
+
+- 读取 run manifest 的 `run_status/last_epoch/last_step/best_metric` 与 metrics 最后 16 条 epoch 记录一致；epoch 13 的 selection metric 为全程最低值。
+- 配置校验与源码均要求 V1.4.4 的 GRAB、ARCTIC `train_stride_values` 恰为 `1..10`、`eval_stride=2`；本次没有执行训练或评估。
+
+**回滚**
+
+纯只读诊断；不涉及运行状态、数据或代码变更，无需回滚。
+
+## 2026-09-18 02:26:54 +0000 — V1.4.4 双域 MANO run 的 EPE 产物核验
+
+- timestamp: `2026-09-18 02:26:54 +0000`
+- activity_id: `ACT-20260918-022654-CMV2-V144-TWO-DOMAIN-EPE-DIAGNOSTIC`
+- modification_version: `V1.4.4`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户要求浏览既有 GRAB/ARCTIC 双域训练的 EPE；本条仅读取运行产物、训练入口和指标实现，不运行新的评估。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `25af8cbe37aeae7e1411101ca8e30d935ac9c29b`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`
+- scope: 确认该 run 是否计算/保存 object 或 flow EPE；不将 V1.4.4 selection loss、历史 V1.3 smoke EPE 或其他 Task 的 EPE 误归因给本次双域训练。
+- conclusion: `INCONCLUSIVE`（本 run 未产生 EPE，不能据现有产物报告 GRAB、ARCTIC 或均值 EPE）。
+
+**原因**
+
+EPE 是以物理单位解释预测误差的指标，不能由训练 loss 或跨版本/跨数据合同的历史 EPE 替代。必须先确认本次 run 的 metrics schema 和训练/评估入口是否实际实现该指标。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/run_manifest.json) 仅将 selection metric 定义为 `mean(val_grab_loss,val_arctic_loss)`；没有 EPE output 或离线评估产物。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/metrics.jsonl) 的 16 条 epoch 记录只含 `val_grab_loss`、`val_arctic_loss`、`selection_metric`、`best_metric`、source counts 与 elapsed time；没有 `epe`/`flow_epe_mm`/`object_epe_mm` 字段。对应 [train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/train.log) 相同。
+- [train_two_domain_mano.py](../../train_two_domain_mano.py) 的验证仅聚合两域 loss 并选择 `best.pt`；源码和本 run 目录均未发现 EPE 计算或保存。历史 V1.3 smoke 的 EPE 属于不同 run/工程 smoke，不可用于本次 V1.4.4 结果。
+
+**验证**
+
+- 对本 run 输出目录、metrics、train log、V1.4.4 training/evaluation 入口进行只读 `rg` 检索；目标 run 的 EPE 匹配结果为空，metrics schema 与 manifest 的 selection metric 一致。
+- 未执行 checkpoint 载入、验证或测试，因此没有产生新的 EPE，也没有改变当前 cache queue 的资源占用。
+
+**回滚**
+
+纯只读诊断；无运行、代码、配置或数据修改，无需回滚。
+
+## 2026-09-18 02:41:06 +0000 — V1.4.5 串行高分辨率 cache queue 状态核验
+
+- timestamp: `2026-09-18 02:41:06 +0000`
+- activity_id: `ACT-20260918-024106-CMV2-V145-CACHE-QUEUE-STATUS`
+- modification_version: `V1.4.5`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问 GRAB/ARCTIC Inspire 与 OakInk2 cache 是否已完整导出；本条只检查 queue state、producer manifest、实际 geometry 写入、日志与 GPU/进程状态。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `29a847d0b8b0edf2a2c2ae34fcf2b27e34760cf7`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v145_highres_queue_20260918T022000Z`
+- run_status: `RUNNING`
+- scope: 核验既有 GPU2 串行 queue；不停止、重启、调整或并行化 producer，不更改 cache、训练 checkpoint、输入 index 或其他用户 GPU 进程。
+- conclusion: `INCONCLUSIVE`（queue 尚未全部完成；当前没有失败证据）。
+
+**原因**
+
+queue 的顺序合同要求只有当前 GRAB Inspire 完整成功才允许 ARCTIC Inspire，随后才允许 OakInk2 MANO；必须区分已经完成的 OakInk2 Inspire、正在导出的 GRAB 和尚未获解锁的下游 job，不能将同为“Inspire”或同为“OakInk2”的不同 variant 混为完整。
+
+**状态与证据**
+
+- 先前 OakInk2 Inspire-20270 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json) 已 `COMPLETED`：`1849/1849` segment、`379591` frame、`failures=[]`；正式 [index.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/index.json) 与 [cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/cache_manifest.json) 已存在。
+- 当前 [queue state](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 显示 GRAB Inspire-20270/KNN32 job `RUNNING`；其 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 为 `STARTED`，已完成 `131/1335` sequence、`49397` frame、`failures=[]`。最近 geometry manifest 写入为 `2026-09-18 02:40:57 +0000`；有 `131` 个完整 geometry 和 `1` 个 `.partial`，符合原子写入中的单项状态。
+- ARCTIC Inspire-20270 与 OakInk2 MANO-4096 的 full root/manifest 尚未出现，因为 queue 尚未完成 GRAB 前序；这不是失败，亦不能称为已导出完成。
+- queue PID `897032` 等待当前 GRAB producer PID `897162`；producer 为 `Rl` 状态、持续 CPU 工作，GPU2 分配约 `651 MiB`。其 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 连续写入成功记录。
+
+**验证**
+
+- 对 queue state、所有 full run manifest/cache manifest、job log、完成 geometry 数和 `.partial` 数做只读核验；状态、输出计数、最近写入时间与存活进程相互一致。
+- 未将 `STARTED` GRAB output 当作可用完整 index，未运行任何训练或评估；也没有修改 queue/producer 状态。
+
+**回滚**
+
+纯只读状态核验；运行控制权保持原 queue。若用户明确要求停止，可终止 queue/当前 job；已完成 geometry 及其 manifest 保留，恢复时使用原 queue 的 `--resume` 合同。
+
+## 2026-09-18 02:43:14 +0000 — GRAB Inspire-20270 queue 完成时间估算
+
+- timestamp: `2026-09-18 02:43:14 +0000`
+- activity_id: `ACT-20260918-024314-CMV2-V145-GRAB-INSPIRE-ETA-DIAGNOSTIC`
+- modification_version: `V1.4.5`
+- type: `diagnostic, operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问当前 GRAB Inspire-20270 全量导出预计还需多久；本条仅用 queue start timestamp 与当前 manifest 完成计数估算。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `d315ede795440e4d401b444254d908af18e13791`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v145_grab_inspire_full_20260918T022000Z`
+- run_status: `RUNNING`
+- scope: 只读估算当前 GRAB producer 完成时间；不调整 GPU、并发度、batch/chunk 参数、queue 顺序或任何数据。
+- conclusion: `INCONCLUSIVE`（预测而非终态；实际耗时受每条序列帧数、NAS I/O 和 GPU 吞吐影响）。
+
+**原因**
+
+queue 必须串行完成 GRAB 后才启动 ARCTIC 和 OakInk2 MANO，故当前 job 的实测吞吐是后续可用时间的直接约束；不能以单条 smoke 或固定“每 epoch”时间替代全量序列的真实吞吐。
+
+**状态与证据**
+
+- [queue state](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/queue_state.json) 显示 GRAB job started at `2026-09-18T02:19:05+00:00`；其 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_full/grab_inspire_20260918T022000Z/run_manifest_cmv2_v145_grab_inspire_full_20260918T022000Z.json) 于本次核验时为 `141/1335` sequence、`53860` frame、`failures=[]`。
+- 从已运行约 `24.0` 分钟估得平均吞吐约 `5.885` sequence/min；线性外推余下 `1194` 条约需 `202.9` 分钟，预计完成约 `2026-09-18 06:05:55 +0000`。
+- producer PID `897162` 仍为 `Rl`，最新 [job log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_5_highres_queue_20260918T022000Z/grab_inspire_20270_knn32.log) 已记录第 `141` 条成功，当前无失败条目。
+
+**验证**
+
+- 以当前 UTC 时间减 queue 的 `started_at` 得实际 elapsed，再用 manifest 的 completed/expected sequence 计数计算 `sequence/min` 和线性剩余时间；没有执行运行控制或数据操作。
+
+**回滚**
+
+纯只读预测；不涉及需回滚的变更。
+
+## 2026-09-18 02:55:26 +0000 — 实现 V1.4.6 双域 MANO checkpoint 离线 flow 评估器
+
+- timestamp: `2026-09-18 02:55:26 +0000`
+- activity_id: `ACT-20260918-025526-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-IMPLEMENTATION`
+- modification_version: `V1.4.6`
+- type: `code, experiment, documentation`
+- task_mode: `change`
+- change_level: `L2`（新增离线指标的聚合与静止角度合同；不改变模型、GT、split、cache 或 checkpoint）
+- approval: `user-approved`
+- approval_basis: 用户于 2026-09-18 确认：使用 `best.pt`、GRAB stride=1 抽 12000、ARCTIC stride=5--10 各抽 2000，并报告 point-micro EPE、预测/GT 模长与有效点夹角。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `1c355730091047de2d5743cd3cd91f12896eb0c7`
+- worktree_dirty: `false`（实现前）
+- scope: 新增 Task-local 离线 evaluator 和纯指标测试，更新 V1.4 final plan 与版本指针；不启动完整评估，不触碰 GPU2 cache queue、cache、训练配置或任何 checkpoint。
+- conclusion: `INCONCLUSIVE`（实现与 CPU 测试通过；尚未完成 checkpoint/dataset smoke 或正式 24000-transition 评估，不能报告模型数值）。
+
+**文件**
+
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 将本 Task 当前指针更新为 `V1.4.6`。
+- [docs/plan/V1.4.md](../plan/V1.4.md) — 追加已定稿的 §10，冻结 checkpoint、抽样、度量、GPU1 资源门槛与回滚边界。
+- [eval_two_domain_mano.py](../../eval_two_domain_mano.py) — 新增确定性抽样、严格 checkpoint/schema/显存检查、微平均 flow 指标及 run manifest 输出。
+- [tests/test_v1_4_6_two_domain_flow_eval.py](../../tests/test_v1_4_6_two_domain_flow_eval.py) — 覆盖 EPE/模长/夹角/静态点统计和确定性无放回抽样。
+- [logs/activity_log.md](activity_log.md) — 登记本次实现边界与验证证据。
+
+**原因**
+
+已完成的 V1.4.4 双域训练只记录 validation loss，未产生用户所需 EPE、flow 模长或方向误差。离线评估必须固定为用户指定的 best checkpoint、transition 范围和点级单位合同，同时分离静止流的未定义角度，避免以训练 loss 或历史 run 指标替代本次数值。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/eval_two_domain_mano.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_6_two_domain_flow_eval.py src/task/ObjectInteractionCmv2/tests/test_v1_4_4_two_domain_split.py`：`4 passed`。
+- `git diff --check`：通过。提交前还将运行 scoped `audit_diff.py --check-links`；真实 checkpoint/dataset smoke 和完整评估各自以独立 run manifest 记录。
+
+**回滚**
+
+回滚为不使用或删除本次未提交的 evaluator/测试/计划增量；不会删除或覆盖外部 checkpoint、数据 index、cache 或正在运行的 GPU2 queue。后续运行若失败，只保留其独立 output manifest 作为诊断证据。
+
+## 2026-09-18 02:57:00 +0000 — V1.4.6 checkpoint/dataset load smoke 完成
+
+- timestamp: `2026-09-18 02:57:00 +0000`
+- activity_id: `ACT-20260918-025700-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-SMOKE`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 checkpoint 离线评估 smoke）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 对 checkpoint、sample scope、指标的三项确认；本 smoke 是完整评估前冻结的工程门槛。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `e3b5eea87d9dba57b063c117dc89ceaa40203cb9`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z`
+- run_status: `COMPLETED`
+- scope: GPU1 上载入固定 V1.4.4 `best.pt`，GRAB stride=1 与 ARCTIC stride=5--10 各评估一个确定性 transition；不运行全量 24000-transition 统计，不写 cache，不修改 checkpoint，也不接触 GPU2 queue。
+- last_step: `null`
+- last_epoch: `13`（所载入 best checkpoint）
+- best_metric: `null`（本操作不做 checkpoint selection）
+- conclusion: `INCONCLUSIVE`（工程 smoke 支持 checkpoint、数据、指标和资源合同；每 group 仅 1 个样本，绝非科研统计）。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/run_manifest.json) 为 `COMPLETED`，记录固定 checkpoint/config 的 SHA256、GPU1、抽样 seed 和 metric contract。
+- [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/metrics_summary.json)、[sample index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/sample_index.json) 和 [eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_smoke_20260918T025700Z/eval.log) 均已生成，共 `7` 个 transition、`7168` object point。
+- smoke 发现 GRAB stride=1 可用 `24652` 个 transition，ARCTIC 各 stride=5--10 均可用 `20139` 个，均大于完整 run 所需的 `12000` / `2000`；不存在缩样。
+
+**原因**
+
+正式统计前必须实际验证已冻结 checkpoint 能严格加载、每个指定 stride 有足量 validation transition、`object_pose_t` flow 张量可计算且 GPU1 的 20 GiB 资源门槛成立；否则完整运行的数值没有可审计的工程前提。
+
+**验证**
+
+- 执行固定 V1.4.4 checkpoint/config 的 evaluator，进程成功退出，manifest 为 `COMPLETED`，7 个 group 的 sample/point 计数与预期一致。
+- `nvidia-smi` 运行前显示 GPU1 空闲 `48506 MiB`；GPU2 producer PID `897162` 保持运行，未发送运行控制信号。
+
+**回滚**
+
+此 smoke 是独立外部 output；回滚为不使用其数值。保留 manifest、抽样索引和日志用于诊断；不删除或覆盖任何数据、cache、checkpoint 或 queue。
+
+## 2026-09-18 02:58:14 +0000 — V1.4.6 双域 MANO flow 正式抽样评估已启动
+
+- timestamp: `2026-09-18 02:58:14 +0000`
+- activity_id: `ACT-20260918-025814-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-FULL-START`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 离线 checkpoint 评估）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 的三项明确确认；前置 smoke 已完成。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7a674228ce022e61a7ab6d00756dfb9c3a55d082`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z`
+- run_status: `RUNNING`
+- command: `/home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.eval_two_domain_mano ... --device cuda:1 --grab-samples 12000 --arctic-samples-per-stride 2000 --batch-size 16 --minimum-free-memory-gib 20`
+- scope: 固定 V1.4.4 epoch-13 `best.pt`，GRAB stride=1 抽 12000，ARCTIC stride=5--10 各抽 2000；逐点输出 EPE、prediction/GT flow magnitude 和有效点夹角。仅使用 GPU1；不训练、不写 cache、不改变 checkpoint、split 或 GPU2 queue。
+- output: [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/run_manifest.json)；`metrics.jsonl`、`metrics_summary.json`、`sample_index.json` 与 `eval.log` 为 `PENDING`，仅在 `RUNNING` 状态存在。
+- conclusion: `INCONCLUSIVE`（运行尚未终态）。
+
+**原因**
+
+已完成 smoke 证明资源和数据合同有效；按用户冻结的 non-full sample 预算启动正式量化，取得可比较的 GRAB/ARCTIC flow 统计，且不干扰 GPU2 的高分辨率 cache 串行 producer。
+
+**验证**
+
+- 启动后 GPU1 进程 PID `928129` 存活，约占用 `1399 MiB`、GPU utilization `54%`；run manifest 已创建且转为 `RUNNING`。
+- GPU2 的既有 GRAB Inspire producer PID `897162` 同时仍存活；未发送停止、重启或参数变更命令。
+
+**回滚**
+
+若用户要求或运行出现资源/实现错误，仅终止 PID `928129`；evaluator 会将本 run manifest 标为 `FAILED`，保留现有产物。不得影响 GPU2 queue 或任何 checkpoint/cache。
+
+## 2026-09-18 02:58:59 +0000 — V1.4.6 双域 MANO flow 抽样评估完成
+
+- timestamp: `2026-09-18 02:58:59 +0000`
+- activity_id: `ACT-20260918-025859-CMV2-V146-TWO-DOMAIN-FLOW-EVAL-FULL-COMPLETED`
+- modification_version: `V1.4.6`
+- type: `operation, experiment`
+- task_mode: `run-only/operation`
+- change_level: `L3`（用户批准的 GPU1 离线 checkpoint 评估）
+- approval: `user-approved`
+- approval_basis: V1.4 final plan §10 与用户于 2026-09-18 对 checkpoint、抽样范围、指标的确认；预置 smoke 已成功。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `7a674228ce022e61a7ab6d00756dfb9c3a55d082`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z`
+- run_status: `COMPLETED`
+- last_step: `null`
+- last_epoch: `13`（载入 fixed `best.pt`）
+- best_metric: `null`（纯评估，不做 selection）
+- scope: GRAB stride=1 的 12000 transition，ARCTIC stride=5--10 各 2000（共 24000）；按 1024 object point/transition 在 `object_pose_t` 下统计 point-micro flow EPE、prediction/GT magnitude 和有效点 angle。
+- conclusion: `INCONCLUSIVE`（统计本身已完成且可复现；数据来自 checkpoint selection 所用 validation sources，且没有对照/held-out test，不能据此作泛化或优越性结论）。
+
+**状态与证据**
+
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/run_manifest.json) 为 `COMPLETED`，开始于 `02:57:39`、结束于 `02:58:59 +0000`，固定 epoch-13 `best.pt` 与 V1.4.4 resolved config。
+- [metrics summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/metrics_summary.json)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/metrics.jsonl)、[sample index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/sample_index.json) 与 [eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v146_two_domain_flow_eval_best12k_20260918T025800Z/eval.log) 均非空。
+- GRAB：`12000` transition / `12288000` point，EPE `3.9029 mm`，prediction/GT magnitude `10.5788 / 10.8730 mm`，angle `41.5272°`；仅 `1` 个 GT-static point 被排除 angle。
+- ARCTIC pooled：`12000` transition / `12288000` point，EPE `28.0533 mm`，prediction/GT magnitude `11.5572 / 34.6068 mm`，angle `52.9060°`；所有 point angle 有效。stride 5→10 EPE 为 `19.4863, 23.1555, 27.1467, 29.4669, 32.7959, 36.2683 mm`。
+- 全体 pooled：`24000` transition / `24576000` point，EPE `15.9781 mm`，prediction/GT magnitude `11.0680 / 22.7399 mm`，angle `47.2166°`；angle-excluded `1`，GT-static `1`，prediction-static/both-static 均为 `0`。
+- [experiment log](experiment_log.md) 保留完整 per-stride 值、解释边界与结论等级。
+
+**原因**
+
+按用户明确的 stride 和指标合同完成不全量定量评估，填补 V1.4.4 training metrics 只有 loss、无法回答双域实际 flow 误差的问题；独立 output 与 sample index 让后续复核能重放完全相同的 transition 集。
+
+**验证**
+
+- 审计 manifest 状态、6 个必需输出的非空性、sample index 的域/stride 分组和 summary 的 sample/point counts：GRAB 恰为 `12000`，ARCTIC 每个 stride 恰为 `2000`，总计 `24000`；无未声明缩样。
+- 运行进程以 exit code `0` 结束。GPU2 GRAB Inspire queue 在运行前、运行中和结束后均未收到控制指令，未被本操作修改。
+
+**回滚**
+
+本次运行不修改模型/数据；回滚为不采用该独立 output 的数字。保留 manifest、index、metrics 和 log 供审计，不删除 checkpoint、cache 或 queue。
+
+## 2026-09-18 03:08:08 +0000 — ARCTIC KNN/距离着色交互轨迹查看器已启动
+
+- timestamp: `2026-09-18 03:08:08 +0000`
+- activity_id: `ACT-20260918-030808-CMV2-V146-ARCTIC-KNN-TRAJECTORY-VIEWER`
+- modification_version: `V1.4.6`
+- type: `diagnostic, operation`
+- task_mode: `run-only/operation`
+- change_level: `L1`
+- approval: `user-approved`
+- approval_basis: 用户要求直接展示 ARCTIC trajectory，复用此前确定的 KNN/累计距离着色 viewer，并明确表示 stride 由其在界面自行调节。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `0fc8f3f6023d30bbbd7d0980348712495fce356c`
+- worktree_dirty: `false`（运行前）
+- run_id: `cmv2_v146_arctic_knn_viewer_20260918T030600Z`
+- run_status: `RUNNING`
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCm.visualize_grab --index <existing ARCTIC raw bilateral viewer index> --sequence arctic/s01/box_use_01 --future-delta 10 --host 127.0.0.1 --port 8113 --modification-version V1.4.6`
+- scope: 只读展示既有 ARCTIC bilateral MANO trajectory；默认初始轨迹 `arctic/s01/box_use_01`、future delta=10，GUI 可切换轨迹、帧及 delta=1--30，并显示红色累计 object--hand 距离和黄色 object→hand KNN 手点。无 mesh 时保持关闭，绝不伪造 articulated object mesh；不修改原始 ARCTIC、Cmv2 cache、GT、split、checkpoint、评估结果或 GPU2 queue。
+- output: [viewer run manifest](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/run_manifest.json) 和 [viewer log](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/viewer.log)；服务地址 `http://127.0.0.1:8113`。
+- conclusion: `SUPPORTED`（读取 ARCTIC trajectory、KNN 与距离着色的工程可视化链路已启动；视觉检查不替代 GT 数值审计或模型效果结论）。
+
+**原因**
+
+用户质疑 ARCTIC GT magnitude，需要先以同一类原始 ARCTIC 30 Hz bilateral MANO 轨迹直观检查物体/双手的时序运动与局部 KNN、距离关系。查看器的 future-delta 是可调的可视化时间间隔，而不是对已完成量化评估的重新采样或修改。
+
+**验证**
+
+- `http://127.0.0.1:8113` 返回 HTTP `200`；[run manifest](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/run_manifest.json) 为 `RUNNING`，记录 ARCTIC raw bilateral input、`30 Hz` 与 future delta=`10`。
+- [viewer log](../../research/arctic_knn_trajectory_visualization/output/cmv2_v146_arctic_knn_viewer_20260918T030600Z/viewer.log) 记录 `6` 条可选 trajectory、初始 `mano_bilateral_raw` 数据和服务 URL。未写回任何输入文件。
+
+**回滚**
+
+若用户要求停止，仅停止本 viewer 进程并将 manifest 更新为 `STOPPED`；其独立 output 可保留或删除，不影响 ARCTIC raw data、训练 cache、checkpoint、评估 output 或 cache queue。
+
+## 2026-09-18 03:13:51 +0000 — ARCTIC 铰接对象合同是否进入 V1.4.4 双域训练核验
+
+- timestamp: `2026-09-18 03:13:51 +0000`
+- activity_id: `ACT-20260918-031351-CMV2-V146-ARCTIC-ARTICULATION-TRAINING-DIAGNOSTIC`
+- modification_version: `V1.4.6`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问已完成 ARCTIC 训练是否加入铰接类物体的超参/架构处理；本条只读检查指导、冻结训练配置、cache schema、loader、模型和 loss。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `1ca03f7559d3069b1b154128b113f607422426dc`
+- worktree_dirty: `false`（查询前）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`（既有训练，仅作检查）
+- scope: 判定 ARCTIC `obj_articulation`、`obj_part_id`、joint/FK metadata 或铰接专属 hyperparameter 是否进入该 run 的输入、model head 或 loss；不重新训练/评估，不更改代码、配置、cache、checkpoint、viewer 或 GPU2 queue。
+- conclusion: `REFUTED`（“V1.4.4 已按铰接物体架构处理 ARCTIC”的判断不成立：cache 保留了 articulation/part 数据，但 completed model 既未读取也未使用，且固定为 single-root rigid SE(3)）。
+
+**状态与证据**
+
+- [冻结训练 config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z/config.json) 固定 `architecture_version=v1_3_rigid_only`、`use_residual=false`、`interaction_mode=swept`、KNN32/2 cm；没有 link、joint、axis、origin、joint-q、part-pooling 或 articulation 参数。
+- [multi_domain.py](../../multi_domain.py) 的 `ARRAYS` 仅读取 frame time、source frame、object point/normal pool、`obj_pose_world` 和 KNN hand streams；`obj_articulation.npy`、`obj_part_id.npy`、`obj_root_pose_world.npy` 均不在输入 batch。`obj_flow_gt` 直接来自 current/future world point 在 current `object_pose_t` 的差。
+- [model.py](../../model.py) 的 V1.3 模型强制 `use_residual=false`，输出单一 `delta_xi_root` 与由其重建的 `obj_flow_pred`；[object_interaction_v13_loss](../../model.py) 仅对该根 translation、root rotation 和 point flow 施加 loss，没有 joint head/FK、link group 或 articulation loss。
+- 一条实际 ARCTIC cache [geometry manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/sequences/train/mano/arctic/s01/mixer_grab_01/geometry/manifest.json) 声明 `articulated_world_points_identity_reference_pose`；`obj_articulation.npy` 为 `[593,1]`、`obj_part_id.npy` 含 `1255/2841` 两个 part 点，而 `obj_pose_world` 恒为 identity。遍历 35 条 ARCTIC validation sequence：35/35 的 articulation 发生变化，最大 angle span `3.14349 rad`。
+- 以该 cache frame `55→65`（stride 10）复算：GT point-flow mean/p95 为 `90.408/102.263 mm`；使用 cache 的单 root pose 重建的残差恰为 `90.408/102.263 mm`，即此运动不能由该 identity root 的一个 SE(3) 解释。V1.0 架构快照明确将 articulation graph、joint metadata/FK 作为后续多-link 版本，而非 V1.0/V1.3 rigid path。
+
+**原因**
+
+需要严格区分“ARCTIC 数据生产时保存了铰接信息”与“训练的模型消费了该信息”。前者成立，后者在 V1.4.4 completed run 中不成立；否则会把未建模的 joint motion 误读为普通刚体 flow 误差或错误的 GT magnitude。
+
+**验证**
+
+- 对冻结 config、loader required arrays/batch 字段、V1.3 model/loss、ARCTIC geometry manifest 和实际 memmap 做只读源码/shape/finite/范围核验；没有发现 articulation 字段进入前向或 loss 的路径。
+- 对全部 35 条 ARCTIC validation geometry 的 `obj_articulation.npy` 只读扫描，并对代表 transition 用 cache 的 documented root-SE(3) 公式重建逐点 future position；无文件写入、无 CUDA/训练/评估运行。
+
+**回滚**
+
+纯只读诊断；无代码、配置、数据、模型或运行状态修改，无需回滚。若要加入铰接处理，必须作为新的 L2/L3 版本计划，明确 link/joint schema、GT、FK、split、loss、checkpoint compatibility 与对照实验，不能把 V1.4.4 checkpoint 静默解释为该模型。
+
+## 2026-09-18 03:13:51 +0000 — Cmv2 后续多-link 铰接设计的代码实现状态核验
+
+- timestamp: `2026-09-18 03:13:51 +0000`
+- activity_id: `ACT-20260918-031351-CMV2-V146-ARTICULATION-DESIGN-IMPLEMENTATION-STATUS`
+- modification_version: `V1.4.6`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问现有代码是否已有后续的铰接对象设计；只读检查 Cmv2 Python/YAML/测试与冻结架构文档。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `9f10e3ae80ecc410428b1c5e3e1f5a62fc2d7509`
+- worktree_dirty: `false`（查询前）
+- scope: 区分已实现可训练的 articulation graph/joint/FK 路径，与仅存在于指导、架构快照、synthetic rigid 占位或 cache producer 的后续设计；不修改任何代码或运行。
+- conclusion: `INCONCLUSIVE`（后续设计已被明确文档化并有单-link placeholder，但多-link articulated implementation 尚不存在，故不能称为“代码已具备该处理”）。
+
+**状态与证据**
+
+- [指导/V1.0.md](../指导/V1.0.md) 已定义预期的 `obj_link_id_pool`、joint parent/child/type/axis/origin/limits/q、articulation graph 和 FK 路线；其迁移步骤明确写为“rigid case 后才加入 articulation metadata 和 graph layer”。
+- [architecture/V1.0.md](../architecture/V1.0.md) 冻结范围写明 `num_links=1`、`J=0`，articulation graph 为单 rigid part，joint message passing 留给未来多-link 版本；这是一份设计快照，不是实施声明。
+- [synthetic.py](../../synthetic.py) 与 [oakink2.py](../../oakink2.py) 中仅存在全零的 `obj_link_id` / `num_links=1` single-link placeholder；它们没有 joint schema、graph module 或 FK joint flow。
+- Cmv2 Python/YAML/tests 中未发现可调用的 `obj_articulation`/`obj_part_id` loader、link-wise pooling、joint head、joint loss、articulation graph 或多-link FK 实现；现有 [model.py](../../model.py) 仍是单 `delta_xi_root` rigid path。
+
+**原因**
+
+“已经规划结构”与“已经在运行代码中消费 ARCTIC 铰接元数据”是不同状态。必须明确后者目前不存在，避免将 zero-valued placeholder 或文档 API 当成可用于 V1.4.4 checkpoint 的功能。
+
+**验证**
+
+- 对 `src/task/ObjectInteractionCmv2` 的 Python、YAML、JSON、测试和 Markdown 作只读关键词/文件清单核验；命中均为文档、cache 生产、single-link synthetic/OakInk2 placeholder 或当前 rigid model，没有多-link runtime path。
+
+**回滚**
+
+纯只读诊断；无变更，无需回滚。
+
+## 2026-09-18 03:33:34 +0000 — 记录铰接对象的张量流与多-link FK 架构设计
+
+- timestamp: `2026-09-18 03:33:34 +0000`
+- activity_id: `ACT-20260918-033334-CMV2-ARTICULATED-ARCHITECTURE-PROPOSAL`
+- modification_version: `V1.4.6`（当前指针；文档不创建或冻结 V1.5）
+- type: `architecture, documentation`
+- task_mode: `change`
+- change_level: `L2`（记录未来将改变 loader/model/GT/checkpoint 合同的设计；本次不实施该变更）
+- approval: `user-approved`
+- approval_basis: 用户明确要求在 `docs/architecture/` 写出更完整的“先总后分”架构，并特别要求张量规格与数据流。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `90ebb28be3e119dd5535ad5c3e02da15603a5f79`
+- worktree_dirty: `false`（修改前）
+- scope: 新增未冻结的 articulated-object design 文档；说明 ARCTIC two-link/revolute first-stage 与 GRAB rigid fallback 的目标 contract、tensor flow、FK、loss/metric 和实现闸门。不改 Python、YAML、cache、数据、checkpoint、训练、评估、viewer 或版本指针。
+- conclusion: `INCONCLUSIVE`（架构设计已按用户要求记录；尚无代码或工程 smoke，不能声称已有多-link 实现或效果）。
+
+**文件**
+
+- [architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 新增总览→坐标/FK→张量规格→模块→监督→不变量→分阶段闸门的完整设计；状态明确为 `proposal / 未实现 / 未冻结`。
+- [README.md](../README.md) — 在 Task 文档入口增加该设计的状态明确导航。
+- [logs/activity_log.md](activity_log.md) — 记录本次受用户明确授权的架构文档变更和保护边界。
+
+**原因**
+
+现有 V1.0 snapshot 只描述 single-link rigid baseline，无法审计 ARCTIC 的 part ID、current q、root pose、joint prediction 与解析 FK 如何在 mixed GRAB/ARCTIC batch 中流动。先冻结设计级张量和不变量，才能在后续 final plan 中讨论实现，而不把 single-root rigid checkpoint 误解释为 articulated architecture。
+
+**验证**
+
+- 文档逐项对齐已核验的 ARCTIC cache 事实：two-part ID、current articulation、`obj_root_pose_world`、现有 source producer 的 canonical Z-axis/origin revolute 合同，以及当前 V1.3 single-root rigid 的缺失边界。
+- 交接前执行 `git diff --check` 与 scoped `audit_diff.py --check-links`；本次没有运行模型、写入 cache 或创建 output。
+
+**回滚**
+
+回滚为删除此 proposal 文档和本活动条目；不涉及数据、代码、配置、checkpoint 或运行产物。任何把设计变为代码的操作都需要用户确认新版本指导和 final plan。
+
+## 2026-09-18 04:09:47 +0000 — ARCTIC 全量 two-link / single-joint cache 合同核验
+
+- timestamp: `2026-09-18 04:09:47 +0000`
+- activity_id: `ACT-20260918-040947-CMV2-ARCTIC-FULL-CACHE-ARTICULATION-DIAGNOSTIC`
+- modification_version: `V1.4.6`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户追问当前 ARCTIC 是否全部属于 two-link / one-joint 情形；只读遍历既有 Cmv2 ARCTIC cache 的 geometry manifest 与 `obj_articulation.npy` header/data。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `false`（查询前）
+- scope: 覆盖当前 cache 内 train/val 的全部 ARCTIC sequence，不改代码、配置、cache、checkpoint、训练、评估、viewer 或 GPU2 queue。
+- conclusion: `SUPPORTED`（就当前 Cmv2 ARCTIC cache 合同而言，301/301 sequence 都是 two-part，且各自都有单标量 articulation stream，因此第一阶段适配器可采用 `L=2, J=1`；这不意味着每一相邻帧窗口都有明显的 joint motion）。
+
+**状态与证据**
+
+- [ARCTIC sequence cache](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/sequences) — 本次只读扫描的完整 train/val 输入根目录；未向其写入任何内容。
+- 递归扫描 `sequences/*/mano/arctic/*/*/geometry/manifest.json`：共 `301` 个 manifest，全部为 `object_representation=articulated_world_points_identity_reference_pose` 且 `object_part_count=2`，没有 rigid one-part 或超过 two-part 的例外。
+- 相同 301 个 geometry 目录均有 `obj_articulation.npy`；逐个解析 NPY header，尾部 shape 全为 `(1,)`，即每帧一个关节标量。全序列 q-span 的最小值/中位数/最大值为 `0 / 1.736075 / 3.784844 rad`；`299/301` 序列 span 大于 `1e-6 rad`，另 `2` 条在整段中静止或近静止。
+- 该结论限定于当前 producer/cached representation：它支持 adapter 的结构上固定 `L=2, J=1`，但 runtime 模型仍应保留 `link_mask/joint_mask`，且 transition 级 loss/指标不能假定 q 恒变化。
+
+**原因**
+
+此前只核验了代表序列和 validation 子集。全量确认后，才能准确区分“ARCTIC schema 始终为两 link、一关节”与“所有训练窗口都有铰接运动”这两个不同判断，避免无依据地把静止 joint 窗口当作非刚体误差来源。
+
+**验证**
+
+- `find ... -path '*/mano/arctic/*/*/geometry/manifest.json' | xargs jq`：`301` 个 manifest 的 `(object_representation, object_part_count)` 唯一组合为 `(articulated_world_points_identity_reference_pose, 2)`。
+- 只读标准库 NPY header/float32 payload 扫描：`301` 个 `obj_articulation.npy`，全部 trailing shape `(1,)`；未导入训练环境、未使用 CUDA，未写入任何文件。
+- 本活动条目将以 `audit_diff.py --worktree --scope-prefix src/task/ObjectInteractionCmv2 --check-links` 复核。
+
+**回滚**
+
+纯诊断活动记录；无模型、数据、cache 或运行状态修改。若后续 cache producer 引入多-link 对象，必须重新统计并升级 adapter/schema plan，不能沿用本条的 `L=2, J=1` 假设。
+
+## 2026-09-18 04:34:04 +0000 — V1.5.1 two-link articulated FK 首阶段实现
+
+- timestamp: `2026-09-18 04:34:04 +0000`
+- activity_id: `ACT-20260918-043404-CMV2-V151-ARTICULATED-FK-IMPLEMENTATION`
+- modification_version: `V1.5.1`
+- type: `architecture / code / documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户确认以 ARCTIC `L=2/J=1` 与 GRAB `L=1/J=0` fallback 为边界，要求直接开始架构实现；V1.5 指导与 final plan 据此冻结。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（开始前已存在本 Task 的 V1.4.6 只读诊断活动记录增量；本次只追加 V1.5 文件与记录，未覆盖该增量。）
+- scope: 新增隔离的 V1.5 articulated loader/collate、two-round link/joint graph、root/joint heads 与 masked analytic FK；不修改 V1.4 rigid runtime、cache、split、checkpoint、queue、output 或 `src/base`。
+- conclusion: `SUPPORTED`（synthetic 及实际 cache 读取工程 smoke）；`INCONCLUSIVE`（真实 cache FK replay 未通过，尚不能训练或宣称 ARCTIC 铰接效果）。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py) — 独立 V1.5 loader、mixed-batch collate、link-wise pooling、joint graph、root/joint prediction、revolute FK 与结构化 loss；`forward` 不读取 future target。
+- [src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py) — rigid reduction、two-link child-only rotation、mixed GRAB/ARCTIC mask、forward/backward 与 ARCTIC root/q loader 覆盖。
+- [src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md) — 用户确认的 V1.5 科研边界。
+- [src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md) — 已冻结的 L2 实施、验证和回滚计划。
+- [src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 更新为实现中状态，并记录 replay 阻断事实。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 新增 V1.5 导航并将 Task 指针推进为 `V1.5.1`。
+
+**原因**
+
+现有 V1.4 rigid head 将整物体压缩为单个 root SE(3)，无法表达 ARCTIC 两个 rigid link 的相对运动。
+本次先隔离实现可审计的结构化路径和 mask/FK 不变量；在取得可验证 joint metadata 前，拒绝用 residual、
+对象名称猜测或临时轴/原点掩盖数据合同问题。
+
+**验证**
+
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/articulated.py src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py`：通过。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py`：`4 passed`；仅为工程 smoke，不构成科研效果结论。
+- 只读加载当前 ARCTIC `s07/phone_use_01` cache：`720` 个 stride-1 transition 可读，sampled `obj_part_id={0,1}`，current `q` 与 `Δq` 可解析。
+- 以临时 `axis=(0,0,1), origin=(0,0,0)` 对该序列四个实际 transition 用 GT root/`Δq` 进行 FK replay：mean error 依次为 `0.090/1.248/9.281/20.214 mm`，max error 为 `0.366/5.129/37.611/74.679 mm`；说明现有 cache 缺少可验证的 per-object joint axis/origin metadata，不能把临时 canonical 假设用于训练。
+- `git diff --check`：通过。交接前将运行 scoped activity link audit。
+
+**回滚**
+
+删除本条列出的 V1.5 Task-local 新文件、还原本次文档增量并将 Cmv2 指针恢复为 `V1.4.6` 即可；不删除或修改任何 NAS cache、既有 output、checkpoint 或运行队列。
+
+## 2026-09-18 04:36:00 +0000 — 二域 checkpoint 与 V1.5 架构兼容性核验
+
+- timestamp: `2026-09-18 04:36:00 +0000`
+- activity_id: `ACT-20260918-043600-CMV2-TWO-DOMAIN-CHECKPOINT-COMPATIBILITY`
+- modification_version: `V1.5.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `auto`
+- approval_basis: 用户询问是否可用既有 checkpoint 继续二域混合训练；本条只读检查已完成 V1.4.4 run 的 payload/config 与 V1.5 model state dict，不启动、修改或恢复训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（保留本次已实现但未提交的 V1.5 增量；未改 checkpoint、config、cache 或 output。）
+- run_id: `cmv2_v144_grab_arctic_mano_init8h_20260917T150600Z`
+- run_status: `COMPLETED`（既有 run，只读检查）
+- scope: 判定 `best.pt`/`latest.pt` 对旧 V1.4 rigid continuation 与新 V1.5 articulated path 的可加载性；不创建新 run。
+- conclusion: `SUPPORTED`（checkpoint 对其原 V1.4 rigid architecture 可用）；`REFUTED`（其不能作为 V1.5 articulated model checkpoint）。
+
+**状态与证据**
+
+- 既有 `best.pt` 的 payload/config 均为 `architecture_version=v1_3_rigid_only`、`modification_version=V1.4.4`；best 位于 epoch `13` / step `29575`，`best_metric=0.18120233068706187`，payload 内含 optimizer state。
+- `latest.pt` 同样存在；既有 run 终态为 epoch `16` / step `36400`。二者都可供旧 V1.4 model 创建独立 continuation run 时加载模型权重。
+- 新 V1.5 `v1_5_articulated_fk` state dict 有 `35` key，与旧 checkpoint 的 `39` key 只重合 `13` 个；其新增 link/joint graph、joint head 与 FK 合同无法 strict-load。因此既有 checkpoint 不能被解释为 V1.5 initialization/resume，也不能静默 partial-load。
+- GPU1 当前空闲约 `48 GiB`；资源可用性不等于已批准启动新训练。
+
+**关联工作区变更**
+
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py) — 待提交的 V1.5 articulated 实现与 smoke 测试；本条只读取其 state dict，不修改它们。
+- [src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — V1.5 新合同及 FK replay 阻断边界。
+- [src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — V1.5 导航与当前 Task 指针。
+
+**原因**
+
+旧 checkpoint 的 single-root rigid state 与 V1.5 的 structured root+joint effect 具有不同的输入、输出和监督语义。将其 partial-load 会混淆是否真的学到 articulated motion；V1.5 还未取得通过 FK replay 的真实 joint axis/origin metadata，故任何 V1.5 训练都必须保持阻断。
+
+**验证**
+
+- 只读 `best.pt`、`latest.pt`、既有 `config.json`、`run_manifest.json`、`metrics.jsonl` 与 `train.log`；未使用 CUDA、未创建输出目录或写入文件。
+- 实例化 V1.5 model 后比较 state dict key 集合；未调用 `load_state_dict`，因此不会改变内存外 checkpoint。
+
+**回滚**
+
+纯只读诊断；删除本活动条目即可，不涉及 checkpoint、训练、cache、queue 或 output 的恢复。
+
+## 2026-09-18 04:42:00 +0000 — V1.5.2 ARCTIC joint metadata 恢复与全 cache FK replay
+
+- timestamp: `2026-09-18 04:42:00 +0000`
+- activity_id: `ACT-20260918-044200-CMV2-V152-ARCTIC-FK-REPLAY`
+- modification_version: `V1.5.2`
+- type: `architecture / code / diagnostic / documentation`
+- task_mode: `change`
+- change_level: `L2`
+- approval: `user-approved`
+- approval_basis: 用户要求继续解决 V1.5 FK replay 阻断；V1.5 final plan 已明确允许恢复并严格校验 source metadata，且本次未改变 cache、GT、split 或训练变量。
+- skills_used: `research-change-control`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（保留未提交的 V1.5.1 implementation 与此前活动记录；本次只新增 metadata/文档记录并更新同一 Task 指针。）
+- scope: 从 `process/ARCTIC/raw.py` 的 actual row-vector producer 恢复 ARCTIC top-link 的 axis sign，写入 Task-local source metadata；只读重放 301 个既有 ARCTIC cache sequence 的代表 transition，不写 cache、不改 GT、不启动训练。
+- conclusion: `SUPPORTED`（V1.5 ARCTIC FK coordinate contract 经全 cache representative replay 验证）；训练效果仍为 `INCONCLUSIVE`，未启动训练。
+
+**文件**
+
+- [src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json](../../configs/active/arctic_articulation_v1_5.json) — 显式声明 `L=2/J=1`、bottom→top、`axis_root=(0,0,-1)`、`origin_root=(0,0,0)`、row-vector q 符号和 required cache arrays。
+- [src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 固化 producer-verified contract、导航及 `V1.5.2` 指针。
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md) — 同一未提交 V1.5 implementation/guidance 工作区边界；本次未改变模型语义或测试实现。
+
+**原因**
+
+先前 `+z` replay 失败并非 cache 缺失 articulation state，而是将 producer 的 row-vector `R_arti` 误读为 column-vector
+正向旋转。producer 实际对 top link 实施 `p_top(q)=p_top(0) @ R_z(-q)^T`；因此在本模型的 standard axis-angle
+实现中，等价 joint axis 必须是 `-z`。这是一项坐标/GT 合同校正，必须先以全 cache replay 验证，再讨论训练。
+
+**验证**
+
+- 在 `s07/phone_use_01` 四个 transition 上，修正后的 GT FK replay mean error 为 `0.001529/0.000111/0.000130/0.000054 mm`；相对于先前 `+z` 的最高 `20.214 mm` mean error，符号约定已被直接证伪并替换。
+- 递归读取当前 train/val `301/301` 个 ARCTIC geometry cache，各取中段相邻 transition、全部 4096 object pool point，以 GT root pose 与 `Δq` 重放：sequence-mean error 的最大值 `0.000270 mm`、中位数 `0.000043 mm`、全体逐点最大 `0.000651 mm`；`0/301` 超过 `0.1 mm`。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py`：`4 passed`；`git diff --check`：通过。
+
+**回滚**
+
+删除 V1.5.2 metadata/文档增量并将 Task 指针恢复 `V1.5.1` 即可；不涉及任何 cache、原始数据、checkpoint、output 或运行队列。训练仍须另建明确的 V1.5 run 计划。
+
+## 2026-09-18 04:49:00 +0000 — V1.6.1 V1.5 随机初始化二域 GPU1 校准完成
+
+- timestamp: `2026-09-18 04:49:00 +0000`
+- activity_id: `ACT-20260918-044900-CMV2-V161-ARTICULATED-CALIBRATION`
+- modification_version: `V1.6.1`
+- type: `code / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认 V1.5 从零训练前仅在 GPU1 做 `GRAB/ARCTIC=1:1`、递增 batch 与 8-step calibration，不使用旧 checkpoint、不启动正式长训。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5.1/V1.5.2 实现与文档尚未提交；本次不覆盖既有用户或运行产物。）
+- run_id: `cmv2_v161_articulated_random_init_calibration_20260918T044900Z`
+- run_status: `COMPLETED`
+- scope: 新增 isolated calibration runner/config；只读既有冻结的 two-domain MANO index/cache、显式 V1.5 ARCTIC metadata，并随机初始化模型。GPU1 依次校准 batch `2,4,8,16` 后，以最大成功 batch 运行 8 optimizer steps；未加载 V1.4 checkpoint，未启动 validation、正式训练、cache writer 或 queue。
+- conclusion: `SUPPORTED`（V1.5 mixed GRAB/ARCTIC random-init forward/backward、FK contract、GPU1 接线和 checkpoint 产物）；科研效果为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/train_articulated_calibration.py](../../train_articulated_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_6_calibration.yaml](../../configs/active/two_domain_articulated_v1_6_calibration.yaml) — 独立 calibration runner 与冻结的 GPU1/batch/8-step 合同。
+- [src/task/ObjectInteractionCmv2/docs/指导/V1.6.md](../指导/V1.6.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.6.md](../plan/V1.6.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 配对指导/final plan、入口和 `V1.6.1` 指针。
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json](../../configs/active/arctic_articulation_v1_5.json)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 同一未提交 V1.5 implementation/metadata 边界；本次训练按这些已验证合同读取。
+- [outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/run_manifest.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/run_manifest.json)、[config.json](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/config.json)、[metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/metrics.jsonl)、[train.log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/train.log)、[latest.pt](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v161_articulated_random_init_calibration_20260918T044900Z/latest.pt) — 完整独立 run 输出。
+
+**原因**
+
+V1.5 的 link/joint graph 与 4096-point hand stream 改变显存和数值路径，不能把 V1.4 的 batch/权重直接解释为可用。先在新输出目录做有限随机初始化 calibration，验证真实 mixed batch 中 GRAB 的 zero-joint mask 与 ARCTIC 的 FK path 能共存，再讨论正式训练预算。
+
+**验证**
+
+- GPU1 batch `2/4/8/16` 均完成一次 finite forward/backward/optimizer step，无 OOM；最大已测试成功 batch 为 `16`。
+- 以 batch `16` 完成 `8` steps；每 step 固定 `grab=8, arctic=8`，总 loss 从 `2.64433` 到 `0.34957`，flow loss 从 `1.30217` 到 `0.16552`。这是有限 smoke 的优化轨迹，不是泛化/效果结论。
+- run manifest 为 `COMPLETED`，`last_step=8`、`initial_checkpoint=null`、`architecture_version=v1_5_articulated_fk`；metrics/train log 均非空，latest checkpoint 已生成。
+- `/home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests`：`29 passed`；`py_compile`、`git diff --check` 通过。交接前运行 scoped activity link audit。
+
+**回滚**
+
+停止/忽略该已完成独立 calibration output，删除本次 V1.6 runner/config/docs 增量并将指针恢复为 `V1.5.2` 即可；不删除输入 cache、历史 checkpoint、V1.4 output 或 queue。未经新的 final plan 不得把 `latest.pt` 当正式初始化或启动长时训练。
+
+## 2026-09-18 05:00:00 +0000 — V1.7.1 V1.5 从零二域正式训练启动
+
+- timestamp: `2026-09-18 05:00:00 +0000`
+- activity_id: `ACT-20260918-050000-CMV2-V171-ARTICULATED-FORMAL-START`
+- modification_version: `V1.7.1`
+- type: `code / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确指定 GRAB stride=1、ARCTIC stride=5..10、16 epoch，并延续 GPU1/batch=16/随机初始化。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.7 implementation/docs 未提交；未覆盖旧 cache/checkpoint/output。）
+- run_id: `cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z`
+- run_status: `STARTED`
+- command: `PYTHONPATH=. /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.train_articulated_formal --config src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_7_formal.yaml --run-id cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z`
+- scope: GPU1、随机初始化 V1.5 articulated model；GRAB stride=1，ARCTIC stable stride=5..10，16 epoch，batch=16、source-balanced。GPU2 queue、旧 V1.4 output/checkpoint、cache/split/GT 均只读。
+- conclusion: `INCONCLUSIVE`（运行中；工程/科研终态待 manifest、metrics 和 activity 更新。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/train_articulated_formal.py](../../train_articulated_formal.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_7_formal.yaml](../../configs/active/two_domain_articulated_v1_7_formal.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.7.md](../指导/V1.7.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.7.md](../plan/V1.7.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — runner、冻结训练合同及 `V1.7.1` 指针。
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/config.json) — 已生成；[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/metrics.jsonl) / [train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/train.log) / checkpoint 为 `PENDING`。
+
+**原因**
+
+V1.6 calibration 已证明 batch=16 的真实 mixed FK path 可运行。用户指定新的跨域 temporal contract 后，必须以独立随机初始化 run 记录性能，不复用 rigid checkpoint，也不混入 ARCTIC stride 1..4。
+
+**验证**
+
+- runner 已通过 `py_compile` 与 V1.5 targeted pytest；GPU1 空闲显存满足 20 GiB 闸门。
+- 启动后 PID `1373809` 存活，run manifest 已写 `STARTED`；当前在构造全量 train/validation transition 索引。终态将补充 last epoch/step、best metric、实际 metrics/train log 和 checkpoint。
+
+**回滚**
+
+停止 PID `1373809` 或其 run 后续进程并将 manifest/activity 标为 `STOPPED`；不删除输入 cache、旧 checkpoint、GPU2 queue 或已写出的独立 run 产物。
+
+## 2026-09-18 09:57:35 +0000 — V1.7.1 正式训练运行中状态核查
+
+- timestamp: `2026-09-18 09:57:35 +0000`
+- activity_id: `ACT-20260918-095735-CMV2-V171-ARTICULATED-FORMAL-STATUS`
+- modification_version: `V1.7.1`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 仅响应用户对已批准、已启动 run 的状态查询；未修改代码、配置、数据、训练进程或 run 产物。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（仅列举既有 V1.5--V1.7 未提交实现/文档；本次核查未写入这些文件。）
+- run_id: `cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z`
+- run_status: `RUNNING`
+- scope: 只读检查 GPU1 训练进程、run manifest 与 latest checkpoint。PID `1373809` 存活；GPU1 利用率 `66%`、显存 `2711/49140 MiB`，无 OOM 迹象；不触碰 GPU0/GPU2/GPU3 的既有任务。
+- evidence: manifest 记录 train rows `GRAB=326722`、`ARCTIC=189741`，validation rows `GRAB=40628`、`ARCTIC=25802`，每 epoch `32279` step。latest checkpoint 的 `epoch=1`、`step=9400`、`best_metric=null`，故尚未完成第一个 epoch 和 validation。
+- conclusion: `INCONCLUSIVE`（进程、GPU 接线与周期 checkpoint 均正常；尚无 epoch 级指标，不能形成工程完成或科研效果结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py)、[src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json](../../configs/active/arctic_articulation_v1_5.json)、[src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 已验证的 V1.5 articulated FK/metadata 实现边界；本次仅按其读取。
+- [src/task/ObjectInteractionCmv2/train_articulated_calibration.py](../../train_articulated_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_6_calibration.yaml](../../configs/active/two_domain_articulated_v1_6_calibration.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.6.md](../指导/V1.6.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.6.md](../plan/V1.6.md) — 已完成 V1.6 calibration 的隔离增量；未被本次诊断或正式 run 改写。
+- [src/task/ObjectInteractionCmv2/train_articulated_formal.py](../../train_articulated_formal.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_7_formal.yaml](../../configs/active/two_domain_articulated_v1_7_formal.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.7.md](../指导/V1.7.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.7.md](../plan/V1.7.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 正式 run 的冻结合同、入口与版本指针。
+- [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/config.json)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/latest.pt)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/train.log) — 独立 V1.7.1 run；后两个文件已创建但在 epoch 完成前为空（runner 仅写 epoch 级记录）。
+
+**原因**
+
+第一个 epoch 长达 `32279` step，runner 按 epoch 写入 validation、metrics 与 train log。因此应以存活进程、manifest 状态、GPU 使用与周期 latest checkpoint 判断当前是否健康，不能把尚为空的 epoch 日志误判为失败。
+
+**验证**
+
+- `ps -p 1373809`：训练进程仍存活，状态为 `Dsl`。
+- `nvidia-smi`：GPU1 使用率 `66%`、显存 `2711/49140 MiB`；未发现 OOM 或进程退出。
+- 使用 `torch.load(.../latest.pt, map_location='cpu')` 只读加载：`epoch=1`、`step=9400`、`architecture_version=v1_5_articulated_fk`、`modification_version=V1.7.1`；checkpoint 文件大小 `4061083` bytes。
+
+**回滚**
+
+若用户要求停止，终止 PID `1373809` 并把 manifest/activity 更新为 `STOPPED`；保留已产生的独立输出以供审计，绝不删除输入 cache、旧 checkpoint 或其他 GPU 任务。
+
+## 2026-09-18 10:02:31 +0000 — V1.8.1 B64 校准与正式重启边界已批准
+
+- timestamp: `2026-09-18 10:02:31 +0000`
+- activity_id: `ACT-20260918-100231-CMV2-V181-B64-RESTART-START`
+- modification_version: `V1.8.1`
+- type: `code / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 已向用户说明停止不完整 B16 run、保留其产物、以 B64 执行 1-step mixed calibration 并随机初始化重启 16 epoch 的范围、风险、回滚与验证；用户回复“可以”。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.8 的 Task-local implementation/docs 尚未提交；未覆盖用户既有 cache、checkpoint 或其他 GPU 工作。）
+- run_id: `cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z`
+- run_status: `STARTED`
+- stopped_run_id: `cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z`
+- stopped_run_status: `STOPPED`
+- scope: 已对精确 PID `1373809` 发送 `SIGTERM` 并确认退出；V1.7.1 manifest 写入 `last_epoch=1`、`last_step=11800` 与用户批准的重启原因。新增 B64 calibration runner/config 和 V1.8 formal config；formal runner 只增加显式 V1.8 schema→B64 审批映射。保持 GPU1、16 epoch、随机初始化、GRAB stride=1、ARCTIC stable stride=5..10、validation stride=2、1:1 sampling、cache/split/GT/FK/旧 checkpoint 不变。
+- conclusion: `INCONCLUSIVE`（B16 已按用户意图停止；B64 calibration 尚未得出结果，正式 B64 run 尚未启动。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py)、[src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json](../../configs/active/arctic_articulation_v1_5.json)、[src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — V1.5 articulated FK 实现及已验证 metadata 边界；本次只沿用，不改数据语义。
+- [src/task/ObjectInteractionCmv2/train_articulated_calibration.py](../../train_articulated_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_6_calibration.yaml](../../configs/active/two_domain_articulated_v1_6_calibration.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.6.md](../指导/V1.6.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.6.md](../plan/V1.6.md) — 已完成的 B16 calibration；保留只读。
+- [src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_7_formal.yaml](../../configs/active/two_domain_articulated_v1_7_formal.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.7.md](../指导/V1.7.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.7.md](../plan/V1.7.md) — 已停止的 B16 formal 合同和原审批边界；不再启动。
+- [src/task/ObjectInteractionCmv2/train_articulated_batch64_calibration.py](../../train_articulated_batch64_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_8_batch64_calibration.yaml](../../configs/active/two_domain_articulated_v1_8_batch64_calibration.yaml)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_8_formal.yaml](../../configs/active/two_domain_articulated_v1_8_formal.yaml)、[src/task/ObjectInteractionCmv2/train_articulated_formal.py](../../train_articulated_formal.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.8.md](../指导/V1.8.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.8.md](../plan/V1.8.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — V1.8.1 B64 calibration 闸门、正式合同、version pointer 与入口。
+- [V1.7 stopped manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json)、[V1.7 latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/latest.pt) — 保留的、未完成 B16 run，不能用于 V1.8 初始化。
+- V1.8 calibration [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/train.log)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/latest.pt) 为 `PENDING`。
+
+**原因**
+
+B16 实测仅使用约 `2.7 GiB` GPU1 显存，用户要求扩大 batch。B64 保持每 source `32` 样本、未变更每 epoch 的数据覆盖和训练 epoch 数，并先以真实 two-domain FK path 验证显存与数值可行性，避免把 B16 checkpoint 或半途样本顺序混入新实验。
+
+**验证**
+
+- 停止前只读加载 V1.7 latest checkpoint：`epoch=1`、`step=11800`、`best_metric=null`；`kill -0 1373809` 在 `SIGTERM` 后确认进程退出。
+- `PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -m py_compile src/task/ObjectInteractionCmv2/train_articulated_formal.py src/task/ObjectInteractionCmv2/train_articulated_batch64_calibration.py` 通过。
+- `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -m pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py`：`4 passed`。
+- 下一步仅启动 V1.8 B64 one-step calibration；其 `COMPLETED`/`FAILED` manifest 是正式训练启动闸门。
+
+**回滚**
+
+停止 V1.8 calibration 或后续 formal PID、将其 manifest/activity 标为 `STOPPED`，保留独立 output；删除 V1.8 runner/config/docs 增量并将 Task 指针恢复为 `V1.7.1` 即可。不得删除 V1.7 output、cache、GT、split、旧 checkpoint 或其他 GPU 任务。
+
+## 2026-09-18 10:04:13 +0000 — V1.8.1 B64 校准通过并启动正式训练
+
+- timestamp: `2026-09-18 10:04:13 +0000`
+- activity_id: `ACT-20260918-100413-CMV2-V181-B64-FORMAL-START`
+- modification_version: `V1.8.1`
+- type: `code / experiment / operation / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确批准 V1.8 B64 calibration 成功后，以随机初始化重启同一 16-epoch 二域训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.8 Task-local implementation/docs 尚未提交；未混入 cache、旧 checkpoint、output 或其他 GPU 工作。）
+- run_id: `cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z`
+- run_status: `STARTED`
+- calibration_run_id: `cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z`
+- calibration_run_status: `COMPLETED`
+- scope: B64 calibration 在 GPU1 用随机初始化、GRAB=32/ARCTIC=32 的真实 V1.5 FK path 完成一轮 finite forward/backward/optimizer；随后以相同 B64、随机初始化、16 epoch、GRAB stride=1、ARCTIC stable stride=5..10、validation stride=2 和 source-balanced sampling 启动独立正式 run。V1.7.1 B16 output 保持 `STOPPED` 且不用于初始化。
+- conclusion: `SUPPORTED`（仅 B64 wiring/显存/数值 smoke）；新正式 run 的工程和科研结果均为 `INCONCLUSIVE`。
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/articulated.py](../../articulated.py)、[src/task/ObjectInteractionCmv2/tests/test_v1_5_articulated.py](../../tests/test_v1_5_articulated.py)、[src/task/ObjectInteractionCmv2/configs/active/arctic_articulation_v1_5.json](../../configs/active/arctic_articulation_v1_5.json)、[src/task/ObjectInteractionCmv2/docs/指导/V1.5.md](../指导/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.5.md](../plan/V1.5.md)、[src/task/ObjectInteractionCmv2/docs/architecture/articulated_object_design.md](../architecture/articulated_object_design.md) — 只读沿用的 articulated FK/metadata 合同。
+- [src/task/ObjectInteractionCmv2/train_articulated_calibration.py](../../train_articulated_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_6_calibration.yaml](../../configs/active/two_domain_articulated_v1_6_calibration.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.6.md](../指导/V1.6.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.6.md](../plan/V1.6.md) — 已完成的 B16 calibration，保留只读。
+- [src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_7_formal.yaml](../../configs/active/two_domain_articulated_v1_7_formal.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.7.md](../指导/V1.7.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.7.md](../plan/V1.7.md) — 已停止且独立保留的 B16 formal 合同。
+- [src/task/ObjectInteractionCmv2/train_articulated_batch64_calibration.py](../../train_articulated_batch64_calibration.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_8_batch64_calibration.yaml](../../configs/active/two_domain_articulated_v1_8_batch64_calibration.yaml)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_8_formal.yaml](../../configs/active/two_domain_articulated_v1_8_formal.yaml)、[src/task/ObjectInteractionCmv2/train_articulated_formal.py](../../train_articulated_formal.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.8.md](../指导/V1.8.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.8.md](../plan/V1.8.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — B64 calibration 与正式训练合同、runner、版本入口。
+- [B16 stopped manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json)、[B16 latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/latest.pt) — 已停止 run，末态 `last_epoch=1`、`last_step=11800`；不得作为新 run 初始化。
+- [B64 calibration manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/train.log)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/latest.pt) — 已完成独立 smoke 产物。
+- B64 formal [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/train.log)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/latest.pt) 为 `PENDING`。
+
+**原因**
+
+V1.8 的启动闸门是实际二域 B64 step，而不是按 B16 显存线性外推。Smoke 已通过，故可以按用户批准范围开始新 run；该 smoke 不比较 validation、不主张泛化或科研效果。
+
+**验证**
+
+- B64 calibration `COMPLETED`：`loss=8.761072158813477`、`flow_loss=4.281817436218262`、`source_counts={grab:32, arctic:32}`，`latest.pt` 已写入，GPU1 随后回到 `0 MiB`。
+- B64 calibration 的 manifest 为 `last_step=1`、`calibrated_batch_size=64`、`initial_checkpoint=null`、`architecture_version=v1_5_articulated_fk`。
+- `py_compile` 与 V1.5 targeted pytest（`4 passed`）见前一条；正式 runner 的 manifest operation 改为由 `modification_version` 派生，避免把 V1.8 run 误标为 V1.7。
+
+**回滚**
+
+停止后续 B64 formal PID、将其 manifest/activity 标为 `STOPPED` 并保留其 output；不删除 B16 run、B64 calibration、cache、GT、split、FK metadata、旧 checkpoint 或其他 GPU 任务。
+
+## 2026-09-18 10:06:36 +0000 — V1.8.1 B64 正式训练运行中核查
+
+- timestamp: `2026-09-18 10:06:36 +0000`
+- activity_id: `ACT-20260918-100636-CMV2-V181-B64-FORMAL-STATUS`
+- modification_version: `V1.8.1`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 仅核查用户已批准且已启动的 V1.8 B64 run；未改动训练变量、输入、训练进程或产物。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.8 Task-local 实现/文档未提交；本次仅追加活动记录。）
+- run_id: `cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z`
+- run_status: `RUNNING`
+- scope: 只读检查 PID `1429425`、run manifest 和 GPU1；进程存活并已完成全量 transition 索引。未触碰已停止的 V1.7.1、已完成的 B64 calibration、cache、GT、split、FK metadata 或 GPU0/GPU2/GPU3 任务。
+- evidence: manifest 记录 `GRAB=326722`、`ARCTIC=189741` train rows，`GRAB=40628`、`ARCTIC=25802` validation rows，`steps_per_epoch=8070`；这是 B16 的 `32279` step/epoch 依相同数据覆盖、B64 重算后的预期值。
+- conclusion: `INCONCLUSIVE`（B64 calibration 的工程 smoke 已 `SUPPORTED`；正式训练正在第一个 epoch，尚未产生 epoch 级 validation/科研结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — 本次及既有 V1.5--V1.8 Task-local 代码、配置、定向测试、指导、final plan、架构说明和入口；其中 V1.8 合同为 [configs/active/two_domain_articulated_v1_8_formal.yaml](../../configs/active/two_domain_articulated_v1_8_formal.yaml)、[docs/指导/V1.8.md](../指导/V1.8.md)、[docs/plan/V1.8.md](../plan/V1.8.md) 与 [train_articulated_formal.py](../../train_articulated_formal.py)。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Task 指针为 `V1.8.1`；[活动记录](activity_log.md) 是运行状态唯一时间线。
+- [B16 stopped manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json) — `STOPPED`，last step `11800`，仅供审计。
+- [B64 calibration manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/run_manifest.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/metrics.jsonl)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/latest.pt) — `COMPLETED` 的 B64 1-step smoke。
+- [B64 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/train.log) — 已生成的独立 run；epoch 级 metrics/train log 仍为空属预期，checkpoint 在第 200 step 前为 `PENDING`。
+
+**原因**
+
+必须先确认新的 B64 run 已从 `STARTED` 进入 `RUNNING`、确实采用 B64 重算后的 epoch 步数，才能把 B64 smoke 成功与长期正式训练启动区分开。
+
+**验证**
+
+- `ps -p 1429425`：进程存活，状态 `Rsl`；manifest 为 `RUNNING`。
+- manifest 的 source row count 与 B16 run 相同，batch 改为 `64` 后 `steps_per_epoch=8070`，符合 `ceil((326722 + 189741)/64)`。
+- B64 calibration 已记录 finite `loss=8.761072158813477`，但该项只验证 wiring，不是正式训练效果。
+
+**回滚**
+
+若用户要求停止，终止 PID `1429425` 并将该 formal manifest/activity 更新为 `STOPPED`；保留所有独立 output，绝不删除 B16/B64 checkpoint、cache、GT、split 或其他 GPU 工作。
+
+## 2026-09-18 14:48:33 +0000 — V1.8.1 B64 正式训练第 11 epoch 运行中核查
+
+- timestamp: `2026-09-18 14:48:33 +0000`
+- activity_id: `ACT-20260918-144833-CMV2-V181-B64-FORMAL-E11-STATUS`
+- modification_version: `V1.8.1`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 仅响应用户对已批准 V1.8 B64 formal run 的状态查询；未改变进程、数据、配置、checkpoint 或训练变量。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.8 Task-local 实现/文档未提交；本次只追加活动记录。）
+- run_id: `cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z`
+- run_status: `RUNNING`
+- scope: 只读核查 PID `1429425`、GPU1、manifest、epoch metrics 与 checkpoint；不触碰 B16 stopped run、B64 calibration、cache、GT、split、FK metadata 或其他 GPU 任务。
+- evidence: PID 已运行 `04:42:42` 且存活；GPU1 利用率 `91%`、显存 `9397/49140 MiB`。epoch 10 已完成（step `80700`），latest checkpoint 正在 epoch 11（step `86800`）。
+- best_metric: `0.10129391495800218`（epoch 9 的等权 `0.5*(val_grab_loss+val_arctic_loss)`；`val_grab_loss=0.07577590058833042`、`val_arctic_loss=0.12681192932767393`）。
+- conclusion: `INCONCLUSIVE`（已得到 10 个 epoch 的运行中验证曲线且无 OOM/non-finite 证据；16 epoch 未完成，不能作最终工程或科研结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.8 的 Task-local implementation、冻结配置、定向测试、指导、final plan 和入口；本次仅按其执行。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前 Task 指针 `V1.8.1`；[活动记录](activity_log.md) 为运行状态唯一时间线。
+- [B16 stopped manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v171_articulated_random_init_grab1_arctic5to10_20260918T050000Z/run_manifest.json) — 保留且不用于初始化的 B16 run。
+- [B64 calibration manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_calibration_20260918T100231Z/run_manifest.json) — `COMPLETED` 的 B64 smoke。
+- [B64 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/train.log)、[best checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/latest.pt) — epoch 10 完整记录与 epoch 11 周期 checkpoint。
+
+**原因**
+
+正式 run 每个 epoch 结束后才写 validation record；因此 checkpoint 的 epoch 11/step 86800 与 metrics 最后一行 epoch 10 并不矛盾。第 9 epoch 的 best checkpoint 只表示当前 selection metric 最低，不代表最终效果成立。
+
+**验证**
+
+- `ps -p 1429425`：进程存活，状态 `Rsl`。
+- `nvidia-smi`：GPU1 `91%`、`9397/49140 MiB`；B64 仍远低于可用显存，未见 OOM。
+- 只读加载 `latest.pt`：`epoch=11`、`step=86800`、`best_metric=0.10129391495800218`、`modification_version=V1.8.1`。
+- `metrics.jsonl` 第 10 epoch：selection metric `0.11090517262217356`，未优于第 9 epoch 的 best。
+
+**回滚**
+
+若用户要求停止，终止 PID `1429425` 并将 manifest/activity 标为 `STOPPED`；保留 B64 output 和现有 best/latest checkpoint，绝不删除 B16 run、cache、GT、split 或其他 GPU 工作。
+
+## 2026-09-18 14:50:04 +0000 — V1.8.1 B64 第 10 epoch validation 阶段性评估
+
+- timestamp: `2026-09-18 14:50:04 +0000`
+- activity_id: `ACT-20260918-145004-CMV2-V181-B64-INTERIM-EVAL`
+- modification_version: `V1.8.1`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 用户请求评估已批准且运行中的训练；仅只读汇总 runner 已完成的 full-validation metrics，不启动独立测试集/benchmark。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.8 Task-local 实现/文档未提交；本次仅追加活动记录。）
+- run_id: `cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z`
+- run_status: `RUNNING`
+- scope: 只读评估已完成 epoch 1--10 的 runner full-validation metrics 及 best/latest checkpoint；不停止第 11 epoch、不改训练变量，也不启动尚未计划的独立测试集评估。
+- best_metric: `0.10129391495800218`（epoch 9：`val_grab_loss=0.07577590058833042`，`val_arctic_loss=0.12681192932767393`）。
+- evidence: selection metric 从 epoch 1 的 `0.12294293948454071` 降至 epoch 9 的最佳值（相对下降约 `17.6%`）；epoch 10 为 `0.11090517262217356`，未刷新最佳。epoch 1→9 的 GRAB validation loss 下降约 `26.2%`，ARCTIC 下降约 `11.4%`；ARCTIC 在 epoch 10 回升到 `0.14959455744056777`，是该 epoch selection 反弹的主因。
+- conclusion: `INCONCLUSIVE`（训练/验证曲线表明 B64 run 发生了有限优化且 checkpoint selection 正常；但仅完成 10/16 epoch、无独立 held-out benchmark 或 rigid baseline 对照，不能据此主张跨域效果成立。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.8 Task-local 实现、配置、指导、final plan、测试与文档；本次评估未修改它们。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Task 当前版本 `V1.8.1`；[活动记录](activity_log.md) 是运行状态和评估证据入口。
+- [B64 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/config.json)、[epoch metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/metrics.jsonl)、[train log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/train.log)、[best checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt)、[latest checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/latest.pt) — 已完成 epoch 1--10 的 full validation 和 epoch 11 周期 checkpoint。
+
+**原因**
+
+当前 runner 的 validation 定义是完整 val transition rows 上 GRAB/ARCTIC structured loss 的等权均值，正是 formal plan 冻结的 best selection metric。它适合判断优化是否在进行和选择 checkpoint，但不等于独立测试集泛化评估，后者应待 16 epoch 终态后以独立 plan/run 执行。
+
+**验证**
+
+- `metrics.jsonl` 含 epoch 1--10 共 10 条完整 validation 记录；best.pt 内嵌 validation 与第 9 epoch 指标一致。
+- 只读加载 best.pt：`epoch=9`、`step=72630`、`best_metric=0.10129391495800218`；latest.pt：`epoch=11`、`step=87200`。
+- PID `1429425` 存活，manifest 仍为 `RUNNING`；因此本条明确为阶段性评估而非终态结论。
+
+**回滚**
+
+本条为只读诊断，无工程回滚。若用户要求停止训练，终止 PID `1429425` 并更新 formal manifest/activity 为 `STOPPED`，保留现有 metrics 和 checkpoints。
+
+## 2026-09-18 14:52:40 +0000 — V1.8.1 请求的 ARCTIC test 评估 split 可用性诊断
+
+- timestamp: `2026-09-18 14:52:40 +0000`
+- activity_id: `ACT-20260918-145240-CMV2-V181-TEST-SPLIT-DIAGNOSTIC`
+- modification_version: `V1.8.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 用户要求当前 test split 按 GRAB stride=1、ARCTIC stride=5..10 评估；本次只读取冻结 index 的 test entries，未创建评估配置、输出或数据变更。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.8 Task-local 实现/文档未提交；本次只追加活动记录。）
+- run_status: `BLOCKED`
+- scope: 读取 `/mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json` 的 `test` split，按 `dataset` 与 MANO variant 计数；未启动 GPU evaluation，也未停止 V1.8 formal training。
+- evidence: 当前 test split 含 `GRAB/MANO=133` 个 sequence entry，`ARCTIC/MANO=0` 个 sequence entry。因此 GRAB stride=1 test eval 可行，而 ARCTIC stride=5..10 test eval 无可读取的 test source。
+- conclusion: `INCONCLUSIVE`（数据 split 不支持用户指定的双域 test 评估；不能将 validation 或 train 伪称为 test，也不能无批准地修改 split。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — 既有 V1.5--V1.8 Task-local runner、配置、计划和活动记录；本次未修改实现。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前 Task 指针 `V1.8.1`。
+- [source index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json) — 只读的 current split 证据；其 `test` 无 ARCTIC/MANO entries。
+- [B64 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[best checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt) — 评估候选 checkpoint 已存在但尚未对 test 执行。
+
+**原因**
+
+用户指定的 ARCTIC stride `5..10` 只有在 ARCTIC test entry 存在时才有科学上的 held-out 含义。用 val 替代会改变 split 解释，用 train 替代会产生泄漏；二者都超出本次授权。
+
+**验证**
+
+- 只读解析 source index 的 `sequences.test`：MANO `grab=133`、`arctic=0`。
+- 未生成 evaluation output、未写 source index/cache/split，训练 PID `1429425` 未被干预。
+
+**回滚**
+
+本条为只读诊断，无工程回滚。若要继续，需由用户选择：只运行 GRAB test，或明确授权 ARCTIC 使用何种非-test split/创建新 held-out split；后者需要新的 final plan 和独立数据/评估 run。
+
+## 2026-09-18 14:53:57 +0000 — V1.8.1 ARCTIC test 缺失原因确认
+
+- timestamp: `2026-09-18 14:53:57 +0000`
+- activity_id: `ACT-20260918-145357-CMV2-V181-ARCTIC-SPLIT-CONFIRM`
+- modification_version: `V1.8.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 回答用户关于 ARCTIC 是否未划分 test split 的询问；只读检查 index/cache manifest 的 split metadata 和 counts。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.8 Task-local 实现/文档未提交；本次仅追加活动记录。）
+- run_status: `NOT_STARTED`
+- scope: 只读当前 `two_domain_mano_split_seed42` 的 index、cache manifest 与生成 run manifest；未修改 split/cache、未启动评估且未干预训练。
+- evidence: `arctic_split={unit: trajectory_sequence_id, method: sha256_mod_10, seed:42, train_fraction:0.9}`。counts 为 ARCTIC `train=266`、`val=35`、`test=0`；GRAB 为 `train=1068`、`val=134`、`test=133`。
+- conclusion: `INCONCLUSIVE`（ARCTIC 原始数据并非不存在；当前 two-domain MANO index 的 ARCTIC policy 仅分配 train/val，故不具备 held-out ARCTIC test 评估。创建或重划 ARCTIC test 是数据语义变更，需另行批准。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — 既有 V1.5--V1.8 Task-local 代码、配置、计划和日志；本次未修改。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前 Task 指针 `V1.8.1`。
+- [two-domain index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json)、[cache manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/cache_manifest.json)、[split generation manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/run_manifest_cmv2_two_domain_mano_split_20260917T150200Z.json) — 只读 split policy 和分域 count 证据。
+
+**原因**
+
+`train_fraction=0.9` 与当前生成结果只表达 ARCTIC train/val 切分，不会自动产生第三个 test bucket。不能将 source 中尚未分配的 ARCTIC trajectory 任意挪入 test 后仍宣称与现有训练协议相同。
+
+**验证**
+
+- index 与 cache manifest 的 `arctic_split` 和 `counts_by_domain` 完全一致。
+- cache manifest validation 为 `bad_count=0`；这只证明现有 split 的 cache 可读，不补出缺失的 ARCTIC test。
+
+**回滚**
+
+本条为只读诊断，无工程回滚。任何新 ARCTIC held-out split 应作为独立数据版本和评估计划创建，保持当前 index/cache 只读。
+
+## 2026-09-18 14:57:25 +0000 — V1.9.1 全量 validation 二域评估启动
+
+- timestamp: `2026-09-18 14:57:25 +0000`
+- activity_id: `ACT-20260918-145725-CMV2-V191-VALIDATION-EVAL-START`
+- modification_version: `V1.9.1`
+- type: `code / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认当前 ARCTIC 无 test split 后明确要求先做验证集测试，并重复指定 GRAB stride=1、ARCTIC stride=5..10。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.9 Task-local implementation/docs 未提交；未覆盖任何 cache、split、checkpoint 或训练 output。）
+- run_id: `cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z`
+- run_status: `STARTED`
+- checkpoint: `V1.8.1 best.pt`，epoch `9`、step `72630`、selection metric `0.10129391495800218`；只读加载，非训练初始化。
+- scope: 新增 isolated V1.9 validation evaluator/config；全量读取 frozen `val` split，GRAB 固定 stride=1，ARCTIC 以 seed=42、sequence/current-frame 稳定映射到 stride=5..10，并按实际 stride 输出分组 flow metrics。GPU1 batch=64，训练 PID `1429425` 保持运行；不读取/写入 `latest.pt`、不创建 ARCTIC test split、不开启训练或数据处理。
+- conclusion: `INCONCLUSIVE`（validation diagnostic 运行中；其结果不可解释为 held-out test 或泛化结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.9 Task-local 代码、配置、定向测试、指导、final plans、入口及既有活动；本次变更限定于 V1.9 isolated evaluator/config/docs 与版本指针。
+- [src/task/ObjectInteractionCmv2/eval_articulated_validation.py](../../eval_articulated_validation.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_9_validation_eval.yaml](../../configs/active/two_domain_articulated_v1_9_validation_eval.yaml)、[src/task/ObjectInteractionCmv2/docs/指导/V1.9.md](../指导/V1.9.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.9.md](../plan/V1.9.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — evaluator、冻结合同、用户指导/final plan 与 `V1.9.1` 指针。
+- [V1.8 best checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt)、[V1.8 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json) — 只读冻结 checkpoint 及其来源。
+- V1.9 validation [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/metrics_summary.json)、[eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/eval.log) 为 `PENDING`。
+
+**原因**
+
+当前 index 没有 ARCTIC test entry；用户指定先用 validation。选择 epoch 9 best checkpoint 防止并发训练中的 latest checkpoint 改变，使此次评估可复现。ARCTIC 采用同一 5..10 deterministic contract 而非把 val stride=2 的训练期指标误作本次比较。
+
+**验证**
+
+- `py_compile src/task/ObjectInteractionCmv2/eval_articulated_validation.py` 通过。
+- `pytest -q src/task/ObjectInteractionCmv2/tests/test_v1_4_6_two_domain_flow_eval.py`：`2 passed`（复用的 point-micro EPE/magnitude/angle 统计合同）。
+- 只读 config load：`V1.9.1`、GPU1/batch=64、stride contract `grab=[1]`、`arctic=[5,6,7,8,9,10]` 通过 strict validation。
+
+**回滚**
+
+停止 V1.9 evaluation PID 并将其 manifest/activity 更新为 `STOPPED`，保留独立 output；删除 V1.9 evaluator/config/docs 并恢复 Task pointer 即可。不得删除/改写 V1.8 best checkpoint、训练 output、cache、GT、split 或训练 PID。
+
+## 2026-09-18 14:58:38 +0000 — V1.9.2 validation evaluator 启动失败修复与重启
+
+- timestamp: `2026-09-18 14:58:38 +0000`
+- activity_id: `ACT-20260918-145838-CMV2-V192-VALIDATION-EVAL-RESTART`
+- modification_version: `V1.9.2`
+- type: `code / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 执行用户已批准的 V1.9 validation evaluation；本次仅修复首次运行暴露的 evaluator→训练 loader seed 适配错误，不改变 checkpoint、split、stride、device、batch 或指标合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.9 Task-local implementation/docs 未提交；未覆盖 cache、split、checkpoint、训练 output 或其他 GPU 任务。）
+- failed_run_id: `cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z`
+- failed_run_status: `FAILED`
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `STARTED`
+- scope: 首次 run 在 dataset construction 前以 `KeyError: 'training'` 失败，未读取 batch、未占用持续 GPU 工作且未影响 V1.8 training。修复 evaluator 为复用 loader 显式提供等价的 `seed=42` adapter，配置/Task pointer 更新为 `V1.9.2`；所有评估数据、GRAB stride=1、ARCTIC stride=5..10、epoch-9 best checkpoint、GPU1/batch=64 与 metrics 保持不变。
+- conclusion: `INCONCLUSIVE`（修复后独立 validation evaluation 尚未完成；首次失败属于 `INVALID_IMPLEMENTATION`，不构成模型结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.9 Task-local 代码、配置、测试、指导、final plans 和日志；本次仅修复 V1.9 evaluator seed adapter 及版本指针。
+- [src/task/ObjectInteractionCmv2/eval_articulated_validation.py](../../eval_articulated_validation.py)、[src/task/ObjectInteractionCmv2/configs/active/two_domain_articulated_v1_9_validation_eval.yaml](../../configs/active/two_domain_articulated_v1_9_validation_eval.yaml)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 最小修复后的 evaluator、`V1.9.2` config 与 Task pointer；[V1.9 plan](../plan/V1.9.md) 不变。
+- [failed V1.9.1 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/run_manifest.json)、[failed config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/config.json) — 保留失败证据，不重用或覆盖。
+- V1.9.2 [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/eval.log) 为 `PENDING`。
+
+**原因**
+
+正式 trainer 的 `_datasets` 从 `training.seed` 读取 deterministic sample seed，而 V1.9 config 将运行参数正确地归在 `evaluation`。首次 runner 未适配该接口。显式构造仅含相同 seed 的 adapter 保持所有数据选择语义不变，避免复制或改写共享 loader。
+
+**验证**
+
+- 失败 traceback 定位为 `_datasets(config, 'val')` 的 `KeyError: 'training'`；失败 manifest 已写 `FAILED`。
+- `py_compile src/task/ObjectInteractionCmv2/eval_articulated_validation.py` 通过；严格 config load 输出 `V1.9.2`。
+- checkpoint、source index、stride/evaluation contract 均未变；下一步仅启动新 output 的 V1.9.2 evaluation。
+
+**回滚**
+
+停止 V1.9.2 evaluation PID 并将其 manifest/activity 写为 `STOPPED`，保留 V1.9.1 failed output 和 V1.9.2 output；删除 V1.9.2 三个最小增量并恢复 Task pointer 即可。不得删除/改写 V1.8 checkpoint、训练 output、cache、GT 或 split。
+
+## 2026-09-18 15:00:12 +0000 — V1.9.2 validation 评估运行中 checkpoint 实际版本核查
+
+- timestamp: `2026-09-18 15:00:12 +0000`
+- activity_id: `ACT-20260918-150012-CMV2-V192-VALIDATION-EVAL-STATUS`
+- modification_version: `V1.9.2`
+- type: `diagnostic / operation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 核查已批准且已启动 V1.9.2 evaluation 的实际 manifest、进程和 GPU 状态；未改变评估或训练进程。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（既有 V1.5--V1.9 Task-local 实现/文档未提交；本次仅追加活动记录。）
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `RUNNING`
+- scope: 只读检查 V1.9.2 manifest、评估 PID `1805786`、训练 PID `1429425` 与 GPU1；不读取/改写训练/评估输入数据、cache、split 或 checkpoint。
+- evidence: evaluator 已全量构造 `val` rows：`GRAB=40762`、`ARCTIC=25522`，并载入实际 `best.pt` 的 `epoch=11`、`step=88770`、SHA-256 `a04bf59890003bad6dec2bef3e7e7d5b0eff25d9e741b9b1afa56e1cf7172ddf`。训练在评估启动窗口内刷新了 best pointer，故原先计划中预期的 epoch 9 路径实际解析为 epoch 11 checkpoint；hash 与 epoch/step 已冻结在本次 manifest，未使用 `latest.pt`。
+- resource_evidence: GPU1 利用率 `100%`、显存 `14556/49140 MiB`；训练和 evaluation 均存活，仍满足 20 GiB 启动闸门后运行。
+- conclusion: `INCONCLUSIVE`（本次将评估实际冻结的 epoch 11 best checkpoint；评估尚未写终态 metrics，不能报告模型结果。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.9 Task-local runner、配置、定向测试、指导、final plan 和活动日志；本次未修改实现。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前 Task 指针 `V1.9.2`。
+- [V1.8 formal manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/run_manifest.json)、[resolved best checkpoint](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v181_articulated_random_init_batch64_formal_20260918T100413Z/best.pt) — 原始 best pointer 及 eval manifest 固化的 digest/epoch/step。
+- [V1.9.2 eval manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/eval.log) — 独立 validation run；metrics/summary/log 在终态前为 `PENDING`。
+
+**原因**
+
+`best.pt` 是训练进程原子性不保证的当前最佳指针；并发训练可在 evaluation 启动前刷新它。评估器已在 manifest 记录读取时 hash、epoch 和 step，故本次实际模型可审计；不能继续把它误记为 epoch 9。后续若需要严格指定 epoch 9，必须从历史 snapshot 显式复制/指定其不可变 checkpoint，而不是依赖已覆盖的 best path。
+
+**验证**
+
+- `ps`：训练 PID `1429425` 与 evaluator PID `1805786` 均存活。
+- V1.9.2 manifest：`run_status=RUNNING`、`rows_by_domain={grab:40762, arctic:25522}`、checkpoint epoch/step 已写入。
+- `nvidia-smi`：GPU1 `100%`、`14556/49140 MiB`；未见 OOM。
+
+**回滚**
+
+若用户要求停止，仅终止 evaluator PID `1805786` 并将 V1.9.2 manifest/activity 更新为 `STOPPED`；继续保留训练 PID、V1.8 checkpoint、失败 V1.9.1 output 与 V1.9.2 已写输出。
+
+## 2026-09-18 15:07:44 +0000 — V1.9.2 全量 validation 二域评估完成
+
+- timestamp: `2026-09-18 15:07:44 +0000`
+- activity_id: `ACT-20260918-150744-CMV2-V192-VALIDATION-EVAL-COMPLETE`
+- modification_version: `V1.9.2`
+- type: `experiment / operation / documentation`
+- task_mode: `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认在 ARCTIC test 缺失时先运行 validation，且指定 GRAB stride=1、ARCTIC stride=5..10；本条记录该已批准 run 的终态和证据。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `oyx`
+- base_commit: `896323d9932dc897dad9318e5e20d4b380804932`
+- worktree_dirty: `true`（V1.5--V1.9 Task-local implementation/docs 未提交；未覆盖 cache、split、checkpoint 或训练 output。）
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `COMPLETED`
+- last_epoch: `11`
+- last_step: `88770`
+- best_metric: `0.09729951618777996`
+- scope: 完成全量 `val` diagnostic：GRAB `40762` transition/stride=1，ARCTIC `25522` transition/stable actual stride=5..10；只读 epoch-11 best checkpoint，GPU1/batch=64。训练独立继续；未创建 ARCTIC test、未改 cache/GT/split/FK/checkpoint。
+- result: GRAB EPE `3.0771183238141897 mm`、ARCTIC pooled EPE `19.190234395794832 mm`；ARCTIC stride 5→10 EPE 为 `13.7949/16.2314/17.5448/20.1664/23.2573/24.1478 mm`。
+- conclusion: `INCONCLUSIVE`（完整 validation diagnostic 成功；GRAB magnitude 已接近 GT，ARCTIC magnitude 仍偏低且误差随 stride 增大。它不是 held-out test、无相对 baseline，且训练未终态，不能主张科研效果成立。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.5--V1.9 Task-local runner、配置、测试、指导、plans、实验与活动记录；本条仅归档终态与实验结果。
+- [docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — 当前 Task 指针 `V1.9.2`；[V1.9 plan](../plan/V1.9.md) 和 [实验记录](experiment_log.md) — 本次评估合同与结果解释。
+- [V1.9.1 failed manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v191_articulated_best_e9_validation_grab1_arctic5to10_20260918T145725Z/run_manifest.json) — loader seed adapter 漏失的失败证据，已独立保留。
+- [V1.9.2 run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/config.json)、[metrics](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics.jsonl)、[summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[eval log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/eval.log) — 完整可复现的终态产物。
+
+**原因**
+
+用户要求先做 validation 而不是新建 ARCTIC held-out test。单独报告 actual stride 5..10 可区分长时距运动导致的误差变化，避免一个 pooled 数掩盖 temporal horizon 差异。
+
+**验证**
+
+- manifest `COMPLETED`：开始 `14:59:25Z`、完成 `15:05:33Z`，耗时约 6 分 8 秒；`rows_by_domain` 与 metrics samples 完全一致。
+- ARCTIC per-stride samples 相加为 `25522`，与 pooled sample accounting 一致；GRAB `40762*1024=41740288`、ARCTIC `25522*1024=26134528` object points 均与 summary 一致。
+- `metrics.jsonl`、`metrics_summary.json` 和 `eval.log` 均已生成且内容相同；checkpoint hash、epoch/step 已写入 manifest。
+
+**回滚**
+
+评估已完成；忽略/保留独立 V1.9.2 output 即可。若需移除实现增量，删除 V1.9 evaluator/config/docs 并恢复 pointer；不得删除 V1.8 checkpoint、训练 output、cache、GT 或 split。
+
+## 2026-09-18 15:16:21 +0000 — V1.9.2 ARCTIC GT flow magnitude 与 raw viewer 口径核对
+
+- timestamp: `2026-09-18 15:16:21 +0000`
+- activity_id: `ACT-20260918-151621-CMV2-V192-ARCTIC-FLOW-VIEWER-DIAGNOSTIC`
+- modification_version: `V1.9.2`
+- type: `diagnostic / documentation`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `not-required`
+- approval_basis: 用户询问 ARCTIC 各 stride 的平均点流移动量与 raw trajectory 可视化差异；只读核对 V1.9 metrics、articulated loader 与既有 raw viewer 的采样/坐标/时间合同。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `be27e5f6d2ab561066a77ea6b99f719107672470`
+- worktree_dirty: `false`（核对开始时；本次只追加本活动记录。）
+- run_id: `cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z`
+- run_status: `COMPLETED`
+- scope: 只读读取 V1.9 summary；检查 articulated loader 的 `obj_flow_gt` 构造和既有 `ObjectInteractionCm.visualize_grab` 的 raw trajectory viewer。未修改模型、cache、GT、split、checkpoint、训练或评估产物。
+- evidence: ARCTIC GT point-micro magnitude（全 validation、1024 uniform sampled points/transition）按 actual stride `5..10` 为 `22.6057/26.3443/29.5176/33.5507/37.6468/39.7068 mm`，pooled 为 `31.5577 mm`。loader 用同一 current root frame 表达 future/current world points 再相减；这是刚体旋转坐标变换，保持同一对应点的位移范数。raw viewer 则显示一条 raw bilateral trajectory 的 world-frame `4096` point cloud，future delta 可由 GUI 在 `0..30` cache frames 选择。
+- conclusion: `INCONCLUSIVE`（数值与可视化不是同一统计对象：不同 split/sequence/frame、future delta、4096 vs 1024 point pool 以及“全点微平均”与单帧点云叠加都会改变直观感受；尚无证据表明 GT flow 计算或坐标变换错误。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — articulated loader、V1.9 evaluator、配置、实验与活动记录；本次未改实现。
+- [V1.9 summary](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/metrics_summary.json)、[V1.9 manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v192_articulated_best_e9_validation_grab1_arctic5to10_20260918T145838Z/run_manifest.json) — stride-wise GT magnitude 证据。
+- [raw viewer implementation](../../../ObjectInteractionCm/visualize_grab.py)、[viewer launch activity](../../../ObjectInteractionCm/docs/logs/activity_log.md) — raw world-frame point cloud、可调 future-delta 与既有查看器启动合同。
+
+**原因**
+
+视觉查看器适合检查一条轨迹上的局部时序和接触；它不显示全 validation 的 point-micro average。若要逐值复现，应锁定同一 sequence、source frame 与 future delta，并在同一 `4096` pool 或同一 `1024` deterministic selection 上计算 `mean(||p_{t+Δ}-p_t||)`；不能比较不同 split 的总体均值与单帧屏幕重叠。
+
+**验证**
+
+- `metrics_summary.json` 的 six group GT magnitudes 与 pooled summary/experiment log 一致。
+- `articulated.py` 明确以 `_world_to_frame(future_world, root) - _world_to_frame(object_world, root)` 构造 GT，且同一 rotation 的欧氏范数不变。
+- `visualize_grab.py` 读取 `obj_points_world`、显示 full 4096 pool、`future_delta_cache_frames` 为 GUI `0..30`；其原启动 activity 记录初始 `future-delta=10`，但用户可在界面改变。
+
+**回滚**
+
+本条为只读诊断，唯一修改是活动记录；删除该条文档增量即可，不涉及数据、模型或运行产物。
+
+## 2026-09-19 03:15:25 +0000 — V1.10.1 Cmv2 几何序列 KNN/距离 Viser 查看器启动
+
+- timestamp: `2026-09-19 03:15:25 +0000`
+- activity_id: `ACT-20260919-031525-CMV2-V110-VISER-START`
+- modification_version: `V1.10.1`
+- type: `code / diagnostic / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求可视化当前训练用的预处理数据，并在 delta 开启时将点流模长显示在 Viser；要求报告启动命令。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（V1.10 viewer/docs/pointer 尚未提交；未覆盖模型、cache、GT、split、checkpoint 或训练 output。）
+- run_id: `cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- run_status: `STARTED`
+- command: `PYTHONPATH=. PYTHONDONTWRITEBYTECODE=1 /home/wbcd/miniconda3/envs/graspenv/bin/python -u -m src.task.ObjectInteractionCmv2.visualize_articulated --index data/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json --split val --sequence arctic/s01/mixer_grab_01 --frame 0 --delta 10 --knn 32 --threshold-mm 20 --host 127.0.0.1 --port 8114 --output /mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- scope: 新增 Task-local viewer，只读当前 two-domain MANO index 与 indexed Cmv2 geometry；初始 ARCTIC val trajectory 为 `arctic/s01/mixer_grab_01`、frame=0、delta=10。GUI 可改变 frame/delta/KNN/距离阈值；delta>0 时 status 展示对应点物体 flow `mean/median/P95/max` mm。旧 ObjectInteractionCm viewer、训练、cache、GT、split 与 checkpoint 不改。
+- conclusion: `INCONCLUSIVE`（viewer 为可视化诊断，不能单独构成模型效果或数据质量结论。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.10 Task-local viewer、用户指导、final plan、入口和既有实现；仅新增可视化诊断能力。
+- [src/task/ObjectInteractionCmv2/visualize_articulated.py](../../visualize_articulated.py)、[src/task/ObjectInteractionCmv2/docs/指导/V1.10.md](../指导/V1.10.md)、[src/task/ObjectInteractionCmv2/docs/plan/V1.10.md](../plan/V1.10.md)、[src/task/ObjectInteractionCmv2/docs/README.md](../README.md)、[docs/current_versions.yaml](../../../../../docs/current_versions.yaml) — Cmv2 schema adapter、冻结 viewer 合同、入口和 `V1.10.1` pointer。
+- [two-domain index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/oicm_v1_4_4/two_domain_mano_split_seed42/index.json)、[geometry manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm_grab_arctic_mano_geometric_v1_4/sequences/train/mano/arctic/s01/mixer_grab_01/geometry/manifest.json) — 只读输入；index 将该物理路径归属为 `val`。
+- Viser [run manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/run_manifest.json)、[config](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/config.json)、[viewer log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/viewer.log) 为 `PENDING`。
+
+**原因**
+
+旧 ObjectInteractionCm viewer 不接受当前 Cmv2 two-domain index schema/geometry manifest。隔离的新 viewer 保持 4096-point current/future world correspondence，直接显示单段 `||p_{t+Δ}-p_t||` 分布，避免将旧 raw viewer 与当前训练数据混用。
+
+**验证**
+
+- `py_compile src/task/ObjectInteractionCmv2/visualize_articulated.py` 通过。
+- `--check-only` 在指定 sequence/frame/delta 完成：object points=`4096`、hand points=`3076`、KNN=32 着色手点=`90`；object flow mean/median/P95/max=`0.0378/0.0367/0.0610/0.0767 mm`。这是该单一静止近似帧段，不能与 pooled validation 均值直接比较。
+
+**回滚**
+
+停止 Viser PID 并将 manifest/activity 更新为 `STOPPED`；保留独立 output。删除 V1.10 viewer/docs/pointer 增量即可，不删除或改写任何输入数据、训练或 checkpoint。
+
+## 2026-09-19 03:26:12 +0000 — V1.10 新 viewer 已按用户要求撤回
+
+- timestamp: `2026-09-19 03:26:12 +0000`
+- activity_id: `ACT-20260919-032612-CMV2-V110-VISER-RETRACTED`
+- modification_version: `V1.9.2`
+- type: `code / diagnostic / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-directed-retraction`
+- approval_basis: 用户明确指出不应实现新脚本，应复用已有 ARCTIC KNN/距离 viewer。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅活动记录待提交；V1.10 viewer、guidance/plan、README/pointer 增量已撤回。）
+- stopped_run_id: `cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z`
+- stopped_run_status: `STOPPED`
+- scope: 精确停止 PID `2198259`，V1.10 output manifest 写 `STOPPED/INVALID_IMPLEMENTATION`；删除未提交 `visualize_articulated.py`、V1.10 guidance/plan，并恢复 Cmv2 pointer 为 `V1.9.2`。未修改训练、cache、GT、split、checkpoint 或旧 `ObjectInteractionCm.visualize_grab`。
+- conclusion: `INVALID_IMPLEMENTATION`（新 viewer 是不必要的范围扩张；后续应直接复用既有 raw bilateral ARCTIC KNN/距离 viewer。）
+
+**文件与产物**
+
+- [src/task/ObjectInteractionCmv2/](../../) — V1.10 实现/计划增量已撤回；仅保留本 retraction activity。
+- [retracted viewer manifest](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/run_manifest.json)、[viewer log](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v110_arctic_val_mixer_grab_delta10_viser_20260919T031525Z/viewer.log) — 停止证据；不删除 output。
+- [existing raw ARCTIC viewer](../../../ObjectInteractionCm/visualize_grab.py)、[existing viewer index](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/processed_data/object_interaction_cm/grab_interact_dexplore_exact_v1_4_17/full_20260916T074233Z/arctic_mano_knn_viewer_20260916T075013Z/index.json) — 后续复用的既有实现与 raw bilateral 输入索引。
+
+**原因**
+
+旧 viewer 已具有用户需要的 KNN、距离着色、future delta 和点流分位数显示，并已经为 ARCTIC raw bilateral MANO 做过兼容。新建 Cmv2 viewer既不必要，也与用户指定的“不读取 cache”不一致。
+
+**验证**
+
+- `kill -0 2198259` 在 `SIGTERM` 后确认进程退出。
+- V1.10 manifest 已为 `STOPPED`，原因明确为用户拒绝新脚本；`git status` 不再包含 V1.10 script/guidance/plan。
+- 既有 viewer-only index schema 为 `ref2dex_object_interaction_cm_index_v1_2`，`arctic/s01/box_use_01` entry 的 variant 为 `mano_bilateral_raw`，可由 `visualize_grab.py` 直接读取。
+
+**回滚**
+
+无进一步回滚：新实现已移除，旧 viewer 未被改动。若需恢复 V1.10，只能经新的用户指导和 final plan，不能从此次撤回静默恢复。
+
+## 2026-09-19 04:26:03 +0000 — V1.10.1 Cmv2 数据/cache 软链接导航层
+
+- timestamp: `2026-09-19 04:26:03 +0000`
+- activity_id: `ACT-20260919-042603-CMV2-DATA-NAVIGATION`
+- modification_version: `V1.10.1`
+- type: `governance / data / documentation`
+- task_mode: `governance`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户确认按所提布局整理 Cmv2 部分，数据和 cache 分开且全部使用软链接。
+- skills_used: `research-change-control`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（本次 V1.10.1 文档/指针与此前 activity 记录待提交；外部 data 入口按仓库忽略规则不入 Git。）
+- scope: 新建 `data/processed_data/oicmv2/` 纯导航层，分离 `data/` 和 `cache/`；不移动、重命名、删除或写入任何 NAS target，不修改训练配置、index、split、schema、模型、checkpoint 或运行。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 冻结命名、范围、验证与回滚合同，并将 Task 指针更新为 `V1.10.1`。
+- [Cmv2 导航 README](../../../../../data/processed_data/oicmv2/README.md) — 说明 data/cache 的职责与 OakInk2 partial cache 禁止项。
+- `data/processed_data/oicmv2/data/{grab,arctic}/{mano,inspire_f1}`、`data/processed_data/oicmv2/data/oakink2/selection`、`data/processed_data/oicmv2/cache/{mano,inspire_f1}/*` — 新建的 8 条绝对 NAS 软链接，均不复制数据。
+
+**原因**
+
+- 旧 `processed_data` 根同时包含 producer、raw 输入、cache、失败中间产物和历史运行，难以从目录名判断 Cmv2 的实际输入。导航层以 domain/hand-variant/scope 命名，保留原路径兼容性。
+- OakInk2 只链接完成态 selection 输入；失败的 `oakink2_inspire_bilateral_v1_4_23/full_20260917T091507Z` 不建立正式 `inspire_f1` cache 入口，防止 partial cache 被训练误用。
+
+**验证**
+
+- 逐条用 `readlink -f` 验证 8 个链接与计划中的绝对 target 完全相同，所有 destination 均为软链接且 target 在创建前已存在。
+- 当前 V1.7/V1.8/V1.9 配置仍显式引用原 `oicm_v1_4_4/two_domain_mano_split_seed42/{index,cache_manifest}.json`，未改为导航路径。
+- 工程结论：`SUPPORTED`（导航层和保护边界成立）；科研结论：`INCONCLUSIVE`（目录治理不构成训练效果结论）。
+
+**回滚**
+
+- 仅删除 [data/processed_data/oicmv2/](../../../../../data/processed_data/oicmv2/) 的本次目录树及本条文档/指针增量；禁止删除任一软链接 target 或既有 `processed_data` 内容。
+
+## 2026-09-19 04:30:34 +0000 — ARCTIC raw MANO 与派生几何 cache 路径辨析
+
+- timestamp: `2026-09-19 04:30:34 +0000`
+- activity_id: `ACT-20260919-043034-CMV2-ARCTIC-RAW-CACHE-DIAGNOSTIC`
+- modification_version: `V1.10.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问新数据入口的 `data/arctic/mano` 与旧 GRAB+ARCTIC MANO geometric cache 是否内容一致。
+- skills_used: `research-change-control`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（仅当前治理/诊断文档记录待提交）
+- scope: 只读比较链接 target、顶层合同和 `arctic/s01/box_use_01` 对应序列；未修改数据、cache、索引或配置。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 本次诊断未改动；它们是同一未提交 V1.10.1 导航层变更，完整影响和验证见上一条 activity。
+
+**原因**
+
+- 导航层的 `data/` 与 `cache/` 旨在显式分开 raw 输入和派生训练几何，避免将同源序列误解为相同目录内容。
+
+**验证**
+
+- [data/arctic/mano](../../../../../data/processed_data/oicmv2/data/arctic/mano/) 解析至 `oicm_v1_4_raw/arctic_mano_30hz`，而 [cache/mano/grab_arctic_v1_4](../../../../../data/processed_data/oicmv2/cache/mano/grab_arctic_v1_4/) 解析至 `object_interaction_cm_grab_arctic_mano_geometric_v1_4`，不是同一 inode/目录。
+- `s01/box_use_01` raw `shared.npz` 含 `(889,4096,3)` 的 `obj_points_world`；cache 同序列另含采样 hand points/normals、KNN indices、距离与监督 masks、candidate masks、part ID、articulation、root pose、frame time 和 manifest。cache 是以 raw 为上游输入之一的派生物，不是 raw 数据的内容复制。
+- 对同一 `s01/box_use_01` 的逐数组只读比对：raw `obj_points_world` 与 cache `obj_points_pool_world` 的 point ID 完全相同、最大绝对差为 `0`；raw 左右 `1538+1538` hand points 按 left-then-right 拼接后与 cache `hand_points_world [889,3076,3]` 也逐元素相同。该结果证明这一序列的核心 world geometry 可直接对齐，但不把单序列等同性泛化为所有 cache 字段或所有序列。
+- `1538` 仅是 cache 保留的 legacy decoder compatibility stream 的每手点数；当前 V1.8/V1.9 articulated training 在 `articulated.py` 读取的是 `knn_hand_points_world`，即 MANO 每手 `2048`、双手 `4096` 点。配置中的 `num_obj_points=1024` 是物体下采样数，不是手点数。
+- cache 的历史 producer 不是本次新增的 `oicmv2/data` 导航层；完成态 manifest 记录其命令为 `build_bilateral_mano_v1_4_cache.py finalize`，物理输入为 `oicm_v1_4_raw/grab_mano_30hz`、`oicm_v1_4_raw/arctic_mano_30hz` 与 Inspire cache 的 index（仅用于 split），输出为 `object_interaction_cm_grab_arctic_mano_geometric_v1_4`。新导航 `data/{grab,arctic}/mano` 只是前两项物理输入根的后建软链接别名。
+- raw MANO 根由 `process/GRAB/stage4_cm.py` / `process/ARCTIC/stage4_cm.py` 从官方 GRAB / ARCTIC 根生成；ARCTIC raw meta 记录 source root 为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/arctic/data/arctic_data/data`，GRAB raw meta 记录 source root 为 `/mnt/ugreen_nas/storage/Ref2Dex_storage/GRAB/data/GRAB`。cache builder 从 raw 读取 1538-point legacy stream，同时依据 MANO model 的固定 triangle/barycentric correspondence 重采样为训练用 2048-point-per-side KNN stream，并生成 KNN/mask/articulation 字段。
+- 既有 `visualize_grab.py` 同时有 raw bilateral 和 bilateral geometry cache 读取分支，却只接受旧 `ref2dex_object_interaction_cm_index_v1_1/v1_2`；当前 Cmv2 two-domain index 为另一 schema，因此不能只替换 index 后“天然”读取，仍需使用相应旧 cache index 或经批准的 schema adapter。
+- 结论：`SUPPORTED`（路径与 schema 差异已验证）；无科研效果结论。
+
+## 2026-09-19 07:44:02 +0000 — OakInk2 高分辨率 Inspire cache 完成态复核
+
+- timestamp: `2026-09-19 07:44:02 +0000`
+- activity_id: `ACT-20260919-074402-CMV2-OAKINK2-HIGHRES-STATUS`
+- modification_version: `V1.10.1`
+- type: `diagnostic`
+- task_mode: `read-only/diagnostic`
+- change_level: `L0`
+- approval: `user-requested`
+- approval_basis: 用户询问 OakInk2 数据是否成功导出。
+- skills_used: `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（此前 V1.10.1 治理文档/指针待提交；本诊断未改动 data 或 cache。）
+- scope: 只读核对 OakInk2 selection、highres Inspire index/cache manifest、resume manifest 与首末 geometry；未运行导出、训练或评估。
+
+**文件**
+
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 本诊断未改动；前一导航计划关于 OakInk2 完成态 cache 的判断需要在用户确认后修订，不应静默改写。
+- [OakInk2 highres cache 根](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/)；[completed resume manifest](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/run_manifest_cmv2_highres_resume_batch8_full_20260917T142300Z.json)；[index](../../../../../data/processed_data/oicm_v1_4_raw/oakink2_inspire_bilateral_v1_4_23/cmv2_highres_full_20260917T134300Z/index.json)。
+
+**原因**
+
+- 初始 `cmv2_highres_full_20260917T134300Z` manifest 为 `STOPPED`，但其后存在独立 resume manifest；只看初始状态会错误地把完整 cache 判为 partial。
+
+**验证**
+
+- resume run `cmv2_highres_resume_batch8_full_20260917T142300Z` 为 `COMPLETED/SUPPORTED`、无 failures；index 和 cache manifest 一致为 train `1849` 条、`379591` 帧；实际 geometry 目录计数也为 `1849`。
+- 首末条 geometry 均含物体 `[T,4096,3]` 与 Inspire KNN 手 `[T,20270,3]`，例如首条 `T=1246`、末条 `T=123`。
+- OakInk2 MANO 是另一条 exporter 链：只找到 `cmv2_v145_oakink2_mano_smoke_20260918T021800Z` 的 `COMPLETED/SUPPORTED` smoke（1/1 段、1246 帧）；没有全量 `sequences/train/mano/oakink2` cache 或正在运行的 MANO export。因此 OakInk2 完整 Inspire 已存在，但完整 MANO 尚未导出，不能建立正式 MANO cache 软链接。
+- 结论：`SUPPORTED`（OakInk2 Inspire highres cache 已完整导出）；不等于它已经进入当前二域训练或已证明训练收益。
+
+**回滚**
+
+- 本次仅新增诊断记录；不改写任何 OakInk2 manifest、cache 或导航软链接。
+
+## 2026-09-19 07:53:00 +0000 — V1.11 OakInk2 MANO 全量导出与 stride=1..3 二域训练启动
+
+- timestamp: `2026-09-19 07:53:00 +0000`
+- activity_id: `ACT-20260919-075300-CMV2-OAKINK2-MANO-AND-TWO-DOMAIN-START`
+- modification_version: `V1.11.1`
+- type: `code / data / experiment / operation / documentation`
+- task_mode: `change`，随后 `run-only/operation`
+- change_level: `L3`
+- approval: `user-approved`
+- approval_basis: 用户明确要求现在启动 OakInk2 MANO 全量导出，并以 GRAB/ARCTIC stride `1..3` 并行二域训练。
+- skills_used: `research-change-control`, `research-experiment-workflow`
+- branch: `cmv2`
+- base_commit: `f589b24dbea1293d37c4d650cacd0a092f2a1723`
+- worktree_dirty: `true`（V1.10.1 未提交治理/诊断记录与本次 V1.11 代码、配置、文档待提交；不覆盖既有运行。）
+- oakink2_run_id: `cmv2_v111_oakink2_mano_full_20260919T075300Z`
+- oakink2_run_status: `STARTED`
+- train_run_id: `cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z`
+- train_run_status: `STARTED`
+- scope: GPU2 以既有 smoke-through OakInk2 MANO producer 导出 1849 selected segments；GPU1 以随机初始化运行 16 epoch GRAB/ARCTIC 二域训练。两域训练 stride 都为 `{1,2,3}`，其余 V1.8 合同不变。
+
+**文件**
+
+- [V1.11 指导](../指导/V1.11.md)、[V1.11 final plan](../plan/V1.11.md)、[V1.11 训练配置](../../configs/active/two_domain_articulated_v1_11_formal.yaml)、[formal trainer](../../train_articulated_formal.py)、[Task 文档入口](../README.md)、[当前版本指针](../../../../../docs/current_versions.yaml) — 新 stride 合同的最小配置/whitelist 扩展与执行边界。
+- [V1.10 指导](../指导/V1.10.md)、[V1.10 final plan](../plan/V1.10.md) — 本次未改动，保留数据导航层的既有合同。
+- [OakInk2 MANO 输出目录](../../../../../data/processed_data/oicm_v1_4_5_highres_full/oakink2_mano_20260919T075300Z/) 与 [二域训练输出目录](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z/) — `PENDING`，启动后写入 manifest/log。
+
+**原因**
+
+- OakInk2 Inspire highres cache 已完成，但 MANO 仅有 smoke；用户要求补齐 4096-point MANO variant。此前二域正式训练使用不对称 stride（GRAB=1、ARCTIC=5..10）；本次只将两域训练采样统一为短 stride `1..3`。
+
+**验证**
+
+- GPU1/GPU2 均为 48 GiB 空闲、无 compute process；selection、annotation、Stage3、MANO asset、二域 index/manifest 均存在，两个唯一 output destination 均不存在。
+- `py_compile train_articulated_formal.py` 通过；V1.8 与 V1.11 config parser 分别验证旧 stride 合同与新 `{1,2,3}` 合同。
+
+**保护与回滚**
+
+- 停止各自 PID 即可；保留独立 manifest/log/已原子完成的 OakInk2 segment 和训练 checkpoint，不删除任何旧 cache、queue、输出或用户进程。
+
+**进度检查（2026-09-19 08:51:41 +0000）**
+
+- OakInk2 exporter PID `2393755` 存活：`69/1849` 段、`30446` 帧，manifest 仍为 `STARTED`（该既有 producer 仅在终态写 `COMPLETED/FAILED`），无 failures。
+- 二域训练 PID `2394527` 存活且 manifest 为 `RUNNING`：train transitions 为 GRAB `324586`、ARCTIC `191603`，validation 为 `40628` / `25802`，每 epoch `8066` steps；尚未完成首个 epoch，故 `metrics.jsonl`/`train.log` 暂无 epoch 行。
+- GPU1 训练显存约 `9396 MiB`、利用率 `58%`；GPU2 exporter 在本次瞬时检查为约 `532 MiB`、`0%`，符合逐段 CPU/I/O 与 GPU KNN 交替阶段。两条 run 均无 error 字段，保持 `INCONCLUSIVE`。
+
+**KNN batch 调整（2026-09-19 08:58:07 +0000）**
+
+- 用户要求提高 GPU2 KNN batch。旧 OakInk2 run 在 `101/1849` 段、`40085` 帧、`failures=[]` 时已发送 `SIGTERM` 并确认 PID 退出；其 manifest 改为 `STOPPED`，保留所有原子完成段。
+- 新 run_id：`cmv2_v111_oakink2_mano_resume_knnfb16_20260919T085807Z`，相同 output root、`--resume`、`knn_frame_batch=16`（原为 `2`）；KNN=32、2048 点/手、4096 点双手、坐标、selection、MANO correspondence 和其余参数不变。恢复初期需逐段验证旧 geometry 后跳过，GPU 仍可暂时空闲；不能将验证阶段的 0% 采样解释为调整失败。
+
+**训练进度检查（2026-09-19 09:03:00 +0000）**
+
+- 二域训练 PID `2394527` 存活、manifest `RUNNING`，GPU1 约 `9398 MiB`、利用率 `100%`。第 1/16 epoch 已完成：step `8066`，`val_grab_loss=0.0786536`、`val_arctic_loss=0.1197243`、等权 `selection_metric=0.0991889`，已写 `best.pt` / `latest.pt` 与 [metrics.jsonl](../../../../../../../../../../mnt/ugreen_nas/storage/Ref2Dex_storage/outputs/ObjectInteractionCmv2/cmv2_v111_articulated_random_init_stride1to3_formal_20260919T075300Z/metrics.jsonl)。这是早期 validation 优化状态，不构成跨域效果结论。

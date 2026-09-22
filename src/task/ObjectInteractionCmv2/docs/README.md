@@ -1,5 +1,48 @@
 # ObjectInteractionCmv2 文档入口
 
+## 当前工作状态
+
+- V1.14d.1 修复本地 Stage4 缺失 `obj_pose_world` 时单位位姿造成的错误刚体 GT：从固定对应物体点恢复
+  frame0-relative SE(3)，全量 replay 通过后才允许启动 V1.14d 训练。入口：
+  [V1.14d.1 FINAL 微补充](plan/V1.14d.1.md)。
+- V1.14d 按用户授权在 Inspire cache 继续生成期间先启动本地 GRAB/MANO 单组随机初始化 1-epoch 训练；正式
+  run `cmv2_v114d_grab_mano_lean_e1_20260922T1504` 当前在 GPU6 运行，active group 固定为 `grab/mano`，不会在
+  运行中动态加入 Inspire，step 200 周期 checkpoint 已通过。入口：
+  [V1.14d FINAL 计划](plan/V1.14d.md)与[MANO-only 配置](../configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml)。
+- V1.14c 已批准并实现本地 GRAB lean geometry 路线：沿用 `full_grab_v1` 的 `1068/134/133` split，MANO 与
+  Inspire 均固定每手 2048 点，只保存训练消费的几何流和由完整源手流计算的 2 cm mask。真实序列 parity 中，MANO
+  mask 与旧 reference 完全一致，Inspire 固定点/法向和 mask 与完整高分辨率 reference 完全一致；样例 lean/legacy
+  字节比为 `0.216`。当前本地 Stage4 为 400616 帧，不等同于历史 NAS 的 406264 帧。full cache 与一轮随机初始化
+  训练尚待 committed build 门禁。入口：[V1.14c FINAL 计划](plan/V1.14c.md)、
+  [本地 lean 配置](../configs/active/mixed_part_se3_v1_14c_local_lean.yaml)。
+- V1.14b 已补齐 portable bilateral 路线：本地 GRAB 可显式启用 `mano + inspire_f1`，服务器配置可启用
+  `GRAB/ARCTIC/OakInk2 × MANO/Inspire` 六组；模型输入继续固定左/右各 2048 点。OakInk2 raw bundle 已校验后迁入
+  `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。
+  Task 测试、本机左右 Inspire retarget 初始化和真实 OakInk2 双手 producer smoke 均通过；固定
+  `manotorch v0.0.2` 仅安装在专用 `graspenv`。随后以真实本地数据完成一次 bounded 六组 1-step smoke：训练 batch
+  六组各 1 个样本，六组 stride 1/2/3 validation 全部完成；进一步纠正 GRAB/ARCTIC 的开头无接触窗口后，
+  interaction-positive 重跑也完成相同门禁，六组共 96 个输入帧均含 2 cm active points。该 smoke 使用随机初始化，
+  只证明三域双手型的真实交互接线可运行，不构成科研效果证据，也不授权正式训练。入口：
+  [V1.14b FINAL 计划](plan/V1.14b.md)、[依赖微补充](plan/V1.14b.1.md)、
+  [Activity](activities/ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)、
+  [六组 smoke Activity](activities/ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE.md)、
+  [本地两组配置](../configs/active/mixed_part_se3_v1_14b_local.yaml)与
+  [服务器六组模板](../configs/active/mixed_part_se3_v1_14b_six_source.yaml)。
+- work_version：`V1.14`；V1.14a 已把 reference hand stream 固定为每手 2048、双手 4096 点，并实现 candidate 共享 start KNN：start top-32 每个 state 只计算一次，end top-32 仍逐 candidate 计算。随机初始化接口与 duplicated-start oracle parity 已通过；GPU3 正式 synthetic benchmark 中 endpoint 从 `33.316 ms` 降至 `19.958 ms`（`1.669x`），shared endpoint + 32D model 为 `25.851 ms`，性能假设 `SUPPORTED`。真实五组 cache 覆盖审计因 NAS 未挂载尚未完成，因此未启动训练。
+- V1.14a 不兼容旧 V1.14 checkpoint 与 V1.13 compact cache；compact-v2 当前仅允许内存 pilot，不授权 full build。入口：[模型](../part_se3_v114.py)、[构造与 checkpoint 合同](../part_se3_v114_training.py)、[未授权运行配置](../configs/active/mixed_part_se3_v1_14a.yaml)、[V1.14a FINAL 计划](plan/V1.14a.md)与[实现 Activity](activities/ACT-20260921-CMV2-V114A-SHARED-START.md)。
+- V1.14 性能证据：[benchmark Activity](activities/ACT-20260921-CMV2-V114-PERFORMANCE-BENCHMARK.md)与[实验卡](experiments/EXP-20260921-V114-NARROW-CANDIDATE-PERFORMANCE.md)；结论仅适用于随机权重 synthetic `B=1,K=8,N=1024,E=32,H=4096` 工程延迟。
+- V1.14a 性能证据：[实现与 benchmark Activity](activities/ACT-20260921-CMV2-V114A-SHARED-START.md)与[实验卡](experiments/EXP-20260921-V114A-SHARED-START-PERFORMANCE.md)；结论仍只适用于随机权重 synthetic 工程延迟。
+- V1.13 保持 V1.12 模型与研究语义不变：训练时可从去重手点表和预选 endpoint-32 edge 恢复交互输入，避免读取完整高分辨率手流及在线全手流 KNN；默认 reference backend 仍保留。
+- V1.13 入口：[紧凑 schema/reader](../compact_endpoint.py)、[cache producer](../tools/data/build_compact_endpoint_v1_13.py)、[FINAL 计划](plan/V1.13.md)与[实现 Activity](activities/ACT-20260921-CMV2-V113-COMPACT-ENDPOINT.md)。
+- 当前 V1.12 架构为 `v1_12_endpoint_part_se3`：固定起始物体 query 的端点 KNN union-rerank、整体多部件 1024 点分层采样、grounded surface-token soft routing、part self-attention 和共享逐部件直接 SE(3) head；part ID 仅用于 grouping/routing。
+- V1.12 独立入口：[模型](../part_se3.py)、[数据适配](../part_se3_data.py)、[构造与 checkpoint 合同](../part_se3_training.py)、[非正式运行配置](../configs/active/mixed_part_se3_v1_12.yaml)、[实现与 smoke Activity](activities/ACT-20260920-CMV2-V112-ENDPOINT-PART-SE3.md)。
+- V1.11.1 正式五组混合 run `cmv2_v111i_mixed_ddp_formal_20260920T114242Z` 已按用户要求于 step 18040、epoch 2 受控停止；其 `latest.pt`、`best.pt`、metrics 与 source snapshot 均保留。
+- V1.12 正式 run `cmv2_v112_part_se3_ddp_formal_20260921T030019Z` 已于 `2026-09-21T03:31:14+00:00` 受控停止；`latest.pt`、manifest、metrics 与日志均保留，尚未完成首轮 validation，故无 `best.pt`。
+- [V1.11g FINAL](plan/V1.11g.md)：五组、GPU1+3、每卡64、stride1..3、16epochs、15组验证，ARCTIC Inspire不等待也不动态纳入；资源切换见 [V1.11i FINAL](plan/V1.11i.md)。
+- V1.11.1 历史入口：[DDP launcher](../train_mixed_articulated_ddp.py)、[部件级固定配置](../configs/active/mixed_articulated_v1_11h_ddp.yaml)、[部件 adapter builder](../tools/data/build_oakink2_part_adapter_v1_11h.py)、[Activity 与原始运行证据](activities/ACT-20260920-CMV2-V111G-MIXED-DDP-GATE.md)、[实验卡](experiments/EXP-20260920-V111G-MIXED-WARMSTART.md)。
+
+## 指导与历史方案入口
+
 - [V1.0 指导](指导/V1.0.md)：用户确认的研究目标、边界与禁止事项；
 - [V1.0 架构](architecture/V1.0.md)：当前版本冻结的输入、结构化交互路径、输出与不变量；
 - [V1.0 计划](plan/V1.0.md)：实现边界、阶段、验证与回滚；当前为 `final`，已作为 V1.0 实现与小规模 pilot 的审批闸门；
@@ -7,9 +50,36 @@
 - [V1.2 最终计划](plan/V1.2.md)：GRAB-only、MANO-only、固定 stride=1 的实施和有界验证范围。
 - [V1.3 指导](指导/V1.3.md)：空间交互融合与直接刚体监督的研究方向。
 - [V1.3 最终计划](plan/V1.3.md)：仅 GRAB/MANO；V1.3.2 不包含 `p_effect` 预测分支。
+- [V1.4 指导](指导/V1.4.md)：用户确认的 GRAB、ARCTIC、OakInk2 三域刚体训练范围。
+- [V1.4 最终计划](plan/V1.4.md)：三域 cache 合同、OakInk2 原始帧回填、等概率 sampler 与 smoke 闸门。
+- [铰接对象架构设计](architecture/articulated_object_design.md)：ARCTIC two-link / GRAB rigid-fallback 张量流、joint graph 与解析 FK；V1.5.1 工程实现已就绪，但真实 cache FK replay 尚未通过，训练仍被阻断。
+- [V1.5 指导](指导/V1.5.md)：用户确认的 ARCTIC two-link / GRAB rigid-fallback 首阶段范围。
+- [V1.5 最终计划](plan/V1.5.md)：articulated loader、graph、analytic FK 与定向 smoke 的冻结实施边界。
+- [V1.5 ARCTIC 运动学 metadata](../configs/active/arctic_articulation_v1_5.json)：由 producer 约定及全 cache FK replay 验证的 two-link revolute contract。
+- [V1.6 最终计划](plan/V1.6.md)：随机初始化 V1.5 的 GPU1 batch calibration 与 8-step smoke。
+- [V1.6 指导](指导/V1.6.md)：用户确认的随机初始化、双域平衡和受控校准范围。
+- [V1.7 最终计划](plan/V1.7.md)：GRAB stride=1、ARCTIC stride=5..10 的 16-epoch 从零正式训练。
+- [V1.8 指导](指导/V1.8.md) 与 [V1.8 最终计划](plan/V1.8.md)：保留未完成 B16 run，以 B64 calibration 闸门后从随机初始化重启相同的 16-epoch 二域训练。
+- [V1.9 指导](指导/V1.9.md) 与 [V1.9 最终计划](plan/V1.9.md)：当前 ARCTIC test 缺失时，使用 V1.8 best checkpoint 做 GRAB stride=1 / ARCTIC stride=5..10 的 validation diagnostic。
+- [V1.10 指导](指导/V1.10.md) 与 [V1.10 最终计划](plan/V1.10.md)：以纯软链接导航层规范 Cmv2 数据与 cache；不迁移 NAS 实体，不改变训练配置。
+- [V1.11 指导](指导/V1.11.md) 与 [V1.11 最终计划](plan/V1.11.md)：OakInk2 MANO 全量导出与随机初始化的 GRAB/ARCTIC stride=1..3 二域正式训练。
+- [V1.11a 最终计划](plan/V1.11a.md)：恢复高分辨率 OakInk2 MANO、GRAB/ARCTIC Inspire cache，并迁移本次新 manifest 的版本字段。
+- [V1.11e 最终计划](plan/V1.11e.md)：隔离空 `.partial` 残留并以 user systemd 托管 GRAB/ARCTIC Inspire 续跑。
+- [V1.11f 最终计划](plan/V1.11f.md)：在 GPU2/GPU1 独立服务上并行调度 GRAB/ARCTIC Inspire，避免同一输出根双写。
+- [V1.11i 最终计划补充](plan/V1.11i.md)：按用户要求将本轮混合训练资源切换为 GPU0+GPU2，其他研究变量不变。
+- [V1.11b 最终计划](plan/V1.11b.md)：用 V1.9 固定 validation 口径评估 V1.11 最优二域 checkpoint。
+- [V1.11c 最终计划](plan/V1.11c.md)：按 stride 1/2/3 分开统计二域 validation 的 EPE 与流模长。
+- [V1.11d 最终计划](plan/V1.11d.md)：在 OakInk2 loader 中排除跨 `frame_time` discontinuity 的短 stride transition，不重导 cache。
+- [V1.12 指导](指导/V1.12.md) 与 [V1.12 最终计划](plan/V1.12.md)：固定起始物体 query 的端点 KNN union-rerank、整体多部件采样、surface-token soft routing 与逐部件直接 SE(3)。
+- [V1.13 最终计划](plan/V1.13.md)：以紧凑 endpoint 派生 cache、分片读取和可选本地 staging 消除完整手流读取与在线 KNN；保持 V1.12 科学语义不变。
+- [V1.14 指导](指导/V1.14.md) 与 [V1.14 最终计划](plan/V1.14.md)：32D 稠密交互、128D token/part reasoning、静态物体编码与 candidate-axis 共享。
+- [V1.14a 指导](指导/V1.14a.md) 与 [V1.14a 最终计划](plan/V1.14a.md)：每手固定 2048 点、共享 start KNN 与独立 candidate end KNN。
+- [V1.14b 最终计划](plan/V1.14b.md)：双手 portable raw 数据入口、可配置 active groups 与跨机器 V1.14a 训练 runner。
+- [V1.14b.1 最终计划](plan/V1.14b.1.md)：在专用 `graspenv` 固定安装 OakInk2 MANO 运行依赖并执行真实双手 smoke。
 - [V1.3 GRAB 正式训练配置](../configs/active/grab_mano_v1_3_formal.yaml)：用户批准的单轮全量 train 范围与停止条件。
 - [V1.3 双卡显存校准配置](../configs/active/grab_mano_v1_3_ddp_calibration.yaml)：GPU2/3 的 batch 显存校准入口。
 - [V1.3 双卡四轮正式配置](../configs/active/grab_mano_v1_3_ddp_formal.yaml)：每卡 batch 160、全局 batch 320、四轮从头训练。
 - [Task 活动记录](logs/activity_log.md)：本 Task 的治理、文档、实现和运行时间线。
+- [当前 Activities](activities/README.md)：合并后治理合同下的长期运行与诊断记录。
 
 本 Task 与旧 `ObjectInteractionCm` 独立。旧 Task 的代码、数据、cache、checkpoint、输出和未提交改动均不在本 Task 范围内。
