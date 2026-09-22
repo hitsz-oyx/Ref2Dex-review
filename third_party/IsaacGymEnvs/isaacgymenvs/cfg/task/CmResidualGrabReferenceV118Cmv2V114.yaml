@@ -12,8 +12,10 @@ basePolicy:
     hidden_width: 128
     interaction_dim: 32
     num_tokens: 16
+    use_residual: false
     knn_k: 32
     interaction_radius_m: 0.02
+    interaction_mode: swept
     feature_scale_m: 0.02
     frame_dt_s: 0.03333333333333333
   cmObjectPoints: 1024

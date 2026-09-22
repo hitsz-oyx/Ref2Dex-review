@@ -24,7 +24,8 @@ MODEL_CONFIG = dict(hidden_width=128, num_tokens=16, use_residual=False,
 V114_SCHEMA = "cmv2_v114a_rigid_candidate_16x32_v1"
 V114_HAND_POINTS = 2048
 V114_MODEL_CONFIG = dict(hidden_width=128, interaction_dim=32, num_tokens=16,
-                         knn_k=32, interaction_radius_m=0.02,
+                         use_residual=False, knn_k=32, interaction_radius_m=0.02,
+                         interaction_mode="swept",
                          feature_scale_m=0.02, frame_dt_s=1 / 30)
 
 
