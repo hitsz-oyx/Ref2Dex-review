@@ -33,6 +33,8 @@ KNN_HAND_POINTS = {name: 2 * count for name, count in KNN_POINTS_PER_SIDE.items(
 V114A_POINTS_PER_SIDE = 2048
 V114A_HAND_POINTS = 2 * V114A_POINTS_PER_SIDE
 V114A_HAND_SAMPLING_CONTRACT = "bilateral_fixed_random_2048_per_side_v1"
+LEAN_GEOMETRY_SCHEMA = "ref2dex_object_interaction_cmv2_lean_geometry_v1"
+LEAN_CACHE_MANIFEST_SCHEMA = "ref2dex_cmv2_lean_geometry_cache_v1"
 DOMAIN_NAMES = ("grab", "arctic", "oakink2")
 HAND_VARIANTS = tuple(KNN_POINTS_PER_SIDE)
 VARIANT_ALIASES = {
@@ -165,6 +167,7 @@ class InspireSequenceView:
             "ref2dex_object_interaction_cm_oakink2_inspire_v1_4",
             "ref2dex_object_interaction_cmv2_stage4_inspire_v1_4",
             "ref2dex_object_interaction_cmv2_oakink2_mano_v1_4",
+            LEAN_GEOMETRY_SCHEMA,
         }
         if self.manifest.get("schema_name") not in supported_schema:
             raise ValueError(f"{self.path}: unsupported geometry schema")
@@ -182,34 +185,39 @@ class InspireSequenceView:
                 f"{self.path}: entry variant {normalize_hand_variant(hand_variant)!r} "
                 f"does not match manifest {self.hand_variant!r}"
             )
-        expected_knn_points = KNN_HAND_POINTS[self.hand_variant]
+        self.hand_preselected = self.manifest.get("schema_name") == LEAN_GEOMETRY_SCHEMA
+        expected_knn_points = V114A_HAND_POINTS if self.hand_preselected else KNN_HAND_POINTS[self.hand_variant]
         offline_knn = self.manifest.get("offline_knn", {})
         if not isinstance(offline_knn, Mapping):
             offline_knn = {}
         declared_knn = self.manifest.get("knn_hand_points")
         if declared_knn is None:
             declared_knn = offline_knn.get("hand_points")
-        expected = {
-            "object_pool_points": 4096,
-            "decoder_hand_points": DECODER_HAND_POINTS,
-            "knn_hand_points": expected_knn_points,
-            "knn_k": self.manifest.get("knn_k") or offline_knn.get("k"),
-        }
+        expected = {"object_pool_points": 4096, "knn_hand_points": expected_knn_points}
+        if not self.hand_preselected:
+            expected["decoder_hand_points"] = DECODER_HAND_POINTS
         actual = {
             "object_pool_points": self.manifest.get("object_pool_points"),
-            "decoder_hand_points": self.manifest.get("decoder_hand_points", self.manifest.get("hand_points")),
             "knn_hand_points": declared_knn,
-            "knn_k": self.manifest.get("knn_k") or offline_knn.get("k"),
         }
+        if not self.hand_preselected:
+            actual["decoder_hand_points"] = self.manifest.get(
+                "decoder_hand_points", self.manifest.get("hand_points"))
         for key, value in expected.items():
             if actual[key] is None or int(actual[key]) != int(value):
                 raise ValueError(f"{self.path}: {key} must be {value}, got {actual[key]}")
         points_per_side = self.manifest.get("knn_points_per_side")
-        if points_per_side is not None and int(points_per_side) != KNN_POINTS_PER_SIDE[self.hand_variant]:
+        expected_per_side = V114A_POINTS_PER_SIDE if self.hand_preselected else KNN_POINTS_PER_SIDE[self.hand_variant]
+        if points_per_side is not None and int(points_per_side) != expected_per_side:
             raise ValueError(
                 f"{self.path}: knn_points_per_side must be "
-                f"{KNN_POINTS_PER_SIDE[self.hand_variant]}, got {points_per_side}"
+                f"{expected_per_side}, got {points_per_side}"
             )
+        if self.hand_preselected:
+            if self.manifest.get("hand_sampling_contract") != V114A_HAND_SAMPLING_CONTRACT:
+                raise ValueError(f"{self.path}: invalid lean hand sampling contract")
+            if int(self.manifest.get("hand_sampling_seed", -1)) != 42:
+                raise ValueError(f"{self.path}: invalid lean hand sampling seed")
         if self.manifest.get("coordinate_frame") not in ("object_pose_t", "world"):
             raise ValueError(f"{self.path}: expected object_pose_t/world cache")
         if self.manifest.get("hand_side") != "bilateral_merged_left_then_right":
@@ -279,10 +287,13 @@ def _resolve_source_entries(source_specs: Sequence[Mapping[str, Any]], split: st
         declared = cache_manifest.get("knn_hand_points_per_stream", {})
         if isinstance(declared, Mapping):
             declared_count = declared.get(requested_variant)
-            if declared_count is not None and int(declared_count) != KNN_HAND_POINTS[requested_variant]:
+            expected_count = (V114A_HAND_POINTS
+                              if cache_manifest.get("schema_name") == LEAN_CACHE_MANIFEST_SCHEMA
+                              else KNN_HAND_POINTS[requested_variant])
+            if declared_count is not None and int(declared_count) != expected_count:
                 raise ValueError(
                     f"{manifest_path}: {requested_variant} stream must have "
-                    f"{KNN_HAND_POINTS[requested_variant]} points, got {declared_count}"
+                    f"{expected_count} points, got {declared_count}"
                 )
         index = json.loads(index_path.read_text(encoding="utf-8"))
         if not isinstance(index.get("sequences", {}).get(split), list):
@@ -385,7 +396,8 @@ class ThreeDomainTransitions(Dataset):
             self.sequences.append(sequence)
             self.sequence_entries.append(entry)
         self.hand_indices = [
-            (None if self.hand_points_per_side is None else fixed_bilateral_hand_indices(
+            (None if self.hand_points_per_side is None or sequence.hand_preselected
+             else fixed_bilateral_hand_indices(
                 sequence.hand_variant, self.hand_points_per_side, self.hand_sampling_seed))
             for sequence in self.sequences
         ]

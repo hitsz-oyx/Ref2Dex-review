@@ -2,6 +2,12 @@
 
 ## 当前工作状态
 
+- V1.14c 已批准并实现本地 GRAB lean geometry 路线：沿用 `full_grab_v1` 的 `1068/134/133` split，MANO 与
+  Inspire 均固定每手 2048 点，只保存训练消费的几何流和由完整源手流计算的 2 cm mask。真实序列 parity 中，MANO
+  mask 与旧 reference 完全一致，Inspire 固定点/法向和 mask 与完整高分辨率 reference 完全一致；样例 lean/legacy
+  字节比为 `0.216`。当前本地 Stage4 为 400616 帧，不等同于历史 NAS 的 406264 帧。full cache 与一轮随机初始化
+  训练尚待 committed build 门禁。入口：[V1.14c FINAL 计划](plan/V1.14c.md)、
+  [本地 lean 配置](../configs/active/mixed_part_se3_v1_14c_local_lean.yaml)。
 - V1.14b 已补齐 portable bilateral 路线：本地 GRAB 可显式启用 `mano + inspire_f1`，服务器配置可启用
   `GRAB/ARCTIC/OakInk2 × MANO/Inspire` 六组；模型输入继续固定左/右各 2048 点。OakInk2 raw bundle 已校验后迁入
   `data/raw_data/ObjectInteractionCmv2/`，新增 raw→既有 Stage3 contract、动态 split 和 V1.14a DDP runner。

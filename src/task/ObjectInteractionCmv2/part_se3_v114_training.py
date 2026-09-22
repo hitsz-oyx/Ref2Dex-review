@@ -111,7 +111,7 @@ def load_v114_config(path: str | Path, *, allow_approved_run: bool = False) -> d
         if not config.get("compact_cache_root"):
             raise ValueError("V1.14 compact backend requires an explicit cache root")
         config["compact_cache_root"] = _absolute(config["compact_cache_root"])
-    elif backend != "reference":
+    elif backend not in ("reference", "lean_geometry"):
         raise ValueError(f"unsupported V1.14 data backend: {backend}")
     return config
 
@@ -142,10 +142,13 @@ def build_part_se3_dataset(config: Mapping[str, Any], group: str, split: str, **
     """Build only the V1.14a fixed-4096 reference path."""
     if config.get("hand_sampling") != EXPECTED_HAND_SAMPLING:
         raise ValueError("V1.14a dataset requires the fixed 2048-per-side contract")
-    if config.get("data_backend", "reference") != "reference":
+    if config.get("data_backend", "reference") not in ("reference", "lean_geometry"):
         raise ValueError("V1.14a compact-v2 cache has not been materialized")
+    dataset_config = dict(config)
+    if dataset_config.get("data_backend") == "lean_geometry":
+        dataset_config["data_backend"] = "reference"
     return _build_part_se3_dataset(
-        config, group, split,
+        dataset_config, group, split,
         hand_points_per_side=EXPECTED_HAND_SAMPLING["points_per_side"],
         hand_sampling_seed=EXPECTED_HAND_SAMPLING["seed"],
         **kwargs,

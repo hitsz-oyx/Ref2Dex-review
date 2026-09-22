@@ -1,5 +1,7 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260922-CMV2-V114C-LEAN-GEOMETRY](ACT-20260922-CMV2-V114C-LEAN-GEOMETRY.md)：本地 GRAB lean geometry schema、真实 parity pilot 与训练门禁。
+
 - [ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE](ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE.md)：本地真实数据的三域 × MANO/Inspire 一次性 1-step 接线 smoke；六组训练与 stride 1/2/3 validation 全部完成。
 
 - [ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL](ACT-20260922-CMV2-V114B-PORTABLE-BILATERAL.md)：双手 portable raw 入口、六组动态 split 与 V1.14a DDP runner；固定 `manotorch` 后真实 OakInk2 双手 smoke 通过。

@@ -189,8 +189,10 @@ class RigidArticulatedPartTransitions(Dataset):
         part_pool = view.part_ids(np.arange(4096, dtype=np.int64))
         selected = stratified_part_indices(part_pool, 1024, seed=seed ^ 0xB15)
         part_ids = part_pool[selected]
-        hand_indices = (None if self.hand_points_per_side is None else fixed_bilateral_hand_indices(
-            view.base.hand_variant, self.hand_points_per_side, self.hand_sampling_seed))
+        hand_indices = (None if self.hand_points_per_side is None or view.base.hand_preselected
+                        else fixed_bilateral_hand_indices(
+                            view.base.hand_variant, self.hand_points_per_side,
+                            self.hand_sampling_seed))
         values = _transition_values(
             view.base, current, future, reference, selected, hand_indices)
         root_rotation, root_translation = delta_in_reference(reference, root_future, reference)
