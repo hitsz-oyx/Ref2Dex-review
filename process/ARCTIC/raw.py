@@ -517,6 +517,20 @@ def transform_object_points_batch(
 # 核心处理逻辑
 # ============================================================
 
+def select_raw_frame_ids(
+    frame_count: int, frame_start: int, preprocess_stride: int, max_frames: Optional[int]
+) -> np.ndarray:
+    """Select absolute raw frame IDs for bounded preprocessing."""
+    if frame_count < 0 or frame_start < 0 or preprocess_stride <= 0:
+        raise ValueError("invalid ARCTIC frame selection")
+    frame_ids = np.arange(frame_start, frame_count, preprocess_stride, dtype=np.int32)
+    if max_frames is not None:
+        frame_ids = frame_ids[: int(max_frames)]
+    if frame_ids.size == 0:
+        raise ValueError("No frames selected after applying frame_start / preprocess_stride / max_frames")
+    return frame_ids
+
+
 class ArcticRawAdapter:
     """Parse ARCTIC sequences into the minimal common Stage 2 source fields."""
 
@@ -525,6 +539,7 @@ class ArcticRawAdapter:
         num_obj_points: int = 4096,
         device: str = DEFAULT_TORCH_DEVICE,
         preprocess_stride: int = 1,
+        frame_start: int = 0,
         max_frames: Optional[int] = None,
         obj_unit: str = "mm",      # mesh.obj 单位：'m' / 'mm' / 'auto'
                                     # 默认 'mm'：ARCTIC 原始 mesh.obj 是 mm（box max=244.91mm），
@@ -537,12 +552,14 @@ class ArcticRawAdapter:
             num_obj_points:        每个物体表面采样点数（固定 4096）
             device:                PyTorch 设备（如 cuda / cuda:3 / cpu）
             preprocess_stride:     预处理阶段物理降采样步长。1=保留全部帧。
+            frame_start:           首个原始帧编号；输出 raw_frame_id 保持绝对编号。
             max_frames:            单条序列最多处理前 N 帧（None=不限制）。
                                     主要用于 quick smoke test。
         """
         self.num_obj_points = num_obj_points
         self.device = resolve_torch_device(device)
         self.preprocess_stride = max(1, int(preprocess_stride))
+        self.frame_start = max(0, int(frame_start))
         self.max_frames = max_frames  # None=不限；>0=只处理前 N 帧（quick test 用）
         self.obj_unit = obj_unit      # mesh.obj 单位：'m' / 'mm' / 'auto'
         self.nn_batch_size = max(1, int(nn_batch_size))
@@ -679,11 +696,9 @@ class ArcticRawAdapter:
         obj_params = np.load(obj_p, allow_pickle=True)            # (T, 7)
 
         T_raw = int(obj_params.shape[0])
-        raw_frame_id = np.arange(0, T_raw, self.preprocess_stride, dtype=np.int32)
-        if self.max_frames is not None:
-            raw_frame_id = raw_frame_id[: int(self.max_frames)]
-        if raw_frame_id.size == 0:
-            raise ValueError("No frames selected after applying preprocess_stride / max_frames")
+        raw_frame_id = select_raw_frame_ids(
+            T_raw, self.frame_start, self.preprocess_stride, self.max_frames
+        )
 
         obj_params = obj_params[raw_frame_id]
         for side in ("right", "left"):

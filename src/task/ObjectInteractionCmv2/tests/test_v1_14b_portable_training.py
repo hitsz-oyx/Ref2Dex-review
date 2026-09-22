@@ -19,6 +19,7 @@ from src.task.ObjectInteractionCmv2.tools.data.materialize_oakink2_stage3_v114b 
     sample_object_surface,
 )
 from src.task.ObjectInteractionCmv2.tools.data.build_active_group_split_v114b import build as build_active_split
+from process.ARCTIC.raw import select_raw_frame_ids
 
 
 TASK_ROOT = Path(__file__).parents[1]
@@ -37,6 +38,15 @@ def test_v114b_configs_cover_local_two_group_and_portable_six_group_contracts():
     assert tuple(smoke["active_groups"]) == SUPPORTED_PART_SE3_GROUPS
     assert smoke["training"]["batch_size_per_rank"] == len(SUPPORTED_PART_SE3_GROUPS)
     assert smoke["training"]["world_size"] == 1
+    interaction_smoke = load_v114_config(
+        TASK_ROOT / "configs/active/mixed_part_se3_v1_14b_six_source_interaction_smoke.yaml")
+    assert tuple(interaction_smoke["active_groups"]) == SUPPORTED_PART_SE3_GROUPS
+    assert interaction_smoke["training"]["batch_size_per_rank"] == len(SUPPORTED_PART_SE3_GROUPS)
+
+
+def test_arctic_raw_adapter_preserves_explicit_frame_start():
+    frame_ids = select_raw_frame_ids(100, frame_start=29, preprocess_stride=3, max_frames=4)
+    assert frame_ids.tolist() == [29, 32, 35, 38]
 
 
 def test_v114b_batch_rounding_is_exact_positive_and_deterministic():

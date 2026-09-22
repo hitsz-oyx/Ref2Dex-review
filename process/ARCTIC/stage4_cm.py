@@ -54,6 +54,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ds-rate", type=int, default=1)
     parser.add_argument("--candidate-threshold", type=float, default=0.05)
     parser.add_argument("--preprocess-stride", type=int, default=1)
+    parser.add_argument(
+        "--frame-start", type=int, default=0,
+        help="First original ARCTIC frame to cache; raw_frame_id remains absolute.",
+    )
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--frame-batch-size", type=int, default=4)
@@ -75,6 +79,8 @@ def main() -> None:
         raise SystemExit("--ds-rate must be positive")
     if args.preprocess_stride <= 0:
         raise SystemExit("--preprocess-stride must be positive")
+    if args.frame_start < 0:
+        raise SystemExit("--frame-start must be non-negative")
 
     sequences = _resolve_sequences(args)
     if not sequences:
@@ -87,6 +93,7 @@ def main() -> None:
         num_obj_points=args.num_obj_points,
         device=str(device),
         preprocess_stride=args.ds_rate * args.preprocess_stride,
+        frame_start=args.frame_start,
         max_frames=args.max_frames if args.max_frames > 0 else None,
         obj_unit=args.obj_unit,
         nn_batch_size=args.nn_batch_size,
@@ -176,6 +183,7 @@ def main() -> None:
             "obj_unit": args.obj_unit,
             "requested_ds_rate": int(args.ds_rate),
             "preprocess_stride": int(args.preprocess_stride),
+            "frame_start": int(args.frame_start),
         },
     )
     write_manifest(output_root)
