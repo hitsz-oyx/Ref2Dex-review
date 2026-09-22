@@ -1,5 +1,6 @@
 # ObjectInteractionCmv2 Activities
 
+- [ACT-20260922-CMV2-V114D-MANO-TRAIN](ACT-20260922-CMV2-V114D-MANO-TRAIN.md)：本地 GRAB/MANO pose 纠偏、单组门禁与正式 1-epoch 训练启动。
 - [ACT-20260922-CMV2-V114C-LEAN-GEOMETRY](ACT-20260922-CMV2-V114C-LEAN-GEOMETRY.md)：本地 GRAB lean geometry schema、真实 parity pilot 与训练门禁。
 
 - [ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE](ACT-20260922-CMV2-V114B-SIX-SOURCE-SMOKE.md)：本地真实数据的三域 × MANO/Inspire 一次性 1-step 接线 smoke；六组训练与 stride 1/2/3 validation 全部完成。

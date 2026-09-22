@@ -5,8 +5,9 @@
 - V1.14d.1 修复本地 Stage4 缺失 `obj_pose_world` 时单位位姿造成的错误刚体 GT：从固定对应物体点恢复
   frame0-relative SE(3)，全量 replay 通过后才允许启动 V1.14d 训练。入口：
   [V1.14d.1 FINAL 微补充](plan/V1.14d.1.md)。
-- V1.14d 按用户授权在 Inspire cache 继续生成期间先启动本地 GRAB/MANO 单组随机初始化 1-epoch 训练；
-  active group 固定为 `grab/mano`，不会在运行中动态加入 Inspire。入口：
+- V1.14d 按用户授权在 Inspire cache 继续生成期间先启动本地 GRAB/MANO 单组随机初始化 1-epoch 训练；正式
+  run `cmv2_v114d_grab_mano_lean_e1_20260922T1504` 当前在 GPU6 运行，active group 固定为 `grab/mano`，不会在
+  运行中动态加入 Inspire，step 200 周期 checkpoint 已通过。入口：
   [V1.14d FINAL 计划](plan/V1.14d.md)与[MANO-only 配置](../configs/active/grab_mano_part_se3_v1_14d_local_lean.yaml)。
 - V1.14c 已批准并实现本地 GRAB lean geometry 路线：沿用 `full_grab_v1` 的 `1068/134/133` split，MANO 与
   Inspire 均固定每手 2048 点，只保存训练消费的几何流和由完整源手流计算的 2 cm mask。真实序列 parity 中，MANO
