@@ -3,7 +3,7 @@
 - timestamp：2026-09-22T10:26:41+08:00
 - activity_id：`ACT-20260922-CMV2-V114C-LEAN-GEOMETRY`
 - work_version：`V1.14`
-- git_commit：实施中；full build 前以最终提交替换
+- git_commit：`aeceb3b`
 - base_commit：`6e4d96e`
 - branch：`ai/ObjectInteractionCmv2/v1.13-io-acceleration`
 - scope：本地 GRAB MANO/Inspire V1.14c lean geometry schema、reader、producer、配置与真实 parity pilot
