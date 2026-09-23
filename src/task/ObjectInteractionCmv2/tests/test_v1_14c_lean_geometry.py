@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
+import torch
 
 from src.task.ObjectInteractionCmv2.multi_domain import (
     LEAN_CACHE_MANIFEST_SCHEMA,
@@ -14,6 +16,10 @@ from src.task.ObjectInteractionCmv2.multi_domain import (
 )
 from src.task.ObjectInteractionCmv2.part_se3_v114_training import load_v114_config
 from src.task.ObjectInteractionCmv2.part_se3_data import RigidArticulatedPartTransitions
+from src.task.ObjectInteractionCmv2.train_part_se3_v114_ddp import (
+    advance_sample_generator,
+    validate_resume_contract,
+)
 
 
 def _write_lean(root: Path, variant: str) -> tuple[Path, Path]:
@@ -97,6 +103,39 @@ def test_v114e_formal_config_only_changes_available_gpu() -> None:
     assert formal["resources"]["physical_gpus"] == [5]
     baseline["resources"]["physical_gpus"] = [5]
     assert formal == baseline
+
+
+def test_v114e1_resume_contract_and_sampler_position() -> None:
+    config = {
+        "active_groups": ["grab/mano", "grab/inspire_f1"],
+        "group_weights": {"grab/mano": 0.5, "grab/inspire_f1": 0.5},
+        "model": {"architecture_version": "v1_14a_shared_start_knn_4096"},
+        "training": {"batch_size_per_rank": 16, "epochs": 1},
+    }
+    payload = {
+        "schema_name": "object_interaction_cmv2_shared_start_candidate_checkpoint_v2",
+        "work_version": "V1.14",
+        "architecture_version": "v1_14a_shared_start_knn_4096",
+        "active_groups": config["active_groups"], "group_weights": config["group_weights"],
+        "epoch": 1, "step": 16400, "model": {}, "optimizer": {},
+    }
+    source = {
+        "task": "ObjectInteractionCmv2", "work_version": "V1.14", "run_status": "FAILED",
+        "active_groups": config["active_groups"], "group_weights": config["group_weights"],
+        "planned_steps": 40024,
+    }
+    assert validate_resume_contract(payload, source, config) == 16400
+    with pytest.raises(ValueError, match="source run manifest"):
+        validate_resume_contract(payload, {**source, "run_status": "COMPLETED"}, config)
+
+    lengths = {"grab/mano": 101, "grab/inspire_f1": 103}
+    restored = torch.Generator().manual_seed(42)
+    advance_sample_generator(restored, lengths, config, 7)
+    manual = torch.Generator().manual_seed(42)
+    for _ in range(7):
+        torch.randint(101, (8,), generator=manual)
+        torch.randint(103, (8,), generator=manual)
+    assert torch.equal(restored.get_state(), manual.get_state())
 
 
 def test_v114d_config_is_approved_mano_only_run() -> None:
